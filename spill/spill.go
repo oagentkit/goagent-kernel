@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/pathx"
@@ -170,6 +171,22 @@ type Page struct {
 
 // ReadPage 会话隔离分页取回：off<0 视作 0、>total 收到 total；limit<=0 用缺省，
 // 超上限收上限（LLM 面与控制台面同一缺省/上限）。
+//
+// # 页边界不切坏字符（issue #199）
+//
+// 分页按字节预算切，但 Page.Content 直接进 read_spill 回包 / 控制台取回面
+// （字段带 json 标签，encoding/json 对非法 UTF-8 替换为 U+FFFD）——页边界
+// 落在多字节字符中间 = 每个跨页字符丢 1–2 字节且不可复原，与截断提示承诺的
+// 「分页取回中段原文」直接冲突。修法三条：
+//
+//  1. **尾部回退**：预算终点落在字符中间时回退到最近的 rune 起点，被截的
+//     字符**整字符挪到下一页**（NextOffset 指向它的起点）——顺序分页逐页
+//     拼接与原文逐字节相等，无丢无损；
+//  2. **头部回退**：非顺序分页传入的 off 落在字符中间时，回退到所在字符
+//     的起点再读（页与页允许重叠，不允许跳字节——任何字节都在某一页里）；
+//  3. **进度保底**：limit 小于单字符宽度（回退后整页装不下一个字符）时，
+//     至少前进一个完整字符（Bytes 可略超 limit，至多 utf8.UTFMax-1），
+//     分页器不死循环。
 func ReadPage(root, sessionID, name string, off int64, limit int) (Page, error) {
 	_, p, err := resolve(root, sessionID, name)
 	if err != nil {
@@ -197,23 +214,78 @@ func ReadPage(root, sessionID, name string, off int64, limit int) (Page, error) 
 	if limit > MaxLimit {
 		limit = MaxLimit
 	}
+	// 头部回退：off 落在多字节字符中间（非顺序分页的入参）时退到所在字符
+	// 起点。字节 [旧off, 新off) 与上一页重叠——重叠无害，跳字节才是丢失。
+	if off > 0 && off < total {
+		if back := midRuneBack(f, off); back > 0 {
+			off -= back
+		}
+	}
 	n := total - off
+	if n <= 0 {
+		// 空尾页（off==total，越界 offset 收到 total 的既有口径）。
+		return Page{Name: filepath.Base(p), Offset: off, Total: total, EOF: true}, nil
+	}
 	if n > int64(limit) {
 		n = int64(limit)
 	}
-	buf := make([]byte, n)
+	// 多读 utf8.UTFMax 字节做判定余量：只为看清「预算终点是不是落在字符
+	// 中间」（以及进度保底时找完整字符的终点），多余字节不进 Content。
+	buf := make([]byte, n+utf8.UTFMax)
 	got, rerr := f.ReadAt(buf, off)
 	if rerr != nil && got == 0 {
 		return Page{}, errors.Wrap(rerr, "存档读取失败")
 	}
+	cut := got
+	if int64(got) > n {
+		// 预算装满且文件还有后续：终点可能切进字符，回退到最近的 rune 起点
+		//（被截字符整字符挪到下一页）。got<=n 即已读到 EOF：文件自己的
+		// 尾字节问题不属分页切坏，如实带出。
+		cut = int(n)
+		for cut > 0 && !utf8.RuneStart(buf[cut]) {
+			cut--
+		}
+		if cut == 0 {
+			// 进度保底：预算小于单字符宽度，整页装不下一个字符——至少
+			// 前进一个完整字符（略超预算 ≤ utf8.UTFMax-1，分页器不死循环）。
+			cut = 1
+			for cut < got && !utf8.RuneStart(buf[cut]) {
+				cut++
+			}
+		}
+	}
 	pg := Page{
-		Name: filepath.Base(p), Offset: off, Bytes: got, Total: total,
-		EOF: off+int64(got) >= total, Content: string(buf[:got]),
+		Name: filepath.Base(p), Offset: off, Bytes: cut, Total: total,
+		EOF: off+int64(cut) >= total, Content: string(buf[:cut]),
 	}
 	if !pg.EOF {
-		pg.NextOffset = off + int64(got)
+		pg.NextOffset = off + int64(cut)
 	}
 	return pg, nil
+}
+
+// midRuneBack 探测 off 是否落在多字节字符中间，是则返回应回退的字节数
+// （≤ utf8.UTFMax-1；最多回探 3 字节——再往前还找不到起点即文件本身不是
+// 合法 UTF-8，如实带出不回退）。只做 1–2 次小 ReadAt，顺序分页（off 恰在
+// rune 起点）零回退零额外读。
+func midRuneBack(f *os.File, off int64) int64 {
+	probe := make([]byte, 1)
+	if got, _ := f.ReadAt(probe, off); got == 1 && utf8.RuneStart(probe[0]) {
+		return 0 // off 恰在字符起点（顺序分页的常态）
+	}
+	head := make([]byte, utf8.UTFMax-1)
+	base := off - int64(len(head))
+	if base < 0 {
+		base = 0
+		head = head[:off]
+	}
+	got, _ := f.ReadAt(head, base)
+	for i := int64(got) - 1; i >= 0; i-- {
+		if utf8.RuneStart(head[i]) {
+			return off - (base + i) // 最近（离 off 最近）的字符起点
+		}
+	}
+	return 0
 }
 
 // 单次取回字节缺省/上限（自 read_spill 迁出：取回文本直接进上下文，上限与输出
