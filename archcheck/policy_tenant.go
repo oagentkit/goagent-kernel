@@ -22,13 +22,28 @@ type TenantSharedSurface struct {
 // policy 声明；执行体是通用 AST 分析。内核代码里不得出现宿主租户字面——
 // 它们只出现在这份 policy 里。
 //
-// # 三条判据
+// # 六条判据（issue #177 补齐到 6，与 bianque tenantcheck 同口径）
 //
 //  1. tenant-surface-missing-evidence：带授权上下文形参 + 返回租户域类型的
 //     函数必须有隔离判定证据（调用登记的共享判定面 / 查询条件含过滤列 /
 //     显式 `// tenant:iso <理由>`）；三者皆无 = 红。
 //  2. viewer-dropped：带授权上下文形参却完全不用 = 红。
 //  3. shared-surface-missing：登记在册的共享判定面在代码里不存在 = 清单漂移 = 红。
+//
+// 后三条是**租户表登记面**判据（bianque 的 RLS 登记面），声明
+// tenant_tables_manifest 后启用；不声明则只跑前三条：
+//
+//  4. tenant-policy-missing：含租户字段的模型映射出的物理表不在清单里 = 红
+//     （漏登记 = 隔离策略不覆盖这张表）。
+//  5. tenant-policy-drift：清单登记的表在模型面已不存在 = 红（登记漂移 =
+//     空登记）。双向核对，清单与模型面谁走了谁都不行。
+//  6. tenant-table-name-missing：含租户字段的模型没有可从 AST 识别的表名
+//     方法（缺省 TableName，可用 table_name_method 配置）= 红——解析不出
+//     物理表名，登记面核对不了这张表。
+//
+// 宿主持有的 RLS 注册表是 Go 符号，执行体调不到；清单是宿主自己 dump 的
+// 产物（或由一条校验测试保证与注册表一致），语义与 shared_surfaces 的
+// 「存在性核对」同族。
 //
 // # 租户类型由代码推导
 //
@@ -53,6 +68,14 @@ type TenantGate struct {
 	FilterColumns []string `yaml:"filter_columns"`
 	// SharedSurfaces 共享隔离判定面登记表（调用证据 + 存在性核对）。
 	SharedSurfaces []TenantSharedSurface `yaml:"shared_surfaces"`
+	// TenantTablesManifest 租户表登记面清单（issue #177）：相对仓根的文本
+	// 文件，每行一个物理表名（`#` 起行为注释）。声明后启用判据 4-6：执行体
+	// 把模型面推导出的租户表集合与清单做**双向**核对（缺登记 / 登记漂移），
+	// 并要求每个租户域类型有可解析的表名方法。空 = 只跑判据 1-3。
+	TenantTablesManifest string `yaml:"tenant_tables_manifest"`
+	// TableNameMethod 物理表名解析方法名（缺省 TableName，GORM 惯例）。
+	// 只影响判据 6 与登记面集合的推导。
+	TableNameMethod string `yaml:"table_name_method"`
 }
 
 // on 报告租户门是否启用。

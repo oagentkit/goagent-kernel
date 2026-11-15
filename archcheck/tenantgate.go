@@ -1,4 +1,6 @@
 // tenantgate.go —— 租户过滤漏拼门（issue #172）：隔离证据判据 + 登记面漂移检测。
+// 租户表登记面三条判据在 tenantmanifest.go（issue #177 补齐到 6 条，与
+// bianque tenantcheck 同口径）。
 //
 // # 为什么需要这条门禁
 //
@@ -12,6 +14,11 @@
 //  2. viewer-dropped：带授权上下文形参却完全不用 = 授权上下文被丢弃 = 红。
 //  3. shared-surface-missing：登记在册的共享判定面在代码里不存在 = 清单漂移
 //     = 红（一条被静默放宽的登记等于没有登记）。
+//
+// 声明 tenant_tables_manifest 后再加**租户表登记面**三条（判据落点见
+// tenantmanifest.go 头注）：tenant-policy-missing（模型面表缺登记）、
+// tenant-policy-drift（清单登记的表模型面已不存在）、tenant-table-name-missing
+// （租户域模型没有可解析的表名方法）。不声明则只跑前三条。
 //
 // # 形状归 policy，执行体通用
 //
@@ -30,7 +37,9 @@
 //   - 调用了共享判定面但没用返回值、Where 里写了过滤列但条件被注释掉，
 //     这类语义缺陷判不了（需要类型/流分析或运行期判据）；
 //   - 同包重名类型按包名索引，两个不同包同名时可能误判（与 bianque 原判据
-//     同口径的已知边界）。
+//     同口径的已知边界）；
+//   - 登记面清单与宿主 RLS 注册表的一致性靠宿主自己的 dump/校验测试保证
+//     （注册表是 Go 符号，执行体调不到，见 tenantmanifest.go 头注）。
 package archcheck
 
 import (
@@ -54,7 +63,7 @@ const (
 // 理由必须非空——裸标签等于没声明：谁都不知道隔离在哪一层）。
 const tenantIsoTag = "tenant:iso"
 
-// tenantGateSeverities 把租户门三条规则的 severity 写进分流表（段未启用时不动）。
+// tenantGateSeverities 把租户门规则的 severity 写进分流表（段未启用时不动）。
 func tenantGateSeverities(g *TenantGate, sevOf map[string]string) {
 	if g == nil || !g.on() {
 		return
@@ -63,15 +72,16 @@ func tenantGateSeverities(g *TenantGate, sevOf map[string]string) {
 	sevOf[tenantSurfaceMissingRuleID] = sev
 	sevOf[tenantViewerDroppedRuleID] = sev
 	sevOf[tenantSurfaceDriftRuleID] = sev
+	tenantManifestSeverities(g, sevOf) // 登记面三条（声明 manifest 才登记）
 }
 
-// tenantGateRuleInfos 报告用的三条规则元信息（段未启用时为空）。
+// tenantGateRuleInfos 报告用的规则元信息（段未启用时为空）。
 func tenantGateRuleInfos(g *TenantGate) []RuleInfo {
 	if g == nil || !g.on() {
 		return nil
 	}
 	sev := sevOrError(g.Severity)
-	return []RuleInfo{
+	infos := []RuleInfo{
 		{ID: tenantSurfaceMissingRuleID,
 			Desc:     "带授权上下文形参且返回租户域类型的函数必须有隔离判定证据（共享判定面 / 过滤列 / tenant:iso 声明）",
 			Severity: sev},
@@ -82,6 +92,7 @@ func tenantGateRuleInfos(g *TenantGate) []RuleInfo {
 			Desc:     tenantGateDesc(*g),
 			Severity: sev},
 	}
+	return append(infos, tenantManifestRuleInfos(g)...)
 }
 
 // tenantGateDesc 报告用规则说明（policy 的 desc 优先）。
@@ -215,6 +226,15 @@ func tenantGateViolations(root string, gate TenantGate) ([]Violation, error) {
 				})
 			}
 		}
+	}
+
+	// 判据 4-6：租户表登记面（声明 tenant_tables_manifest 才启用，issue #177）。
+	if gate.TenantTablesManifest != "" {
+		mv, err := tenantManifestViolations(root, gate, typeFiles, fields)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, mv...)
 	}
 
 	slices.SortFunc(out, func(a, b Violation) int {
