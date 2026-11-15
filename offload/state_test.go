@@ -3,16 +3,18 @@ package offload
 // State 的并发安全：编排可能从多个环节并发推进，共享同一个 State 是常态。
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"sync"
 	"testing"
+
+	"github.com/oekit/pkg/encoding"
 )
 
 // hashOf 与生产代码同样的摘要算法，保证 State 的键形态一致。
+//
+// 直接取上游 encoding.Sha256Hex（单源）：测试与生产各写一份 sha256+hex，
+// 「测试绿但生产换过算法」这种漂移就没人挡。
 func hashOf(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
+	return encoding.Sha256Hex([]byte(s))
 }
 
 // TestStateConcurrentMarkSeen 并发 Mark/Seen/Len 不得崩、不得数据竞争。
