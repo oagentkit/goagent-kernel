@@ -66,6 +66,15 @@ var ErrInvalidConfig = errors.New("worker: 配置非法")
 // 账都记不到它头上。
 var ErrNotRegistered = errors.New("worker: 注册已失效（令牌不匹配或有效期已过）")
 
+// ErrLeaseUnconfirmed 在途任务的租约连续续期失败跨过一个 TTL：驱动无法
+// 确认自己仍是持有者，已取消在途执行并停止领取收刀（issue #179）。
+//
+// 与 @@ErrNotRegistered@@ 分列：那是身份没了，这是任务资格答不出来——
+// 两者对宿主的处置不同（前者查注册表/顶替，后者查任务板/存储健康）。
+// 驱动报它即已收刀：续不上还继续开工，施加的每个副作用都可能是
+// 与新持有者的双份。
+var ErrLeaseUnconfirmed = errors.New("worker: 任务租约无法确认持有资格（连续续期失败跨过 TTL）")
+
 // Spec 注册声明：worker 是谁、要多久的心跳周期。
 type Spec struct {
 	// ID worker 标识（宿主词表；空串非法）。允许重复注册：后到者顶替
