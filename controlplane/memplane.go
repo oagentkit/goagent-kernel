@@ -4,7 +4,9 @@
 //
 //   - **控制面**：实现 Plane 契约（查询 + 三类介入），演示介入判据怎么落在
 //     「与运行时同一份状态」上——留痕与状态变更在同一个临界区里完成，
-//     留痕失败即整体失败（没有「先改后补痕迹」的窗口）；
+//     三类介入一律候选变更式（先算下一状态，留痕成功后才写回），
+//     留痕失败即整体失败（没有「先改后补痕迹」的窗口，也没有「先改状态
+//     后留痕」的窗口）；
 //   - **最小运行时面**：Claim / Complete / Release / Seed* 驱动场景——
 //     控制面的介入判据必须对着运行时的租约与代次演示（强释之后旧令牌
 //     提交被拒、下一次认领代次严格递增），没有运行时面就没有可演示的
@@ -249,11 +251,16 @@ func (m *MemPlane) Terminate(ctx context.Context, req Termination) error {
 		}
 		return errors.Wrap(ErrTerminalRun, "当前状态: "+run.status)
 	}
-	run.status = contract.StatusCancelled
-	run.gen++ // 终止本身是一次代次前进：并发介入者的旧视图从此失效
-	if err := m.audit(ctx, req.Operator, ActionTerminate, string(req.RunID), req.Basis, fmt.Sprintf("已终止（第 %d 代）", run.gen)); err != nil {
+	// 候选变更式（与 ForceRelease / Adjudicate 同序）：先算下一状态与代次，
+	// 留痕成功后才写回——留痕失败 ⇒ 状态与代次一律不变，不存在「失败的介入
+	// 已经生效」的窗口。终止本身是一次代次前进：并发介入者的旧视图从此失效。
+	nextStatus := contract.StatusCancelled
+	nextGen := run.gen + 1
+	if err := m.audit(ctx, req.Operator, ActionTerminate, string(req.RunID), req.Basis, fmt.Sprintf("已终止（第 %d 代）", nextGen)); err != nil {
 		return err
 	}
+	run.status = nextStatus
+	run.gen = nextGen
 	return nil
 }
 

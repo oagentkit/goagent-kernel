@@ -25,6 +25,13 @@ func emptyCtx() context.Context { return context.Background() }
 func seededPlane(t *testing.T) (*MemPlane, *MemAuditor) {
 	t.Helper()
 	aud := &MemAuditor{}
+	return seededPlaneWithAuditor(t, aud), aud
+}
+
+// seededPlaneWithAuditor 同一场景，留痕面由调用方注入（留痕失败注入用——
+// 见 TestInterventionAuditFailureHasNoSideEffect）。
+func seededPlaneWithAuditor(t *testing.T, aud Auditor) *MemPlane {
+	t.Helper()
 	m := NewMemPlane(aud)
 	err := m.SeedRun("r1", contract.StatusRunning, []taskboard.Task{
 		{ID: "t1", Title: "第一个环节", State: taskboard.StateOpen},
@@ -36,7 +43,7 @@ func seededPlane(t *testing.T) (*MemPlane, *MemAuditor) {
 	if err := m.SeedEffect("effect-1", false); err != nil {
 		t.Fatalf("SeedEffect: %v", err)
 	}
-	return m, aud
+	return m
 }
 
 func TestValidateInterventions(t *testing.T) {
