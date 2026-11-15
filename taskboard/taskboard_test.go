@@ -4,7 +4,13 @@
 // 经不起变异——退化成「永远报」也能全绿，而那会把正确的图判成错的。
 package taskboard
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+// testNow 表驱动用例共用的「现在」：到期时刻残留的形态需要非零 Until。
+var testNow = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // clean 一张自洽的任务图：t1 已完成、t2 依赖 t1 且被认领。
 func clean() []Task {
@@ -42,6 +48,7 @@ func TestCheckCatchesEachInvariant(t *testing.T) {
 		{"认领却没有令牌", append(clean(), Task{ID: "t3", State: StateClaimed, Owner: "a1"}), CodeClaimedNoLease},
 		{"非认领态残留令牌", append(clean(), Task{ID: "t3", State: StateOpen, Lease: Lease{Token: "tok"}}), CodeLeaseNoClaim},
 		{"非认领态残留代次", append(clean(), Task{ID: "t3", State: StateOpen, Lease: Lease{Fence: 3}}), CodeLeaseNoClaim},
+		{"非认领态残留到期时刻", append(clean(), Task{ID: "t3", State: StateOpen, Lease: Lease{Until: testNow.Add(time.Minute)}}), CodeLeaseNoClaim},
 		{"终态仍带 owner", append(clean(), Task{ID: "t3", State: StateDone, Owner: "a1", Seq: 1}), CodeTerminalClaimed},
 	}
 	for _, c := range cases {
