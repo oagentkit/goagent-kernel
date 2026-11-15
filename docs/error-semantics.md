@@ -280,6 +280,7 @@
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
 | `ErrEngineCall` | Docker Engine 调用失败（创建 / 启动 / 等待 / 读取任一步） | 重试或查引擎侧（不可达 / 镜像不存在 / 参数被拒）；作业没跑起来属基础设施故障 |
+| `ErrMountDenied` | 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 / 形态不合法，创建阶段先于引擎调用拒绝） | 修作业声明：来源改到白名单内或按策略放开 `AllowWritable`；**不得降级执行**——策略拒绝是 fail-closed 的（#187） |
 | `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
