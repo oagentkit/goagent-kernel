@@ -10,6 +10,7 @@ import (
 	oerrors "github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/coord"
 	"github.com/yi-nology/goagent-kernel/sidetest"
 	"github.com/yi-nology/goagent-kernel/taskboard"
 	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
@@ -22,6 +23,8 @@ import (
 //   - TestTaskBoardContract        boardtest 全家族（含并发认领规模档）；
 //   - TestDownstreamSinkContract   sidetest.RunSinkContract 6 条（栅栏一族，
 //     与 sideeffect 包内内存替身跑同一段判据）；
+//   - TestCoordBackendContract     coord.BackendContract 全家族（版本单调 /
+//     删除推进版本的墓碑语义 / 删后重建旧版本 CAS 必败 / 前缀列键）；
 //   - TestSnapshot…                checkpoint.StoreCAS 的单调 / 拒零用例。
 //
 // # 跳过与硬失败的边界
@@ -70,6 +73,14 @@ func basePool(t *testing.T, dsn string) *pgxpool.Pool {
 // 在共享数据库里「全新」的落法就是独立 schema。
 func freshStores(t *testing.T, dsn string) (eff *EffectStore, sink *Downstream, board *BoardStore, snaps *SnapStore) {
 	t.Helper()
+	pool := freshSchema(t, dsn)
+	return NewEffectStore(pool), NewDownstream(pool), NewBoardStore(pool), NewSnapStore(pool)
+}
+
+// freshSchema 建一个随机命名的 schema、建表、返回指向它的独立连接池
+// （t.Cleanup 整块删除）——「全新实现」的落法，各契约套件的 factory 共用。
+func freshSchema(t *testing.T, dsn string) *pgxpool.Pool {
+	t.Helper()
 	ctx := context.Background()
 	admin := basePool(t, dsn)
 	schema, err := NewSchema(ctx, admin)
@@ -80,8 +91,7 @@ func freshStores(t *testing.T, dsn string) (eff *EffectStore, sink *Downstream, 
 	if err := EnsureSchema(ctx, admin, schema); err != nil {
 		t.Fatal(err)
 	}
-	pool := schemaPool(t, dsn, schema)
-	return NewEffectStore(pool), NewDownstream(pool), NewBoardStore(pool), NewSnapStore(pool)
+	return schemaPool(t, dsn, schema)
 }
 
 // schemaPool 为指定 schema 开一个独立连接池（search_path 已指好）。
@@ -130,6 +140,17 @@ func TestDownstreamSinkContract(t *testing.T) {
 		_, sink, _, _ := freshStores(t, dsn)
 		return sink
 	})
+}
+
+// TestCoordBackendContract 跑 coord.Backend 的**共享契约套件**（PG 版，
+// issue #181）：版本跨删除存活（Del 推进版本 + 墓碑），核心负向用例是
+// 「写 → 删 → 重建 → 旧版本 CAS 必须失败」——ABA 不能误判成功。
+func TestCoordBackendContract(t *testing.T) {
+	dsn := requireDSN(t)
+	pool := freshSchema(t, dsn)
+	if err := coord.BackendContract(context.Background(), NewBackendStore(pool), "contract/"); err != nil {
+		t.Fatalf("PG 参考后端必须过 coord.Backend 契约套件: %v", err)
+	}
 }
 
 // TestSnapshotSaveIfNewerRejectsStaleSeq 快照序号必须严格递增，陈旧写被拒且不落库。

@@ -6,6 +6,7 @@
 //   - pgref_effect_resource 资源级状态（这个资源谁占着 / 发第几代令牌）
 //   - pgref_downstream      下游资源（已见最大令牌 + 参考业务数据，FencedSink 的落点）
 //   - pgref_board_task      任务认领面（taskboard.Board）
+//   - pgref_coord_kv        coord.Backend 的键值面（版本 + 墓碑，issue #181）
 //   - pgref_snapshot        进度快照（checkpoint.StoreCAS）
 package pgstore
 
@@ -61,6 +62,17 @@ CREATE TABLE IF NOT EXISTS pgref_board_task (
     fence  BIGINT      NOT NULL DEFAULT 0,
     until  TIMESTAMPTZ,
     seq    BIGINT      NOT NULL DEFAULT 0
+);
+
+-- coord.Backend 的键值面（issue #181）：版本跨删除存活。
+-- 删除不删行：ver + 1 且 deleted = TRUE（墓碑），同名键重建从墓碑之后继续。
+-- 本参考实现**不 GC 墓碑**（回收墓碑 = 把版本还给 VerMissing，ABA 窗口重开；
+-- GC 许可条件见 coord.Backend 文档的 Version 条款）。
+CREATE TABLE IF NOT EXISTS pgref_coord_kv (
+    key     TEXT PRIMARY KEY,
+    ver     BIGINT  NOT NULL,
+    val     BYTEA,
+    deleted BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS pgref_snapshot (

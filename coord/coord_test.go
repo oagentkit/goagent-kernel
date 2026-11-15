@@ -54,13 +54,22 @@ func TestMemoryBackendVersionMonotone(t *testing.T) {
 			t.Fatalf("版本必须逐次 +1（第 %d 次后实得 %d）", i, snap["k"].Ver)
 		}
 	}
-	// 删除后重建：版本从 VerMissing 重新起（历史不复用——版本语义随键生灭）。
+	// 删除也是一次成功写入：条目转墓碑（Exists=false），版本 +1 并保留
+	// ——同名键重建后从墓碑版本继续，不复用旧版本（issue #181）。
 	if _, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Del: true}}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := b.Snapshot(ctx, "k")
-	if snap["k"].Exists || snap["k"].Ver != VerMissing {
-		t.Fatalf("删除后应为不存在（实得 %+v）", snap["k"])
+	if snap["k"].Exists || snap["k"].Ver != Version(4) {
+		t.Fatalf("删除后应为墓碑（Exists=false 且版本保留为 4；实得 %+v）", snap["k"])
+	}
+	// 重建：版本从墓碑之后继续（5），不得回到 1。
+	if _, err := b.Txn(ctx, []Assert{{Key: "k", Ver: Version(4)}}, []Mutation{{Key: "k", Val: []byte("v")}}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = b.Snapshot(ctx, "k")
+	if snap["k"].Ver != Version(5) {
+		t.Fatalf("同名键重建后版本必须从墓碑之后继续（期望 5，实得 %d）", snap["k"].Ver)
 	}
 }
 

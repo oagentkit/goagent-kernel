@@ -613,20 +613,27 @@ modules:
   # 「依赖面窄」的判据是内核的依赖图窄，不是仓库一个驱动都不许见。
   #
   # 为什么它必须登记成模块：未登记的包目录对依赖方向门禁隐形。它的判据
-  # 面来自共享契约套件（sidetest / boardtest / RunSinkContract，测试侧 import），
-  # 生产侧只允许依赖 checkpoint / sideeffect / taskboard 与 pgx、oekit/pkg
+  # 面来自共享契约套件（sidetest / boardtest / RunSinkContract / coord 的
+  # BackendContract，测试侧 import），生产侧只允许依赖
+  # checkpoint / coord / sideeffect / taskboard 与 pgx、oekit/pkg
   # ——多引一个机制包就红。
+  #
+  # coord（issue #181）：pgrefstore 是 coord.Backend 的 PostgreSQL 参考实现
+  # （三原语 + 删除推进版本的墓碑语义）。这条依赖是**示例抄模板**的一侧：
+  # coord 只给形态约定与契约套件，不含存储。
   - id: pgrefstore
     roots: [examples/pgstore, examples/pgstore/cmd/pgsmoke]
-    requires: [checkpoint, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [checkpoint, coord, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
       sideeffect.Store / sideeffect.FencedSink / taskboard.Board（含 RenewingBoard）/
-      checkpoint.StoreCAS 的 PostgreSQL 参考实现 + SIGKILL 故障恢复 e2e + 部署冒烟
-      （cmd/pgsmoke）+ docker compose 集成环境。Acquire 三判合一在一个事务里
-      （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
-      同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
+      coord.Backend / checkpoint.StoreCAS 的 PostgreSQL 参考实现 + SIGKILL 故障
+      恢复 e2e + 部署冒烟（cmd/pgsmoke）+ docker compose 集成环境。Acquire 三判
+      合一在一个事务里（SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的
+      upsert，写入体走同一事务（不得部分写）。coord.Backend 的删除不删行（版本
+      +1 + 墓碑，issue #181），条件事务按涉及键的事务级咨询锁串行化。契约判定
+      在共享契约套件（与内存版同一段判据）。
 
   # 容器执行后端参考实现（2026-11-13 新增，issue #109）：backend.Backend 的
   # 容器形态落点。

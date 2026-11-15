@@ -34,6 +34,14 @@
 //     Redis → Lua 脚本（单线程执行天然原子；断言写在脚本开头，不满足即返回 0）；
 //     etcd → txn（If 全部成立才 Then）；PostgreSQL → 事务内的
 //     SELECT … FOR UPDATE + 条件 UPDATE。
+//   - **删除（Del）推进版本**（issue #181）：删除不是把键连同版本一起抹掉，
+//     而是「版本 +1 + 墓碑」——同一条纪律要在三种后端上各自落到原语里：
+//     Redis → 不能直接 DEL，改为把版本计数器 +1 并写墓碑标记（键与版本
+//     分存或同存）；etcd → 每键版本可用全局 mod_revision（天然单调不复用），
+//     或删除时 put 墓碑；PostgreSQL → 墓碑行（版本列保留 + deleted 标记，
+//     本仓 examples/pgstore 的 coord.Backend 参考实现即此形态）。
+//     墓碑**默认不 GC**：回收墓碑等于把版本还给 VerMissing，同名键重建后
+//     从 1 重来（ABA）；GC 条件见 @@Backend@@ 文档的 Version 条款。
 //   - **CAS 循环**：断言失败（applied=false）→ 取新快照 → 重判 → 再事务。
 //     这是适配器的通用收尾：判（快照）与写（事务）之间有窗口，冲突就重来。
 //     Redis 有 Lua 时整个判定可推进脚本里、免循环；etcd/PG 保留循环即可。
