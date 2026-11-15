@@ -101,18 +101,27 @@ func WithContext(ctx context.Context, c Context) context.Context {
 
 // From 提取租户上下文。未注入返回零值（读路径宽容，不报错——
 // 查询面不该被「没有租户上下文」拦死；写路径用 Require）。
+// nil ctx 同宽容（返回零值）：读路径不崩的承诺对「上下文缺失」这一最该
+// 宽容的输入形态同样成立（issue #215）。
 func From(ctx context.Context) Context {
+	if ctx == nil {
+		return Context{}
+	}
 	c, _ := ctx.Value(ctxKey{}).(Context)
 	return c
 }
 
 // Require fail-closed 判据：机制声明「本动作必须感知租户上下文」时的入口。
 //
-//   - 未注入（Tenant 空）→ ErrNoContext；
+//   - ctx 为 nil 或未注入（Tenant 空）→ ErrNoContext（fail-closed：崩溃
+//     不是拒绝，拒绝要能被宿主按 errors.Is 分流）；
 //   - required 非空且授权不足 → ErrUnauthorized。
 //
 // 通过时返回注入的 Context 副本，机制面不必再取一次。
 func Require(ctx context.Context, required ...string) (Context, error) {
+	if ctx == nil {
+		return Context{}, ErrNoContext
+	}
 	c := From(ctx)
 	if !c.Present() {
 		return Context{}, ErrNoContext

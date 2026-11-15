@@ -16,7 +16,8 @@
 //
 // 收尾语义：强制路径按宿主的「进程停机」分支处理（不写终态，留给启动对账）。
 // **排水失败不阻断关停链** —— Drain 恒返回 nil，最坏情况是「和没排水一样」，
-// 不会更坏。
+// 不会更坏：ctx 没有期限时由 budget 自建兜底期限（issue #206），「永不返回、
+// 停机链卡死、最终靠外层 SIGKILL」不是本包的形态。
 //
 // 本包不关心「轮」是什么，只认 Turns 提供的在途计数与批量取消能力。
 //
@@ -115,7 +116,9 @@ type Turns interface {
 // 留痕经 logx 出往宿主后端；本函数无返回值——排水失败不阻断关停链。
 //
 // 期限由 ctx 承载、不由 budget 承载：budget 进留痕并决定部署侧宽限口径
-// （见 DefaultTimeout），超时判定看 ctx。故调用方须传入会到点的 ctx。
+// （见 DefaultTimeout），超时判定看 ctx。ctx 没有期限时按 budget 自建兜底
+// 期限（issue #206）——「调用方忘了 WithTimeout」曾让 Drain 永不返回，
+// 停机链卡死到外层 SIGKILL，比不排水更坏。
 func Drain(ctx context.Context, t Turns, budget DrainBudget) {
 	if budget < 0 {
 		return // 脱钩关闭态：无排水语义（存量行为）

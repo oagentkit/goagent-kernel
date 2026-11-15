@@ -120,6 +120,15 @@ type Lease struct {
 	Until time.Time
 }
 
+// IsZero 报告租约是否为全零值（没有残留任何一列）。
+//
+// 判定收敛在此处而不是散落各处（issue #220）：快照体检要判「非认领态是否
+// 残留租约」，漏一列（Until）就让「体检绿」与运行期行为分叉——今后再加
+// 字段时，这里是一处改、处处跟的单点。
+func (l Lease) IsZero() bool {
+	return l.Token == "" && l.Fence == 0 && l.Until.IsZero()
+}
+
 // ClaimRequest 认领请求：调用方给出**想要多长的租约**，不给出令牌。
 //
 // # 为什么请求里没有令牌
@@ -263,10 +272,14 @@ func Check(tasks []Task) []Problem {
 				out = append(out, Problem{Task: t.ID, Code: CodeClaimedNoLease,
 					Text: "已认领但没有 owner 或租约令牌：释放与完成都无从验证"})
 			}
-		} else if t.Owner != "" || t.Lease.Token != "" || t.Lease.Fence != 0 {
-			// 非认领态残留 owner/token/代次：宿主会照着它以为「还有人负责」。
+		} else if t.Owner != "" || !t.Lease.IsZero() {
+			// 非认领态残留 owner 或租约任何一列（token/代次/到期时刻）：
+			// 宿主会照着它以为「还有人负责」。Until 也要查（issue #220）——
+			// 只清 Token/Owner/Fence 而漏 Until 的部分清理，会让「还能不能
+			// 被接管」的读路径与「凭 token 认人」的写路径给出相反结论，
+			// 而体检这里看不见。
 			out = append(out, Problem{Task: t.ID, Code: CodeLeaseNoClaim,
-				Text: "非认领态残留 owner/租约/代次：读起来像还有人负责，实际没人"})
+				Text: "非认领态残留 owner/租约（含到期时刻）：读起来像还有人负责，实际没人"})
 		}
 		if t.State.Terminal() && t.Owner != "" {
 			out = append(out, Problem{Task: t.ID, Code: CodeTerminalClaimed,

@@ -174,3 +174,26 @@ func TestToolPrefixAndClip(t *testing.T) {
 		t.Fatalf("超长理由必须截断，实得长度 %d", len(res2.Reasons[0]))
 	}
 }
+
+// TestWhitespaceEventStillMatches 带首尾空白的 Event/ToolPrefix 必须能匹配
+// （issue #213）：此前 New 只 TrimSpace 判空、却存原值——「PreToolUse 」
+// 能通过自检、却因严格比较永不匹配。一条「已登记、已通过自检、看起来在拦」
+// 的阻塞 hook 实际一次都不执行，与自检的目的正相反。现与 Name 同款：
+// 归一化后存回。
+func TestWhitespaceEventStillMatches(t *testing.T) {
+	runner := &fakeRunner{}
+	e, err := New([]Hook{{
+		Name: "deny-rm", Event: "PreToolUse ", ToolPrefix: "shell ",
+		Command: "check", Blocking: true, Timeout: time.Second,
+	}}, runner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.Dispatch(context.Background(), Payload{Event: "PreToolUse", Tool: "shell.exec"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Ran) != 1 || res.Ran[0] != "deny-rm" {
+		t.Fatalf("归一化后的 hook 必须能匹配（否则阻塞检查静默不跑）: %+v", res)
+	}
+}

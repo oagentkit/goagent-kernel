@@ -116,13 +116,18 @@ func Build(entries []Entry, q Query) (Result, error) {
 	for k := range latest {
 		keys = append(keys, k)
 	}
-	// 确定性：按 (At 降序, ID 升序)。时间相同也不能靠 map 顺序决定先后。
+	// 确定性：按 (At 降序, 去重键升序)。时间相同也不能靠 map 顺序决定先后；
+	// 回退比较用**去重键**而不是条目 ID（issue #203）：空 ID 是合法输入
+	// （ineligible 只拒「ID 与 Text 同时为空」），两条空 ID 条目按 ID 比较恒等，
+	// slices.SortFunc 非稳定——输出顺序随 map 迭代序漂移，配 MaxItems/MaxBytes
+	// 时哪条被注入随运行变化，Result 不可复现。去重键对空 ID 条目是
+	// "text:"+Text，必不相同（同键已在去重时合并）。
 	slices.SortFunc(keys, func(a, b string) int {
 		ea, eb := latest[a], latest[b]
 		if c := ea.At.Compare(eb.At); c != 0 {
 			return -c
 		}
-		return strings.Compare(ea.ID, eb.ID)
+		return strings.Compare(a, b)
 	})
 
 	usedBytes := 0
@@ -186,6 +191,9 @@ func ineligible(e Entry, q Query) string {
 //
 // 标记里带 id / source / at 三样，缺一样就少一条追溯路径：
 // 没有 id 无法引用，没有 source 无法判断可信度，没有 at 无法判新鲜度。
+// ID 为空的条目（合法输入）显式标注「无 id」（issue #203）——渲染出一个
+// 空的 id= 槽位会让模型拿一个空串当引用锚点，且看不出是「这条没有 id」
+// 还是「标记坏了」。
 func (r Result) Prompt() string {
 	if len(r.Pieces) == 0 {
 		return ""
@@ -194,7 +202,11 @@ func (r Result) Prompt() string {
 	b.WriteString("<memory>\n")
 	for _, p := range r.Pieces {
 		b.WriteString("[id=")
-		b.WriteString(p.Entry.ID)
+		if p.Entry.ID == "" {
+			b.WriteString("<无id>")
+		} else {
+			b.WriteString(p.Entry.ID)
+		}
 		b.WriteString(" source=")
 		b.WriteString(p.Entry.Source)
 		b.WriteString(" at=")

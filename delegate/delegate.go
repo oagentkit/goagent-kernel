@@ -99,15 +99,43 @@ func (o Offer) Accept(r Request) error {
 // 选择口径：**能力最少者优先**（最小能力原则），同数量按名字字典序。
 // 多个都满足时按顺序取第一个是错的：那取决于 offer 的排列顺序，
 // 而排列顺序通常来自配置文件的书写次序——一次无关的重排就会换掉执行方。
+//
+// # 全拒时的归因（issue #209）
+//
+// Accept 拒绝时报错而不是返回 false，为的就是「拒绝的理由要能进报告」——
+// Route 是那个报告的出口。全拒时逐 offer 携带拒绝原因；只有全部原因都是
+// 能力缺失时才归到 ErrUnsupported（提示宿主去补能力声明），否则保持
+// ErrNoRunner（真实修法是缩短目标 / 补名字，指向「补能力」是误导）。
 func Route(offers []Offer, r Request) (Offer, error) {
 	cands := make([]Offer, 0, len(offers))
-	for _, o := range offers {
-		if err := o.Accept(r); err == nil {
-			cands = append(cands, o)
+	reasons := make([]string, 0, len(offers))
+	allUnsupported := len(offers) > 0
+	for i, o := range offers {
+		if err := o.Accept(r); err != nil {
+			// 无名 offer 也是拒绝原因之一，不能拿它当归因标签——退化到序号。
+			label := o.Name
+			if strings.TrimSpace(label) == "" {
+				label = fmt.Sprintf("offer[%d]", i)
+			}
+			reasons = append(reasons, label+": "+err.Error())
+			if !errors.Is(err, ErrUnsupported) {
+				allUnsupported = false
+			}
+			continue
 		}
+		cands = append(cands, o)
 	}
 	if len(cands) == 0 {
-		return Offer{}, errors.Wrap(ErrNoRunner, "delegate: 请求需要能力 "+joinCaps(r.Needs))
+		// 每个 offer 的拒绝原因都要能进报告（Accept 的注释承诺了这一点）：
+		// 「能力不足」与「目标太长」合成同一个沉默，宿主会被指去修一个
+		// 不存在的缺陷。
+		why := strings.Join(reasons, "; ")
+		if allUnsupported {
+			return Offer{}, errors.Wrap(ErrUnsupported,
+				"delegate: 无执行方提供所需能力 "+joinCaps(r.Needs)+"（"+why+"）")
+		}
+		return Offer{}, errors.Wrap(ErrNoRunner,
+			"delegate: 无执行方能接该请求（"+why+"）")
 	}
 	slices.SortStableFunc(cands, func(a, b Offer) int {
 		if c := cmp.Compare(len(a.Provides), len(b.Provides)); c != 0 {

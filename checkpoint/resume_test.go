@@ -191,3 +191,34 @@ func TestSkipRunNoAlias(t *testing.T) {
 		t.Fatalf("Skip 与编排图共享了底层数组: %v", ids)
 	}
 }
+
+// TestUnknownStatusNotResumed 词表外状态不得被当成「可续跑」（issue #219）：
+// 此前 isTerminal 对未知值 fail-open——宿主把运行落库为自定义终态
+// （如 "aborted"）时，已终结的运行被静默重开，且 Anomalies 一个字都没有。
+// 「判不了」按阻塞侧处理（与 Reconcile 对未登记闸态同一条口径）。
+func TestUnknownStatusNotResumed(t *testing.T) {
+	s := snap("run", 7, "aborted", "step-alpha")
+	p := BuildPlan(graph("step-alpha", "step-beta"), &s)
+	if len(p.Run) != 0 {
+		t.Fatalf("词表外状态可能是宿主自定义终态，不得自动续跑，实得 Run=%v", p.Run)
+	}
+	if !p.Blocked() {
+		t.Fatal("词表外状态 + 有待执行项应阻断")
+	}
+	if !p.HasAnomaly(AnomalyUnknownStatus) {
+		t.Fatalf("应报告 unknown_status 异常，实得 %+v", p.Anomalies)
+	}
+}
+
+// TestUnknownStatusFullyDoneRunsNothing 词表外状态但全部完成：无待执行项时
+// 不阻断——「要不要重开」的问题不存在，只是照快照跳过。
+func TestUnknownStatusFullyDoneRunsNothing(t *testing.T) {
+	s := snap("run", 8, "aborted", "step-alpha", "step-beta")
+	p := BuildPlan(graph("step-alpha", "step-beta"), &s)
+	if len(p.Run) != 0 || !reflect.DeepEqual(p.Skip, []string{"step-alpha", "step-beta"}) {
+		t.Fatalf("全部完成应全跳过: Run=%v Skip=%v", p.Run, p.Skip)
+	}
+	if p.Blocked() {
+		t.Fatalf("无待执行项不应阻断: %+v", p.Anomalies)
+	}
+}

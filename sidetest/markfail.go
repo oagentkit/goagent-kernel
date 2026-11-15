@@ -26,44 +26,51 @@ import (
 // 契约要求（Store.MarkUncertain 第 5 条）：标记写失败时，该 Key 的执行
 // 意图必须原样留在存储里——它是唯一还在挡着重试的东西。本场景用一个
 // 套件内部的**故障注入装饰器**模拟「存储侧此刻不可用」。
+//
+// # 注入点必须在宿主写入之前（issue #224）
+//
+// 「让宿主实现跑完、再把返回值换成失败」造不出这条失效形态：参考实现把
+// MarkUncertain 的写放进一个事务，宿主跑完即已提交——随后的 Acquire 走的是
+// **uncertain 分支**（标记已落地），不是场景点名的「意图还在挡着」。
+// 真正的写失败（语句报错 ⇒ 事务回滚 ⇒ 存储回到标记前）在这条路径上从未
+// 被制造，一个「失败路径顺手丢意图」的实现在这里也是绿的。
+// 故装饰器对被注入的那次调用**什么都不写**、只返回错误——这正是
+// 「写失败」的语义：什么都没进去。断言随之收紧为 OutcomeContended
+// （由 Acquire 登记的执行意图挡住），而不是宽到「不是 Applied 就行」的
+// 任意分支。真库上的回滚语义（一个事务里既有撤销、又有置未知）由
+// examples/pgstore 的「标记写失败」用例在真实 PostgreSQL 上另行钉住。
 
-// failingMarkStore 套件内部的故障注入装饰器：让 MarkUncertain **对调用方
-// 报告失败**，模拟「存储侧此刻不可用」——语义拒绝（三项联查不过）由
-// stale_fence_cannot_mark 一族覆盖，这里注入的是写失败。
-//
-// # 为什么「先走宿主实现、再把返回值替换成失败」
-//
-// 真实世界里「方法返回 error」与「存储状态没被动过」是两件事：宿主代码
-// 完全可能在返回 error 的路径上已经动了状态（「先撤意图、标记没落地」
-// 就是最坏的那种写法）。契约硬要求（Store.MarkUncertain 第 5 条）钉的是
-// **剩下的状态必须挡住 Acquire**，不是「宿主的代码顺序好看」。故装饰器
-// 先让宿主实现跑完（它想怎么动状态就怎么动），再把调用方看到的返回值
-// 换成注入的失败——这样无论宿主内部怎么写，只要失败后存储侧挡不住
-// 下一次 Acquire，本场景就红。
+// failingMarkStore 套件内部的故障注入装饰器：让 MarkUncertain **以写失败
+// 形态失败**——什么都不写、对调用方返回错误，模拟「存储侧此刻不可用」。
+// 语义拒绝（三项联查不过）由 stale_fence_cannot_mark 一族覆盖，这里注入的
+// 是写失败。
 type failingMarkStore struct {
 	sideeffect.Store
 
 	fired bool
 }
 
-// failMark 让下一次 MarkUncertain 以存储故障形态失败（只失败一次）。
+// failMark 让下一次 MarkUncertain 以写失败形态失败（只失败一次）。
 func (f *failingMarkStore) failMark() {
 	f.fired = true
 }
 
 func (f *failingMarkStore) MarkUncertain(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
-	err := f.Store.MarkUncertain(ctx, act, lease, reason)
 	if f.fired {
+		// 写失败的语义：存储什么都没收到。宿主实现完全不被调用——
+		// 「调用方拿到错误」与「存储状态被动过」从此是两件事。
 		return errors.New("注入的存储故障：标记未写入")
 	}
-	return err
+	return f.Store.MarkUncertain(ctx, act, lease, reason)
 }
 
-// checkMarkFailureBlocksAcquire 钉住：标记失败后，同一 Key 的下一次 Acquire
-// 必须被拒（不得授予执行权）。
+// checkMarkFailureBlocksAcquire 钉住：标记写失败后，同一 Key 的下一次 Acquire
+// 必须被**执行意图**挡住（issue #224：判据支点是意图分支，不是任意非 Applied）。
 //
-// 判据支点是**执行意图**：标记没写成 ⇒ 意图还在 ⇒ Acquire 看见一次尚未
-// 裁决的尝试 ⇒ 不得重新授予执行权。
+// 标记没写成 ⇒ 存储侧既没有「完成」也没有「未知」⇒ 唯一还在的东西是
+// 首次 Acquire 登记的执行意图 ⇒ Acquire 必须返回 contended（未裁决的尝试
+// 还在，租约未过期）。判据宽到「不是 Applied」的话，一个靠意外落入
+// uncertain 分支（或任何其它分支）而通过的实现会掩盖「失败路径丢意图」。
 func checkMarkFailureBlocksAcquire(st sideeffect.Store) error {
 	ctx := context.Background()
 	a := act("k-markfail", "res-markfail")
@@ -83,8 +90,9 @@ func checkMarkFailureBlocksAcquire(st sideeffect.Store) error {
 	if err != nil {
 		return fmt.Errorf("标记失败后的 Acquire 失败: %w", err)
 	}
-	if outcome == sideeffect.OutcomeApplied {
-		return fmt.Errorf("标记写失败后不得授予执行权（意图必须还在挡着），实得 applied——重复施加的入口已打开")
+	if outcome != sideeffect.OutcomeContended {
+		return fmt.Errorf("标记写失败后必须由执行意图挡住（contended），实得 %v——"+
+			"意图被丢或被换成了别的分支，重复施加的入口已打开", outcome)
 	}
 	return nil
 }

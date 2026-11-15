@@ -138,6 +138,11 @@ const nonBlockingTimeout = 30 * time.Second
 //   - 阻塞 hook 必须有正 Timeout（没有上限的阻塞 hook 会把宿主挂住）；
 //   - OnTimeout 只能出现在**阻塞** hook 上（写在非阻塞 hook 上等于一条永不生效的
 //     假声明：非阻塞 hook 的超时根本不参与裁决）。
+//
+// Event 与 ToolPrefix 同 Name 一样**归一化后存回**（issue #213）：匹配用原值
+// 严格比较，只 TrimSpace 判空、却存原值的话，带首尾空白的声明能通过自检、
+// 却永不匹配——一条「已登记、已通过自检、看起来在拦」的阻塞 hook 实际一次
+// 都不执行，与自检的目的正相反。
 func New(hooks []Hook, r Runner) (*Engine, error) {
 	if r == nil {
 		return nil, errors.New("hookengine: Runner 为空（没有执行接缝就谈不上 hooks）")
@@ -153,7 +158,8 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 			return nil, fmt.Errorf("hookengine: hook 名 %q 重复", name)
 		}
 		seen[name] = true
-		if strings.TrimSpace(h.Event) == "" {
+		event := strings.TrimSpace(h.Event)
+		if event == "" {
 			return nil, fmt.Errorf("hookengine: hook %q 没有事件（它永远不会被触发）", name)
 		}
 		if strings.TrimSpace(h.Command) == "" {
@@ -171,6 +177,8 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 				"非阻塞 hook 的超时**不参与裁决**，这条声明永远不会生效", name)
 		}
 		h.Name = name
+		h.Event = event
+		h.ToolPrefix = strings.TrimSpace(h.ToolPrefix)
 		out = append(out, h)
 	}
 	// 求值顺序必须确定：hook 集合常常来自 map / 文件遍历，顺序不定会让

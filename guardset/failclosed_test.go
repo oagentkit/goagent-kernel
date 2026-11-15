@@ -10,14 +10,20 @@ import (
 // issue #43：零值 Set 与未装配 Assembly 不得 fail-open（allow-all）——
 // New 在构造期拒绝空集合，「没人看着」的形态只剩零值/未装配，二者必须
 // 按拒绝收口。
+//
+// issue #214：fail-closed 分支同样必须填 Primary——宿主按文档只读
+// Primary 留痕时，拒绝发生了却无从归因是零值 Denial 掩不掉的洞。
 func TestZeroValueSetFailsClosed(t *testing.T) {
 	var s Set
 	out := s.Evaluate(context.Background(), invoke.Call{Name: "t"})
 	if out.Allowed {
 		t.Fatal("零值 Set 必须 fail-closed，不得放行")
 	}
-	if len(out.Denials) == 0 || out.Denials[0].Guard != "guardset" {
-		t.Fatalf("拒绝必须可归因到 guardset, got %+v", out.Denials)
+	if len(out.Denials) == 0 || out.Denials[0].Guard != stageUnassembled {
+		t.Fatalf("拒绝必须可归因到未装配虚拟环名, got %+v", out.Denials)
+	}
+	if out.Primary.Guard != stageUnassembled || out.Primary.Reason == "" {
+		t.Fatalf("fail-closed 分支必须填 Primary（拒绝要能归因）, got %+v", out.Primary)
 	}
 
 	var p *Set // nil receiver：方法调用合法（Evaluate 首行判 nil）

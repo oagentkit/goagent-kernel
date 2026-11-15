@@ -125,8 +125,22 @@ func validatePattern(id, p string) error {
 	return nil
 }
 
-// Workspaces 返回全部工作区（已按 ID 排序）。
-func (p *Plan) Workspaces() []Workspace { return p.workspaces }
+// Workspaces 返回全部工作区（已按 ID 排序）的**只读快照**。
+//
+// 深拷贝交付（issue #225）：Workspace 内含 ReadOnly/Writable 两个切片，直接
+// 返回内部切片等于把「已定稿」的计划交出去——调用方改返回值的任意元素，
+// New 做过的一致性自检（ID 唯一、只读与可写不重叠）与 Conflicts 的结论随之
+// 静默作废，且没有任何报错。与 metrics.Specs() 同一条纪律：登记表只读，
+// 调用方改不动。
+func (p *Plan) Workspaces() []Workspace {
+	out := make([]Workspace, len(p.workspaces))
+	for i, w := range p.workspaces {
+		w.ReadOnly = slices.Clone(w.ReadOnly)
+		w.Writable = slices.Clone(w.Writable)
+		out[i] = w
+	}
+	return out
+}
 
 // Conflicts 判**可写区重叠**，按 (A, B) 排序返回（确定性）。
 //

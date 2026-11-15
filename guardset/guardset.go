@@ -299,10 +299,17 @@ func (s *Set) Evaluate(ctx context.Context, c invoke.Call) Outcome {
 	// 「没人看着的调用」，New 在构造期就拒绝空集合，能走到这里的空集
 	// 只剩零值构造（var s Set / &Set{}）与 Assembly 未装配的回落形态，
 	// 两者都必须按拒绝收口，而不是当「全部守卫都同意」放行。
-	if s == nil || len(s.guards) == 0 {
+	if len(s.guards) == 0 {
+		// Primary 也要填（issue #214）：类型定义承诺它是「优先级最高的那条」，
+		// 宿主按文档只读 Primary 留痕时，恰好在这个「没人看着调用、必须显性
+		// 告警」的场景不能拿到零值 Denial——拒绝发生了却无从归因。
+		d := Denial{Guard: stageUnassembled,
+			Reason:    "守卫集合为空（零值/未装配）——fail-closed 拒绝，请经 New/ NewAssembly 装配",
+			Retryable: false}
 		return Outcome{
 			Allowed: false,
-			Denials: []Denial{{Guard: "guardset", Reason: "守卫集合为空（零值/未装配）——fail-closed 拒绝，请经 New/ NewAssembly 装配", Retryable: false}},
+			Denials: []Denial{d},
+			Primary: d,
 		}
 	}
 	if len(denials) == 0 {

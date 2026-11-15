@@ -67,8 +67,9 @@ type convergeTarget struct {
 // # 期限只由 ctx 承载
 //
 // 本函数不自己计时。budget 只用于留痕（与部署口径对齐，见 Budget 的说明）：
-// 排水时长 = 调用方给的 ctx 期限。故调用方**必须**给一个会到点的 ctx，否则本函数
-// 会一直等——这正是「import 了排水却忘了给期限」那一档的症状。
+// 排水时长 = 调用方给的 ctx 期限。ctx 没有期限时按 budget 自建兜底期限
+// （issue #206）——「import 了排水却忘了给期限」那一档曾让本函数一直等，
+// 停机链卡死；兜底后最坏情况回到「和没排水一样」。
 //
 // # 先试一次再轮询
 //
@@ -88,6 +89,19 @@ func awaitConverged(ctx context.Context, tgt convergeTarget, msg convergeLog, bu
 	// 显式转回 time.Duration 再留痕：DrainBudget 是命名类型、不继承 Duration 的
 	// String 方法，直接透传会让日志里的预算变成纳秒整数。
 	log.CtxInfo(ctx, msg.start, withKV(base, "active", n, "budget", time.Duration(budget))...)
+
+	// 无期限 ctx 的兜底（issue #206）：期限由 ctx 承载，但「调用方忘了给期限」
+	// 在停机路径上是永不返回——比不排水更坏，正对着包级承诺的反面。故按
+	// budget 自建兜底期限（ShutdownBudget：<=0 都归缺省），父 ctx 的取消通路
+	// 原样保留（WithTimeoutCause 派生：关停链二次取消仍即时到点，且按
+	// context.Canceled 归因不变）。
+	if _, ok := ctx.Deadline(); !ok {
+		log.CtxWarn(ctx, "排水 ctx 无期限：按排水预算兜底为强制期限（调用方忘设 WithTimeout？）",
+			withKV(base, "budget", time.Duration(budget))...)
+		fallback, cancel := context.WithTimeoutCause(ctx, ShutdownBudget(time.Duration(budget)), ErrDeadline)
+		defer cancel()
+		ctx = fallback
+	}
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()

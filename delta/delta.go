@@ -9,7 +9,7 @@
 // 本包提供其上的编排层：
 //   - (kind, iteration) 键控：同一轮内的 reasoning / text 各自成流；
 //   - 惰性建流（构造后可注入时钟，建流待首次使用）；
-//   - 收口扫序：轮升序 × reasoning→text，保证事件落序确定性。
+//   - 收口扫序：轮升序 × reasoning→text→其余 kind 按名排序，保证事件落序确定性。
 //
 // 语义约定（同轮权威快照优先）：权威整段事件到达即 absorb 缓冲（回放/终稿以权威
 // 为准）；调用轮没有权威正文快照，残尾只能靠 FlushAll 冲刷落地。
@@ -31,8 +31,10 @@
 package delta
 
 import (
+	"cmp"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oagentkit/runtime/pacer"
@@ -116,27 +118,58 @@ func (p *Pacer) Absorb(kind string, iteration int) {
 }
 
 // FlushAll 环节收口：按轮序冲刷所有残尾（调用轮正文无权威快照，只在此落地）。
-// 顺序确定性：轮升序 × reasoning→text，保证事件落序可回放。
+// 顺序确定性：轮升序 × reasoning→text→其余 kind 按名排序，保证事件落序可回放。
+//
+// kind 是**开放词表**：Offer 接受任意串，宿主可以建 reasoning / text 之外的流
+// （issue #202）。收口按 (轮, kind) 汇总**实际存在**的未收口 kind 冲刷，不硬编码
+// 词表——否则其它 kind 的残尾会被永久留在 pacer 里（Sealed 恒 false），收口
+// 静默丢内容，流式观测面的最后一个窗口永不发布。
 //
 // iteration 由宿主按轮递增（约定从 1 起，见包注释的局部计数器不变量）；
 // 本实现对**任意**取值（含 ≤0）都不丢残尾（issue #153）——此前扫序上界从 1
 // 起扫、max 初值 0，0 基宿主的 0 轮残尾永远不在扫序内，收口静默不发布。
 func (p *Pacer) FlushAll() []Pub {
 	its := make([]int, 0, len(p.entries))
+	kinds := make(map[int][]string, len(p.entries))
 	for _, e := range p.entries {
-		if !e.stream.Sealed() {
+		if e.stream.Sealed() {
+			continue
+		}
+		if _, ok := kinds[e.iteration]; !ok {
 			its = append(its, e.iteration)
 		}
+		kinds[e.iteration] = append(kinds[e.iteration], e.kind)
 	}
 	slices.Sort(its)
-	its = slices.Compact(its)
 	var out []Pub
 	for _, it := range its {
-		for _, kind := range []string{"reasoning", "text"} {
+		for _, kind := range flushOrder(kinds[it]) {
 			if pub, ok := p.Flush(kind, it); ok {
 				out = append(out, pub)
 			}
 		}
 	}
+	return out
+}
+
+// flushOrder 收口冲刷的 kind 序：reasoning→text→其余按名排序（确定性）。
+func flushOrder(ks []string) []string {
+	rank := func(k string) int {
+		switch k {
+		case "reasoning":
+			return 0
+		case "text":
+			return 1
+		default:
+			return 2
+		}
+	}
+	out := slices.Clone(ks)
+	slices.SortFunc(out, func(a, b string) int {
+		if c := cmp.Compare(rank(a), rank(b)); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
 	return out
 }
