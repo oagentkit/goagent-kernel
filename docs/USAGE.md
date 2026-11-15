@@ -1288,9 +1288,19 @@ func runWatchdog(ctx context.Context, bus *eventbus.Bus) {
 - **`Hub` 的 cancel 幂等安全**；宿主仍应在 SSE 断开时调用。
 - **`watchdog` 只告警不裁决**：热路径裁决在守卫侧（`IdentityGuard`），不在本包。
   **别让宿主误以为它能兜底。**
+- **INV3 是轮级括号**（issue #171）：`turn_started` 按 sessionID 开括号，
+  `turn_ended` 闭合必须带 `closed_by`（缺省 `loop|recovery|boot-reconcile|panic`，
+  宿主经 `watchdog.NewWithConfig(pub, watchdog.Config{ClosedBy: ...})` 扩充）且
+  `status` ∈ contract 终态词表（`succeeded|failed|cancelled|timed_out`）。告警
+  reason 四条：`turn_end_unattributed` / `turn_end_unknown_status` /
+  `turn_end_unopened` / `turn_open_leak`（2h 开放 TTL，与既有 `openIdleTTL` 同款）。
+  **停机留开放是合法态**：`Run` 因 ctx 取消退出时不扫尾，否则每个宿主的正常停机
+  都会误报泄漏。它判不了「闭合 status 与会话终态是否一致」——那要存储面，语义
+  裁决归宿主恢复路径。
 - **`Watcher` 不是并发安全的**，只能由 `Run` 单 goroutine 驱动。
-- `watchdog` 的 INV3（事件面 checksum 抽验）**不实现**：`tool_result` 载荷截断到 2000 字符，
-  无法重算 checksum；内容级校验由守卫在源头全量覆盖。
+- 命名撞车：spec 2026-09-15-tool-identity-otel-guard-design §8 的「INV3（事件面
+  checksum 抽验）」与本包的 INV3 轮括号不是一回事，前者仍**不实现**：`tool_result`
+  载荷截断到 2000 字符，无法重算 checksum；内容级校验由守卫在源头全量覆盖。
 
 ---
 
