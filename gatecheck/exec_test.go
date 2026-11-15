@@ -184,3 +184,50 @@ func TestGuardDoesNotExecuteOnDeny(t *testing.T) {
 		t.Fatalf("审批已否时不该执行，实得 %d 次", calls)
 	}
 }
+
+// TestZeroValueRequestDoesNotPanic 钉住 issue #210：MinLevel/Egress 零值的
+// 默认请求在未装配登记簿时**不得 panic**——nil Provider 解引用是必崩的
+// 进程级 DoS，结论必须是明确的失败（LevelShort：执行后端缺位）。
+func TestZeroValueRequestDoesNotPanic(t *testing.T) {
+	g := NewGuard(gateOf(policy.VerdictAuto), nil)
+	out, d := g.Run(context.Background(), Request{
+		Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
+	})
+	if d.Outcome != OutcomeLevelShort {
+		t.Fatalf("无后端可执行必须判 level_short，实得 %v（%s）", d.Outcome, d.Reason)
+	}
+	if out.OK {
+		t.Fatal("不得有成功结果")
+	}
+	if !strings.Contains(d.Reason, "没有可用的执行后端") {
+		t.Fatalf("理由应指出执行后端缺位，实得 %q", d.Reason)
+	}
+	// 纯判定不受影响：判定面仍然放行（「没装沙箱」与「不要求隔离」两回事）。
+	cd := g.Check(context.Background(), Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}})
+	if cd.Outcome != OutcomeProceed {
+		t.Fatalf("纯判定应放行（沙箱层不构成约束），实得 %v", cd.Outcome)
+	}
+}
+
+// TestUnconstrainedProceedResolvesProvider 钉住放行分支给后端（issue #210
+// 的另一半）：零值请求 + 登记簿在位 ⇒ 取满足要求的最弱后端就地执行，
+// 判定结论与理由不变。
+func TestUnconstrainedProceedResolvesProvider(t *testing.T) {
+	calls := 0
+	reg := sandbox.NewRegistry()
+	_ = reg.Register(countingProvider{level: sandbox.LevelOS, calls: &calls})
+	g := NewGuard(gateOf(policy.VerdictAuto), reg)
+	out, d := g.Run(context.Background(), Request{
+		Op:      policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)},
+		Program: "return 1;",
+	})
+	if d.Outcome != OutcomeProceed || d.Provider == nil {
+		t.Fatalf("零值请求应放行且带出后端，实得 %v（%s）provider=%v", d.Outcome, d.Reason, d.Provider)
+	}
+	if !out.OK {
+		t.Fatal("执行应成功")
+	}
+	if calls != 1 {
+		t.Fatalf("判出来的后端应被执行 1 次，实得 %d", calls)
+	}
+}

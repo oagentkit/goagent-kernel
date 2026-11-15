@@ -289,3 +289,90 @@ func TestMemAuditor(t *testing.T) {
 		t.Fatal("留痕条目被调用方改写")
 	}
 }
+
+// brokenAuditor 持续故障的留痕面替身（Append 必失败）。
+type brokenAuditor struct{}
+
+func (brokenAuditor) Append(context.Context, AuditEntry) error {
+	return errors.New("controlplane: 留痕后端故障（替身）")
+}
+
+func (brokenAuditor) Entries(context.Context, string) ([]AuditEntry, error) {
+	return nil, errors.New("controlplane: 留痕后端故障（替身）")
+}
+
+// TestInterventionsFailClosedOnAuditFailure 钉「介入返回 error ⇒ 状态与
+// 代次一律未变」（issue #180）：留痕与状态变更在同一临界区，留痕失败即
+// 整体失败——一次失败的介入不得改变可观测状态，并发介入者的旧视图必须
+// 仍然成立。三类介入共用同一组「失败即无副作用」用例。
+func TestInterventionsFailClosedOnAuditFailure(t *testing.T) {
+	m := NewMemPlane(brokenAuditor{})
+	if err := m.SeedRun("r1", contract.StatusRunning, []taskboard.Task{
+		{ID: "t1", Title: "第一个环节", State: taskboard.StateOpen},
+	}); err != nil {
+		t.Fatalf("SeedRun: %v", err)
+	}
+	if err := m.SeedEffect("effect-1", true); err != nil {
+		t.Fatalf("SeedEffect: %v", err)
+	}
+	ctx := tenantCtx()
+
+	if _, err := m.Claim(ctx, "t1", "w1", time.Minute); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	view0, err := m.RunView(ctx, "r1")
+	if err != nil {
+		t.Fatalf("RunView: %v", err)
+	}
+	tv0, err := m.TaskView(ctx, "t1")
+	if err != nil {
+		t.Fatalf("TaskView: %v", err)
+	}
+	eff0 := m.effects["effect-1"]
+
+	cases := []struct {
+		name string
+		call func() error
+	}{
+		{"Terminate", func() error {
+			return m.Terminate(ctx, Termination{RunID: "r1", ExpectedGen: view0.Gen, Operator: "op-1", Basis: "b"})
+		}},
+		{"ForceRelease", func() error {
+			return m.ForceRelease(ctx, ForceRelease{TaskID: "t1", Operator: "op-1", Basis: "b"})
+		}},
+		{"Adjudicate", func() error {
+			return m.Adjudicate(ctx, Adjudication{EffectKey: "effect-1", Verdict: VerdictApplied, Operator: "op-1", Basis: "b"})
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); err == nil {
+				t.Fatal("留痕失败时介入必须整体失败")
+			}
+
+			view, err := m.RunView(ctx, "r1")
+			if err != nil {
+				t.Fatalf("RunView: %v", err)
+			}
+			if view.Status != view0.Status || view.Gen != view0.Gen {
+				t.Fatalf("失败的介入不得改状态/代次：status %s→%s gen %d→%d",
+					view0.Status, view.Status, view0.Gen, view.Gen)
+			}
+			tv, err := m.TaskView(ctx, "t1")
+			if err != nil {
+				t.Fatalf("TaskView: %v", err)
+			}
+			if tv.Task.State != tv0.Task.State || tv.Task.Owner != tv0.Task.Owner ||
+				tv.Task.Lease.Token != tv0.Task.Lease.Token || tv.Task.Seq != tv0.Task.Seq {
+				t.Fatalf("失败的介入不得改任务状态： %+v → %+v", tv0.Task, tv.Task)
+			}
+			m.mu.Lock()
+			eff := m.effects["effect-1"]
+			m.mu.Unlock()
+			if eff.uncertain != eff0.uncertain || eff.resolved != eff0.resolved {
+				t.Fatalf("失败的介入不得改裁决账： %+v → %+v", eff0, eff)
+			}
+		})
+	}
+}
