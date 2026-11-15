@@ -2,6 +2,113 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.38.0] — 2026-11-15
+
+### 新增(watchdog,archcheck)：轮括号不变量 INV3 + 租户过滤漏拼门（#171 #172）
+
+* feat(watchdog): INV3 轮括号配对与闭合归因校验（#171）最小实现
+- watchdog 新增外层轮级不变量：turn_started 按 sessionID 开括号、
+  turn_ended 闭合校验（契约见 turn.go）；
+- 四条告警 reason：turn_end_unattributed / turn_end_unknown_status /
+  turn_end_unopened / turn_open_leak（TTL 清扫，停机退出不扫尾）；
+- closed_by 缺省四值（loop|recovery|boot-reconcile|panic），
+  NewWithConfig 可扩充；New(pub) 签名与缺省语义不变；
+- contract 新增 IsTerminalStatus（终态词表单点，不另立第二套）；
+  eventbus 新增 EventTurnBracketViolation（warn 级）；
+- policy：watchdog requires 补 contract，notes 写明 INV3 边界。
+* test(watchdog): INV3 轮括号七条判据用例 + 声明面同步（#171）
+- 正常配对静默 / 双开 TTL 泄漏 / 无开闭合 / 缺归因 / 未知归因 /
+  非终态 status / 自定义归因注册 / ctx 取消退出不扫尾；
+- README 包表 watchdog 行数与职责更新；USAGE 3.7 补 INV3 边界与
+  checksum INV3 命名撞车说明。
+* feat(archcheck): 租户过滤漏拼门三条 AST 判据（#172）最小实现
+- tenant_gate 段声明形状：扫描面 / 租户类型推导面 / 授权上下文类型名 /
+  租户域字段名 / 过滤列 / 共享判定面登记表；执行体不出现宿主字面；
+- 判据三条：tenant-surface-missing-evidence、viewer-dropped、
+  shared-surface-missing（登记面存在性核对，清单漂移即红）；
+- 授权上下文限定名匹配 + import 别名解析（改名别名绕不过判据），
+  租户域类型由代码推导（含字段名的 struct），不另立清单；
+- 三条规则 id 进 builtinrules 清单与 selfcheck 口径（段缺省即关闭，
+  声明了却漏 roots/auth 类型/租户字段由自校验报红）；
+- 本仓 policy 登记自身形状（tenant 包：tenant.Context / Tenant /
+  tenant_id / Require+Enforce）；
+- 文件按 max_file_lines 拆分：tenantast/policy_tenant/tenantgate_selfcheck/
+  thresholds，archcheck 既有测试全绿。
+* docs(archcheck,watchdog): 声明面同步租户门与 INV3 + contract 终态词表用例（#171 #172）
+- README 包表：archcheck 行数/职责、watchdog INV3；工程底座三项按实测重算；
+- USAGE：新增 4.5 tenant_gate（宿主 policy 形状示例与判不了什么），
+  4.2 AST 规则表补租户门三条，3.7 补 INV3 与停机留开放边界；
+- AI-GUIDE：结构规则条数 6→9 并补租户门三条；
+- api-lifecycle/api-compat：watchdog 依赖说明改为 eventbus/contract（非零依赖）；
+- contract.IsTerminalStatus 补用例（新可执行语句，逐包覆盖率门禁要求）。
+
+### 新增(dispatch,deadline)：下沉改派 failover 与会话墙钟（#169 #170）
+
+dispatch（#169）：三档分类词表 transient/fatal/other + 两级判定（第一级消费
+上游 toolgate/policy.Disposition 单源——toolfail 链 → MCP 协议层；链与协议层都
+Unknown 才落文本兜底，状态码判定带 \b 词边界）+ 四级数据化策略解析（条目 >
+表级 dispatch_defaults > conf 旋钮 > 代码缺省，指针区分未声明与显式 0/false）
++ StickyFailover 改派环骨架（同域 N 次 → 瞬态跨域一次 → fatal 直接终态；候选
+经 FailoverCandidates(slug, tried, sameDomain) 注入，执行步经 Attempt 注入）。
+两条硬纪律（包头 + 契约测试各钉一条）：① 判定面只读首次失败的原始错误——
+改派说明 %w（已同域改派 X 仍失败）只进事件与最终消息，不进 Classify；② 状态码
+判定必须 \b 词边界（「省略中段 4032 字节」不得被裸 Contains("403") 命中）。
+deadline（#170）：锚点三态（未写/有效/过期）判定纯函数 + shared 锚点首轮认领
+成功后写一次、续跑轮沿用（总时限不因续跑轮重置）+ 轮 ctx 经 WithTimeoutCause
+携带专属 ErrSessionDeadline + 三分路由 Route（timed_out 臂必须先于停机臂——
+墙钟到点的 ctx 同样 ctx.Err() != nil，次序反了超时被判成停机、会话永久滞留
+running）+ 过期锚点的续跑轮在认领迁移后立即 timed_out 收敛不进编排。锚点持久化
+经注入 Store（首轮写一次、续跑轮读；未注入 fail-closed 报 ErrNoStore），
+词表消费 contract.StatusTimedOut；与 drain.ErrDeadline 是两个 Cause。
+登记同步（先改声明再写代码）：architecture-policy modules/scan_roots 登记两包、
+api-lifecycle 定级 Experimental(v0.38.0)、docs/error-semantics 登记两个哨兵、
+README 包表与工程底座、docs/USAGE 与 docs/api-compat 口径按门禁实测值更新。
+
+### 新增：下沉 finalize 收尾漏斗 + steer 运行中接管（#167 #168）
+
+issue #167 → 新包 finalize：Cause→终态四分路由（接管不落终态回 created /
+用户取消 cancelled / 会话超时 timed_out 先于停机分支 / 进程停机不落终态留给
+恢复循环）+ 其余 failed + AdjudicateRetry 排队重试裁决，外加 Converge 多起点
+条件迁移与三条并发纪律（① 终态写走 Detached 脱离 ctx；② 条件迁移零行 =
+他路已接手不再写任何状态；③ running/waiting_approval 双起点一次原子迁移 +
+0 行回读库内现终态补发事件不谎报）。gorm/model 不下沉——存储面（条件迁移 /
+回读现终态 / 发事件）走 Store 注入接口，报告文案、needs_review、排队结算
+留宿主回调。
+issue #168 → 新包 steer：ErrSteered 协作中止 Cause（Signal/IsSteered，与
+用户取消 / 停机三分可辨）+ BuildSummary 保产摘要（已完成环节机械拼接不调
+LLM、读取失败降级正文）+ Decide 队列感知（有排队条目才回 created，否则
+按失败收敛不开空轮）+ Run 单协程条件迁移（无双跑窗口，8 路并发投喂恰有
+一个赢家）。判据只依赖注入事实（环节清单 / 队列非空 / 迁移结果），零领域词。
+依赖方向单向 finalize → steer（消费 steer.ErrSteered），不许环；两包与
+contract / statemachine / commitgate / checkpoint / drain / handoff /
+taskboard / pending 划界互指。声明面同步（policy 先行）：modules +
+scan_roots、api-lifecycle（Experimental）、error-semantics 哨兵登记、
+README 包表与工程底座三项、USAGE / api-compat 机器口径数。
+测试：26 个顶层用例（表驱动子用例合计 36），finalize 覆盖率 87.2%、
+steer 95.7%，-race 绿；make check 全绿（lint 2.14 归零）。
+
+### 新增：下沉 reconcile 三路孤儿对账 + event-tail 跨副本补灌(#165,#166)
+
+reconcile 新包（#165，bianque internal/engine/scheduler/recovery 下沉）：
+- 三路判定纯函数化：boot-anchor（启动锚点，定义性孤儿无须等事件静默）/
+  event-silence（本副本 10m 静默）/ heartbeat-lease（他副本租约过期立即收、
+  心跳新鲜免检、无心跳行回落 30m 静默），30s 宽限窗与三阈值常量随包下沉；
+- 收敛体动作序收口：ConvergeCAS(running→failed，含报告/排队结算/悬挂环节
+  收口归宿主原子实现) → CloseBracket(closed_by 四路归因) → Pub(session_finished)；
+- 存储面全经 Store 接缝注入（ListRunning/LastActivity/ListBeats/ConvergeCAS/
+  CloseBracket），状态词表复用 contract、事件走 eventbus，包零 gorm/DB 依赖；
+- 时钟可注入（NewWithClock）：租约/静默/锚点边界确定性可测；
+- 如实声明误收面（双进程重叠窗口的静默长步骤）与 closed_by 归因语义。
+eventbus.Tailer（#166，bianque background.go event-tail 下沉）：
+- 每副本一条尾随循环：初始化取 MaxID → 每秒读 id>游标 回灌 Hub → 读失败
+  游标不动（幂等补读）→ ctx 取消干净退出；缺省 1s/1000 与宿主同参；
+- TailStore 只有 MaxID/ListAfter 两方法，包零 DB 依赖；重复帧不归 Tailer
+  去重（归订阅侧游标，与 #160 分工同纪律）；
+- scope:replica 写进包头：不套 leader 门，套了非 leader 副本收不到他副本事件。
+登记面同步（先 policy 后代码）：architecture-policy modules/scan_roots 登记
+reconcile、eventbus requires 补 logx；README 包表与工程底座、USAGE 口径块、
+api-lifecycle/api-compat 计数回填。
+
 ## [v0.37.0] — 2026-11-14
 
 ### 新增：commitgate SeedE 响亮空 Ref——Seed 挂 Deprecated 过渡；archcheck/docsync 嵌套模块排除(#154 #162)
