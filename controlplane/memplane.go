@@ -249,11 +249,15 @@ func (m *MemPlane) Terminate(ctx context.Context, req Termination) error {
 		}
 		return errors.Wrap(ErrTerminalRun, "当前状态: "+run.status)
 	}
-	run.status = contract.StatusCancelled
-	run.gen++ // 终止本身是一次代次前进：并发介入者的旧视图从此失效
-	if err := m.audit(ctx, req.Operator, ActionTerminate, string(req.RunID), req.Basis, fmt.Sprintf("已终止（第 %d 代）", run.gen)); err != nil {
+	// 候选变更先行（与 ForceRelease/Adjudicate 同一口径）：留痕失败 ⇒
+	// 状态与代次一字不动（issue #180——一次失败的介入不得改变可观测状态，
+	// 并发介入者的旧视图必须仍然成立）。留痕成功后才提交变更。
+	nextGen := run.gen + 1 // 终止本身是一次代次前进：并发介入者的旧视图从此失效
+	if err := m.audit(ctx, req.Operator, ActionTerminate, string(req.RunID), req.Basis, fmt.Sprintf("已终止（第 %d 代）", nextGen)); err != nil {
 		return err
 	}
+	run.status = contract.StatusCancelled
+	run.gen = nextGen
 	return nil
 }
 
