@@ -69,11 +69,51 @@ func TestRoutePicksLeastCapable(t *testing.T) {
 	}
 }
 
-// TestRouteNoRunner 没人能接必须报 ErrNoRunner，而不是返回一个空 offer。
+// TestRouteNoRunner 没人能接必须报哨兵错误，而不是返回一个空 offer。
+//
+// 归因口径（issue #209）：全部拒绝原因都是能力缺失 ⇒ ErrUnsupported
+// （修法是补能力声明）；混入其它原因（目标超长 / 无名字）⇒ ErrNoRunner
+// （指去补能力是误导——真实修法是缩短目标）。
 func TestRouteNoRunner(t *testing.T) {
 	_, err := Route([]Offer{offer("r1", "read")}, Request{Goal: "g", Needs: []Capability{"write"}})
+	if !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("全部原因为能力缺失必须报 ErrUnsupported，实得 %v", err)
+	}
+	if !strings.Contains(err.Error(), "write") {
+		t.Fatalf("错误必须指出缺的能力，实得 %v", err)
+	}
+}
+
+// TestRouteAttributesGoalTooLong 目标超长被全拒时，错误里必须出现上限数字
+// （issue #209 验收）：此前一律归因「请求需要能力 read」——宿主被指去补
+// 能力声明，真实修法是缩短目标。
+func TestRouteAttributesGoalTooLong(t *testing.T) {
+	o := Offer{Name: "r1", Provides: []Capability{"read"}, MaxGoalBytes: 4096}
+	_, err := Route([]Offer{o}, Request{Goal: strings.Repeat("x", 5001), Needs: []Capability{"read"}})
+	if err == nil {
+		t.Fatal("超长目标必须被全拒")
+	}
+	if !strings.Contains(err.Error(), "4096") || !strings.Contains(err.Error(), "5001") {
+		t.Fatalf("错误必须携带上限与实际字节数，实得 %v", err)
+	}
+}
+
+// TestRouteMixedReasonsPerOffer 混合原因时错误文本必须含每个 offer 的拒绝
+// 原因（issue #209 验收）：跨运行时排障，归因错误的代价全落在人身上。
+func TestRouteMixedReasonsPerOffer(t *testing.T) {
+	tooLong := Offer{Name: "r1", Provides: []Capability{"read"}, MaxGoalBytes: 4}
+	noName := Offer{Provides: []Capability{"read"}}
+	_, err := Route([]Offer{tooLong, noName}, Request{Goal: "toolong", Needs: []Capability{"read"}})
+	if err == nil {
+		t.Fatal("全部被拒必须报错")
+	}
 	if !errors.Is(err, ErrNoRunner) {
-		t.Fatalf("没有能接的执行方必须报 ErrNoRunner，实得 %v", err)
+		t.Fatalf("混入非能力原因应保持 ErrNoRunner，实得 %v", err)
+	}
+	for _, want := range []string{"r1", "offer[1]", "上限"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("错误文本必须含每个 offer 的原因（缺 %q）: %v", want, err)
+		}
 	}
 }
 
