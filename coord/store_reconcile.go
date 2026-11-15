@@ -60,7 +60,10 @@ func (s *StoreAdapter) resolveWithin(ctx context.Context, act sideeffect.Action,
 			if requiredHolder != "" {
 				// 带凭据的裁决：占用必须存在、未过期、身份匹配——否则
 				// 出示的是迟到对账者的旧凭据，拒之且不改任何状态。
-				now := s.clock()
+				now, nerr := s.nowAt(ctx)
+				if nerr != nil {
+					return resolveOut{}, nil, nil, errors.Wrap(nerr, "coord: ResolveUncertain 取存储时钟失败")
+				}
 				if a.Recon == nil || !now.Before(a.Recon.Expires) || a.Recon.Holder != requiredHolder {
 					return resolveOut{}, nil, nil, errors.Wrap(sideeffect.ErrReconcileLost,
 						"出示的对账认领不是当前有效的一份（已过期或已被接管）",
@@ -128,7 +131,11 @@ func (s *StoreAdapter) BeginReconcile(ctx context.Context, act sideeffect.Action
 			if a.Done || !a.Uncertain {
 				return beginOut{}, nil, nil, sideeffect.ErrNotUncertain
 			}
-			now := s.clock()
+			// 判定时刻取存储时钟（issue #194，时间权威次序见 resolveNow）。
+			now, nerr := s.nowAt(ctx)
+			if nerr != nil {
+				return beginOut{}, nil, nil, errors.Wrap(nerr, "coord: BeginReconcile 取存储时钟失败")
+			}
 			if a.Recon != nil && now.Before(a.Recon.Expires) {
 				return beginOut{}, nil, nil, sideeffect.ErrReconcileTaken
 			}

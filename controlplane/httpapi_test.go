@@ -170,7 +170,8 @@ func TestHandlerErrorMapping(t *testing.T) {
 	}
 
 	// 终止：过期视图 → 409
-	view, err := m.RunView(context.Background(), "r1")
+	viewCtx := tenant.WithContext(context.Background(), tenant.Context{Tenant: "acme"})
+	view, err := m.RunView(viewCtx, "r1")
 	if err != nil {
 		t.Fatalf("RunView: %v", err)
 	}

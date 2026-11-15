@@ -44,16 +44,30 @@ const (
 type StoreAdapter struct {
 	b Backend
 
+	// now 测试注入的时钟（UseClock；nil = 未注入）。缺省 nil 是刻意的：
+	// 判定时刻一律走 resolveNow 的时间权威次序，绝不静默落回节点本地时钟
+	//（与 BoardAdapter 同一条纪律，issue #194）。
 	mu  sync.Mutex
 	now func() time.Time
 }
 
 // NewStoreAdapter 构造 Store 适配器。
-func NewStoreAdapter(b Backend) *StoreAdapter {
-	return &StoreAdapter{b: b, now: time.Now}
+//
+// 装配期检查时间权威（issue #194）：后端既不实现 ClockSource 也不声明
+// SingleMachine 时返回 @@ErrNoTimeAuthority@@——占用/意图/对账的到期判定
+// 同样是跨进程共享的事实，拒绝装配，而不是静默退化成节点本地时钟。
+func NewStoreAdapter(b Backend) (*StoreAdapter, error) {
+	if !hasTimeAuthority(b) {
+		return nil, errors.Wrap(ErrNoTimeAuthority,
+			"coord: StoreAdapter 拒绝装配（到期判定必须由存储时钟算，或显式声明仅单机）")
+	}
+	return &StoreAdapter{b: b}, nil
 }
 
 // UseClock 注入时钟（sidetest 契约套件要求：过期判定必须读可注入的时钟）。
+//
+// 仅限测试：契约套件的过期场景用它做确定性推进。生产路径**不得**注入本地
+// 时钟——占用到期是跨进程共享的事实，时间真相在存储（issue #194）。
 func (s *StoreAdapter) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -62,8 +76,13 @@ func (s *StoreAdapter) UseClock(now func() time.Time) {
 	}
 }
 
-// clock 当前时刻（持锁调用）。
-func (s *StoreAdapter) clock() time.Time { return s.now() }
+// nowAt 判定用当前时刻（时间权威次序见 resolveNow）。
+func (s *StoreAdapter) nowAt(ctx context.Context) (time.Time, error) {
+	s.mu.Lock()
+	inj := s.now
+	s.mu.Unlock()
+	return resolveNow(s.b, inj, ctx)
+}
 
 // ── Store 的八个入口 ─────────────────────────────────────────────────────
 
@@ -88,7 +107,11 @@ func (s *StoreAdapter) Acquire(ctx context.Context, act sideeffect.Action, ttl t
 			if rerr != nil {
 				return acq{}, nil, nil, rerr
 			}
-			now := s.clock()
+			// 判定时刻取存储时钟（issue #194，时间权威次序见 resolveNow）。
+			now, nerr := s.nowAt(ctx)
+			if nerr != nil {
+				return acq{}, nil, nil, errors.Wrap(nerr, "coord: Acquire 取存储时钟失败")
+			}
 			// dirty：快照判定过程中攒下的待提交改动（身份登记、过期占用清理等）。
 			// 纯结论（无改动）直接返回，不走一次空事务；有改动则连同
 			// 本次结论一起原子落地。
@@ -337,7 +360,11 @@ func (s *StoreAdapter) Renew(ctx context.Context, act sideeffect.Action, lease s
 			if err := intentOwnerErr(act, lease, a); err != nil {
 				return sideeffect.Lease{}, nil, nil, err
 			}
-			now := s.clock()
+			// 判定时刻取存储时钟（issue #194，时间权威次序见 resolveNow）。
+			now, nerr := s.nowAt(ctx)
+			if nerr != nil {
+				return sideeffect.Lease{}, nil, nil, errors.Wrap(nerr, "coord: Renew 取存储时钟失败")
+			}
 			// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时，
 			// 旧持有者不得复活它——否则过期那次尝试绕开「先对账」直接继续
 			// 推进。判定在写入之前，被拒的续期不留任何状态。

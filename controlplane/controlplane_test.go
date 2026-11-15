@@ -22,10 +22,10 @@ func emptyCtx() context.Context { return context.Background() }
 
 // seededPlane 场景夹具：run r1 挂两个任务（t1 可认领，t2 依赖 t1），
 // 一个未知的副作用键。
-func seededPlane(t *testing.T) (*MemPlane, *MemAuditor) {
+func seededPlane(t *testing.T, opts ...MemOption) (*MemPlane, *MemAuditor) {
 	t.Helper()
 	aud := &MemAuditor{}
-	m := NewMemPlane(aud)
+	m := NewMemPlane(aud, opts...)
 	err := m.SeedRun("r1", contract.StatusRunning, []taskboard.Task{
 		{ID: "t1", Title: "第一个环节", State: taskboard.StateOpen},
 		{ID: "t2", Title: "第二个环节", State: taskboard.StateOpen, Deps: []taskboard.TaskID{"t1"}},
@@ -66,7 +66,7 @@ func TestValidateInterventions(t *testing.T) {
 
 func TestViews(t *testing.T) {
 	m, _ := seededPlane(t)
-	ctx := context.Background()
+	ctx := tenantCtx() // 读路径同样 fail-closed（issue #197），判定要带租户上下文
 
 	view, err := m.RunView(ctx, "r1")
 	if err != nil {
