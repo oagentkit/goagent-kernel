@@ -124,18 +124,21 @@ type Store interface {
 type SeqGate struct {
 	mu   sync.Mutex
 	last map[string]uint64
-	// prev 记 last 的**前一个最大值**，只一格：Release 只可能回滚最近一次 Accept。
+	// floor 已确认**落库**的基线，是 Release 的唯一回滚目标。
 	//
-	// 为什么必须有它：last 只存最大值，删记录等于连**上一个成功的地板**一起抹掉。
-	// Accept(5) 成功后 Accept(7) 落库失败 → 若 Release 走 delete(last)，闸从 5
-	// 跌回「无记录」，陈旧的 seq=3 便畅通无阻——正是本闸存在的理由
-	// （恢复点静默回退）被自己打开。回滚要回到**前一个值**，不是回到零。
-	prev map[string]uint64
+	// 为什么不能像旧实现那样记一格「上一个 last」（prev）：Accept → Save 失败
+	// → Release 是公开用法，而 Store 允许多个环节**并发**落库。两个在途提交
+	// 同时失败时，单格 prev 会被第二次 Accept 覆盖——回滚就把 last 钉在另一个
+	// 同样失败了的在途序号上，该序号重试被判 ErrStaleSeq，永远写不进去
+	// （该 run 从此卡死）。基线必须是「最后一次确认写进存储的序号」
+	// （Save 成功时由 MarkPersisted 抬升），它不随在途 Accept 抬升，
+	// 回滚永远有可靠的落点。
+	floor map[string]uint64
 }
 
 // NewSeqGate 构造单调闸。
 func NewSeqGate() *SeqGate {
-	return &SeqGate{last: make(map[string]uint64), prev: make(map[string]uint64)}
+	return &SeqGate{last: make(map[string]uint64), floor: make(map[string]uint64)}
 }
 
 // Seed 用**已持久化的**快照初始化序号基线。宿主重启后必须调用一次，
@@ -151,9 +154,34 @@ func (g *SeqGate) Seed(runID string, seq uint64) {
 	defer g.mu.Unlock()
 	if cur, ok := g.last[runID]; !ok || cur < seq {
 		g.last[runID] = seq
-		// 基线被持久化事实抬高后，旧的前值不再是合法回滚目标（宿主重启场景下
-		// 内存里的历史本就不可信），作废之，免得日后 Release 退回到一个陈旧地板。
-		delete(g.prev, runID)
+		// Seed 灌的是持久化事实：回滚基线一并抬到它。宿主重启场景下内存里的
+		// 历史本就不可信，日后的 Release 只该退回这份持久化基线。
+		g.floor[runID] = seq
+	}
+}
+
+// MarkPersisted 确认某序号**已成功落库**，抬高回滚基线。
+//
+// 调用顺序 Accept → Save：Save 返回 nil 后**必须**调本方法，否则后续某次
+// Release 会把闸退回更旧的基线、甚至退回「无记录」——陈旧慢写重新获得
+// 通行权，恢复点静默回退（正是本闸存在的理由被自己打开）。
+//
+// 幂等：重复确认同一序号结果相同；seq 不大于当前基线时是空操作。
+// （checkpoint.Committer 已把 Accept → SaveIfNewer → 成功 MarkPersisted /
+// 失败 Release 固化成一个调用，手写这条顺序的宿主才需要直接用本方法。）
+func (g *SeqGate) MarkPersisted(runID string, seq uint64) {
+	if runID == "" || seq == 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if seq > g.floor[runID] {
+		g.floor[runID] = seq
+	}
+	// 持久化事实不可回滚：确认值若高于 last（宿主绕过 Accept 的非常规形态），
+	// last 一并抬到它——闸的地板不会高过天花板。
+	if seq > g.last[runID] {
+		g.last[runID] = seq
 	}
 }
 
@@ -165,13 +193,16 @@ func (g *SeqGate) Seed(runID string, seq uint64) {
 // # 调用顺序（重要）
 //
 // Accept 只保证「不倒退」，它**不保证「已落库」**——落库成败由 Store 决定。
-// 因此正确顺序是 Accept → Store.Save，**且 Save 失败时必须调 Release 回滚**：
+// 因此正确顺序是 Accept → Store.Save：**Save 失败时调 Release 回滚**，
+// **Save 成功时调 MarkPersisted 抬回滚基线**：
 //
 //	gate.Accept(s)   // 挡住并发的陈旧写
 //	if err := store.Save(ctx, s); err != nil {
 //	    gate.Release(s.RunID, s.Seq) // 不回滚的话闸会跑到实际存储前面，
 //	    return err                    // 同序号重试将被判为陈旧而永远写不进去
 //	}
+//	gate.MarkPersisted(s.RunID, s.Seq) // 成功也要记下：不抬基线，日后某次
+//	                                   // Release 会退回比已落库事实更旧的值
 //
 // 不回滚的真实后果不是「多花一个序号」，而是**这个 run 从此卡死**：闸认为
 // seq=N 已落库，实际没有；重试 N 被拒、跳过 N 又留下一条永远补不回来的空洞。
@@ -184,9 +215,9 @@ func (g *SeqGate) Accept(s Snapshot) error {
 	if prev, ok := g.last[s.RunID]; ok && s.Seq <= prev {
 		return ErrStaleSeq
 	}
-	// 记下前一个最大值供 Release 精确回滚；map 取零值，故无历史时写 0，
-	// Release 见 0 即删（那才是「本来就没有地板」）。
-	g.prev[s.RunID] = g.last[s.RunID]
+	// 只抬 last（在途），不碰 floor：落库与否由 MarkPersisted / Release 说话。
+	// 多个环节并发 Accept 时 last 记最大在途值，回滚目标始终是已落库基线，
+	// 不依赖「Release 只回滚最近一次 Accept」这一在并发落库下不成立的假设。
 	g.last[s.RunID] = s.Seq
 	return nil
 }
@@ -204,12 +235,14 @@ func (g *SeqGate) Last(runID string) uint64 {
 // 若期间已有更新的写入落地（last > seq），返回 false 且不动任何状态——
 // 那时把闸退回去反而会让陈旧写重新获得通行权。
 //
-// # 回滚到前一个值，不是清零
+// # 回滚到已落库基线（floor），不是「前一个接受值」
 //
-// 这里退回到 Accept(seq) **之前**的最大值（prev 一格），而不是删掉记录：
-// 删记录会把上一个**已成功落库**的序号一起抹掉，闸的地板从 5 跌到「无」，
-// 于是 seq=3 的陈旧慢写畅通无阻——恢复点静默回退，正是本闸要防的那件事。
-// 只有在本就没有历史（prev 为 0）时才退化成删除。
+// 回滚目标是 MarkPersisted 确认过的基线，而不是「上一个 Accept 的值」：
+// Store 允许多个环节并发落库，Accept → Save 失败 → Release 可能交错发生，
+// 按「上一个接受值」回滚会把 last 钉在另一个**同样失败**的在途序号上——
+// 该序号重试被判 ErrStaleSeq，永远写不进去（该 run 从此卡死）。
+// 基线是唯一可靠的落点：它是最后一次确认写进存储的序号。
+// 基线为 0（本就没有已落库记录）时退化成删除——那才是「本来就没有地板」。
 func (g *SeqGate) Release(runID string, seq uint64) bool {
 	if seq == 0 {
 		return false
@@ -220,11 +253,10 @@ func (g *SeqGate) Release(runID string, seq uint64) bool {
 	if !ok || cur != seq {
 		return false
 	}
-	if back := g.prev[runID]; back != 0 {
+	if back := g.floor[runID]; back != 0 {
 		g.last[runID] = back
 	} else {
-		delete(g.last, runID) // 本就无历史，退回「无记录」
+		delete(g.last, runID) // 本就无已落库基线，退回「无记录」
 	}
-	delete(g.prev, runID)
 	return true
 }

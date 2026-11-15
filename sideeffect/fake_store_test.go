@@ -365,7 +365,16 @@ func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.D
 		return Lease{}, err
 	}
 	now := s.clockLocked()
+	// 过期即资格终止（Store.Renew 契约）：租约已过期而**尚未被他人接管**时，
+	// 旧持有者的续期同样必须被拒——三项联查只看令牌与身份，令牌没换、身份
+	// 没变，它判不出「过期」。放行过期续期等于允许 GC 停顿超 TTL 的持有者
+	// 复活一段已作废的租约，绕开 Acquire「过期 → 结果未知，必须先对账」
+	// 的判定：两份闸同时开着，且无任何观测点。
 	cur := s.holders[act.Resource]
+	if !now.Before(cur.expires) {
+		return Lease{}, errors.Wrap(ErrFenceStale, "凭据被拒：租约已过期，资格已终止（未被接管也不例外）",
+			"resource", act.Resource)
+	}
 	cur.expires = now.Add(ttl)
 	cur.lease.TTL = ttl
 	s.holders[act.Resource] = cur

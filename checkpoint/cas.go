@@ -25,7 +25,11 @@
 //	if err := store.SaveIfNewer(s); err != nil {
 //	    gate.Release(s.RunID, s.Seq) // ← 这一行漏掉，闸就永久停在 s.Seq
 //	    return err                    //    该 run 从此卡死：重试 s.Seq 被判陈旧，
-//	}                               //    跳过它又留一个永远补不回来的空洞
+//	                                 //    跳过它又留一个永远补不回来的空洞
+//	}
+//	gate.MarkPersisted(s.RunID, s.Seq) // ← 成功这行漏掉，回滚基线停在旧值：
+//	                                   //   日后某次 Release 会退回比已落库
+//	                                   //   事实更旧的值，陈旧写重新放行
 //
 // 这段在 SeqGate 的注释里写了，但注释不是门禁——每个宿主手抄一遍，就会有一个
 // 抄漏的。Committer 把它收成一个调用，宿主没有机会抄漏。
@@ -108,8 +112,16 @@ func (c *Committer) Commit(ctx context.Context, s Snapshot) error {
 	}
 
 	err := c.store.SaveIfNewer(ctx, s)
-	if err != nil && c.gate != nil {
-		c.gate.Release(s.RunID, s.Seq)
+	if c.gate != nil {
+		if err != nil {
+			// 失败必须回滚：不回滚的话闸停在 s.Seq，重试被判陈旧，该 run 卡死。
+			c.gate.Release(s.RunID, s.Seq)
+		} else {
+			// 成功必须抬回滚基线：不抬的话，日后某次失败的 Release 会退回
+			// 比已落库事实更旧的值（甚至退回「无记录」），陈旧慢写重新获得
+			// 通行权——恢复点静默回退，正是本机制要防的那件事。
+			c.gate.MarkPersisted(s.RunID, s.Seq)
+		}
 	}
 	return err
 }
