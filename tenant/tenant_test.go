@@ -202,10 +202,10 @@ func TestEnforce(t *testing.T) {
 // 「读路径不因缺上下文而崩」，Require 是 fail-closed 入口——两者在 nil ctx
 // 上得到的应是零值 / ErrNoContext，而不是进程级崩溃。
 func TestNilContextDoesNotPanic(t *testing.T) {
-	if got := From(nil); got.Present() {
+	if got := From(nil); got.Present() { //nolint:staticcheck // SA1012: nil ctx is the contract under test
 		t.Fatalf("From(nil) 应返回零值，实得 %+v", got)
 	}
-	if _, err := Require(nil); !errors.Is(err, ErrNoContext) {
+	if _, err := Require(nil); !errors.Is(err, ErrNoContext) { //nolint:staticcheck // SA1012: 同上
 		t.Fatalf("Require(nil) 应报 ErrNoContext，实得 %v", err)
 	}
 }
