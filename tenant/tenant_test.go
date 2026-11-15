@@ -197,3 +197,15 @@ func TestEnforce(t *testing.T) {
 		t.Fatalf("声明源故障应原样上抛，got %v", err)
 	}
 }
+
+// TestNilContextDoesNotPanic nil ctx 不得 panic（issue #215）：From 的契约是
+// 「读路径不因缺上下文而崩」，Require 是 fail-closed 入口——两者在 nil ctx
+// 上得到的应是零值 / ErrNoContext，而不是进程级崩溃。
+func TestNilContextDoesNotPanic(t *testing.T) {
+	if got := From(nil); got.Present() {
+		t.Fatalf("From(nil) 应返回零值，实得 %+v", got)
+	}
+	if _, err := Require(nil); !errors.Is(err, ErrNoContext) {
+		t.Fatalf("Require(nil) 应报 ErrNoContext，实得 %v", err)
+	}
+}
