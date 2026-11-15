@@ -9,6 +9,7 @@ package metrics
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/oekit/pkg/errors"
@@ -19,6 +20,10 @@ import (
 // TestSpecsSelfCheck 登记表自洽：名称唯一、前缀统一、类型与单位合法、
 // 每个维度有界且依据非空、禁区键不进维度。
 func TestSpecsSelfCheck(t *testing.T) {
+	forbidden := map[string]bool{}
+	for _, f := range ForbiddenLabels {
+		forbidden[f.Name] = true
+	}
 	all := Specs()
 	if len(all) == 0 {
 		t.Fatal("登记表为空：契约面没有登记任何指标")
@@ -58,7 +63,7 @@ func TestSpecsSelfCheck(t *testing.T) {
 				}
 				vals[v] = true
 			}
-			if _, bad := forbiddenSet[d.Key]; bad {
+			if forbidden[d.Key] {
 				t.Errorf("指标 %s 的标签 %s 自己就在禁区清单里：声明自相矛盾", m.Name, d.Key)
 			}
 		}
@@ -179,6 +184,46 @@ func TestValidate(t *testing.T) {
 	// 零维指标带标签 = 想加暗维度，拦。
 	if err := Validate(NameUncertainBacklog, Labels{LabelExecStatus: ExecStatusOK}); err == nil {
 		t.Error("零维指标（积压 gauge）不应接受任何标签")
+	}
+}
+
+// TestCheckLabelsHostMetric 禁区判据与登记表解耦（issue #178）：宿主自有指标
+// 不在 Specs() 里，此前调 Validate 在登记表第一步就被拒，禁区判据永远走不到
+// ——宿主只能照抄 ForbiddenLabels 成第二份真相（漂移不报警）。CheckLabels
+// 只看标签键：未登记的宿主指标名照样能判，Prometheus 描述符列表也能过。
+// 判据是**字面键**匹配——宿主键名不同而语义同形（target≙agent_slug）的违例
+// 机器判不出，那半边仍归宿主自己的评审/静态扫描（本函数给它们当判据用）。
+func TestCheckLabelsHostMetric(t *testing.T) {
+	// 宿主指标直接用了禁区键名（漂移面：宿主清单与内核清单必然各自演化）。
+	if err := CheckLabels(Labels{"source": "webhook", "priority": "high", "agent_slug": "bianque-main"}); err == nil {
+		t.Fatal("宿主指标的禁区键应被判红")
+	} else if !strings.Contains(err.Error(), "agent_slug") {
+		t.Fatalf("报错应点名禁区键与理由: %v", err)
+	}
+
+	// 干净标签：宿主指标名不在登记表里也判绿——本函数不查登记表。
+	if err := CheckLabels(Labels{"source": "webhook", "priority": "high"}); err != nil {
+		t.Fatalf("无禁区键应判绿（与登记表无关）: %v", err)
+	}
+	if err := CheckLabels(nil); err != nil {
+		t.Fatalf("空标签判绿: %v", err)
+	}
+
+	// 全部禁区键逐个可见（清单加键后这里自动跟上）。
+	for _, f := range ForbiddenLabels {
+		if err := CheckLabels(Labels{f.Name: "x"}); err == nil {
+			t.Errorf("禁区键 %s 应被判红", f.Name)
+		}
+	}
+
+	// Validate 的宿主路径仍不通（登记表口径不变），但禁区键的报错先于登记表
+	// ——同一份清单两条入口，报错语义一致。
+	if err := Validate("bianque_intents_total", Labels{"agent_slug": "x"}); err == nil ||
+		!strings.Contains(err.Error(), "agent_slug") {
+		t.Fatalf("未登记指标名带禁区键应先报禁区: %v", err)
+	}
+	if err := Validate("bianque_intents_total", Labels{"source": "webhook"}); !errors.Is(err, ErrUnregisteredMetric) {
+		t.Fatalf("未登记指标名走登记表判据不变，实得 %v", err)
 	}
 }
 

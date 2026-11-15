@@ -38,6 +38,12 @@
 //	fatal     终态类：换执行者也是白跑（权限/凭证/审批/治理类）——直接终态。
 //	other     不确定：仅同域重试，不跨域。
 //
+// 词表**中英双语**（issue #207）：ClassUnknown 落到文本兜底的错误文案两种语言
+// 都会出现——transient 档若只有英文，中文瞬态（「连接被拒绝」「连接超时」）
+// 整类不可达：跨域兜底对中文错误静默失效，最典型的瞬态还会被 fatal 档的
+// 中文词升级成终态。语言不得成为档位偏置；fatal 档的「拒绝」因此收窄为
+// 「权限拒绝」「拒绝访问」（裸「拒绝」会命中「连接被拒绝」这类瞬态文案）。
+//
 // # 两级判定：上游单源优先，文本只兜底
 //
 // 第一级消费 `toolgate/policy.Disposition`——它是「toolfail 链 → MCP 协议层」
@@ -106,14 +112,17 @@ var (
 )
 
 // transientWords / fatalWords：第二级文本兜底词表（链与协议层都 Unknown 才走）。
+// 中英双语对称（issue #207，见包头「三档词表」）；判定先 transient 后 fatal
+// ——「连接被拒绝」含双档词时按瞬态处置（跨域兜底不被抑制）。
 var (
 	transientWords = []string{
 		"timeout", "deadline", "context canceled", "connection", "connect",
 		"refused", "unavailable", "temporarily",
+		"超时", "连接", "拒绝连接", "暂时不可用", "限流",
 	}
 	fatalWords = []string{
 		"权限", "未授权", "unauthorized", "forbidden", "审批", "黑名单",
-		"拒绝", "checksum", "身份校验",
+		"权限拒绝", "拒绝访问", "checksum", "身份校验",
 	}
 )
 

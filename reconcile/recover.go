@@ -62,8 +62,9 @@ func (r *Reconciler) RecoverBootOrphans(ctx context.Context) (int, error) {
 		}
 		ok, err := r.reclaim(ctx, s, cause)
 		if err != nil {
+			// 收敛成立但收尾有失败面（如括号关闭失败，issue #184）也在此带出
+			// ——计数照加（CAS 已命中），错误并入聚合留痕。
 			errs = errors.Append(errs, err)
-			continue
 		}
 		if ok {
 			n++
@@ -144,7 +145,6 @@ func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
 		ok, err := r.reclaim(ctx, s, cause)
 		if err != nil {
 			errs = errors.Append(errs, err)
-			continue
 		}
 		if ok {
 			n++
@@ -156,11 +156,17 @@ func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
 // reclaim 收敛体（三路共用，动作序固定）：
 //
 //	ConvergeCAS（failed 终态 + 恢复说明报告 + 排队结算 + 悬挂环节收口，原子）
-//	  → CloseBracket（turn 括号关闭，closed_by = Cause.By）
+//	  → CloseBracket（turn 括号关闭，closed_by = Cause.By；错误并入返回值）
 //	  → Pub(session_finished)
 //
 // CAS 返回 false（他方已处理）或 error 时**后续动作一律不发生**——收尾动作
 // 只属于赢下条件迁移的那一次，双写轮括号/事件比不写更伤审计。
+//
+// CAS 命中后的收尾两步**不再互相吞错**（issue #184）：CloseBracket 失败并入
+// 返回值由宿主留痕/补偿（括号是审计面的轮边界，吞掉等于永久留一个读不出的
+// 洞），但 session_finished 照发——终态事实已由 CAS 成立，依赖事件收尾的
+// 下游（清理、通知、计费）不因审计面故障停摆。返回 (true, err) = 收敛成立但
+// 收尾有失败面，调用方两边都处理（计数 + 聚合错误）。
 func (r *Reconciler) reclaim(ctx context.Context, s Session, cause Cause) (bool, error) {
 	ok, err := r.store.ConvergeCAS(ctx, s.ID, contract.StatusRunning, contract.StatusFailed, cause)
 	if err != nil {
@@ -169,10 +175,14 @@ func (r *Reconciler) reclaim(ctx context.Context, s Session, cause Cause) (bool,
 	if !ok {
 		return false, nil // 他方已处理（条件迁移零行）
 	}
-	r.store.CloseBracket(ctx, s.ID, cause.By)
+	var errs error
+	if berr := r.store.CloseBracket(ctx, s.ID, cause.By); berr != nil {
+		errs = errors.Append(errs, errors.Wrap(berr, "关闭 turn 括号失败（收敛已成立）",
+			"session", s.ID, "closed_by", cause.By))
+	}
 	r.pub(s.ID, s.CaseID, nil, eventbus.EventSessionFinished, "error", map[string]any{
 		"error": "编排中断恢复：会话按失败收敛（by=" + cause.By + "）",
 		"by":    cause.By,
 	})
-	return true, nil
+	return true, errs
 }

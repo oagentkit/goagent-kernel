@@ -1298,19 +1298,31 @@ dependency_direction:
 # Tenant、过滤列 tenant_id。宿主仓复用同一执行体时，把这一段换成自己的形状
 # （如 Viewer / 自身模型字段 / team_id）——宿主字面不得进内核代码。
 #
-# 三条判据：
+# 六条判据（issue #177 补齐到 6，与 bianque tenantcheck 同口径；1-3 见
+# archcheck/tenantgate.go，4-6 见 archcheck/tenantmanifest.go）：
 #   1. tenant-surface-missing-evidence：带授权上下文形参 + 返回租户域类型的
 #      函数必须有隔离判定证据（调用登记的共享判定面 / Where|Raw 含过滤列 /
 #      显式 `// tenant:iso <理由>`）；三者皆无 = 红。
 #   2. viewer-dropped：带授权上下文形参却完全不用 = 红。
 #   3. shared-surface-missing：登记在册的共享判定面在代码里不存在 = 清单漂移
 #      = 红（一条被静默放宽的登记等于没有登记）。
+#   4. tenant-policy-missing：含租户字段的模型映射出的物理表不在
+#      tenant_tables_manifest 里 = 红（漏登记 = 隔离策略不覆盖这张表）。
+#   5. tenant-policy-drift：清单登记的表在模型面已不存在 = 红（登记漂移 =
+#      空登记）。4/5 是双向核对——清单与模型面谁走了谁都不行。
+#   6. tenant-table-name-missing：含租户字段的模型没有可从 AST 识别的表名
+#      方法（缺省 TableName，table_name_method 可改）= 红——解析不出物理
+#      表名，登记面核对不了。
+# 4-6 只在声明 tenant_tables_manifest 后启用。宿主持有的 RLS 注册表是 Go
+# 符号，执行体调不到；清单是宿主自己 dump 的产物（或由一条校验测试保证与
+# 注册表一致）。本仓无模型层（租户机制面只有判据，没有表），故不声明清单。
 #
 # 租户域类型清单**不另立**：tenant_type_roots（缺省 = roots）下任何含
 # tenant_fields 字段名的 struct 都由代码推导，新增模型自动入面。
 #
 # 边界：本门禁判静态证据存在性，判不了「过滤是否真的生效」（调了判定面但没用
-# 返回值、过滤条件被注释掉）；语义正确性归宿主运行期判据（tenant 包的
+# 返回值、过滤条件被注释掉）；清单与宿主 RLS 注册表的一致性靠宿主自己的
+# dump/校验测试保证。语义正确性归宿主运行期判据（tenant 包的
 # Require/Can/Quota 是运行时对偶）。
 tenant_gate:
   enabled: true
