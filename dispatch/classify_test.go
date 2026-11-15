@@ -167,3 +167,63 @@ func TestClassifiedTextIsLowercased(t *testing.T) {
 		t.Fatal("判定不得改写错误原文")
 	}
 }
+
+// TestClassifyChineseTexts 词表中英双语对称（issue #207）：中文瞬态必须判
+// transient（跨域兜底可达）、中文权限必须判 fatal、裸「拒绝」收窄后不再把
+// 无权限语义的拒绝文案误升级成终态。修复前：中文瞬态整类不可达——
+// 「连接被拒绝」被裸「拒绝」判 fatal 直接终态、「连接超时」降级为仅同域。
+func TestClassifyChineseTexts(t *testing.T) {
+	cases := []struct {
+		name string
+		msg  string
+		want Class
+	}{
+		{
+			name: "中文瞬态：连接被拒绝（双档词竞争按瞬态，验收①）",
+			msg:  "连接被拒绝",
+			want: ClassTransient,
+		},
+		{
+			name: "中文瞬态：连接超时（修复前降级为不跨域的 other）",
+			msg:  "上游连接超时",
+			want: ClassTransient,
+		},
+		{
+			name: "中文瞬态：暂时不可用",
+			msg:  "依赖服务暂时不可用，请稍后重试",
+			want: ClassTransient,
+		},
+		{
+			name: "中文瞬态：限流",
+			msg:  "触发限流，稍后再试",
+			want: ClassTransient,
+		},
+		{
+			name: "中文终态：权限拒绝（验收②）",
+			msg:  "权限拒绝：角色不足以执行该操作",
+			want: ClassFatal,
+		},
+		{
+			name: "中文终态：拒绝访问",
+			msg:  "网关返回：拒绝访问",
+			want: ClassFatal,
+		},
+		{
+			name: "中文终态：权限词本就命中",
+			msg:  "缺少审批：需主管签批",
+			want: ClassFatal,
+		},
+		{
+			name: "裸「拒绝」已收窄：无权限语义的拒绝不得误判终态",
+			msg:  "请求被对方拒绝，参数不符合约定",
+			want: ClassOther,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Classify(errors.New(tc.msg)); got != tc.want {
+				t.Fatalf("Classify(%q) = %q, want %q", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
