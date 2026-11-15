@@ -79,18 +79,20 @@ func (s *lateCommitStore) ListAfter(_ context.Context, cursor uint64, limit int)
 
 // holeStore 违约 TailStore 替身：跳号返回（模拟「11 先提交、10 迟到」下
 // 不设防的 READ COMMITTED 读法）。
-type holeStore struct{ fakeTailStore }
+type holeStore struct{ fake fakeTailStore }
+
+func (s *holeStore) MaxID(ctx context.Context) (uint64, error) { return s.fake.MaxID(ctx) }
 
 func (s *holeStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]Event, error) {
-	s.fakeTailStore.mu.Lock()
-	defer s.fakeTailStore.mu.Unlock()
-	s.fakeTailStore.listCalls = append(s.fakeTailStore.listCalls, cursor)
-	if s.fakeTailStore.failList > 0 {
-		s.fakeTailStore.failList--
+	s.fake.mu.Lock()
+	defer s.fake.mu.Unlock()
+	s.fake.listCalls = append(s.fake.listCalls, cursor)
+	if s.fake.failList > 0 {
+		s.fake.failList--
 		return nil, errFakeRead
 	}
 	var out []Event
-	for _, ev := range s.fakeTailStore.evs {
+	for _, ev := range s.fake.evs {
 		if ev.ID <= cursor {
 			continue
 		}
@@ -172,9 +174,8 @@ func TestTailerOutOfOrderCommitNotSkipped(t *testing.T) {
 // TestTailerGapAlarmFiresOnHole 空洞哨兵（#183 判据一的反向面）：违约
 // TailStore 跳号返回时哨兵必须响——静默丢帧从此变成响亮信号。
 func TestTailerGapAlarmFiresOnHole(t *testing.T) {
-	inner := &fakeTailStore{maxID: 9}
-	store := &holeStore{fakeTailStore: *inner}
-	store.append(Event{ID: 11, SessionID: "s", Type: "x"}) // 10 缺席，直回 11
+	store := &holeStore{fake: fakeTailStore{maxID: 9}}
+	store.fake.append(Event{ID: 11, SessionID: "s", Type: "x"}) // 10 缺席，直回 11
 
 	hub := NewHub()
 	ch, stop := hub.Subscribe("s")
