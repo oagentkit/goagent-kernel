@@ -254,3 +254,9 @@ packages:
     level: Experimental
     since: v0.35.0
     reason: Worker 生命周期参考实现（package main，issue #106）。示例演示契约怎么接线，不构成任何兼容承诺。
+
+# ── 2026-11-15 新增（issue #165 #166）──
+  - pkg: reconcile
+    level: Experimental
+    since: v0.38.0
+    reason: 三路孤儿对账与收敛体（issue #165）刚从宿主下沉——Store 接缝形状与三阈值刻度会随 bianque 适配器接线反馈调整。

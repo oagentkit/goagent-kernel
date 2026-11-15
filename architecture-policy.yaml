@@ -78,10 +78,10 @@ modules:
 
   - id: eventbus
     roots: [eventbus]
-    requires: ["ext:github.com/oagentkit/runtime"]
+    requires: ["ext:github.com/oagentkit/runtime", "ext:github.com/oekit/logx"]
     owner: harness
     managed: true
-    notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责
+    notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责；durable 发布面（#160 写侧）与 event-tail 补灌面（#166 读侧）各为可选接缝，包仍零 DB 依赖
 
   - id: spill
     roots: [spill]
@@ -464,6 +464,30 @@ modules:
     owner: harness
     managed: true
     notes: 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀
+
+  # 2026-11-15 新增：drain 两处明写「留给启动对账」的那半边（issue #165）。
+  #
+  # 为什么值得单开一个包：drain 的包注释写着「强制路径按宿主的进程停机分支处理
+  # （不写终态，留给启动对账）」「排水超时：强制中断（留启动对账收敛）」——
+  # 这是内核自己留的洞，至今空缺，各宿主只能在启动/恢复路径上各自手搓同一套
+  # 三路判定，各判一套必然漂移。判据只依赖宿主可注入的事实（instance 身份、
+  # 最后事件时刻、心跳租约表、进程启动锚点）+ 一个收敛动作，零宿主领域词——
+  # 与 taskboard 同范式：语义归包、落库归宿主 Store 接缝。
+  #
+  # 与同域包的划界（issue #165 划界段逐条）：vs checkpoint（「续跑而非重放」，
+  # 方向相反）是补充；vs drain（计划内停机 vs 非计划死，成对件）；vs worker.Recover
+  # （任务重跑 vs 会话收敛、不重跑）对象与动作都不同；vs sideeffect/coord 的
+  # 「对账」（结果未知的副作用裁决）同词不同域，包头互指。
+  - id: reconcile
+    roots: [reconcile]
+    requires: [contract, eventbus, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      启动孤儿对账与心跳租约死主回收：三路判定（boot-anchor / event-silence /
+      heartbeat-lease）+ 宽限窗 + CAS 收敛编排，与 drain 成对（drain=计划内、
+      reconcile=非计划死）。状态词表复用 contract（终态语义不定义两次），
+      收尾事件走 eventbus 词表；存储事实全经 Store 接缝注入，包零 DB/gorm 依赖。
 
   - id: commitgate
     roots: [commitgate]
@@ -1361,7 +1385,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
