@@ -264,3 +264,8 @@ packages:
     level: Experimental
     since: v0.38.0
     reason: 会话墙钟机制（issue #170）刚下沉——锚点形态与三分路由要随 finalize/恢复语义的对接反馈调整。
+  # ── 2026-11-15 新增（issue #165 #166）──
+  - pkg: reconcile
+    level: Experimental
+    since: v0.38.0
+    reason: 三路孤儿对账与收敛体（issue #165）刚从宿主下沉——Store 接缝形状与三阈值刻度会随 bianque 适配器接线反馈调整。
