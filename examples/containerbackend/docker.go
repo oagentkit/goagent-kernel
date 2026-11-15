@@ -37,10 +37,13 @@ package containerbackend
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/oekit/concurrency/async"
@@ -55,6 +58,10 @@ import (
 // 属于 backend.Result 注释里说的「后端基础设施故障」：作业没跑起来，
 // 修复对象是引擎侧（引擎不可达 / 镜像不存在 / 参数被拒）。
 var ErrEngineCall = errors.New("containerbackend: docker engine 调用失败")
+
+// ErrMountDenied 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 /
+// 形态不合法）。属于「作业声明违反安全策略」：创建阶段响亮拒绝，不降级执行。
+var ErrMountDenied = errors.New("containerbackend: 挂载被安全策略拒绝")
 
 // 缺省的 Engine socket 与 API 版本前缀。
 const (
@@ -73,12 +80,15 @@ const (
 //     被网络命名空间强制阻断，不是「设了一组环境变量」；
 //   - Capable：内存兜得住（容器内存上限），输出截断兜不住（如实自报
 //     false），逐调用计数对作业形态不存在（同样 false）；
-//   - 墙钟经 context 截止兑现（超时杀容器，见 Exec）。
+//   - 墙钟经 context 截止兑现（超时杀容器，见 Exec）；
+//   - 挂载一律过 MountPolicy 白名单（缺省拒绝一切挂载）——network=none 的
+//     出站隔离不许被一个 bind 绕开（见 MountPolicy，issue #187）。
 type Docker struct {
 	id       string
 	endpoint string // 引擎 HTTP 端点（unix:// 前缀 = socket，否则按 URL 直连）
 	apiVer   string
 	client   *http.Client
+	mounts   MountPolicy // 挂载白名单（零值 = 空白名单 = 全拒，fail-closed）
 }
 
 // DockerOption Docker 实现的装配项。
@@ -100,6 +110,12 @@ func WithID(id string) DockerOption {
 	return func(d *Docker) { d.id = id }
 }
 
+// WithMountPolicy 装配挂载白名单（issue #187）。缺省（不装配）= 拒绝一切
+// 挂载——判据与含义见 MountPolicy。
+func WithMountPolicy(p MountPolicy) DockerOption {
+	return func(d *Docker) { d.mounts = p }
+}
+
 // NewDocker 构造 Docker Engine 后端（缺省走宿主的缺省 socket——见 defaultSocket）。
 func NewDocker(opts ...DockerOption) *Docker {
 	d := &Docker{
@@ -115,6 +131,73 @@ func NewDocker(opts ...DockerOption) *Docker {
 }
 
 func (d *Docker) ID() string { return d.id }
+
+// MountPolicy 挂载白名单（issue #187）。
+//
+// # 为什么必须有它
+//
+// 本实现唯一兑现的出站隔离是 network=none，而一个 bind 就能把它整个绕开：
+// 挂 /var/run/docker.sock 等于把宿主容器控制权交给作业（断不断网毫无意义），
+// 挂 / 、/etc、$HOME/.ssh、$HOME/.aws 等于直接交出凭据。backend.Job.Mounts
+// 的来源若不做判定，「隔离档位声明」与「实际执行」就是脱节的。
+//
+// # 判据（不满足 ⇒ 创建阶段拒绝，绝不降级——fail-closed）
+//
+//   - Source 命中 AllowedSources 之一（目录形态 = 该目录整棵子树）；
+//   - 读写挂载必须显式 AllowWritable——缺省一切挂载只读（可写挂载是暴露面）；
+//   - 零值策略（未装配）= 空白名单 = 拒绝一切挂载；
+//   - 形态判据：bind 字符串由本实现拼成 `Source:Target[:ro]`，两端出现「:」
+//     会被引擎当 bind 选项解析（Target 塞 ":rw" 等于改写读写档），拒绝；
+//     相对来源会被引擎当命名卷解释（绕开宿主路径控制），拒绝。
+//
+// # 已知边界（如实声明，不假装覆盖）
+//
+// 本判据是 Clean 后的字符串前缀匹配：宿主路径里的符号链接不在判据内
+// （/workspace/link → /etc 这类形态要在运行时按真实路径解析才可判），
+// 那是容器引擎 / Provider 职责面（上游 oagentkit/guardx#193 的原语位）。
+type MountPolicy struct {
+	// AllowedSources 允许的宿主侧来源路径（绝对路径；目录形态含整棵子树）。
+	AllowedSources []string
+	// AllowWritable 是否放开读写挂载（缺省 false = 只接受 ReadOnly 声明）。
+	AllowWritable bool
+}
+
+// check 判一次挂载声明是否落在策略内。
+func (p MountPolicy) check(m backend.Mount) error {
+	if strings.Contains(m.Source, ":") || strings.Contains(m.Target, ":") {
+		return fmt.Errorf("挂载 %q→%q 含「:」——会被引擎当 bind 选项解析", m.Source, m.Target)
+	}
+	src := path.Clean(m.Source)
+	if !path.IsAbs(src) {
+		return fmt.Errorf("挂载来源 %q 不是绝对路径（相对形态会被引擎当命名卷解释）", m.Source)
+	}
+	if !path.IsAbs(path.Clean(m.Target)) {
+		return fmt.Errorf("挂载目标 %q 不是绝对路径", m.Target)
+	}
+	if !m.ReadOnly && !p.AllowWritable {
+		return fmt.Errorf("挂载 %q→%q 是读写挂载而策略未放开（缺省只读）", m.Source, m.Target)
+	}
+	for _, a := range p.AllowedSources {
+		allow := path.Clean(a)
+		if !path.IsAbs(allow) {
+			continue // 白名单项自身不合法：跳过，不放它当通配
+		}
+		if src == allow || strings.HasPrefix(src, allow+"/") {
+			return nil
+		}
+	}
+	return fmt.Errorf("挂载来源 %q 不在白名单内（允许：%v）", m.Source, p.AllowedSources)
+}
+
+// checkMounts 挂载判据闸：任何一条不满足即在创建阶段拒绝（先于引擎调用）。
+func (d *Docker) checkMounts(j backend.Job) error {
+	for _, m := range j.Mounts {
+		if err := d.mounts.check(m); err != nil {
+			return errors.Wrap(ErrMountDenied, err.Error())
+		}
+	}
+	return nil
+}
 
 // Isolation 容器档（见类型注释的自报四条）。
 func (d *Docker) Isolation() backend.Isolation { return backend.IsolationContainer }
@@ -151,6 +234,8 @@ var errWallClock = errors.New("containerbackend: 作业超出墙钟预算")
 //
 //   - 作业要求兜内存 ⇒ 容器以 Memory 上限启动（Capable 承诺的兑现点）；
 //   - 出站一律 network=none（Egress 承诺的兑现点）；
+//   - 挂载一律过 MountPolicy 白名单，不满足即创建阶段拒绝（ErrMountDenied，
+//     先于任何引擎调用）——隔离承诺的兑现不许被一个 bind 绕开（issue #187）；
 //   - Budget.WallClock > 0 ⇒ wait 挂截止，到点 SIGKILL——超时不是「再等等」，
 //     是预算的强制面；被预算终止的作业返回 Result{OK=false}（作业没跑完
 //     是它的失败，不是引擎的故障）；
@@ -159,6 +244,9 @@ var errWallClock = errors.New("containerbackend: 作业超出墙钟预算")
 func (d *Docker) Exec(ctx context.Context, j backend.Job) (backend.Result, error) {
 	if err := j.Validate(); err != nil {
 		return backend.Result{}, errors.New("containerbackend: " + err.Error())
+	}
+	if err := d.checkMounts(j); err != nil {
+		return backend.Result{}, err
 	}
 	id, err := d.create(ctx, j)
 	if err != nil {
