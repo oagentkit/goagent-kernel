@@ -127,6 +127,63 @@ func TestExecuteAndRunReportsExecutionFailure(t *testing.T) {
 	}
 }
 
+// TestRunWithLevelNoneDoesNotPanic 钉住 issue #210：**零值请求**（不要求隔离
+// 强度与出口）走执行入口时不得 panic，且必须真的把程序跑起来。
+//
+// 旧实现的问题：放行分支（MinLevel==LevelNone && 无出口要求）从不赋值
+// d.Provider，而 ExecuteAndRun 无条件解引用它 ⇒ nil 接口调用方法 ⇒ 进程级
+// panic。LevelNone 是**文档支持的一档**（preset 的 Unsafe 组合会合法产出它），
+// 不是误用——「判据+执行」的唯一入口在这份配置上必崩，等于给宿主一个
+// 进程级 DoS。
+func TestRunWithLevelNoneDoesNotPanic(t *testing.T) {
+	calls := 0
+	reg := sandbox.NewRegistry()
+	_ = reg.Register(countingProvider{level: sandbox.LevelProcess, calls: &calls})
+
+	g := NewGuard(gateOf(policy.VerdictAuto), reg)
+	out, d := g.Run(context.Background(), Request{
+		Op:      policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
+		Program: "return 1;",
+	})
+	if d.Outcome != OutcomeProceed {
+		t.Fatalf("不要求隔离强度时应放行，实得 %v（%s）", d.Outcome, d.Reason)
+	}
+	if d.Provider == nil {
+		t.Fatal("放行时必须给出可执行的后端（否则执行入口拿不到东西跑）")
+	}
+	if !out.OK {
+		t.Fatal("执行应成功")
+	}
+	if calls != 1 {
+		t.Fatalf("判出来的后端应被执行 1 次，实得 %d", calls)
+	}
+}
+
+// TestExecuteAndRunWithoutRegistryFailsClosed 钉住 issue #210 的兜底：
+// 判据放行但**没有可执行的后端**（登记簿未装配）⇒ 返回明确的失败结论，
+// 绝不解引用 nil Provider。
+//
+// 这一态与「没装审批门」同一条纪律：缺失必须在判定里显形，而不是在
+// 执行入口炸成 panic——panic 不携带任何宿主可处置的信息。
+func TestExecuteAndRunWithoutRegistryFailsClosed(t *testing.T) {
+	out, d := ExecuteAndRun(context.Background(),
+		gateOf(policy.VerdictAuto),
+		nil, // 压根没装登记簿
+		Request{
+			Op:      policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
+			Program: "return 1;",
+		})
+	if d.Outcome != OutcomeLevelShort {
+		t.Fatalf("没有可执行后端时应给出明确失败结论（level_short），实得 %v（%s）", d.Outcome, d.Reason)
+	}
+	if out.OK {
+		t.Fatal("没有后端时不该有成功结果")
+	}
+	if !strings.Contains(d.Reason, "后端") {
+		t.Errorf("理由应指出缺后端，实得 %q", d.Reason)
+	}
+}
+
 // TestGuardZeroValueFailsClosed 钉住：零值 Guard（门与登记簿都缺）⇒ 按需人审。
 //
 // 零值不可用是本仓纪律（「空集合拒绝构造」「没人看着的调用不该看起来能用」）。
