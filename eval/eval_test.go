@@ -122,16 +122,86 @@ func TestRecordReplayReproduce(t *testing.T) {
 		if len(a) == 0 || len(b) == 0 {
 			t.Fatalf("两侧都应有差异：%d vs %d", len(a), len(b))
 		}
-		// 两侧比较方向不同，但各自的输出内部按 (ID, Field) 有序。
+		// 两侧比较方向不同，但各自的输出内部按 (ID, Index, Field) 有序。
 		for _, div := range [][]Divergence{a, b} {
 			for i := 1; i < len(div); i++ {
 				prev, cur := div[i-1], div[i]
-				if prev.ID > cur.ID || (prev.ID == cur.ID && prev.Field > cur.Field) {
-					t.Fatalf("差异清单未按 (ID, Field) 排序：%+v", div)
+				if prev.ID > cur.ID || (prev.ID == cur.ID && prev.Index > cur.Index) ||
+					(prev.ID == cur.ID && prev.Index == cur.Index && prev.Field > cur.Field) {
+					t.Fatalf("差异清单未按 (ID, Index, Field) 排序：%+v", div)
 				}
 			}
 		}
 	})
+
+	t.Run("同 ID 多行：授予段差异必须显形（issue #221）", func(t *testing.T) {
+		// 同一个副作用 Key 的授予段与对账段共用一个行标识（trajectory 的设计
+		// 事实）。按 ID 建一对一 map 会只留数组里最后一条（对账段），授予段被
+		// 整条丢弃——含副作用事件的回归比对由此给出「差异假零」。
+		evs := sideEffectEvents()
+		want := Replay(evs, trajectory.Options{})
+		evs[0].Payload["resource"] = "res-2" // 重放侧只改授予段的资源
+		got := Replay(evs, trajectory.Options{})
+		div := Diff(want, got)
+		if len(div) == 0 {
+			t.Fatal("授予段被改必须显形（按 ID 建一对一 map 时这里是假零）")
+		}
+		found := false
+		for _, d := range div {
+			if d.ID == "sideeffect#se-1" && d.Index == 0 && d.Field == "sideeffect_resource" &&
+				d.Want == "res-1" && d.Got == "res-2" {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("差异应落在授予段（Index=0）的 sideeffect_resource 上：%+v", div)
+		}
+	})
+
+	t.Run("同 ID 多行：两侧全同则差异为零", func(t *testing.T) {
+		evs := sideEffectEvents()
+		div := Diff(Replay(evs, trajectory.Options{}), Replay(evs, trajectory.Options{}))
+		if len(div) != 0 {
+			t.Fatalf("同一段含副作用事件的全同轨迹必须差异为零：%+v", div)
+		}
+	})
+
+	t.Run("同 ID 少一段：缺行显形且记出现序（issue #221）", func(t *testing.T) {
+		// 录制侧多一次点观察（contended，同 ID 第三行），重放侧没有——
+		// 缺段按出现序报 row 缺行，段数差异不得静默。
+		t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+		extra := append(sideEffectEvents(), eventbus.Event{
+			ID: 1, SessionID: "sess-se", Type: eventbus.EventSideEffectContended, Level: "info",
+			Payload:    map[string]any{"key": "se-1"},
+			OccurredAt: t0.Add(300 * time.Millisecond),
+		})
+		want := Replay(extra, trajectory.Options{})
+		got := Replay(sideEffectEvents(), trajectory.Options{})
+		div := Diff(want, got)
+		if len(div) != 1 {
+			t.Fatalf("应恰有一条缺行差异：%+v", div)
+		}
+		d := div[0]
+		if d.ID != "sideeffect#se-1" || d.Index != 2 || d.Field != "row" || d.Want != "present" || d.Got != "absent" {
+			t.Fatalf("缺段应报 Index=2 的 row present→absent：%+v", d)
+		}
+	})
+}
+
+// sideEffectEvents 一段含副作用事件的最小流：授予 → 转未知（授予段收口 +
+// 开同 Key 对账段）→ 裁决未生效（对账段收口）。同一个 Key 的两段共用一个
+// 行标识（sideeffect#se-1）——「轨迹行 ID 不唯一」的现成形态。
+func sideEffectEvents() []eventbus.Event {
+	t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	ev := func(at time.Time, typ string, payload map[string]any) eventbus.Event {
+		return eventbus.Event{ID: 1, SessionID: "sess-se", Type: typ, Level: "info",
+			Payload: payload, OccurredAt: at}
+	}
+	return []eventbus.Event{
+		ev(t0, eventbus.EventSideEffectGranted, map[string]any{"key": "se-1", "resource": "res-1", "fence": uint64(1)}),
+		ev(t0.Add(100*time.Millisecond), eventbus.EventSideEffectUncertain, map[string]any{"key": "se-1"}),
+		ev(t0.Add(200*time.Millisecond), eventbus.EventSideEffectResolved, map[string]any{"key": "se-1", "applied": false}),
+	}
 }
 
 func TestVerify(t *testing.T) {

@@ -190,7 +190,10 @@ func TestReconcileAppliedRecordsResult(t *testing.T) {
 }
 
 // TestReconcileNotAppliedAllowsRetry 钉住对账的负向裁决：
-// 宿主确认「未生效」⇒ 清除未知标记 ⇒ 该 Key 重新可被执行。
+// 宿主确认「未生效」⇒ 清除未知标记 ⇒ 该 Key 重新可被执行，**裁决本身返回
+// OutcomeApplied**——契约口径：「裁决成功且门已打开」，不是 OutcomeContended
+// （那会把「可执行了」误报成「没轮上」，调用方按契约立即重做的路径会被
+// 误导成退避等待；issue #218 前本用例把错误的一侧钉成了断言）。
 //
 // 这一条是「未知态可解」的正向证明：未知不是死局，对账之后路能走。
 func TestReconcileNotAppliedAllowsRetry(t *testing.T) {
@@ -210,8 +213,11 @@ func TestReconcileNotAppliedAllowsRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("对账不该失败: %v", err)
 	}
-	if outcome != OutcomeContended {
-		t.Fatalf("裁决「未生效」应返回 contended（可再抢闸），实得 %v", outcome)
+	// OutcomeContended 在这里是误判的返回值：contended 的语义是「没轮上、
+	// 退避后再试」，而此刻的真相是「门已打开、可立刻执行」——与 sidetest
+	// （reconcile.go 裁决场景）和 examples/pgstore（resolveBody）同一口径。
+	if outcome != OutcomeApplied {
+		t.Fatalf("裁决「未生效」应返回 applied（裁决成功且门已打开），实得 %v", outcome)
 	}
 
 	calls := 0
@@ -230,6 +236,34 @@ func TestReconcileNotAppliedAllowsRetry(t *testing.T) {
 	}
 	if string(res.Payload) != "ok" {
 		t.Fatalf("结果应为 ok，实得 %q", res.Payload)
+	}
+}
+
+// TestReconcileNotAppliedThenAcquireApplied 交叉断言（issue #218 验收）：
+// 裁决「未生效」的返回值（applied）与存储侧的事实（立刻 Acquire 必得 applied）
+// 必须互为印证——「返回值说门开了」与「门真的开了」不能各说各话。
+func TestReconcileNotAppliedThenAcquireApplied(t *testing.T) {
+	st := newFakeStore()
+	r := NewRunner(st, 30*time.Second)
+	ctx := context.Background()
+	a := act("k1", "res-a")
+
+	_, _, _ = r.Execute(ctx, a, func(context.Context, Lease) (Result, error) {
+		return Result{}, errors.New("响应丢了")
+	})
+	if _, _, err := r.Reconcile(ctx, a, Resolution{Applied: false, Reason: "查下游：动作未生效"}); err != nil {
+		t.Fatalf("对账不该失败: %v", err)
+	}
+
+	acqOutcome, lease, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("裁决后 Acquire 不该失败: %v", err)
+	}
+	if acqOutcome != OutcomeApplied {
+		t.Fatalf("裁决未生效后立刻 Acquire 应得 applied，实得 %v", acqOutcome)
+	}
+	if lease.Fence == 0 {
+		t.Fatal("重新开门的授予必须发放令牌（下游据此拒收陈旧写入）")
 	}
 }
 

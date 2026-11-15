@@ -1,8 +1,9 @@
 // diff.go —— 差异比对：录制投影 vs 重放投影，逐行逐字段判不同。
 //
 // 比对的两端必须是同一个投影函数的产物（两侧都用 Replay/同一 Options），
-// 否则比出的是「两个投影器的差异」而不是「事件的差异」。差异按 (ID, Field)
-// 排序——确定性输出让「同一对输入永远同一份差异」，回归比对才有基线。
+// 否则比出的是「两个投影器的差异」而不是「事件的差异」。差异按
+// (ID, Index, Field) 排序——确定性输出让「同一对输入永远同一份差异」，
+// 回归比对才有基线。
 package eval
 
 import (
@@ -18,7 +19,11 @@ import (
 type Divergence struct {
 	// ID 行标识（缺失行以 Field="row" 表达）。
 	ID string
-	// Field 字段名（trajectory.Row 的字段词表）。
+	// Index 同 ID 多行时的出现序（0 起）：副作用行共用一个标识（同一个逻辑
+	// 动作的授予段、对账段、点观察，见 trajectory.sideeffectRowID），配对必须
+	// 按出现序逐条进行——单行 ID 恒为 0。
+	Index int
+	// Field 字段名（trajectory.Row 的字段词表；"row" = 该出现序上整行缺失）。
 	Field string
 	// Want 期望值（录制侧）。
 	Want string
@@ -29,17 +34,30 @@ type Divergence struct {
 // Diff 比对两份轨迹行，返回确定性排序的差异清单。
 //
 // 空切片 = 完全复现（issue #111 的验收线：回放能复现一条已录制轨迹，
-// 差异为零）。比对字段覆盖轨迹行的全部投影事实（ID 是键、Seq 是顺序锚、
-// 两侧时刻都来自事件本身——时刻不同只说明事件被改过，照样报）。
+// 差异为零）。
+//
+// # 配对按「ID 分组 + 出现序」（issue #221）
+//
+// 轨迹行 ID **不唯一**是 trajectory 的设计事实：同一个副作用 Key 的授予段、
+// 对账段、点观察共用一个标识（trajectory.sideeffectRowID——它们是同一个逻辑
+// 动作的先后两段/侧面）。按 ID 建一对一的 map 会让后写覆盖先写，每个 ID 只剩
+// 数组里最后一条（通常是对账段），**授予段被整条丢弃**——含副作用事件的轨迹
+// 回归比对由此给出「差异为零 = 完全复现」的假绿，缺一段也照样判
+// present↔present。故先按 ID 分组（map[string][]Row），再按出现序逐条配对：
+// 第 i 条对第 i 条；一侧多出/缺少整段时，多出的出现序上报 row 缺行
+// （Index 记缺的是第几条），段数差异永不静默。
+//
+// 比对字段覆盖轨迹行的全部投影事实（ID 是键、Seq 是顺序锚、两侧时刻都来自
+// 事件本身——时刻不同只说明事件被改过，照样报）。
 func Diff(want, got []trajectory.Row) []Divergence {
-	byID := func(rows []trajectory.Row) map[string]trajectory.Row {
-		m := make(map[string]trajectory.Row, len(rows))
+	group := func(rows []trajectory.Row) map[string][]trajectory.Row {
+		m := make(map[string][]trajectory.Row, len(rows))
 		for _, r := range rows {
-			m[r.ID] = r
+			m[r.ID] = append(m[r.ID], r)
 		}
 		return m
 	}
-	wm, gm := byID(want), byID(got)
+	wm, gm := group(want), group(got)
 
 	var out []Divergence
 	ids := make([]string, 0, len(wm)+len(gm))
@@ -54,25 +72,27 @@ func Diff(want, got []trajectory.Row) []Divergence {
 	slices.Sort(ids)
 
 	for _, id := range ids {
-		w, wok := wm[id]
-		g, gok := gm[id]
-		switch {
-		case wok && !gok:
-			out = append(out, Divergence{ID: id, Field: "row", Want: "present", Got: "absent"})
-		case !wok && gok:
-			out = append(out, Divergence{ID: id, Field: "row", Want: "absent", Got: "present"})
-		case wok && gok:
-			out = append(out, rowDiff(id, w, g)...)
+		ws, gs := wm[id], gm[id]
+		n := max(len(ws), len(gs))
+		for i := range n {
+			switch {
+			case i >= len(ws):
+				out = append(out, Divergence{ID: id, Index: i, Field: "row", Want: "absent", Got: "present"})
+			case i >= len(gs):
+				out = append(out, Divergence{ID: id, Index: i, Field: "row", Want: "present", Got: "absent"})
+			default:
+				out = append(out, rowDiff(id, i, ws[i], gs[i])...)
+			}
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Divergence) int {
-		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Field, b.Field))
+		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Index, b.Index), cmp.Compare(a.Field, b.Field))
 	})
 	return out
 }
 
-// rowDiff 比对同一行的全部投影字段（字段表驱动，漏一个字段就是假绿）。
-func rowDiff(id string, w, g trajectory.Row) []Divergence {
+// rowDiff 比对同一次出现的行的全部投影字段（字段表驱动，漏一个字段就是假绿）。
+func rowDiff(id string, idx int, w, g trajectory.Row) []Divergence {
 	type pair struct{ field, want, got string }
 	pairs := []pair{
 		{"seq", fmt.Sprint(w.Seq), fmt.Sprint(g.Seq)},
@@ -100,7 +120,7 @@ func rowDiff(id string, w, g trajectory.Row) []Divergence {
 	var out []Divergence
 	for _, p := range pairs {
 		if p.want != p.got {
-			out = append(out, Divergence{ID: id, Field: p.field, Want: p.want, Got: p.got})
+			out = append(out, Divergence{ID: id, Index: idx, Field: p.field, Want: p.want, Got: p.got})
 		}
 	}
 	return out

@@ -351,7 +351,11 @@ func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resoluti
 		return OutcomeUncertain, Result{}, ErrUnsafeNotRetryable
 	}
 	delete(s.uncertain, act.Key)
-	return OutcomeContended, Result{}, nil
+	// 契约第 2 条：未生效的裁决 = 「裁决成功且门已打开」，返回 OutcomeApplied
+	// 表达这个结论。返回 OutcomeContended 是误判——那会把「可执行了」
+	// 误报成「没轮上」，调用方按契约写 `if outcome == OutcomeApplied { 立即重做 }`
+	// 时会退避等待一个本该立刻执行的动作（与 sidetest / pgstore 参考实现同一口径）。
+	return OutcomeApplied, Result{}, nil
 }
 
 func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error) {
