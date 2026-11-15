@@ -79,7 +79,7 @@ packages:
   - pkg: watchdog
     level: Stable
     since: v0.33.0
-    reason: 被动配对不变量监视，零依赖，只告警不裁决——没有可变的裁决语义。
+    reason: 被动配对不变量监视，只依赖 eventbus/contract 两个内部包、无外部依赖，只告警不裁决——没有可变的裁决语义。
 
   # ── 判据已定型的机制包（Stable）──
   - pkg: spill

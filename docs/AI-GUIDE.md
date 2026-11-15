@@ -405,8 +405,9 @@ make check
 ### 4.1 架构门禁的规则表
 
 > **条数口径**：`make architecture-check` 打印的是「8 条规则 + 0 个门面包 + 57 个包的
-> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 6 条结构规则
-> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ 1 条 policy 自校验。
+> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 9 条结构规则
+> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** /
+> **租户隔离证据三条**）+ 1 条 policy 自校验。
 > 下表把两类都列出来，故行数比「8 条」多。**别再按表的行数改「N 条规则」那句话**：
 > 那句话对着 `rules` 段，两者本来就不同量纲（此前标题写「9 条规则」属实是拿混了）。
 >
@@ -428,7 +429,10 @@ make check
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
 | `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询 `SatisfiedBy`）；登记 `denied`（本层无法兑现）；登记已陈旧；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`——按**文件**判，不按启动函数判）| 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env **并**在 spawn 前问一次后端能力（`Spec.SatisfiedBy`）/ 改档位。**`denied` 在本层是造假，不是配置**；子进程环境必须由 `procx.ChildEnv` 白名单生成 |
-| `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录** | 补执行体 / 改声明 / 删陈旧包根 |
+| `tenant-surface-missing-evidence` | 带授权上下文形参 + 返回租户域类型的服务层函数，既没调登记的共享判定面、查询条件也没含过滤列、也没 `// tenant:iso <理由>` 声明 | 补隔离判定（共享判定面 / 过滤列）或在函数注释里写明隔离点 |
+| `viewer-dropped` | 带授权上下文形参却完全不用（授权上下文被丢弃） | 用它做隔离判定，或删掉这个形参 |
+| `shared-surface-missing` | 登记在册的共享隔离判定面在代码里不存在（清单漂移 = 登记失效） | 同步 `tenant_gate.shared_surfaces` 与代码（改名/迁走即改，删面即撤登记） |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录**、租户门缺形状 | 补执行体 / 改声明 / 删陈旧包根 |
 
 > 最后一条的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——
 > 任何模块都能 import 它而不判违规。判定粒度是**包目录**，不是顶层目录。

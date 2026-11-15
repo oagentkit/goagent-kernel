@@ -251,6 +251,12 @@ const (
 	// pairing_leak 为被动 watcher 配对不变量告警（reason=declared_not_executed|duplicate_result）。
 	EventToolIdentityViolation = "tool_identity_violation"
 	EventToolPairingLeak       = "tool_pairing_leak"
+	// 轮级括号不变量告警（watchdog INV3，issue #171）：turn_started/turn_ended
+	// 配对与归因校验的被动告警出口（warn 级）。与 tool_pairing_leak 同层——
+	// 一个是工具调用级配对，一个是轮级括号（外层），只告警不裁决。
+	// payload: reason=turn_end_unattributed|turn_end_unknown_status|
+	// turn_end_unopened|turn_open_leak，附 status/closed_by/event 诊断字段。
+	EventTurnBracketViolation = "turn_bracket_violation"
 	// 身份违规 IM 推送已处理标记（identity-watch 通知扫描兜底的幂等锚点；payload {"ref":<源事件ID>}）。
 	EventIdentityViolationNotified = "identity_violation_notified"
 

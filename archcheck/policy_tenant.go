@@ -1,0 +1,63 @@
+// policy_tenant.go —— tenant_gate 段的声明类型（issue #172）。
+//
+// 与 policy.go 拆开的理由：policy.go 已接近 max_file_lines 阈值；租户门的形状
+// 声明是一组自洽的字段（授权类型 / 租户字段 / 扫描面 / 共享面登记），单独成文件
+// 比继续往 policy.go 里堆更容易读。
+package archcheck
+
+// TenantSharedSurface 是一条登记在册的共享租户隔离判定面。
+//
+// Dir 是相对仓根的目录，Name 是函数/方法名。执行体做两件事：
+//   - 调用点匹配（服务层做隔离判定时走这些面）；
+//   - 存在性核对（Dir 下必须有同名 FuncDecl，否则清单漂移 = 红）。
+type TenantSharedSurface struct {
+	Dir  string `yaml:"dir"`
+	Name string `yaml:"name"`
+	Note string `yaml:"note"`
+}
+
+// TenantGate 是租户过滤漏拼门（issue #172）的声明面。
+//
+// 形状（哪些类型算授权上下文、哪些字段算租户域、共享判定面清单）由宿主
+// policy 声明；执行体是通用 AST 分析。内核代码里不得出现宿主租户字面——
+// 它们只出现在这份 policy 里。
+//
+// # 三条判据
+//
+//  1. tenant-surface-missing-evidence：带授权上下文形参 + 返回租户域类型的
+//     函数必须有隔离判定证据（调用登记的共享判定面 / 查询条件含过滤列 /
+//     显式 `// tenant:iso <理由>`）；三者皆无 = 红。
+//  2. viewer-dropped：带授权上下文形参却完全不用 = 红。
+//  3. shared-surface-missing：登记在册的共享判定面在代码里不存在 = 清单漂移 = 红。
+//
+// # 租户类型由代码推导
+//
+// 不另立类型清单：扫描 TenantTypeRoots（缺省 = Roots）下所有生产代码，
+// 任何含 TenantFields 中字段名的 struct 都算租户域类型。新增模型自动入面。
+type TenantGate struct {
+	Enabled  *bool  `yaml:"enabled"`
+	Severity string `yaml:"severity"`
+	Desc     string `yaml:"desc"`
+
+	// Roots 是服务层扫描面（相对仓根，递归）。
+	Roots []string `yaml:"roots"`
+	// TenantTypeRoots 是租户类型推导面；缺省（空）= Roots。
+	TenantTypeRoots []string `yaml:"tenant_type_roots"`
+	// AuthContextTypes 授权上下文类型名。可写限定名（pkg.Actor）或裸名（Actor）。
+	// 限定名按**源级限定符**匹配，并解析 import 别名（`import a ".../pkg"`
+	// 后的 a.Actor 仍算 pkg.Actor）——改名别名绕不过去。
+	AuthContextTypes []string `yaml:"auth_context_types"`
+	// TenantFields 租户域字段名：struct 含任一字段即租户域类型。
+	TenantFields []string `yaml:"tenant_fields"`
+	// FilterColumns 查询过滤列名（Where/Raw 的字符串字面量包含其一即证据）。
+	FilterColumns []string `yaml:"filter_columns"`
+	// SharedSurfaces 共享隔离判定面登记表（调用证据 + 存在性核对）。
+	SharedSurfaces []TenantSharedSurface `yaml:"shared_surfaces"`
+}
+
+// on 报告租户门是否启用。
+//
+// 与 sandbox_providers 等段的缺省语义**相反**：本段缺省即关闭——没有形状
+// （授权类型/租户字段/扫描面）就无从判定，强行开启只会对每个函数报「无证据」。
+// 声明了段却漏形状由自校验报红（那才是「声明了但判不动」的形态）。
+func (t TenantGate) on() bool { return t.Enabled == nil || *t.Enabled }

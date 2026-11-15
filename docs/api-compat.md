@@ -124,8 +124,9 @@ api-lifecycle.yaml 登记 **58** 个包（Stable 21 / Experimental 37 / Deprecat
 - **门面 Stable + 跟随上游**：`dispatch` / `policy` / `reminder` / `toolfail` /
   `sandbox`——调用面稳定，判据语义随上游 oagentkit/guardx、toolgate 演进
   （`follows_upstream` 登记，门禁验 import 面）；
-- **零依赖小判据 Stable**：`toolname` / `pending` / `ticket` / `watchdog` /
-  `statemachine`——小、冻结、无依赖，判据已写死；
+- **小判据 Stable**：`toolname` / `pending` / `ticket` / `watchdog` /
+  `statemachine`——小、冻结、判据已写死（`watchdog` 只依赖 eventbus 与
+  contract 两个内部包，无外部依赖）；
 - **Experimental**：两类——「明显还在演进」的（`ptc` 两轮 BREAKING 未远、
   `budget` 压实骨架刚落、`trajectory` 投影面随上游事件流扩、`egress`/
   `netguard` 出口强制件两端仍空、2026-11-06 批次的七个新包
