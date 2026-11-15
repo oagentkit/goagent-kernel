@@ -79,7 +79,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 |---|---|---|---|
 | `protocol` | 2341 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `scheduling` | 391 | oekit/pkg | Agent 调度的**判据面**（优先级 / 加权公平 / 资源配额 / 背压，issue #108）：归属结论见 ADR-0008——上游 `oagentkit/agent/dispatch` 的全部判定面是 allow 矩阵 + 深度 + 自派发三条（证据见 ADR 的「证据」节），四样判据上游确实没有，落本仓**纯函数面**：优先级排序**平局有名字层裁决且不依赖输入次序**（一次无关的配置重排不得换掉执行次序）、加权公平按 `served_i/w_i` 欠账最小者先服务（同状态重建选择序列逐字相同）、配额账本**整单占用不做部分占用 + 超释放显式拒**（钳位会把重复释放吞成静默）、背压裁决**拒绝必须带机器可判的原因**且在途满优先于队列满（容量问题的处置是扩容/收敛，拥塞问题的处置是退避，先报哪条决定宿主去找谁）。**不做队列不做执行**（宿主的活）、**不判可达性**（dispatch 门面的活）——不与上游并存第二份实现；上游若收编某样，对应判据转门面（ADR-0008 写明后续动作）|
-| `eventbus` | 671 | oagentkit/runtime | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
+| `eventbus` | 886 | oagentkit/runtime、oekit/logx | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）；可选 event-tail 补灌面 `Tailer` 收口「初始化 MaxID → 轮询 id>游标 → 回灌 Hub → 推进」（#166，读侧对偶，TailStore 两方法、读失败游标不动幂等补读；**scope:replica 每副本一条，不套 leader 门**——套了非 leader 副本就收不到他副本事件；重复帧不归它去重，归订阅侧游标）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
 | `spill` | 263 | oekit/pkg | 输出预算溢出：提示契约 / 取回 / 按龄清理 |
 | `pii` | 712 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
 | `netguard` | 1212 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
@@ -102,6 +102,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `pending` | 73 | 无 | 多轮挂起态载体：单一编码入口 + 宽容解码（非法值降级为无挂起）|
 | `sessionref` | 212 | oagentkit/guardx、oekit/pkg | 跨会话引用快照：把**另一个会话的结论**以有界、带来源、带失效点的片段注入当前上下文。`budget`/`spill`/`offload` 三者回答的都是「**同一份上下文**里内容放不下怎么办」，而「引用别的会话的结论」是另一件事——那份内容不在当前上下文里，它的边界与保鲜度没有任何机制面管。不管的后果不是「引用得不好」，是把**当时的**结论当成**现在的**结论用，而这类错误在报告里读起来完全正常（那段话当时确实是真的）。三条判据都走结构：① 裁剪上限采集时给定且裁剪必须显式（`Truncated` + `OriginalBytes` + 注入面的 `truncated=true`，静默截断会让模型以为看到全文）；② `Source`/`SourceVersion`/`CapturedAt`/`ExpiresAt` 随快照走；③ 渲染写 `state=fresh\|expired\|stale`。**版本这一维不可省**：TTL 是采集者猜的，源是否前进是事实（长 TTL + 高频源更新是最常见的失效形态，只靠时间会一路判有效）；版本**回退**同样判 stale（同一个 id 已不是同一段历史）；两者同时成立报 expired。渲染**不拒绝、只标注**——拒不渲染会让「引用过期」变成「引用消失」，宿主无从区分「本来就没引用」与「引用了但过期」。防伪不另写一套，走 `reminder.Wrap` |
 | `drain` | 320 | oekit/logx、oekit/pkg | 优雅排水：轮 ctx 取消脱钩 + 等在途收敛 + 预算耗尽强制收刀（经 `Turns` 接口）|
+| `reconcile` | 508 | oekit/pkg | 启动孤儿对账与心跳租约死主回收（issue #165）：**三路判定 + 一套收敛体**——boot-anchor（进程启动即替代同 instanceID 的上一具尸体，名下 running 且最后事件早于锚点定义性是孤儿，**无须等事件静默**）/ event-silence（本副本 10m 静默；本副本不适用心跳免检，自副本走静默恰是重启孤儿的安全网）/ heartbeat-lease（他副本租约过期**不等静默立即收**、心跳新鲜免检、无心跳行回落 30m 静默），30s 宽限窗；收敛 deny-by-default 落 failed（不重放任何步骤）+ closed_by 四路归因（boot-reconcile/recovery/dead-owner/dead-lease）。**与 drain 成对**（drain 两处「留启动对账」的空缺即本包：计划内 vs 非计划死）；状态词表复用 contract、收尾事件走 eventbus，存储事实全经 Store 接缝（`ListRunning`/`LastActivity`/`ListBeats`/`ConvergeCAS`/`CloseBracket`），包零 DB 依赖；时钟可注入（租约/静默边界可确定性测）。**误收面如实声明**：双进程重叠窗口的静默长步骤有误收面（常规路有 10m 缓冲；单副本杀旧起新无重叠不受影响），`BootGrace` 正值加宽、负值整体关闭 |
 | `ptc` | 3116 | dop251/goja、oagentkit/guardx、oagentkit/runtime、oekit/concurrency、oekit/logx、oekit/pkg | 程序化工具编排：模型写程序 → 沙箱 VM 执行 → 经 `bindings` 调宿主工具；三重预算（墙钟/调用数/字节数）替代 OS 沙盘。**N 轮 ReAct 往返塌缩成 1 轮，原始数据不过模型面**；绑定可带 Signature 让模型按位置传参（可选形参以 `?` 标记、未传则不出现在 JSON 里；形态里的函数名必须是**净化后**的名字，规则见 `toolname`）；**程序内的 host.<tool>() 与普通工具调用走同一套 Stage 判定环**（不做这一步，本包就成了整条链上唯一绕过所有门禁的路径）；**v0.32.0 起缺省即拒绝**：装了工具绑定却没装判定环 ⇒ 拒绝执行（`ErrorKind=unmanaged`），裸执行必须显式声明逃逸口（生产代码里由门禁拦下）；绑定名净化后撞名即装配期拒（否则后绑者顶替前绑者，副作用错位无信号）。**新增子进程后端**（`ptc-subprocess`）：把执行搬出宿主进程，用 **cgroup v2 的 `memory.max`** 兑现 `MaxMemory`（限**物理内存**；`RLIMIT_AS` 限的是虚拟地址空间，会把 Go runtime 一起掐死——已实测否掉）——进程内形态兜不住内存（Go 运行时没有「只给一个 VM 限内存」的开关，goja 公开 API 也没有内存限制），故子进程形态**如实声明**自己兑现这一项（`sandbox.Capable`），**建不出即拒绝执行**（fail closed），兜不住的后端在登记簿里不会被选中 |
 | `backend` | 579 | oagentkit/guardx、oekit/pkg | 任务式执行后端的**契约面**（issue #109）：隔离轴（none/process/container/vm——上游 `Level` 词表的枚举值即强弱序，往中间插容器档等于跨仓破坏性变更，故本包立自己的轴，与 `sandbox.Level` 的对应关系**只写在注释里、不写进代码**——代码级映射是第二真相）。三条判据与既有执行面同源：能力**自报**（`EgressEnforcer` / `Capable` 与 sandbox 同构同词表，**沉默按最弱**——未声明出站能力面的后端连「我能禁网」都说不出口）、要求对照 **fail-closed**（`Spec.SatisfiedBy`：词表外档位不是「更强」而是声明缺陷；要求内存必须实现 `Capable` 且自报兜得住）、登记簿 **无满足者即拒绝不降级 / 满足者取最弱、同档按 ID 字典序**（与登记顺序无关，一次无关的配置重排不会换掉执行方）。进程内兜底 `Inline` **显式自报 IsolationNone**（零值=最弱档是刻意的：漏声明的后端拿到的是最弱选择，不是最强豁免）。Docker Engine 参考实现 + K8s Job 接入占位在 `examples/containerbackend`（宿主抄它、不 import 它） |
 | `watchdog` | 127 | 无| 被动配对不变量监视：环节收口仍有未执行声明 / 结果无对应声明；**只告警不裁决**（热路径裁决在守卫侧）|
@@ -215,11 +216,11 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 43,740 行 / 239 文件（不含 `_test.go`）|
-| 测试 | 249 个测试文件 |
+| 生产代码 | 44,463 行 / 243 文件（不含 `_test.go`）|
+| 测试 | 254 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 8 条规则（`rules` 段）+ 6 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 44 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
+| 门禁 | 8 条规则（`rules` 段）+ 6 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 53 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** |
 | 例外登记 | **0** |
 
 > **上表分两类：前两行有机器判定，其余仍是散文**（issue #31）。

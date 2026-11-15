@@ -16,6 +16,15 @@
 // DurablePublisher 的宿主，本包语义一字不变。接缝形态与 #145 落的
 // commitgate.Store / ticket.Backend 同风格：判定留包内、状态归存储、
 // 进程内参考实现垫底。
+//
+// # 可选 event-tail 面（issue #166）：durable 写侧的对偶读侧
+//
+// durable 面回答「本副本的事件怎么带 ID 落库」；tail 面（tail.go 的 Tailer）
+// 回答「**他副本**的事件怎么进本进程的 Hub」——每副本一条轮询循环，读
+// id > 游标 的新事件回灌，初始化取 MaxID、读失败游标不动。同款边界：
+// TailStore 接口由宿主实现、包零 DB 依赖、不装配则纯内存语义一字不变。
+// **scope:replica**：每副本各跑一条，套 leader 门会让非 leader 副本收不到
+// 他副本事件（详见 tail.go 包头）。重复帧不归它去重，去重归订阅侧游标。
 package eventbus
 
 import (
