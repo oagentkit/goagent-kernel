@@ -50,6 +50,10 @@ import (
 // 一次误用的批量签发就能把进程内存吃干。本包的立场是**满了就说满**，
 // 而不是默默淘汰（默默淘汰会让宿主以为票据还在，实际已失效 ⇒ 表现为
 // 「偶发地连不上」，极难查）。
+//
+// ⭐ 容量按**未过期张数**计（issue #208）：签发路径在容量判定前回收过期
+// 票据——被签发但从未被消费的票不再永久占容量，长期运行进程不会因累计
+// 过期票而签发永久失败。未过期的票满了照样显式拒发（上面的立场不变）。
 const DefaultMaxEntries = 1024
 
 // idBytes 票据 id 的随机字节数（24 字节 = 192 bit，hex 后 48 字符）。
@@ -120,6 +124,13 @@ func NewWithBackend(b Backend, now func() time.Time) *Store {
 //
 // 容量已满 ⇒ 显式报错（见 DefaultMaxEntries 的说明）。
 //
+// 签发前**顺手回收过期票据**（issue #208）：被签发但从未被消费的票（链接
+// 没人点开）等不到 Consume/Take 来删它，若无人回收，累计满容量后 Put 恒报
+// 「票据空间已满」⇒ 此后所有签发永久失败。回收走 Backend.GC（多副本宿主
+// 注入的 Backend 同样生效）；判定与 Take 同一把尺（now 晚于过期时刻）。
+// 回收是**尽力面**：GC 故障不拦签发，容量判定仍归 Backend（满了照样显式
+// 拒发）——回收成功与否只决定「过期票还占不占地方」，不改变放行语义。
+//
 // ⚠️ 绑定载荷**零校验**（含零值 Binding{}——机制面不解释字段语义）。
 // 零绑定票据消费成功后返回全空 Binding，消费方拿到「授权成立」却答不出
 // 「授权给谁、干什么、对什么对象」，审计面同样无从追溯。多数宿主应改用
@@ -131,9 +142,13 @@ func (s *Store) Issue(b Binding, ttl time.Duration) (string, time.Time, error) {
 		return "", time.Time{}, fmt.Errorf("票据随机源不可用: %w", err)
 	}
 	id := hex.EncodeToString(raw)
-	exp := s.now().Add(ttl)
 	// 容量策略在 Backend 内自判（内存参考实现满了报「票据空间已满」）——
 	// 判定时机（签发前拒）留在这里，判定依据（当前占用数）归存储。
+	// 签发前先回收过期票据（issue #208）：Put 只看条目数、分不出「未过期」，
+	// 不回收的话过期票会永久占满容量，签发从此恒拒。回收后仍在场的都是
+	// 未过期票 ⇒ 「容量按未过期张数计」由此成立。
+	s.GC()
+	exp := s.now().Add(ttl)
 	if err := s.backend.Put(id, b, exp); err != nil {
 		return "", time.Time{}, err
 	}
@@ -191,7 +206,8 @@ func (s *Store) Consume(id string) (Binding, bool) {
 // GC 清掉过期票据，返回清理张数。
 //
 // 过期票据**已不可消费**（Consume 判过期即失败），但仍占着空间 ⇒ 需要有人
-// 定期收。宿主可挂定时器调它，也可只在签发前顺手调。
+// 定期收。宿主可挂定时器调它；签发路径（Issue）签发前也会顺手调一次
+// （issue #208）——即使宿主从不主动 GC，过期票也不再永久占容量。
 // Backend 故障 ⇒ 返回 0（本轮没清成，下轮再试；清理是尽力面不是判定面）。
 func (s *Store) GC() int {
 	n, err := s.backend.GC(s.now())

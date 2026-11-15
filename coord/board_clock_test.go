@@ -7,10 +7,11 @@ package coord
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
@@ -40,12 +41,6 @@ func (c *clockedStorage) advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.at = c.at.Add(d)
-}
-
-func (c *clockedStorage) current() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.at
 }
 
 // bareBackend 只有三个原语：既不实现 ClockSource 也不声明 SingleMachine
