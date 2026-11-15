@@ -5,11 +5,13 @@ package drain
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -223,5 +225,74 @@ func TestBudgetAndShutdownBudgetAreNotInterchangeable(t *testing.T) {
 		if got := ShutdownBudget(d); got <= 0 {
 			t.Fatalf("ShutdownBudget(%v) = %v：喂 WithTimeout 的预算必须恒正", d, got)
 		}
+	}
+}
+
+// TestDrainBudgetBoundsDeadlinelessCtx 无期限 ctx + 不收敛的在途轮 ⇒ 按 budget
+// 兜底返回（issue #206）：此前 budget 只进留痕、超时判定只看 ctx，Background
+// 这类无期限 ctx 让 Drain 永不返回——停机链卡死，比「不排水」更坏，正对着
+// 包级承诺（「最坏情况和没排水一样」）的反面。
+func TestDrainBudgetBoundsDeadlinelessCtx(t *testing.T) {
+	f := &fakeTurns{active: 1}
+	done := make(chan struct{})
+	go func() { Drain(context.Background(), f, Budget(300*time.Millisecond)); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("无期限 ctx + 不收敛轮应按 budget 兜底返回（修复前永不返回）")
+	}
+	if f.Active() != 0 {
+		t.Fatal("兜底期限到点应强制收刀（在途轮清零）")
+	}
+	if cause := f.lastCause(t); !errors.Is(cause, ErrDeadline) {
+		t.Fatalf("兜底期限的取消原因应为 ErrDeadline, got: %v", cause)
+	}
+}
+
+// captureLogger 留痕捕获：只覆写本包用到的两个方法与 WithAttrs（Delegating
+// 解析 component 子 logger 的必经路——不覆写它会提升到嵌入的后端，捕获落空），
+// 其余方法未被本包调用。用于钉住「ctx 无期限」告警必须出现——静默兜底会让
+// 读者继续以为「60 秒预算在生效」是宿主自己设的。
+type captureLogger struct {
+	logx.Logger
+
+	mu    sync.Mutex
+	warns []string
+}
+
+func (c *captureLogger) CtxInfo(_ context.Context, _ string, _ ...any) {}
+
+func (c *captureLogger) CtxWarn(_ context.Context, msg string, _ ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.warns = append(c.warns, msg)
+}
+
+func (c *captureLogger) WithAttrs(...logx.Attr) logx.Logger { return c }
+
+func (c *captureLogger) contains(sub string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, w := range c.warns {
+		if strings.Contains(w, sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDrainWarnsOnDeadlinelessCtx 兜底必须留痕：无期限 ctx 进入等待时，
+// 留痕里要出现「ctx 无期限」告警（issue #206 验收第二条）。
+func TestDrainWarnsOnDeadlinelessCtx(t *testing.T) {
+	prev := logx.Default()
+	cap := &captureLogger{Logger: prev}
+	logx.SetDefault(cap)
+	defer logx.SetDefault(prev)
+
+	Drain(context.Background(), &fakeTurns{active: 1}, Budget(50*time.Millisecond))
+
+	if !cap.contains("无期限") {
+		t.Fatalf("无期限 ctx 进入等待时应告警「ctx 无期限」，实得 warns: %v", cap.warns)
 	}
 }

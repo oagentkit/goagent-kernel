@@ -147,3 +147,50 @@ func TestDeltaPacerFlushAllZeroBasedIteration(t *testing.T) {
 		t.Fatalf("已收口轮不得再冲刷，未收口轮（含负值）应冲刷: %+v", got3)
 	}
 }
+
+// TestDeltaFlushAllCoversOpenKinds 词表外 kind 的残尾不得被收口静默丢弃
+// （issue #202）：kind 是开放词表（Offer 接受任意串），此前 FlushAll 硬编码
+// reasoning/text 两类——宿主用别的 kind 建流时，残尾永久留在 pacer 里
+// （Sealed 恒 false），流式观测面的最后一个窗口永不发布。
+func TestDeltaFlushAllCoversOpenKinds(t *testing.T) {
+	t0 := time.Now()
+
+	// 词表外 kind 单独成流：收口必须冲刷它的残尾。
+	p := New()
+	p.now = func() time.Time { return t0 }
+	_, _ = p.Offer("thinking", 1, "推理残尾")
+	got := p.FlushAll()
+	if len(got) != 1 || got[0].Kind != "thinking" || got[0].Iteration != 1 || got[0].Text != "推理残尾" {
+		t.Fatalf("词表外 kind 的残尾必须被冲刷: %+v", got)
+	}
+	if again := p.FlushAll(); len(again) != 0 {
+		t.Fatalf("已冲刷的残尾不得重复发布: %+v", again)
+	}
+
+	// 同轮混开词表：冲刷序仍确定——reasoning→text→其余按名排序。
+	p2 := New()
+	p2.now = func() time.Time { return t0 }
+	_, _ = p2.Offer("tool_delta", 1, "甲")
+	_, _ = p2.Offer("text", 1, "乙")
+	_, _ = p2.Offer("reasoning", 1, "丙")
+	got2 := p2.FlushAll()
+	if len(got2) != 3 {
+		t.Fatalf("三类残尾都应被冲刷: %+v", got2)
+	}
+	wantKind := []string{"reasoning", "text", "tool_delta"}
+	for i, k := range wantKind {
+		if got2[i].Kind != k {
+			t.Fatalf("冲刷序应为 reasoning→text→其余按名排序, got %+v", got2)
+		}
+	}
+
+	// 词表外 kind 之间按名排序：轮升序在前、同类内名升序。
+	p3 := New()
+	p3.now = func() time.Time { return t0 }
+	_, _ = p3.Offer("zeta", 1, "z")
+	_, _ = p3.Offer("alpha", 1, "a")
+	got3 := p3.FlushAll()
+	if len(got3) != 2 || got3[0].Kind != "alpha" || got3[1].Kind != "zeta" {
+		t.Fatalf("其余 kind 之间应按名排序: %+v", got3)
+	}
+}
