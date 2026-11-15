@@ -241,3 +241,7 @@ func TestGuardDoesNotExecuteOnDeny(t *testing.T) {
 		t.Fatalf("审批已否时不该执行，实得 %d 次", calls)
 	}
 }
+
+// （本文件原 #210 用例已随 PR #227 进 main：TestRunWithLevelNoneDoesNotPanic /
+// TestExecuteAndRunWithoutRegistryFailsClosed 与 TestEgressZeroValueUnchanged
+// 的补强子用例同口径覆盖——合并时去重，不保两份判同一契约的用例。）
