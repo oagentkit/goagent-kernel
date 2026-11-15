@@ -29,9 +29,10 @@ type fakeStore struct {
 	beatsErr  error
 	beatsCall int
 
-	casErr   error
-	refused  map[string]bool
-	lastCast struct {
+	casErr     error
+	refused    map[string]bool
+	bracketErr error
+	lastCast   struct {
 		from, to string
 		cause    Cause
 	}
@@ -85,10 +86,11 @@ func (s *fakeStore) ConvergeCAS(_ context.Context, id, from, to string, cause Ca
 	return !s.refused[id], nil
 }
 
-func (s *fakeStore) CloseBracket(_ context.Context, id, closedBy string) {
+func (s *fakeStore) CloseBracket(_ context.Context, id, closedBy string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, "bracket:"+id+":"+closedBy)
+	return s.bracketErr
 }
 
 func (s *fakeStore) log() []string {
@@ -295,5 +297,79 @@ func TestInterruptedNegativeLeaseTTLDisablesBeatsRead(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("心跳面关闭时他副本回落事件静默并超阈应收敛, n=%d", n)
+	}
+}
+
+// ── 收敛体错误面（issue #184）────────────────────────────────────────────
+
+// TestInterruptedCloseBracketErrorSurfaces 崩溃点注入：CAS 命中后括号关闭失败
+// 必须可见——错误随返回值带出（不吞）、收敛照计数（CAS 已成立）、
+// session_finished 照发（事件驱动收尾的下游不因审计面故障停摆）。
+func TestInterruptedCloseBracketErrorSurfaces(t *testing.T) {
+	store := &fakeStore{
+		sessions:   []Session{{ID: "s1", CaseID: "c1", Owner: "replica-a", CreatedAt: rbase.Add(-time.Hour)}},
+		last:       map[string]time.Time{"s1": rbase.Add(-(DefaultStall + time.Second))},
+		beats:      map[string]time.Time{},
+		bracketErr: fmt.Errorf("turn 表写失败"),
+	}
+	r, rec := newRig(t, Config{InstanceID: "replica-a"}, store)
+
+	n, err := r.RecoverInterrupted(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "关闭 turn 括号失败") {
+		t.Fatalf("括号关闭失败必须随返回值带出（吞掉=永久留未闭合括号无痕）, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "s1") || !strings.Contains(err.Error(), ByRecovery) {
+		t.Fatalf("错误应带会话与归因定位: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("CAS 已命中的收敛必须计数, n=%d", n)
+	}
+	if len(rec.events) != 1 || !strings.Contains(rec.events[0], "session_finished") {
+		t.Fatalf("session_finished 必须照发（下游收尾不因审计面故障停摆）: %v", rec.events)
+	}
+	// 动作序不变：括号在事件之前。
+	got := store.log()
+	if got[len(got)-2] != "bracket:s1:recovery" || got[len(got)-1] != "pub:s1:session_finished:by=recovery" {
+		t.Fatalf("动作序不符: %v", got)
+	}
+}
+
+// TestBootCloseBracketErrorSurfaces 启动锚点路同面：三路共用的收敛体在 boot 路
+// 也必须把括号失败带出——两条扫描入口的聚合语义一致。
+func TestBootCloseBracketErrorSurfaces(t *testing.T) {
+	store := &fakeStore{
+		sessions:   []Session{{ID: "s1", CaseID: "c1", Owner: "replica-a", CreatedAt: rbase.Add(-time.Hour)}},
+		last:       map[string]time.Time{"s1": rbase.Add(-2 * time.Hour)},
+		bracketErr: fmt.Errorf("turn 表写失败"),
+	}
+	r, _ := newRig(t, Config{InstanceID: "replica-a", Boot: rbase, BootGrace: time.Minute}, store)
+
+	n, err := r.RecoverBootOrphans(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "关闭 turn 括号失败") {
+		t.Fatalf("boot 路括号失败必须随返回值带出, got %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("boot 路收敛必须计数, n=%d", n)
+	}
+}
+
+// TestCloseBracketZeroRowStillSilent 零行（他方已处理）时后续收尾一律不发生：
+// 括号与事件都不属于输家——CloseBracket 不得被调用。
+func TestCloseBracketZeroRowStillSilent(t *testing.T) {
+	store := &fakeStore{
+		sessions: []Session{{ID: "s1", Owner: "replica-a", CreatedAt: rbase.Add(-time.Hour)}},
+		last:     map[string]time.Time{"s1": rbase.Add(-(DefaultStall + time.Second))},
+		refused:  map[string]bool{"s1": true},
+	}
+	r, _ := newRig(t, Config{InstanceID: "replica-a"}, store)
+
+	n, err := r.RecoverInterrupted(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("零行静默: n=%d err=%v", n, err)
+	}
+	for _, c := range store.log() {
+		if strings.HasPrefix(c, "bracket:") || strings.HasPrefix(c, "pub:") {
+			t.Fatalf("零行后不得有任何收尾动作: %v", store.log())
+		}
 	}
 }

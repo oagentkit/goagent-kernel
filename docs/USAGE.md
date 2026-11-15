@@ -2270,7 +2270,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
 
-另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（三条规则号）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
+另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
@@ -2282,6 +2282,9 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `tenant-surface-missing-evidence` | 带授权上下文形参 + 返回租户域类型的服务层函数，既没调登记的共享判定面、查询条件也没含过滤列、也没 `// tenant:iso <理由>` 声明 | `policy.yaml` 的 `tenant_gate` 段 + `archcheck/tenantgate.go` |
 | `viewer-dropped` | 带授权上下文形参却完全不用（授权上下文被丢弃） | 同上 |
 | `shared-surface-missing` | 登记在册的共享隔离判定面在代码里不存在（清单漂移 = 登记失效） | 同上 |
+| `tenant-policy-missing` | 含租户字段的模型映射出的物理表不在 `tenant_tables_manifest` 清单里（漏登记 = 隔离策略不覆盖该表） | `policy.yaml` 的 `tenant_gate` 段 + `archcheck/tenantmanifest.go` |
+| `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
+| `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 | `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
@@ -2444,16 +2447,26 @@ tenant_gate:
     - dir: internal/service/identity
       name: TeamRowsVisible
       note: 列表读面行级团队过滤
+  tenant_tables_manifest: docs/tenant_tables.txt  # 租户表登记面（可选，声明后启用 4-6 三条判据）
+  # table_name_method: TableName                   # 物理表名方法名（缺省 GORM 惯例）
 ```
 
-三条判据（规则号见 §4.2 表）：**缺证据即红**、**授权上下文丢弃即红**、
-**登记面不存在即红**。三者各自可单独豁免（policy `exceptions` 精确到
-rule + path + line）。租户类型清单**不另立**——`tenant_type_roots` 下任何含
-`tenant_fields` 字段名的 struct 自动入面。
+六条判据（issue #177 补齐到 6，与 bianque tenantcheck 同口径；规则号见 §4.2 表）：
+**缺证据即红**、**授权上下文丢弃即红**、**登记面不存在即红**，以及声明
+`tenant_tables_manifest` 后启用的**租户表登记面三条**——模型面推导出的租户表
+（`tenant_type_roots` 下含租户字段、且有可解析 `TableName()` 字面量的 struct）
+与清单做**双向核对**：缺登记即红（隔离策略不覆盖这张表）、登记漂移即红（清单
+里的表模型面已不存在）；含租户字段的模型没有可解析表名方法也红。清单是宿主
+自己 dump 的产物（每行一个物理表名，`#` 起行为注释）——宿主持有的 RLS 注册表
+是 Go 符号，执行体调不到；清单与注册表的一致性由宿主的一条校验测试保证。
+前三条各自可单独豁免（policy `exceptions` 精确到 rule + path + line）。
+租户类型清单**不另立**——`tenant_type_roots` 下任何含 `tenant_fields` 字段名
+的 struct 自动入面。
 
 **判不了什么**：调用判定面但没用返回值、过滤条件写在注释里——静态证据存在性
 判不了语义生效。那归宿主运行期判据（`tenant` 包的 `Require/Can` 与配额
-`Enforce` 是它的运行时对偶）。本仓 policy 已按自身形状启用（`tenant` 包）。
+`Enforce` 是它的运行时对偶）。本仓 policy 已按自身形状启用（`tenant` 包；
+无模型层故不声明 `tenant_tables_manifest`）。
 
 ### 4.6 在本仓加新包的正确顺序
 

@@ -58,5 +58,10 @@ func tenantGateSelfCheck(root, policyPath string, tg *TenantGate) []Violation {
 			add("tenant_gate.shared_surfaces 有缺少 dir 或 name 的登记项：无法做调用匹配与存在性核对")
 		}
 	}
+	if p := strings.TrimSpace(tg.TenantTablesManifest); p != "" {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil {
+			add("tenant_gate.tenant_tables_manifest %q 不存在或无法读取（%v）：清单读不到，双向核对一条都判不了", p, err)
+		}
+	}
 	return out
 }

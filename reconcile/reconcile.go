@@ -140,7 +140,10 @@ type Cause struct {
 //   - **CloseBracket 关闭该会话仍开放的 turn 括号**，以 closedBy 归因留痕。
 //     宿主的典型实现即落 turn_ended 事件（载荷带 closed_by）——「有 start
 //     无 end」的开放括号是中断轮的可检测孤儿态，关不掉它审计就读不出轮边界。
-//     本包不重复发 turn_ended（那会与宿主实现双写）。
+//     本包不重复发 turn_ended（那会与宿主实现双写）。返回 error = 括号没关成，
+//     内核**并入聚合错误带出留痕**（issue #184：签名吞错误连「失败了」都
+//     表达不了，宿主拿到错误才能补偿修复）；session_finished 照发——终态
+//     事实已由 ConvergeCAS 成立，事件驱动收尾的下游不因审计面故障停摆。
 type Store interface {
 	// ListRunning 列出 running 态会话（owner 语义见上）。
 	ListRunning(ctx context.Context, owner string) ([]Session, error)
@@ -151,7 +154,8 @@ type Store interface {
 	// ConvergeCAS 条件收敛（from→to，原子带报告与结算；false = 他方已处理）。
 	ConvergeCAS(ctx context.Context, sessionID, from, to string, cause Cause) (bool, error)
 	// CloseBracket 关闭开放的 turn 括号（closedBy = Cause.By）。
-	CloseBracket(ctx context.Context, sessionID, closedBy string)
+	// 返回 error = 关闭失败（内核并入聚合错误带出，不吞）。
+	CloseBracket(ctx context.Context, sessionID, closedBy string) error
 }
 
 // Pub 收尾事件发布接缝（宿主的落库+广播同一路；与 watchdog.Pub 同形）。

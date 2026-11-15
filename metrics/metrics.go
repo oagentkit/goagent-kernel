@@ -312,12 +312,3 @@ func SpecOf(name string) (Metric, bool) {
 	}
 	return Metric{}, false
 }
-
-// forbiddenSet 禁区标签的集合视图（Validate 用；包级惰性一次构建）。
-var forbiddenSet = func() map[string]ForbiddenLabel {
-	set := make(map[string]ForbiddenLabel, len(ForbiddenLabels))
-	for _, f := range ForbiddenLabels {
-		set[f.Name] = f
-	}
-	return set
-}()
