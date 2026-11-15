@@ -791,7 +791,7 @@ modules:
 
   - id: worker
     roots: [worker]
-    requires: [taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -799,6 +799,8 @@ modules:
       心跳与续期接 taskboard 的租约续期（Renew = 资格检查不是心跳摆设）；
       恢复（Recover）判资格不判时钟——过期判定归任务板侧，不建第二套时钟判据。
       注册表的参考实现放 examples/worker-runtime（issue #106 边界）。
+      身份域与任务正确性域解耦（issue #179）：心跳失败不阻断租约续期；
+      资格类失败（易主/无法确认/收场被拒）经 Config.OnEvent + logx 留痕，不静默。
 
   - id: scheduling
     roots: [scheduling]

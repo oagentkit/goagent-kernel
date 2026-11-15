@@ -6,9 +6,17 @@
 //
 //   - 注册失败 → 直接返回（没身份就别开工）；
 //   - 心跳失败（@@ErrNotRegistered@@）→ 身份没了：停止领取，收刀退出；
+//   - 心跳失败（其余错误）→ 身份**暂不可确认**：留痕后下一拍重试，
+//     **不阻断**任务租约续期——身份可用性与任务正确性是两个故障域，
+//     焊在一起会让注册表抖动把租约一起拖死（issue #179）；
 //   - 任务租约续期失败（@@taskboard.ErrLeaseLost@@）→ 资格没了：**取消在途
 //     执行的 ctx**，本次任务按失败收场——资格检查失败后的继续执行就是
-//     与新持有者重复施加（危险窗口在施加之前封口）；
+//     与新持有者重复施加（危险窗口在施加之前封口），并留痕；
+//   - 租约续期连续失败跨过一整个租约周期（且 ctx 未取消）→ 资格无法确认：
+//     按 fail-safe 取消在途 ctx、停止发起新副作用并留痕——此时租约按
+//     Renew 的契约已必然过期，继续做就是与新持有者重复施加；
+//   - 收场（Complete/Release）被 @@ErrLeaseLost@@ 拒 → 闸已易主：留痕
+//     （@@EventFinalizeRejected@@），不当成功路径静默吞掉；
 //   - handler 失败 → 任务 Release 回任务板（failed/open 都可被重做，
 //     一次失败不把子任务钉死——taskboard 的状态语义）。
 //
@@ -68,6 +76,13 @@ type Config struct {
 	// 可认领的（确定性——不依赖任务板返回顺序）。优先级/公平性等挑选策略
 	// 由宿主在此接线（判据面见 scheduling 包；本驱动不内嵌第二份）。
 	Pick func(candidates []taskboard.Task) (taskboard.TaskID, bool)
+	// OnEvent 资格类留痕事件的回调（nil = 不回调）：租约易主、资格无法
+	// 确认、收场被拒都在此产出——这些路径此前完全静默。事件同时经 logx
+	// 输出一份，不接回调的宿主也有默认轨迹。
+	//
+	// 回调由驱动**串行**调用（心跳协程与主循环共用一把锁），不得阻塞
+	// （会拖慢心跳节拍）；panic 被收编，不打死驱动。
+	OnEvent func(Event)
 }
 
 // NewLoop 校验配置并构造驱动。
@@ -105,6 +120,22 @@ type Loop struct {
 	registry Registry
 	handler  Handler
 	cfg      Config
+
+	// emitMu 串行化 OnEvent：事件从心跳协程（资格类）与主循环（收场被拒）
+	// 两处产出。宿主回调不必自己加锁；顺序仍按产生时序。
+	emitMu sync.Mutex
+}
+
+// emit 产出资格类留痕事件：默认轨迹走 logx（不接回调的宿主也看得见），
+// 再串行回调宿主。回调 panic 走 async.RunSafe 收编——观测面不得打死驱动。
+func (l *Loop) emit(ev Event) {
+	log.Warnf("worker: 资格类事件 kind=%s task=%s err=%v", ev.Kind, ev.Task, ev.Err)
+	if l.cfg.OnEvent == nil {
+		return
+	}
+	l.emitMu.Lock()
+	defer l.emitMu.Unlock()
+	async.RunSafe(func() { l.cfg.OnEvent(ev) })
 }
 
 // claimed 一次在途认领（主循环与心跳协程的共享面，由 mu 护住）。
@@ -138,12 +169,25 @@ func (l *Loop) Run(ctx context.Context) error {
 	stopping := make(chan struct{}) // 主循环收刀信号（在途已收敛）
 	done := make(chan struct{})     // 心跳协程退出信号
 
-	// 心跳/续期协程：注册心跳 + 在途任务的租约续期，共用一个节拍。
+	// 心跳/续期协程：注册心跳（身份域）+ 在途任务租约续期（正确性域），
+	// 共用一个节拍但**互不阻断**——心跳失败不得跳过续期（issue #179）。
 	// 走 async.GoSafe 而非裸 go func（本仓门禁：panic 无法被外层 recover）。
 	async.GoSafe(func() {
 		defer close(done)
 		ticker := time.NewTicker(l.cfg.HeartbeatInterval)
 		defer ticker.Stop()
+
+		// 续期资格的本地追踪（仅本协程访问，无需加锁）：
+		//   - tracked 是上一次观察到的在途认领；
+		//   - confirmed 是它最近一次「资格被确认」的时刻（Claim 成功即一次
+		//     授予，换认领时从此刻起算）；
+		//   - notified 保证每个认领的资格类事件只留痕一次（不是每拍一遍）。
+		var (
+			tracked   *claimed
+			confirmed time.Time
+			notified  bool
+		)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -152,7 +196,10 @@ func (l *Loop) Run(ctx context.Context) error {
 				return
 			case <-ticker.C:
 			}
-			// 注册心跳：身份的资格检查。非身份类失败（含 ctx 取消的抖动）
+
+			// ── 身份域：注册心跳 ──────────────────────────────────────
+			// 心跳失败只影响身份，**不阻断**下面的租约续期：注册表的可用性
+			// 不是任务正确性的前置条件。非身份类失败（含 ctx 取消的抖动）
 			// 不判丢失——把存储抖动当成身份丢失，驱动会在任务板正常时自杀。
 			if _, hbErr := l.registry.Heartbeat(ctx, reg.ID, reg.Token, l.cfg.TTL); hbErr != nil {
 				if errors.Is(hbErr, ErrNotRegistered) {
@@ -163,20 +210,45 @@ func (l *Loop) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return
 				}
-				continue // 存储抖动：下一拍重试
+				log.Warnf("worker: 注册心跳失败（身份域抖动，下一拍重试；租约续期不受影响）: %v", hbErr)
 			}
-			// 任务租约续期（taskboard.Renew = 资格检查 + 推后到期时刻）。
+
+			// ── 正确性域：在途任务租约续期 ────────────────────────────
+			// taskboard.Renew = 资格检查 + 推后到期时刻。
 			mu.Lock()
 			cur := current
 			mu.Unlock()
 			if cur == nil {
+				tracked, notified = nil, false
 				continue
 			}
-			_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
-			if rErr != nil && errors.Is(rErr, taskboard.ErrLeaseLost) {
-				cur.cancel() // 资格没了：取消在途执行（施加之前封口）
+			if cur != tracked {
+				tracked, confirmed, notified = cur, time.Now(), false
 			}
-			// 其它续期错误：下一拍重试（租约尚未到期的前提下仍有出路）。
+			_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
+			switch {
+			case rErr == nil:
+				confirmed = time.Now()
+			case errors.Is(rErr, taskboard.ErrLeaseLost):
+				// 资格没了：取消在途执行（施加之前封口），留痕。
+				cur.cancel()
+				if !notified {
+					notified = true
+					l.emit(Event{Kind: EventLeaseLost, Task: cur.id, Err: rErr})
+				}
+			case ctx.Err() != nil:
+				return
+			case !notified && time.Since(confirmed) >= l.cfg.TTL:
+				// 连续失败已跨过一整个租约周期（期间一次都没成功）：按 Renew
+				// 的契约，租约在「最后一次确认 + TTL」必然终止——无法确认
+				// 持有资格就是没有持有资格。按 fail-safe 取消在途 ctx
+				// （停止发起新副作用）并留痕；每个认领只收口一次（本地时钟
+				// 与存储时钟的微小偏差不足以让「跨过整周期」的结论翻转）。
+				notified = true
+				cur.cancel()
+				l.emit(Event{Kind: EventLeaseUnconfirmed, Task: cur.id, Err: rErr})
+			}
+			// 其它续期错误（阈值内）：下一拍重试（租约尚未到期的前提下仍有出路）。
 		}
 	})
 
@@ -252,7 +324,8 @@ func (l *Loop) claimNext(ctx context.Context) (taskboard.Task, bool, error) {
 //
 // 收场动作走 WithoutCancel：外层停机时在途任务的 Complete/Release 仍要落地
 // （任务板的状态不能因为停机而悬在 claimed）。收场被 ErrLeaseLost 拒
-// = 闸已易主——任务归新持有者，如实接受（不重试、不吞）。
+// = 闸已易主——任务归新持有者，如实接受（不重试），但必须留痕
+// （EventFinalizeRejected）：这是唯一能告诉下游「这次执行的结果不作数」的信号。
 func (l *Loop) executeOne(ctx context.Context, mu *sync.Mutex, current **claimed, task taskboard.Task) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	c := &claimed{id: task.ID, token: task.Lease.Token, cancel: cancel}
@@ -269,14 +342,19 @@ func (l *Loop) executeOne(ctx context.Context, mu *sync.Mutex, current **claimed
 
 	finalCtx := context.WithoutCancel(ctx)
 	if execErr == nil {
-		if err := l.board.Complete(finalCtx, task.ID, c.token); err != nil &&
-			!errors.Is(err, taskboard.ErrLeaseLost) {
-			return errors.Wrap(err, "worker: 完成任务失败", "task", string(task.ID))
+		if err := l.board.Complete(finalCtx, task.ID, c.token); err != nil {
+			if !errors.Is(err, taskboard.ErrLeaseLost) {
+				return errors.Wrap(err, "worker: 完成任务失败", "task", string(task.ID))
+			}
+			// 闸已易主：本次收场未生效。留痕，不当成功路径吞掉。
+			l.emit(Event{Kind: EventFinalizeRejected, Task: task.ID, Err: err})
 		}
 	} else {
-		if err := l.board.Release(finalCtx, task.ID, c.token); err != nil &&
-			!errors.Is(err, taskboard.ErrLeaseLost) {
-			return errors.Wrap(err, "worker: 释放任务失败", "task", string(task.ID))
+		if err := l.board.Release(finalCtx, task.ID, c.token); err != nil {
+			if !errors.Is(err, taskboard.ErrLeaseLost) {
+				return errors.Wrap(err, "worker: 释放任务失败", "task", string(task.ID))
+			}
+			l.emit(Event{Kind: EventFinalizeRejected, Task: task.ID, Err: err})
 		}
 	}
 	return nil
