@@ -255,6 +255,15 @@ packages:
     since: v0.35.0
     reason: Worker 生命周期参考实现（package main，issue #106）。示例演示契约怎么接线，不构成任何兼容承诺。
 
+  # ── 2026-11-15 新增（issue #169 #170，下沉提案落地）──
+  - pkg: dispatch
+    level: Experimental
+    since: v0.38.0
+    reason: 改派失败面（issue #169）刚下沉——三档词表与改派环的刻度会随宿主多执行者编排的反馈调整。
+  - pkg: deadline
+    level: Experimental
+    since: v0.38.0
+    reason: 会话墙钟机制（issue #170）刚下沉——锚点形态与三分路由要随 finalize/恢复语义的对接反馈调整。
   # ── 2026-11-15 新增（issue #165 #166）──
   - pkg: reconcile
     level: Experimental

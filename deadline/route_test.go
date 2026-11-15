@@ -1,0 +1,118 @@
+package deadline
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/contract"
+)
+
+// 收尾三分路由的契约判据（issue #170）：超时 / 用户取消 / 进程停机可区分，
+// 且 timed_out 臂必须先于停机臂（次序纪律）。
+
+// TestRouteThreeWaySplit 三分可区分：三种 cause 各归各的结论与终态词表。
+func TestRouteThreeWaySplit(t *testing.T) {
+	// ① 会话墙钟到点 → timed_out（deny-by-default：超时的产出不可信）。
+	tctx, tcancel := WithCause(context.Background(), 3*time.Millisecond)
+	defer tcancel()
+	<-tctx.Done()
+	if got := Route(tctx); got != OutcomeTimedOut {
+		t.Fatalf("墙钟到点应判 timed_out, got %s", got)
+	}
+	if got := Route(tctx).Status(); got != contract.StatusTimedOut {
+		t.Fatalf("timed_out 应落 contract.StatusTimedOut, got %q", got)
+	}
+
+	// ② 用户取消（宿主专属哨兵经 WithCancelCause 表达）→ cancelled。
+	userSentinel := errors.New("caller asked to stop")
+	uctx, ucancel := context.WithCancelCause(context.Background())
+	ucancel(userSentinel)
+	if got := Route(uctx, userSentinel); got != OutcomeCancelled {
+		t.Fatalf("用户取消应判 cancelled, got %s", got)
+	}
+	if got := Route(uctx, userSentinel).Status(); got != contract.StatusCancelled {
+		t.Fatalf("cancelled 应落 contract.StatusCancelled, got %q", got)
+	}
+
+	// ③ 进程停机（父 ctx 取消传播）→ 不落终态（留给恢复循环）。
+	pctx, pcancel := context.WithCancel(context.Background())
+	child, childCancel := context.WithCancel(pctx) // 轮 ctx 挂在关停链上
+	pcancel()
+	<-child.Done()
+	childCancel()
+	if got := Route(child); got != OutcomeShutdown {
+		t.Fatalf("停机应判 shutdown（不落终态）, got %s", got)
+	}
+	if s := Route(child).Status(); s != "" {
+		t.Fatalf("停机不得给出终态词, got %q", s)
+	}
+
+	// 未取消 → 无收敛动作。
+	if got := Route(context.Background()); got != OutcomeNone || got.Status() != "" {
+		t.Fatalf("未取消应判 none, got %s (%q)", got, got.Status())
+	}
+
+	// 不给 userCancel 哨兵时，非本包 cause 的取消一律判停机
+	//（裸 cancel 与停机在 Cause 上不可分——三分的前提是各有 cause）。
+	if got := Route(uctx); got != OutcomeShutdown {
+		t.Fatalf("未声明用户取消哨兵时应保守判停机, got %s", got)
+	}
+}
+
+// TestRouteDeadlineArmBeatsShutdownArm **次序纪律**：墙钟到点的 ctx 同样满足
+// 停机臂的条件（ctx.Err() != nil），timed_out 臂必须先被判走——次序写反，
+// 每次会话超时都会被判成停机、不落终态，会话永久滞留 running。
+//
+// 场景即任务判据：**停机形态的 ctx（已取消）+ 已过期锚点 → timed_out 而非停机臂**。
+func TestRouteDeadlineArmBeatsShutdownArm(t *testing.T) {
+	cfg := Config{Timeout: 30 * time.Minute, Shared: true}
+	// 锚点还有几毫秒余量 → Begin 按剩余时长装饰出携带专属 cause 的轮 ctx。
+	anchor := &Anchor{
+		FirstClaimAt: time.Now().Add(-time.Minute),
+		DeadlineAt:   time.Now().Add(3 * time.Millisecond),
+	}
+	rctx, release, expired := cfg.Begin(context.Background(), anchor, time.Now())
+	defer release()
+	if expired {
+		t.Fatal("锚点此刻仍有效，不该判过期")
+	}
+
+	<-rctx.Done()
+	// 断言点打在「两个臂同时成立」的那一刻：ctx 已取消（停机臂条件），
+	// 且锚点此刻已过期。
+	if rctx.Err() == nil {
+		t.Fatal("前提失效：ctx 应已取消（否则测不到臂序）")
+	}
+	if got := anchor.State(time.Now()); got != StateExpired {
+		t.Fatalf("前提失效：锚点应已过期, got %s", got)
+	}
+	if got := Route(rctx); got != OutcomeTimedOut {
+		t.Fatalf("次序纪律被破坏：已取消 + 锚点过期应走 timed_out 臂而非停机臂, got %s", got)
+	}
+
+	// 对照组：同样已取消，但 cause 来自停机（没有本包哨兵）→ 停机臂。
+	// 两条同时成立才说明「区分靠 cause 与臂序」，不是「取消了一律 timed_out」。
+	pctx, pcancel := context.WithCancel(context.Background())
+	pctx2, c2 := context.WithCancel(pctx)
+	pcancel()
+	<-pctx2.Done()
+	c2()
+	if got := Route(pctx2); got != OutcomeShutdown {
+		t.Fatalf("对照：停机 ctx 应走停机臂, got %s", got)
+	}
+}
+
+// TestRouteMultipleUserCancelSentinels 用户取消哨兵可给多个（宿主常有
+// 「API 取消」与「前端断开」两个入口），任一命中即判取消。
+func TestRouteMultipleUserCancelSentinels(t *testing.T) {
+	first := errors.New("api cancel")
+	second := errors.New("client disconnect")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(second)
+	if got := Route(ctx, first, second); got != OutcomeCancelled {
+		t.Fatalf("第二个哨兵命中应判 cancelled, got %s", got)
+	}
+}
