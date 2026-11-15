@@ -58,6 +58,11 @@ const (
 	AnomalyDoneOutOfOrder AnomalyKind = "done_out_of_order"
 	// AnomalyCompleteWithPending 快照标记运行已终结，编排图里却仍有未完成步骤。
 	AnomalyCompleteWithPending AnomalyKind = "complete_with_pending"
+	// AnomalyUnknownStatus 快照状态不在已知词表内（既非终态、也非过程态），
+	// 且图里仍有未完成步骤。语义判不了——它可能是宿主自定义的终态——按
+	// 阻塞侧处理：不自动续跑（issue #219，与 Reconcile 对未知闸态同一条口径：
+	// 判不了不是放行的理由）。
+	AnomalyUnknownStatus AnomalyKind = "unknown_status"
 )
 
 // Anomaly 一条不一致报告。
@@ -85,17 +90,21 @@ type Plan struct {
 
 // Blocked 该计划是否含内核**拒绝自动决定**的异常。
 //
-// 两种：
+// 三种：
 //
 //   - AnomalyCompleteWithPending：快照说这次运行已终结，图里却还有未完成步骤。
 //     内核不会擅自重开一个已终结的运行——是否重开是宿主的决定。
 //   - AnomalySideEffectConflict（v0.33.0，issue #90）：快照说某步已完成，
 //     闸侧却说该步的副作用未结算——快照不可信，先对账再重建（Reconcile）。
+//   - AnomalyUnknownStatus（issue #219）：快照状态不在已知词表内、图里却还有
+//     未完成步骤。它可能是宿主自定义的终态——「判不了」按阻塞侧处理，与
+//     Reconcile 对未登记闸态的口径一致。
 //
 // 其余异常都不阻断：内核已按最保守解释给出可执行计划。
 func (p Plan) Blocked() bool {
 	for _, a := range p.Anomalies {
-		if a.Kind == AnomalyCompleteWithPending || a.Kind == AnomalySideEffectConflict {
+		if a.Kind == AnomalyCompleteWithPending || a.Kind == AnomalySideEffectConflict ||
+			a.Kind == AnomalyUnknownStatus {
 			return true
 		}
 	}
@@ -126,6 +135,35 @@ func isTerminal(status string) bool {
 	default:
 		return false
 	}
+}
+
+// statusClass 快照状态的三态归类。
+//
+// 两态不够用（issue #219）：「非终态」把**词表外**的值也吞进去，而宿主完全
+// 可能把运行落库为自定义终态（"aborted"）——两态判据对它 fail-open，已终结
+// 的运行被当成「可续跑」静默重开。三态让「判不了」显式成为一类，处置对齐
+// Reconcile 的口径：未知按阻塞侧。
+type statusClass int
+
+const (
+	// statusOpen 已知过程态（或快照没写状态——崩溃快照的常态，续跑是本包的本职）。
+	statusOpen statusClass = iota
+	// statusTerminal 已知终态。
+	statusTerminal
+	// statusUnknown 词表外：语义判不了，不得按「可续跑」放行。
+	statusUnknown
+)
+
+// classifyStatus 把快照状态归入三态。词表取自 contract——不在本包另立一份。
+func classifyStatus(status string) statusClass {
+	switch status {
+	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
+		return statusOpen
+	}
+	if isTerminal(status) {
+		return statusTerminal
+	}
+	return statusUnknown
 }
 
 // BuildPlan 由编排图与（可为 nil 的）进度快照算出恢复计划。纯函数，无副作用。
@@ -164,6 +202,8 @@ func isTerminal(status string) bool {
 //
 // 快照标记运行已终结、图里却有未完成步骤时，计划置为 Blocked 且 Run/Skip 均留空：
 // 内核拒绝替宿主决定是否重开，也不给一个「看起来能跑」的半截计划。
+// 词表外状态（既非已知终态也非已知过程态）按同一方向处置（issue #219）：
+// 它可能是宿主自定义的终态，「判不了」按阻塞侧，不按「可续跑」放行。
 func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	var p Plan
 
@@ -247,10 +287,22 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	}
 
 	// 已终结的运行不被自动重开：把已算出的计划作废，交给宿主显式决定。
-	if isTerminal(snap.Status) && len(p.Run) > 0 {
-		p.addAnomaly(AnomalyCompleteWithPending, "",
-			"快照标记运行已终结但仍有未完成步骤，内核不自动重开，需宿主显式决定")
-		p.Skip, p.Run = nil, nil
+	// 词表外状态同宽处理（issue #219）：它可能是宿主自定义的终态，「判不了」
+	// 不是放行的理由——按阻塞侧处理（与 Reconcile 对未登记闸态同一条口径），
+	// 而不是 fail-open 成「可续跑」。
+	switch classifyStatus(snap.Status) {
+	case statusTerminal:
+		if len(p.Run) > 0 {
+			p.addAnomaly(AnomalyCompleteWithPending, "",
+				"快照标记运行已终结但仍有未完成步骤，内核不自动重开，需宿主显式决定")
+			p.Skip, p.Run = nil, nil
+		}
+	case statusUnknown:
+		if len(p.Run) > 0 {
+			p.addAnomaly(AnomalyUnknownStatus, "",
+				"快照状态 "+snap.Status+" 不在已知词表内（可能是宿主自定义终态），内核不自动续跑，需宿主显式决定")
+			p.Skip, p.Run = nil, nil
+		}
 	}
 
 	return p

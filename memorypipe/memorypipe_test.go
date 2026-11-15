@@ -122,3 +122,49 @@ func TestPromptCarriesMarks(t *testing.T) {
 		t.Fatal("裁剪后注入体必须标出来")
 	}
 }
+
+// TestBuildDeterministicForEmptyIDEntries 空 ID 同时刻条目的输出必须逐字可复现
+// （issue #203）：此前比较器回退读条目 ID，两条空 ID 条目恒比出 0，
+// slices.SortFunc 非稳定——输出顺序随 map 迭代序漂移，配 MaxItems 时
+// 哪条被注入随运行变化。回退改用去重键后，序恒为键升序（"text:A" < "text:B"）。
+func TestBuildDeterministicForEmptyIDEntries(t *testing.T) {
+	q := Query{Scope: "project", MaxItems: 1}
+	entries := []Entry{
+		entry("", "B", "project", "src", base),
+		entry("", "A", "project", "src", base),
+	}
+	var first string
+	var last Result
+	for i := 0; i < 50; i++ {
+		res, err := Build(entries, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := res.Prompt()
+		if first == "" {
+			first = out
+		} else if out != first {
+			t.Fatalf("输出随运行漂移（注入顺序随 map 迭代序）:\nfirst=%q\ngot=%q", first, out)
+		}
+		last = res
+	}
+	if len(last.Pieces) != 1 || last.Pieces[0].Entry.Text != "A" {
+		t.Fatalf("去重键升序应注入 A: %+v", last.Pieces)
+	}
+	if len(last.Dropped) != 1 || last.Dropped[0].Text == "" && last.Dropped[0].Why == "" {
+		t.Fatalf("另一条应被 MaxItems 裁掉并说明: %+v", last.Dropped)
+	}
+}
+
+// TestPromptMarksEmptyID 空 ID 条目的渲染必须显式标注「无 id」（issue #203）：
+// 渲染一个空的 id= 槽位会让模型拿空串当引用锚点，且分不清「这条没有 id」
+// 与「标记坏了」。
+func TestPromptMarksEmptyID(t *testing.T) {
+	res, err := Build([]Entry{entry("", "正文", "project", "src", base)}, Query{Scope: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := res.Prompt(); !strings.Contains(out, "id=<无id>") {
+		t.Fatalf("空 ID 应显式标注，实得: %q", out)
+	}
+}
