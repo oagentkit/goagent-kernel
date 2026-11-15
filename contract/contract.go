@@ -48,6 +48,22 @@ const (
 	StatusTimedOut        = "timed_out"
 )
 
+// IsTerminalStatus 报告 status 是否为会话终态词表成员。
+//
+// 终态 = 一轮编排不会再自行前进的收尾状态（succeeded / failed / cancelled /
+// timed_out）。created / running / waiting_approval 是过程态，不是终态。
+//
+// 这是**词表成员判定**，不是「这个终态是否与事实一致」的裁决——后者需要会话
+// 存储面与恢复路径，归宿主。机制面只需要一个共同的词表真相，故在这里单点导出：
+// 消费方（如 watchdog 的轮括号校验）不必各抄一份终态清单（第二套词表必然漂移）。
+func IsTerminalStatus(status string) bool {
+	switch status {
+	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut:
+		return true
+	}
+	return false
+}
+
 // RunContext 编排运行上下文。
 //
 // 生命周期：一轮编排对应一个实例，由宿主在派发时构造、终态后释放。

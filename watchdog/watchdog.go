@@ -5,11 +5,14 @@
 // 删导出符号都算 breaking，判定规则与变更流程见 docs/api-compat.md，
 // 逐包理由见 api-lifecycle.yaml。
 //
-// 订阅事件总线校验工具调用配对不变量——只告警，不裁决（热路径裁决在 IdentityGuard）。
+// 订阅事件总线校验配对不变量——只告警，不裁决（热路径裁决在 IdentityGuard）。
 // INV1 环节收口仍有未执行声明 → reason=declared_not_executed；
 // INV2 结果无对应声明（重复/幽灵结果）→ reason=unpaired_result。
-// spec §8 INV3（事件面 checksum 抽验）不实现：tool_result 事件载荷截断到 2000 字符，
-// 无法重算 checksum——内容级校验由守卫在源头全量覆盖，此处不重复。
+// INV3（issue #171）是工具配对的外层——轮级括号 turn_started/turn_ended 的
+// 配对、闭合归因（closed_by）与 status 终态词表校验，见 turn.go。
+// 注意命名撞车：spec 2026-09-15-tool-identity-otel-guard-design §8 的「INV3
+// （事件面 checksum 抽验）」是另一条不变量，本包仍不实现它——tool_result 载荷
+// 截断到 2000 字符，无法重算 checksum，内容级校验由守卫在源头全量覆盖。
 package watchdog
 
 import (
@@ -37,14 +40,42 @@ type Watcher struct {
 	open       map[string]map[string]string // key(session|step) → call_id → 工具名
 	lastActive map[string]time.Time         // key → 最后活动时刻（TTL 清扫依据）
 	lastSweep  time.Time
+
+	// INV3 轮级括号（turn.go）：按 sessionID 的开放表 + 归因词表 + TTL。
+	closedBy  map[string]bool
+	turnOpen  map[string]turnBracket
+	turnTTL   time.Duration
+	sweepEach time.Duration
 }
 
 // New 构造（pub 必填；nil 时告警静默丢弃——不阻塞事件流）。
+//
+// 缺省配置：closed_by 四值（loop|recovery|boot-reconcile|panic）+ 2h 开放 TTL。
 func New(pub Pub) *Watcher {
-	return &Watcher{pub: pub, open: map[string]map[string]string{}, lastActive: map[string]time.Time{}}
+	return NewWithConfig(pub, Config{})
+}
+
+// NewWithConfig 带 INV3 配置的构造（additive：New(pub) 的调用面与缺省语义不变）。
+//
+// cfg 的零值 = New 的缺省语义；ClosedBy 在缺省四值上**扩充**，OpenTTL /
+// SweepEvery <=0 时复用既有 openIdleTTL / sweepEvery。
+func NewWithConfig(pub Pub, cfg Config) *Watcher {
+	closedBy, turnOpen, ttl, every := newTurnState(cfg)
+	return &Watcher{
+		pub:        pub,
+		open:       map[string]map[string]string{},
+		lastActive: map[string]time.Time{},
+		closedBy:   closedBy,
+		turnOpen:   turnOpen,
+		turnTTL:    ttl,
+		sweepEach:  every,
+	}
 }
 
 // Run 消费事件流直到 ctx 取消（main 装配期后台 goroutine）。
+//
+// ctx 取消退出**不做扫尾告警**：停机路径刻意留开放轮括号给恢复循环/启动对账
+// 闭合，把「停机」当「泄漏」会误报每个宿主的正常收尾。
 func (w *Watcher) Run(ctx context.Context, bus *eventbus.Bus) {
 	ch, cancel := bus.Subscribe(ctx)
 	defer cancel()
@@ -97,13 +128,17 @@ func (w *Watcher) observe(ev eventbus.Event) {
 		}
 		delete(w.open, key)
 		delete(w.lastActive, key)
+	case eventbus.EventTurnStarted:
+		w.observeTurnStarted(ev)
+	case eventbus.EventTurnEnded:
+		w.observeTurnEnded(ev)
 	}
 }
 
 // maybeSweep 低频 TTL 清扫：单协程消费内联触发，无锁。
 func (w *Watcher) maybeSweep() {
 	now := time.Now()
-	if now.Sub(w.lastSweep) < sweepEvery {
+	if now.Sub(w.lastSweep) < w.sweepEach {
 		return
 	}
 	w.lastSweep = now
@@ -113,6 +148,7 @@ func (w *Watcher) maybeSweep() {
 			delete(w.lastActive, key)
 		}
 	}
+	w.sweepTurns(now)
 }
 
 func (w *Watcher) key(ev eventbus.Event) string {

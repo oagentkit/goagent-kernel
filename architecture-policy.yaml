@@ -174,13 +174,20 @@ modules:
 
   - id: watchdog
     roots: [watchdog]
-    requires: [eventbus]
+    requires: [contract, eventbus] # INV3 轮括号的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus
     owner: harness
     managed: true
     notes: |
-      工具调用配对不变量监视，只告警不裁决。依赖 eventbus 是为了在检测到
+      配对不变量监视，只告警不裁决。依赖 eventbus 是为了在检测到
       「声明未执行 / 执行未声明」时把异常广播出去——配对不变量违反了却无人知晓，
       等于没有监视。
+      INV1/INV2 是工具调用级配对（声明↔结果）；INV3（issue #171）是它的外层——
+      轮级括号配对：turn_started 开括号、turn_ended 闭合，闭合必须带归因
+      （closed_by ∈ 宿主注册词表，缺省 loop|recovery|boot-reconcile|panic）与
+      contract 终态词表内的 status；停机留开放=合法态（Run 退出不扫尾告警）、
+      开放超时=open_leak（与既有 openIdleTTL/sweep 同款 TTL 清扫）。
+      closed_by 词表开放给宿主注册，内核只判「有没有（在册的）归因」，
+      不判归因的语义正确性（那是宿主恢复路径的裁决面）。
 
   - id: delta
     roots: [delta]
