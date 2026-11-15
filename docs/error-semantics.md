@@ -284,6 +284,12 @@
 | `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
+### examples/pgstore
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrIntentRowIncomplete` | 动作行的执行意图四列（intent_resource / intent_fence / intent_holder / intent_expires）**部分填充**——包内写入路径总是四列同写同清，残缺只可能来自仓外（人工订正 / schema 迁移 / 仓外写入方只写部分列）。Acquire 判「有没有在途尝试」按最宽口径（任一列非 NULL 即算挂着，残缺行不得 fail-open 放行），判定前先过四列齐全性守卫（#223，fail-closed） | **先订正数据再重试**：把残缺行的意图四列补齐或全部置 NULL（同一次作废尝试的资源持有一并清掉），此后同一 Key 恢复可用；不得绕过判定强行授予，也不得吞错重试（订正前每次 Acquire 都会原样变红，事务整体回滚、不落任何一行） |
+
 ### tooldisclose
 
 | 哨兵 | 触发条件 | 调用方处置 |
