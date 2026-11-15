@@ -54,13 +54,30 @@ func TestMemoryBackendVersionMonotone(t *testing.T) {
 			t.Fatalf("版本必须逐次 +1（第 %d 次后实得 %d）", i, snap["k"].Ver)
 		}
 	}
-	// 删除后重建：版本从 VerMissing 重新起（历史不复用——版本语义随键生灭）。
+	// 删除即转墓碑（issue #181——旧口径「删除即丢版本」被判契约违反）：
+	// Exists=false 但版本保留并推进——版本是断言的锚点，随条目一起删掉
+	// 就是把它拆了（同名键重建后旧版本断言会误判「没动过」= ABA）。
 	if _, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Del: true}}); err != nil {
 		t.Fatal(err)
 	}
 	snap, _ := b.Snapshot(ctx, "k")
-	if snap["k"].Exists || snap["k"].Ver != VerMissing {
-		t.Fatalf("删除后应为不存在（实得 %+v）", snap["k"])
+	if snap["k"].Exists || snap["k"].Ver != Version(4) {
+		t.Fatalf("删除后应不存在且版本保留墓碑值（实得 %+v）", snap["k"])
+	}
+	// 重建：版本继续前进，不复用历史；删除前的旧版本断言必失败。
+	if _, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Val: []byte("v2")}}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = b.Snapshot(ctx, "k")
+	if !snap["k"].Exists || snap["k"].Ver != Version(5) {
+		t.Fatalf("重建后版本必须继续前进（实得 %+v）", snap["k"])
+	}
+	applied, err := b.Txn(ctx, []Assert{{Key: "k", Ver: Version(1)}}, []Mutation{{Key: "k", Val: []byte("v3")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("删除前旧版本的断言必须失败（ABA 防线——版本不复用）")
 	}
 }
 
@@ -195,4 +212,61 @@ func (c countingBackend) Txn(_ context.Context, _ []Assert, _ []Mutation) (bool,
 
 func (c countingBackend) Keys(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
+}
+
+// TestVersionNotReusedOnMemoryBackend 契约判据对参考实现自检（issue #181）：
+// 写 → 删 → 重建 → 旧版本 CAS 必须失败。宿主的 Redis/etcd/PG Backend
+// 实现对同一判据跑同一套（coord.VersionNotReused）。
+func TestVersionNotReusedOnMemoryBackend(t *testing.T) {
+	ctx := context.Background()
+	if err := VersionNotReused(ctx, NewMemoryBackend(), "aba-key"); err != nil {
+		t.Fatalf("版本单调契约判据必须过： %v", err)
+	}
+}
+
+// TestStaleVersionAssertFailsAfterRebuild 钉 ABA 场景本身（判据背后的事故
+// 形态）：快照读到 k@1 ⇒ 另一路删 k ⇒ 重建 k ⇒ 旧断言 k@1 必须失败——
+// 旧实现里版本从 1 重来、断言重新成立，判定读的是上一代的值、提交写的
+// 是新一代的键。
+func TestStaleVersionAssertFailsAfterRebuild(t *testing.T) {
+	ctx := context.Background()
+	b := NewMemoryBackend()
+
+	if applied, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Val: []byte("上一代")}}); err != nil || !applied {
+		t.Fatalf("首写失败: %v %v", applied, err)
+	}
+	snap, _ := b.Snapshot(ctx, "k")
+	stale := snap["k"].Ver
+
+	if applied, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Del: true}}); err != nil || !applied {
+		t.Fatalf("删除失败: %v %v", applied, err)
+	}
+	snap, _ = b.Snapshot(ctx, "k")
+	if snap["k"].Exists {
+		t.Fatal("删除后键必须不存在")
+	}
+	if snap["k"].Ver != stale+1 {
+		t.Fatalf("删除必须推进版本（墓碑）： %d → %d", stale, snap["k"].Ver)
+	}
+
+	if applied, err := b.Txn(ctx, nil, []Mutation{{Key: "k", Val: []byte("新一代")}}); err != nil || !applied {
+		t.Fatalf("重建失败: %v %v", applied, err)
+	}
+	snap, _ = b.Snapshot(ctx, "k")
+	if snap["k"].Ver <= stale {
+		t.Fatalf("重建后版本不得回退/复用： %d → %d", stale, snap["k"].Ver)
+	}
+
+	// 快照里那份「k@旧版本」的断言对新一代的键必须不成立。
+	applied, err := b.Txn(ctx, []Assert{{Key: "k", Ver: stale}}, []Mutation{{Key: "k", Val: []byte("ABA 注入")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatalf("旧版本 %d 的断言在重建后的键上提交成功——ABA 防线破", stale)
+	}
+	snap, _ = b.Snapshot(ctx, "k")
+	if string(snap["k"].Val) != "新一代" {
+		t.Fatalf("失败断言的事务不得写入（实得 %s）", snap["k"].Val)
+	}
 }

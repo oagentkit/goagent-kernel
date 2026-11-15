@@ -26,9 +26,12 @@ type MemoryBackend struct {
 }
 
 // memEntry 一个键的当前状态（Val 保存独立拷贝，防调用方改底层数组）。
+// del = 墓碑：键已删除但条目保留，版本随之保留（issue #181——删条目即删
+// 版本会让同名键重建后版本回到 1，ABA 断言误判「没动过」）。
 type memEntry struct {
 	ver Version
 	val []byte
+	del bool
 }
 
 // NewMemoryBackend 构造空后端。
@@ -37,17 +40,23 @@ func NewMemoryBackend() *MemoryBackend {
 }
 
 // Snapshot 一致快照读（锁内逐字一致）。
+//
+// 墓碑键返回 Exists=false 但**携带墓碑版本**（不是 VerMissing）——
+// 版本单调的锚点不随删除丢失；VerMissing 只表示「从未写过」。
 func (m *MemoryBackend) Snapshot(_ context.Context, keys ...string) (map[string]Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make(map[string]Entry, len(keys))
 	for _, k := range keys {
 		e, ok := m.kv[k]
-		if !ok {
+		switch {
+		case !ok:
 			out[k] = Entry{Key: k, Ver: VerMissing, Exists: false}
-			continue
+		case e.del:
+			out[k] = Entry{Key: k, Ver: e.ver, Exists: false}
+		default:
+			out[k] = Entry{Key: k, Ver: e.ver, Val: append([]byte(nil), e.val...), Exists: true}
 		}
-		out[k] = Entry{Key: k, Ver: e.ver, Val: append([]byte(nil), e.val...), Exists: true}
 	}
 	return out, nil
 }
@@ -69,7 +78,17 @@ func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mut
 	}
 	for _, mu := range mutations {
 		if mu.Del {
-			delete(m.kv, mu.Key)
+			// 删除也是一次推进：条目转墓碑保留（版本不回退、不复用）。
+			// 对从未写过的键 Del 同样立墓碑——它此后与「从未写过」在
+			// 版本断言上可辨（VerMissing 断言不再成立）。
+			e, ok := m.kv[mu.Key]
+			if !ok {
+				e = memEntry{ver: VerMissing}
+			}
+			e.ver++
+			e.val = nil
+			e.del = true
+			m.kv[mu.Key] = e
 			continue
 		}
 		e, ok := m.kv[mu.Key]
@@ -78,17 +97,23 @@ func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mut
 		}
 		e.ver++ // 版本单调：每次成功写入 +1
 		e.val = append([]byte(nil), mu.Val...)
+		e.del = false
 		m.kv[mu.Key] = e
 	}
 	return true, nil
 }
 
 // Keys 前缀列键（锁内快照语义，结果按键名排序保证确定性）。
+// 墓碑键不列——已删除的键不在键空间里（列出去，适配器的 List 会把
+// 已删任务当活任务判）。
 func (m *MemoryBackend) Keys(_ context.Context, prefix string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out []string
-	for k := range m.kv {
+	for k, e := range m.kv {
+		if e.del {
+			continue
+		}
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			out = append(out, k)
 		}
