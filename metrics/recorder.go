@@ -102,10 +102,32 @@ func Set(name string, v int64, labels Labels) { Default().Set(name, v, labels) }
 // ErrUnregisteredMetric 埋了没登记的指标名（先登记 Specs 再埋点）。
 var ErrUnregisteredMetric = errors.New("未登记的指标名（先在 metrics.specs 登记再埋点）")
 
-// Validate 校验一次埋点是否在契约面内：指标名已登记、标签键都在登记的维度里、
-// 取值落在封闭枚举内、禁区键不出现。宿主测试用它把「埋错标签」拦在测试期
-// ——这类错在生产里不报错，只会在看板上静默拼不起来。
+// CheckLabels 只判禁区标签（issue #178）：与指标名登记表**无关**——宿主给
+// 自己的指标（如 bianque_intents_total）复用同一份 ForbiddenLabels 清单，
+// 不必照抄第二份真相（清单漂移时两边各自静默、不会报警）。Prometheus 描述符
+// 列表同样能过：这里只看标签键，不看指标名。
+//
+// 禁区判据是通用知识（哪些键无界、为什么），登记表判据是内核自有口径（
+// Specs() 只登记 harness.*）——两件事此前焊在 Validate 一个函数里，宿主指标
+// 名在第一步就拿到 ErrUnregisteredMetric，禁区判据永远走不到。
+func CheckLabels(labels Labels) error {
+	for _, f := range ForbiddenLabels {
+		if _, bad := labels[f.Name]; bad {
+			return fmt.Errorf("标签 %q 在禁区清单里（%s）", f.Name, f.Why)
+		}
+	}
+	return nil
+}
+
+// Validate 校验一次埋点是否在契约面内：禁区键不出现、指标名已登记、标签键
+// 都在登记的维度里、取值落在封闭枚举内。宿主测试用它把「埋错标签」拦在
+// 测试期——这类错在生产里不报错，只会在看板上静默拼不起来。
+//
+// 宿主自有指标不走本函数（登记表只认 harness.*），改用 CheckLabels 判禁区。
 func Validate(name string, labels Labels) error {
+	if err := CheckLabels(labels); err != nil {
+		return err
+	}
 	m, ok := SpecOf(name)
 	if !ok {
 		return errors.Wrap(ErrUnregisteredMetric, fmt.Sprintf("埋点 %q", name))
@@ -115,9 +137,6 @@ func Validate(name string, labels Labels) error {
 		declared[d.Key] = d
 	}
 	for k, v := range labels {
-		if f, bad := forbiddenSet[k]; bad {
-			return fmt.Errorf("标签 %q 在禁区清单里（%s）", k, f.Why)
-		}
 		d, ok := declared[k]
 		if !ok {
 			return fmt.Errorf("指标 %s 未声明标签 %q（登记表是口径的唯一来源）", name, k)

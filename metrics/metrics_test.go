@@ -19,6 +19,10 @@ import (
 // TestSpecsSelfCheck 登记表自洽：名称唯一、前缀统一、类型与单位合法、
 // 每个维度有界且依据非空、禁区键不进维度。
 func TestSpecsSelfCheck(t *testing.T) {
+	forbidden := map[string]bool{}
+	for _, f := range ForbiddenLabels {
+		forbidden[f.Name] = true
+	}
 	all := Specs()
 	if len(all) == 0 {
 		t.Fatal("登记表为空：契约面没有登记任何指标")
@@ -58,7 +62,7 @@ func TestSpecsSelfCheck(t *testing.T) {
 				}
 				vals[v] = true
 			}
-			if _, bad := forbiddenSet[d.Key]; bad {
+			if forbidden[d.Key] {
 				t.Errorf("指标 %s 的标签 %s 自己就在禁区清单里：声明自相矛盾", m.Name, d.Key)
 			}
 		}
