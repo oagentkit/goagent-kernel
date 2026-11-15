@@ -252,7 +252,7 @@ func TestDrainBudgetBoundsDeadlinelessCtx(t *testing.T) {
 
 // captureLogger 留痕捕获：只覆写本包用到的两个方法与 WithAttrs（Delegating
 // 解析 component 子 logger 的必经路——不覆写它会提升到嵌入的后端，捕获落空），
-// 其余方法未被本包调用。用于钉住「ctx 无期限」告警必须出现——静默兜底会让
+// 其余方法未被本包调用。用于钉住「ctx 无期限」留痕必须出现——静默兜底会让
 // 读者继续以为「60 秒预算在生效」是宿主自己设的。
 type captureLogger struct {
 	logx.Logger
@@ -283,7 +283,7 @@ func (c *captureLogger) contains(sub string) bool {
 }
 
 // TestDrainWarnsOnDeadlinelessCtx 兜底必须留痕：无期限 ctx 进入等待时，
-// 留痕里要出现「ctx 无期限」告警（issue #206 验收第二条）。
+// 留痕里要出现「ctx 无期限」的显式提示（issue #206 验收第二条）。
 func TestDrainWarnsOnDeadlinelessCtx(t *testing.T) {
 	prev := logx.Default()
 	cap := &captureLogger{Logger: prev}
@@ -293,6 +293,6 @@ func TestDrainWarnsOnDeadlinelessCtx(t *testing.T) {
 	Drain(context.Background(), &fakeTurns{active: 1}, Budget(50*time.Millisecond))
 
 	if !cap.contains("无期限") {
-		t.Fatalf("无期限 ctx 进入等待时应告警「ctx 无期限」，实得 warns: %v", cap.warns)
+		t.Fatalf("无期限 ctx 进入等待时应留痕「ctx 无期限」，实得 warns: %v", cap.warns)
 	}
 }
