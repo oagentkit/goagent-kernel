@@ -189,3 +189,28 @@ func TestReadOnlyWorkspaceAllowed(t *testing.T) {
 		t.Fatal("没有可写区时必须一律不可写")
 	}
 }
+
+// TestWorkspacesReturnsDefensiveCopy 改动 Workspaces() 返回值不得写穿到计划
+// 本体（issue #225）：此前直接交出内部底层数组——调用方改一个元素，New 的
+// 一致性自检与 Conflicts 的结论随之静默作废。登记表只读，调用方改不动。
+func TestWorkspacesReturnsDefensiveCopy(t *testing.T) {
+	p, err := New([]Workspace{
+		{ID: "alpha", Writable: []string{"src/"}},
+		{ID: "beta", Writable: []string{"lib/"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(p.Conflicts())
+
+	ws := p.Workspaces()
+	ws[0].Writable = append(ws[0].Writable, "lib/") // 伪造与 beta 的可写重叠
+	ws[1].ID = "gamma"                              // 伪造 ID 改写
+
+	if got := len(p.Conflicts()); got != before {
+		t.Fatalf("改写返回值不得影响计划结论：改前 %d 条冲突，改后 %d 条", before, got)
+	}
+	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 {
+		t.Fatalf("计划本体不得被写穿: %+v", again[0])
+	}
+}
