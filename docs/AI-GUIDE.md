@@ -54,16 +54,16 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 44 个包分五组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 49 个包分五组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（44 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **48 个**
+> 口径：与 README 包表（49 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **55 个**
 > 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
 > 上一版此表写「29 个包 / 门面 3 个」，与实际差在两处：`toolfail` / `sandbox` 早已转入
 > 门面（门面共 5 个），而 `trajectory` / `ticket` 漏登记。
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（31 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `tooldisclose` `toolname` `guardset` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `pii` `netguard` `sideeffect` `trajectory` `ticket` `cmdpolicy` `egress` `sessionref` `taskboard` `skilldisclose` `hookengine` `memorypipe` `delegate` `worktree` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
+| **机制面**（34 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `tooldisclose` `toolname` `guardset` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `reconcile` `finalize` `steer` `pii` `netguard` `sideeffect` `trajectory` `ticket` `cmdpolicy` `egress` `sessionref` `taskboard` `skilldisclose` `hookengine` `memorypipe` `delegate` `worktree` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
 | **门面**（5 个） | `dispatch` `policy` `reminder` `toolfail` `sandbox` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`（`guardx/toolfail`、`guardx/sandbox`）。 |
@@ -92,7 +92,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（48 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（55 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -403,9 +403,9 @@ make check
 
 ### 4.1 架构门禁的规则表
 
-> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 5 个门面包 + 48 个包的
-> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 5 条结构规则
-> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口**）+ 1 条 policy 自校验。
+> **条数口径**：`make architecture-check` 打印的是「8 条规则 + 0 个门面包 + 55 个包的
+> 依赖方向」——「8 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 6 条结构规则
+> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸**）+ 1 条 policy 自校验。
 > 下表把两类都列出来，故行数比「8 条」多。**别再按表的行数改「N 条规则」那句话**：
 > 那句话对着 `rules` 段，两者本来就不同量纲（此前标题写「9 条规则」属实是拿混了）。
 >
