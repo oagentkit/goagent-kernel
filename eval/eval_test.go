@@ -411,3 +411,76 @@ func TestAssess(t *testing.T) {
 		}
 	})
 }
+
+// TestAssessSideEffectPointRowsNotClosureViolations 钉住 issue #222 的成对判据：
+// 副作用**点观察**行（replayed / contended）的孤儿形态是投影的设计事实——
+// 点事件没有括号段，「起点缺失」的判据前提对它不成立。把它判成违规就是
+// 假红：只要轨迹里出现一次「动作已完成、这次取回结果」或「资源被别人持有」
+// （都是正常路径），健康轨迹就被判不过。
+//
+// 成对面：**非点观察**相位的孤儿行（如只观测到收尾的 completed）是真实的
+// 「只有终点没有起点」，必须照判——豁免过宽就是假绿。
+func TestAssessSideEffectPointRowsNotClosureViolations(t *testing.T) {
+	t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	ev := func(at time.Time, typ string, payload map[string]any) eventbus.Event {
+		return eventbus.Event{ID: 1, SessionID: "s", Type: typ, Level: "info", Payload: payload, OccurredAt: at}
+	}
+
+	t.Run("点观察行不误报（replayed / contended 都是正常路径）", func(t *testing.T) {
+		stream := []eventbus.Event{
+			ev(t0, eventbus.EventSideEffectReplayed, map[string]any{"key": "se-r", "resource": "res-r"}),
+			ev(t0.Add(time.Second), eventbus.EventSideEffectContended, map[string]any{"key": "se-c", "resource": "res-c"}),
+		}
+		v, err := Assess(Spec{Checks: []Check{CheckClosure}}, Replay(stream, trajectory.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !v.Pass || len(v.Findings) != 0 {
+			t.Fatalf("点观察行是设计事实，健康轨迹不得被判红：%+v", v.Findings)
+		}
+	})
+
+	t.Run("点观察与其它判项组合仍过（健康轨迹全绿）", func(t *testing.T) {
+		stream := append(baseEvents(),
+			ev(t0.Add(600*time.Millisecond), eventbus.EventSideEffectReplayed,
+				map[string]any{"key": "se-r", "resource": "res-r"}))
+		v, err := Assess(Spec{Checks: []Check{CheckClosure, CheckPairing, CheckNoDuplicates}},
+			Replay(stream, trajectory.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !v.Pass {
+			t.Fatalf("含点观察的健康轨迹应全绿：%+v", v.Findings)
+		}
+	})
+
+	t.Run("非点观察相位的孤儿行照判（真缺起点）", func(t *testing.T) {
+		// 只观测到 completed 收尾、没有授予段（授予发生在别的进程且事件流
+		// 只有尾部）——这是投影明说的孤儿形态，closure 必须报。
+		stream := []eventbus.Event{
+			ev(t0, eventbus.EventSideEffectCompleted, map[string]any{"key": "se-x", "resource": "res-x"}),
+		}
+		v, err := Assess(Spec{Checks: []Check{CheckClosure}}, Replay(stream, trajectory.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Pass || len(v.Findings) != 1 || v.Findings[0].RowID != "sideeffect#se-x" {
+			t.Fatalf("非点观察的孤儿行必须报起点缺失：%+v", v.Findings)
+		}
+	})
+
+	t.Run("打开中的副作用行仍判未收口", func(t *testing.T) {
+		// 授予段开了没收口（只有 granted，没有收口事件）——open 照判，
+		// 点观察豁免不覆盖它。
+		stream := []eventbus.Event{
+			ev(t0, eventbus.EventSideEffectGranted, map[string]any{"key": "se-o", "resource": "res-o"}),
+		}
+		v, err := Assess(Spec{Checks: []Check{CheckClosure}}, Replay(stream, trajectory.Options{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if v.Pass || len(v.Findings) != 1 || v.Findings[0].RowID != "sideeffect#se-o" {
+			t.Fatalf("打开中的授予段必须报未收口：%+v", v.Findings)
+		}
+	})
+}

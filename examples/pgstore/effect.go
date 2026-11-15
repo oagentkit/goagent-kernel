@@ -236,7 +236,37 @@ type actionRow struct {
 }
 
 // hasIntent 该 Key 上是否挂着一次未裁决的尝试。
-func (r *actionRow) hasIntent() bool { return r.intentFence != nil }
+//
+// 四列**任一**非 NULL 即算挂着（按最宽口径判「有没有」）：四个意图列各自
+// 独立可空，人工订正、schema 迁移、仓外写入方只写部分列都可能留下
+// 「部分填充」的行。按单列判会把残缺行当成「没有在途尝试」放行——对部分
+// 损坏的状态 fail-open，正是重复施加入口重开的那种放行。残缺行能否参与
+// 判定由 intentCompleteErr 把关（fail-closed）。
+func (r *actionRow) hasIntent() bool {
+	return r.intentResource != nil || r.intentFence != nil ||
+		r.intentHolder != nil || r.intentExpires != nil
+}
+
+// intentCompleteErr 意图四列齐全性守卫（fail-closed）。
+//
+// Acquire 的判定路径要解引用 intentResource / intentFence / intentExpires
+// （intentHolder 另有 nil 分支）。四列各列独立可空，库里出现「部分填充」
+// 的行时既不能 panic（panic 发生在行锁持有、事务开着的路径上，直接杀宿主
+// 进程，连接与锁的处置全部交给上层 recover），也不能当「没有在途尝试」
+// 放行——显式报错，事务整体回滚（校验失败即整体回滚、不落任何一行）。
+func (r *actionRow) intentCompleteErr(key sideeffect.Key) error {
+	if r.intentResource != nil && r.intentFence != nil &&
+		r.intentHolder != nil && r.intentExpires != nil {
+		return nil
+	}
+	return errors.Wrap(ErrIntentRowIncomplete,
+		"pgstore: 动作行的执行意图残缺（四列应同时为 NULL 或同时有值）",
+		"key", string(key),
+		"intent_resource", r.intentResource != nil,
+		"intent_fence", r.intentFence != nil,
+		"intent_holder", r.intentHolder != nil,
+		"intent_expires", r.intentExpires != nil)
+}
 
 // hasRecon 该 Key 上是否挂着对账占用。
 func (r *actionRow) hasRecon() bool { return r.reconExpires != nil }
@@ -343,3 +373,14 @@ func intentOwnerErr(act sideeffect.Action, lease sideeffect.Lease, a *actionRow)
 	}
 	return nil
 }
+
+// ErrIntentRowIncomplete 动作行的执行意图四列不齐全（部分填充）。
+//
+// 四个意图列（intent_resource / intent_fence / intent_holder / intent_expires）
+// 各自独立可空，正常的写入路径（Acquire 第 5 条）总是四列同写同清；库里出现
+// 「部分填充」只可能来自仓外：人工订正、schema 迁移、只写部分列的外部写入方。
+// 这类行不能被当成「没有在途尝试」放行（对部分损坏 fail-open ⇒ 重复施加的
+// 入口重开），也不能被解引用判定（行锁持有、事务开着的路径上 panic 直接杀
+// 宿主进程）——唯一正确的处置是显式报错、事务整体回滚（fail-closed）。
+// 修复完数据行（四列补齐或全部置 NULL）后重试即可。
+var ErrIntentRowIncomplete = errors.New("pgstore: 执行意图行残缺（fail-closed，须先订正数据）")
