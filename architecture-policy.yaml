@@ -777,8 +777,46 @@ modules:
     notes: |
       Agent 调度判据面：优先级排序（确定性平局裁决）、加权公平份额、
       资源配额账本（账平判据：整单占用 / 超释放拒）、背压裁决（拒绝必须带
-      机器可判的原因）。纯函数面，不做队列不做执行；可达性/深度归 dispatch
-      门面（ADR-0008 的归属结论）。
+      机器可判的原因）。纯函数面，不做队列不做执行；可达性/深度归上游
+      oagentkit/agent/dispatch（原 dispatch 门面 v0.35.0 已整包删除）。
+
+  # ── 2026-11-15 新增（issue #169 #170，下沉提案落地）─────────────────
+  #
+  # dispatch（issue #169）：派发域的**失败面**——多执行者编排的第四问
+  # 「失败后还能不能再派、派给谁」。三档分类词表（transient 可跨域兜底 /
+  # fatal 换谁白跑直接终态 / other 仅同域重试）+ 两级判定（上游
+  # toolgate/policy.Disposition 单源优先，链与协议层都 Unknown 才落文本兜底，
+  # 状态码判定带 \b 词边界）+ 改派环骨架（候选枚举与执行步经回调注入）。
+  # 不是可达性门面：v0.35.0 起 facades 清单为空，本包是新立的机制包，
+  # 不碰 allow 矩阵 / 深度上限 / 自派发三条判定（那三条在上游）。
+  #
+  # deadline（issue #170）：会话级墙钟时限——shared 锚点跨续跑轮不刷新
+  # （总时限不因续跑轮重置）、轮 ctx 携带专属 ErrSessionDeadline、与用户
+  # 取消/进程停机三分（timed_out 臂先于停机臂）、过期锚点认领后立即收敛
+  # 不进编排。与 budget（压力面）、drain（进程生命周期排水）各占一根轴，
+  # 互不改判据。
+  - id: dispatch
+    roots: [dispatch]
+    requires: ["ext:github.com/oagentkit/toolgate", "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      改派错误分类与同域/跨域兜底策略（issue #169）：Classify 两轴映射
+      （处置类 → 换执行者有无意义）、四级数据化策略解析（条目 > 表级 >
+      conf > 代码缺省）、StickyFailover 改派环骨架。判定面只读首次失败的
+      原始错误（改派说明只进事件与最终消息）；候选集经 FailoverCandidates
+      接缝注入，与宿主注册表/能力画像无关。
+
+  - id: deadline
+    roots: [deadline]
+    requires: [contract, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      会话级墙钟时限（issue #170）：锚点三态（未写/有效/过期）纯函数、
+      轮 ctx 装饰（WithTimeoutCause 携带专属 ErrSessionDeadline）、三分路由
+      （timed_out 先于停机臂）、锚点持久化注入接口（首轮写一次、续跑轮读）。
+      消费 contract.StatusTimedOut 词表；与 drain.ErrDeadline 是两个 Cause。
 
   - id: worker-runtime-ref
     roots: [examples/worker-runtime]
@@ -1361,7 +1399,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, dispatch, deadline]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

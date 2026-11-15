@@ -98,6 +98,13 @@
 | `ErrEmptyKind` | 成本事件缺计量种类（Kind 为空——没有种类的账无从聚合） | 修声明：报数侧补上计量种类；拒收留痕，不静默入账 |
 | `ErrNegativeAmount` | 成本事件量为负（记账 bug） | 修声明：查报数侧的记账 bug；拒收留痕，不静默归零、不许反向抹账 |
 
+### deadline
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrSessionDeadline` | 会话级墙钟到点（轮内 ctx 经 `WithTimeoutCause` 携带的 cause） | 收敛 timed_out 终态（deny-by-default：超时的产出不可信）；**必须先于停机臂判定**（次序纪律，见 `deadline.Route`）。与 `drain.ErrDeadline` 是两个 Cause，不要互相代入 |
+| `ErrNoStore` | 未注入锚点持久化接缝（`Store`）就要读/写 shared 锚点 | 修声明：shared 模式必须注入 Store——静默跳过会让总时限被续跑轮重置，且没有任何信号 |
+
 ### delegate
 
 | 哨兵 | 触发条件 | 调用方处置 |
