@@ -15,6 +15,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"testing"
 	"time"
 )
@@ -139,7 +140,10 @@ func TestNewTransportWrapsExistingDialer(t *testing.T) {
 			return (&net.Dialer{}).DialContext(ctx, network, a)
 		},
 	}
-	tr := NewTransport(base, Allow{Loopback: true})
+	tr, err := NewTransport(base, Allow{Loopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if tr.DialContext == nil {
 		t.Fatal("挂上守卫后 DialContext 不得为 nil")
 	}
@@ -171,7 +175,10 @@ func TestNewTransportAdaptsLegacyDialField(t *testing.T) {
 			return net.Dial(network, a)
 		},
 	}
-	tr := NewTransport(base, Allow{Loopback: true})
+	tr, err := NewTransport(base, Allow{Loopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	conn, err := tr.DialContext(context.Background(), "tcp", addr)
 	if err != nil {
 		t.Fatalf("拨号失败: %v", err)
@@ -185,16 +192,96 @@ func TestNewTransportAdaptsLegacyDialField(t *testing.T) {
 	}
 
 	// 方向 2：守卫真的在链上——被拒地址不得经旧拨号器连出去。
-	guarded := NewTransport(&http.Transport{
+	guarded, err := NewTransport(&http.Transport{
 		Dial: func(network, a string) (net.Conn, error) { //nolint:staticcheck // 同上：只设废弃字段是本用例的前提
 			return net.Dial(network, a)
 		},
 	}, Allow{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	conn2, err := guarded.DialContext(context.Background(), "tcp", addr)
 	if err == nil {
 		_ = conn2.Close()
 		t.Fatal("守卫放行面拒回环时不得连上（守卫没接上的静默形态）")
 	}
+}
+
+// TestNewTransportRejectsProxy 显式代理的 base 必须构造报错（issue #211）。
+//
+// 反面即攻击形态：此前 Proxy != nil 静默通过——传输层配置代理时拨号层收到
+// 的是代理地址，守卫三道判据全部落在代理上、真实目标一道不过，SSRF 防护
+// 与 rebinding 闭合整体落空。与自定义 RoundTripper 同一条纪律：挂不上就
+// 报错，不悄悄放行。传输层与客户端两层都钉。
+func TestNewTransportRejectsProxy(t *testing.T) {
+	base := &http.Transport{Proxy: fixedProxy("http://127.0.0.1:3128")}
+	if tr, err := NewTransport(base, Allow{}); err == nil {
+		if tr != nil {
+			t.Fatal("显式 Proxy 必须构造报错，不得返回传输层")
+		}
+		t.Fatal("显式 Proxy 必须构造报错，不得静默通过")
+	}
+
+	cb := &http.Client{Transport: &http.Transport{Proxy: fixedProxy("http://127.0.0.1:3128")}}
+	if _, err := NewClient(cb, Allow{}); err == nil {
+		t.Fatal("客户端层的显式 Proxy 同样必须报错")
+	}
+}
+
+// TestGuardedTransportIgnoresAmbientProxy 环境代理不得使守卫失效（issue #211 端到端）。
+//
+// http.DefaultTransport 自带 ProxyFromEnvironment，进程环境里有 HTTP_PROXY 时
+// （本仓 egress 包就会为子进程写下这类变量），克隆保留它 ⇒ 拨号层只见代理、
+// 守卫整体落空。修后守卫传输层一律直连：
+//
+//   - 反面（攻击）：HTTP_PROXY 指向一台「来者不拒」的假代理，零值放行面下
+//     请求回环目标必须被拒——若环境代理被悄悄保留，假代理会替攻击者回 200
+//     （守卫没接上的静默形态）；
+//   - 正面（合法）：放行回环后照常直连本机假服务器——剥离环境代理不误伤
+//     合法流量。
+func TestGuardedTransportIgnoresAmbientProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", cannedProxy(t))
+	addr := echoListener(t)
+
+	strict, err := NewClient(nil, Allow{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := strict.Get("http://" + addr + "/x"); err == nil {
+		t.Fatal("HTTP_PROXY 已设：回环目标必须仍被守卫拒绝（环境代理不得使守卫失效）")
+	}
+
+	permissive, err := NewClient(nil, Allow{Loopback: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := permissive.Get("http://" + addr + "/x"); err != nil {
+		t.Fatalf("剥离环境代理后直连回环假服务器必须照常： %v", err)
+	}
+}
+
+// fixedProxy 构造恒返同一代理 URL 的 Proxy 函数（模拟宿主显式配代理）。
+func fixedProxy(addr string) func(*http.Request) (*neturl.URL, error) {
+	u, _ := neturl.Parse(addr)
+	return func(*http.Request) (*neturl.URL, error) { return u, nil }
+}
+
+// cannedProxy 起一台「来者不拒」的假代理：任何请求（代理语义的绝对形态）
+// 都回 200——用来证明请求真的绕开了守卫（被代理应答）或真的被守卫拦下。
+func cannedProxy(t *testing.T) string {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := &http.Server{Handler: mux}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = srv.Close() })
+	go func() { _ = srv.Serve(ln) }()
+	return "http://" + ln.Addr().String()
 }
 
 // roundTripperFunc 让测试能造一个自定义 RoundTripper。
