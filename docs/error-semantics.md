@@ -125,6 +125,13 @@
 | `ErrBadSpec` | 评估清单不自洽（判项不在词表内 / 重复列出 / 期望清单缺失） | 修声明 |
 | `ErrBadRecord` | 录制文件不合法（编码失败 / 行解码失败） | 修数据：按行号定位坏行 |
 
+### finalize
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrUserCancelled` | 用户经取消 API 触发协作中止的 Cause（`Route` 据此落 cancelled 终态） | 按取消收敛；与停机（裸 ctx 取消）/ 接管（`steer.ErrSteered`）三分可辨——宿主用 `WithCancelCause` 携带 |
+| `ErrSessionDeadline` | 会话级墙钟超时的 Cause（`Route` 据此落 timed_out，判定先于停机分支） | 会话超时必须 `WithTimeoutCause` 携带本哨兵；**裸 deadline 归停机臂不落终态**——接线写错会让超时会话滞留 running |
+
 ### gatecheck
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -236,6 +243,12 @@
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
 | `errSinkBoom`（包内） | 栅栏契约套件 `write_error_no_partial_write` 场景注入的写入体故障——断言「写入体报错 ⇒ 预占与部分写一起回滚」 | 套件内部判据用：断言错误经 `WriteFenced` 原样透出且零落地；宿主无需处置 |
+
+### steer
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrSteered` | 用户运行中注入新输入的协作中止 Cause（`steer.Signal` 发出；`finalize.Route` 据此路由到接管臂） | 交 `steer.Run` 收敛：队列非空回 created 续跑、队列空按失败收敛不开空轮；**不落 cancelled 终态**——与 `finalize.ErrUserCancelled` 分流，勿混 |
 
 ### taskboard
 
