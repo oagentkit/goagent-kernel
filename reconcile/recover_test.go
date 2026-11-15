@@ -29,9 +29,10 @@ type fakeStore struct {
 	beatsErr  error
 	beatsCall int
 
-	casErr   error
-	refused  map[string]bool
-	lastCast struct {
+	casErr     error
+	refused    map[string]bool
+	bracketErr error
+	lastCast   struct {
 		from, to string
 		cause    Cause
 	}
@@ -85,10 +86,11 @@ func (s *fakeStore) ConvergeCAS(_ context.Context, id, from, to string, cause Ca
 	return !s.refused[id], nil
 }
 
-func (s *fakeStore) CloseBracket(_ context.Context, id, closedBy string) {
+func (s *fakeStore) CloseBracket(_ context.Context, id, closedBy string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, "bracket:"+id+":"+closedBy)
+	return s.bracketErr
 }
 
 func (s *fakeStore) log() []string {
