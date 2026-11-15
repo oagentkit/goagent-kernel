@@ -190,8 +190,9 @@ func tenantManifestViolations(root string, gate TenantGate, typeFiles []tenantFi
 		}
 		out = append(out, Violation{
 			Rule: tenantPolicyDriftRuleID, Path: gate.TenantTablesManifest, Line: e.line,
-			Text: fmt.Sprintf("登记面登记的租户表 %q 在模型面已不存在——登记漂移（模型改名/删除后清单未同步），"+
-				"空的登记等于没有登记；请同步清单或撤下该行", e.table),
+			Text: fmt.Sprintf("登记面登记的租户表 %q 在模型面没有可解析的对应——模型已改名/删除（登记漂移，"+
+				"空登记等于没有登记），或某模型的表名方法不可解析（配不上对）。执行体无法区分两种成因"+
+				"（解析不出表名就关联不了清单条目），两条一起红；请同步清单、补表名方法或撤下该行", e.table),
 			Kind: "table_policy_drift",
 		})
 	}
