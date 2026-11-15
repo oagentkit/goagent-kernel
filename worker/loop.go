@@ -6,11 +6,20 @@
 //
 //   - 注册失败 → 直接返回（没身份就别开工）；
 //   - 心跳失败（@@ErrNotRegistered@@）→ 身份没了：停止领取，收刀退出；
+//     **非身份类**心跳失败（存储抖动）→ 只影响身份本身，**不得吞掉同一拍
+//     的任务租约续期**（issue #179：身份的可用性不是任务正确性的前置条件
+//     ——两个故障域互不阻断）；
 //   - 任务租约续期失败（@@taskboard.ErrLeaseLost@@）→ 资格没了：**取消在途
 //     执行的 ctx**，本次任务按失败收场——资格检查失败后的继续执行就是
 //     与新持有者重复施加（危险窗口在施加之前封口）；
+//   - 任务租约续期**连续失败**跨过一个 TTL（@@ErrLeaseUnconfirmed@@）→
+//     无法确认持有资格：取消在途 ctx + 停止领取收刀——续不上又继续开工，
+//     与新持有者重复施加的是同一种危险，只是这次连「谁在持」都答不出来；
 //   - handler 失败 → 任务 Release 回任务板（failed/open 都可被重做，
-//     一次失败不把子任务钉死——taskboard 的状态语义）。
+//     一次失败不把子任务钉死——taskboard 的状态语义）；
+//   - 收场动作被 @@taskboard.ErrLeaseLost@@ 拒（任务已归新持有者）→
+//     如实接受但**经 @@Config.OnLeaseLost@@ 留痕**——「闸已易主、本次结果
+//     作废」是事实不是成功路径，静默吞掉它宿主就永远不知道丢了什么。
 //
 // # 优雅退出 = 停止领取 + 在途收敛 + 注销
 //
@@ -68,6 +77,22 @@ type Config struct {
 	// 可认领的（确定性——不依赖任务板返回顺序）。优先级/公平性等挑选策略
 	// 由宿主在此接线（判据面见 scheduling 包；本驱动不内嵌第二份）。
 	Pick func(candidates []taskboard.Task) (taskboard.TaskID, bool)
+	// RenewFailMax 在途租约的连续续期失败阈值：连续失败达到它（且外层
+	// ctx 未取消）＝ 无法确认持有资格，驱动取消在途执行的 ctx 并停止
+	// 领取收刀（@@ErrLeaseUnconfirmed@@）。0 = 缺省
+	// ceil(TTL/HeartbeatInterval)——连续失败跨过一个 TTL 还没续上，租约
+	// 按已到期对待（期间接管者随时可能就位）；负值非法（装配期拦下）。
+	RenewFailMax int
+	// OnLeaseLost 在途租约失去资格时的可观测钩子（nil = 不回调）。
+	//
+	// 三个触发点（见 @@LeaseLostCause@@）：续期报 @@taskboard.ErrLeaseLost@@
+	// （租约已易主）；连续续期失败到阈值（无法确认持有资格）；收场动作
+	// （Complete/Release）被 @@taskboard.ErrLeaseLost@@ 拒（结果作废）。
+	// 三个都是「本次执行的结果已作废」的事实，不是成功路径——宿主据此
+	// 计数/留痕/告警，静默吞掉它们下游的非幂等副作用就可能双份（issue
+	// #179 的触发序列）。回调在心跳协程/收场路径上同步调用：快返回，
+	// 别在里面做重活。
+	OnLeaseLost func(task taskboard.TaskID, cause LeaseLostCause)
 }
 
 // NewLoop 校验配置并构造驱动。
@@ -94,6 +119,15 @@ func NewLoop(board taskboard.RenewingBoard, registry Registry, handler Handler, 
 		return nil, errors.Wrap(ErrInvalidConfig,
 			"worker: 心跳间隔必须短于 TTL——否则注册必然周期性过期",
 			"interval", cfg.HeartbeatInterval, "ttl", cfg.TTL)
+	}
+	if cfg.RenewFailMax < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期失败阈值必须非负", "renewFailMax", cfg.RenewFailMax)
+	}
+	if cfg.RenewFailMax == 0 {
+		// 缺省 = ceil(TTL/HeartbeatInterval)：连续失败跨过一个 TTL 还没
+		// 续上，租约按已到期对待（HeartbeatInterval < TTL 已被上面拦下，
+		// 所以这里除数恒为正、结果恒 >= 2）。
+		cfg.RenewFailMax = int((cfg.TTL + cfg.HeartbeatInterval - 1) / cfg.HeartbeatInterval)
 	}
 	return &Loop{board: board, registry: registry, handler: handler, cfg: cfg}, nil
 }
@@ -131,19 +165,23 @@ func (l *Loop) Run(ctx context.Context) error {
 	defer claimCancel()
 
 	var (
-		mu      sync.Mutex
-		current *claimed
-		lost    bool // 心跳协程写、Run 在心跳退出后读（close(done) 建立先行发生）
+		mu          sync.Mutex
+		current     *claimed
+		lost        bool // 心跳协程写、Run 在心跳退出后读（close(done) 建立先行发生）
+		unconfirmed bool // 续期连续失败跨过阈值：资格无法确认（停止领取，收刀）
 	)
 	stopping := make(chan struct{}) // 主循环收刀信号（在途已收敛）
 	done := make(chan struct{})     // 心跳协程退出信号
 
-	// 心跳/续期协程：注册心跳 + 在途任务的租约续期，共用一个节拍。
+	// 心跳/续期协程：注册心跳 + 在途任务的租约续期，共用一个节拍，
+	// 但**互不阻断**（issue #179）：续期先做——身份的可用性不是任务
+	// 正确性的前置条件，注册表抖动不得吞掉同一拍的租约续期。
 	// 走 async.GoSafe 而非裸 go func（本仓门禁：panic 无法被外层 recover）。
 	async.GoSafe(func() {
 		defer close(done)
 		ticker := time.NewTicker(l.cfg.HeartbeatInterval)
 		defer ticker.Stop()
+		renewFails := 0 // 连续续期失败计数（成功一次即清零）
 		for {
 			select {
 			case <-ctx.Done():
@@ -152,8 +190,36 @@ func (l *Loop) Run(ctx context.Context) error {
 				return
 			case <-ticker.C:
 			}
+			// 任务租约续期（taskboard.Renew = 资格检查 + 推后到期时刻）。
+			mu.Lock()
+			cur := current
+			mu.Unlock()
+			if cur != nil {
+				_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
+				switch {
+				case rErr == nil:
+					renewFails = 0
+				case errors.Is(rErr, taskboard.ErrLeaseLost):
+					// 资格没了：取消在途执行（施加之前封口），并留痕。
+					renewFails = 0
+					l.notifyLeaseLost(cur.id, LeaseLostTakenOver)
+					cur.cancel()
+				default:
+					// 其它续期错误：下一拍重试（阈值内租约尚未到期，
+					// 仍有出路）；连续失败跨过阈值 = 无法确认持有资格
+					//——与新持有者重复施加的是同一种危险，封口并收刀。
+					renewFails++
+					if renewFails >= l.cfg.RenewFailMax && ctx.Err() == nil {
+						unconfirmed = true
+						l.notifyLeaseLost(cur.id, LeaseLostUnconfirmed)
+						claimCancel() // 停止领取：答不出「谁在持」就不发起新的副作用
+						cur.cancel()  // 在途封口
+					}
+				}
+			}
 			// 注册心跳：身份的资格检查。非身份类失败（含 ctx 取消的抖动）
 			// 不判丢失——把存储抖动当成身份丢失，驱动会在任务板正常时自杀。
+			// 失败也不回退上面已做过的续期（两个故障域互不阻断，issue #179）。
 			if _, hbErr := l.registry.Heartbeat(ctx, reg.ID, reg.Token, l.cfg.TTL); hbErr != nil {
 				if errors.Is(hbErr, ErrNotRegistered) {
 					lost = true
@@ -163,20 +229,8 @@ func (l *Loop) Run(ctx context.Context) error {
 				if ctx.Err() != nil {
 					return
 				}
-				continue // 存储抖动：下一拍重试
+				// 存储抖动：下一拍重试（只影响身份，不影响上面的续期）。
 			}
-			// 任务租约续期（taskboard.Renew = 资格检查 + 推后到期时刻）。
-			mu.Lock()
-			cur := current
-			mu.Unlock()
-			if cur == nil {
-				continue
-			}
-			_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
-			if rErr != nil && errors.Is(rErr, taskboard.ErrLeaseLost) {
-				cur.cancel() // 资格没了：取消在途执行（施加之前封口）
-			}
-			// 其它续期错误：下一拍重试（租约尚未到期的前提下仍有出路）。
 		}
 	})
 
@@ -191,6 +245,10 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	if lost {
 		return errors.Wrap(ErrNotRegistered, "worker: 注册在途中失效，驱动已收刀退出")
+	}
+	if unconfirmed {
+		return errors.Wrap(ErrLeaseUnconfirmed,
+			"worker: 任务租约连续续期失败跨过 TTL，无法确认持有资格——已取消在途执行并停止领取")
 	}
 	return runErr
 }
@@ -252,7 +310,9 @@ func (l *Loop) claimNext(ctx context.Context) (taskboard.Task, bool, error) {
 //
 // 收场动作走 WithoutCancel：外层停机时在途任务的 Complete/Release 仍要落地
 // （任务板的状态不能因为停机而悬在 claimed）。收场被 ErrLeaseLost 拒
-// = 闸已易主——任务归新持有者，如实接受（不重试、不吞）。
+// = 闸已易主——任务归新持有者，如实接受（不重试、不吞），但经
+// OnLeaseLost 留痕：本次结果作废是宿主必须知道的事实，不是成功路径
+// （issue #179：静默吞掉它，下游非幂等副作用就可能双份）。
 func (l *Loop) executeOne(ctx context.Context, mu *sync.Mutex, current **claimed, task taskboard.Task) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	c := &claimed{id: task.ID, token: task.Lease.Token, cancel: cancel}
@@ -269,14 +329,18 @@ func (l *Loop) executeOne(ctx context.Context, mu *sync.Mutex, current **claimed
 
 	finalCtx := context.WithoutCancel(ctx)
 	if execErr == nil {
-		if err := l.board.Complete(finalCtx, task.ID, c.token); err != nil &&
-			!errors.Is(err, taskboard.ErrLeaseLost) {
-			return errors.Wrap(err, "worker: 完成任务失败", "task", string(task.ID))
+		if err := l.board.Complete(finalCtx, task.ID, c.token); err != nil {
+			if !errors.Is(err, taskboard.ErrLeaseLost) {
+				return errors.Wrap(err, "worker: 完成任务失败", "task", string(task.ID))
+			}
+			l.notifyLeaseLost(task.ID, LeaseLostOnFinalize)
 		}
 	} else {
-		if err := l.board.Release(finalCtx, task.ID, c.token); err != nil &&
-			!errors.Is(err, taskboard.ErrLeaseLost) {
-			return errors.Wrap(err, "worker: 释放任务失败", "task", string(task.ID))
+		if err := l.board.Release(finalCtx, task.ID, c.token); err != nil {
+			if !errors.Is(err, taskboard.ErrLeaseLost) {
+				return errors.Wrap(err, "worker: 释放任务失败", "task", string(task.ID))
+			}
+			l.notifyLeaseLost(task.ID, LeaseLostOnFinalize)
 		}
 	}
 	return nil

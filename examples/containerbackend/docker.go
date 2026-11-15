@@ -56,6 +56,10 @@ import (
 // 修复对象是引擎侧（引擎不可达 / 镜像不存在 / 参数被拒）。
 var ErrEngineCall = errors.New("containerbackend: docker engine 调用失败")
 
+// ErrMountDenied 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 /
+// 形态不合法）。属于「作业声明违反安全策略」：创建阶段响亮拒绝，不降级执行。
+var ErrMountDenied = errors.New("containerbackend: 挂载被安全策略拒绝")
+
 // 缺省的 Engine socket 与 API 版本前缀。
 const (
 	defaultSocket   = "/var/run/docker.sock"
@@ -73,12 +77,15 @@ const (
 //     被网络命名空间强制阻断，不是「设了一组环境变量」；
 //   - Capable：内存兜得住（容器内存上限），输出截断兜不住（如实自报
 //     false），逐调用计数对作业形态不存在（同样 false）；
-//   - 墙钟经 context 截止兑现（超时杀容器，见 Exec）。
+//   - 墙钟经 context 截止兑现（超时杀容器，见 Exec）；
+//   - 挂载一律过 MountPolicy 白名单（缺省拒绝一切挂载）——network=none 的
+//     出站隔离不许被一个 bind 绕开（见 MountPolicy，issue #187）。
 type Docker struct {
 	id       string
 	endpoint string // 引擎 HTTP 端点（unix:// 前缀 = socket，否则按 URL 直连）
 	apiVer   string
 	client   *http.Client
+	mounts   MountPolicy // 挂载白名单（零值 = 空白名单 = 全拒，fail-closed）
 }
 
 // DockerOption Docker 实现的装配项。
@@ -98,6 +105,12 @@ func WithAPIVersion(v string) DockerOption {
 // WithID 覆盖后端标识（多套引擎并存时区分登记）。
 func WithID(id string) DockerOption {
 	return func(d *Docker) { d.id = id }
+}
+
+// WithMountPolicy 装配挂载白名单（issue #187）。缺省（不装配）= 拒绝一切
+// 挂载——判据与含义见 MountPolicy。
+func WithMountPolicy(p MountPolicy) DockerOption {
+	return func(d *Docker) { d.mounts = p }
 }
 
 // NewDocker 构造 Docker Engine 后端（缺省走宿主的缺省 socket——见 defaultSocket）。
@@ -151,6 +164,8 @@ var errWallClock = errors.New("containerbackend: 作业超出墙钟预算")
 //
 //   - 作业要求兜内存 ⇒ 容器以 Memory 上限启动（Capable 承诺的兑现点）；
 //   - 出站一律 network=none（Egress 承诺的兑现点）；
+//   - 挂载一律过 MountPolicy 白名单，不满足即创建阶段拒绝（ErrMountDenied，
+//     先于任何引擎调用）——隔离承诺的兑现不许被一个 bind 绕开（issue #187）；
 //   - Budget.WallClock > 0 ⇒ wait 挂截止，到点 SIGKILL——超时不是「再等等」，
 //     是预算的强制面；被预算终止的作业返回 Result{OK=false}（作业没跑完
 //     是它的失败，不是引擎的故障）；
@@ -159,6 +174,9 @@ var errWallClock = errors.New("containerbackend: 作业超出墙钟预算")
 func (d *Docker) Exec(ctx context.Context, j backend.Job) (backend.Result, error) {
 	if err := j.Validate(); err != nil {
 		return backend.Result{}, errors.New("containerbackend: " + err.Error())
+	}
+	if err := d.checkMounts(j); err != nil {
+		return backend.Result{}, err
 	}
 	id, err := d.create(ctx, j)
 	if err != nil {

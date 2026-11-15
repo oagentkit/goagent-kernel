@@ -280,6 +280,7 @@
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
 | `ErrEngineCall` | Docker Engine 调用失败（创建 / 启动 / 等待 / 读取任一步） | 重试或查引擎侧（不可达 / 镜像不存在 / 参数被拒）；作业没跑起来属基础设施故障 |
+| `ErrMountDenied` | 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 / 形态不合法，创建阶段先于引擎调用拒绝） | 修作业声明：来源改到白名单内或按策略放开 `AllowWritable`；**不得降级执行**——策略拒绝是 fail-closed 的（#187） |
 | `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
@@ -300,8 +301,9 @@
 
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
-| `ErrInvalidConfig` | 注册声明缺 ID / TTL 非正 / 心跳间隔不短于 TTL / Loop 缺组件 | 修声明：装配期参数错误，重试无意义 |
+| `ErrInvalidConfig` | 注册声明缺 ID / TTL 非正 / 心跳间隔不短于 TTL / Loop 缺组件 / 续期失败阈值非负 | 修声明：装配期参数错误，重试无意义 |
 | `ErrNotRegistered` | 注册已失效：令牌不匹配、注册被顶替、或有效期已过 | 停止领取、收刀退出（凭据由注册表铸造，丢了就是丢了）；重启走重新注册并按新令牌接续 |
+| `ErrLeaseUnconfirmed` | 在途任务的租约连续续期失败跨过一个 TTL（驱动无法确认持有资格，已取消在途执行并停止领取） | 查任务板/存储健康后重跑 `Recover` 接管：与 `ErrNotRegistered` 分列——那查注册表/顶替，这查任务板/存储；租约失去资格期间的副作用归属需对账 |
 
 ## 结构化错误类型（errors.As 判定）
 
