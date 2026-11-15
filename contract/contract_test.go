@@ -105,6 +105,23 @@ func TestMinimalHostSatisfiesContract(t *testing.T) {
 	}
 }
 
+// TestIsTerminalStatus 终态词表单点：四个终态为真，过程态与未知值为假。
+//
+// 这个函数是 watchdog INV3 轮括号校验的 status 真相源（issue #171）——两份
+// 终态清单必然漂移，故词表成员判定只留这一处。
+func TestIsTerminalStatus(t *testing.T) {
+	for _, s := range []string{StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut} {
+		if !IsTerminalStatus(s) {
+			t.Fatalf("%q 应为终态", s)
+		}
+	}
+	for _, s := range []string{StatusCreated, StatusRunning, StatusWaitingApproval, "", "degraded", "unknown"} {
+		if IsTerminalStatus(s) {
+			t.Fatalf("%q 不应为终态", s)
+		}
+	}
+}
+
 // TestFieldFailClosed 宿主拒绝未知键时 SetField 必须报错，**不得静默吞**——
 // 静默吞会让编排以为写成功了，状态在重启后消失。
 func TestFieldFailClosed(t *testing.T) {

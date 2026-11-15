@@ -2270,8 +2270,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
 
-另有**五条不走正则表、由 `go/ast` 判定**的结构性规则 + 一条 policy 自校验（判据是语法结构，
-逐行看文本判不出）：
+另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（三条规则号）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
@@ -2280,7 +2279,10 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
 | `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询）；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
-| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 | `archcheck/selfcheck.go` |
+| `tenant-surface-missing-evidence` | 带授权上下文形参 + 返回租户域类型的服务层函数，既没调登记的共享判定面、查询条件也没含过滤列、也没 `// tenant:iso <理由>` 声明 | `policy.yaml` 的 `tenant_gate` 段 + `archcheck/tenantgate.go` |
+| `viewer-dropped` | 带授权上下文形参却完全不用（授权上下文被丢弃） | 同上 |
+| `shared-surface-missing` | 登记在册的共享隔离判定面在代码里不存在（清单漂移 = 登记失效） | 同上 |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 | `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。
@@ -2421,7 +2423,39 @@ egress_paths:
 
 **本仓自己的实例**：`ptc/childpipes.go` 的 `newChildPipes` 登记为 `proxy`，
 兑现方式是把 `SubprocessOptions.Egress` 交给 `spec.Env(base)` 生成子进程环境（失败即不起子进程）。
-### 4.5 在本仓加新包的正确顺序
+
+### 4.5 租户过滤漏拼门：`tenant_gate`
+
+多租户仓最贵的一次遗漏是「查询忘拼过滤列」——它不会报错、测试可能全绿，只会
+在某天变成一次跨租户越权。`archcheck` 把 bianque 的 `tenantcheck` 判据下沉为
+通用执行体：**形状归宿主 policy，执行体不出现任何宿主字面**。
+
+```yaml
+# 宿主仓的 architecture-policy.yaml
+tenant_gate:
+  enabled: true
+  severity: error
+  roots: [internal/service]            # 服务层读面扫描面（递归）
+  tenant_type_roots: [internal/model]  # 租户域类型推导面（缺省 = roots）
+  auth_context_types: [identity.Viewer] # 授权上下文类型（可带包名）
+  tenant_fields: [TeamID]              # 含该字段的 struct = 租户域类型
+  filter_columns: [team_id]            # Where/Raw 字面量含其一 = 隔离证据
+  shared_surfaces:
+    - dir: internal/service/identity
+      name: TeamRowsVisible
+      note: 列表读面行级团队过滤
+```
+
+三条判据（规则号见 §4.2 表）：**缺证据即红**、**授权上下文丢弃即红**、
+**登记面不存在即红**。三者各自可单独豁免（policy `exceptions` 精确到
+rule + path + line）。租户类型清单**不另立**——`tenant_type_roots` 下任何含
+`tenant_fields` 字段名的 struct 自动入面。
+
+**判不了什么**：调用判定面但没用返回值、过滤条件写在注释里——静态证据存在性
+判不了语义生效。那归宿主运行期判据（`tenant` 包的 `Require/Can` 与配额
+`Enforce` 是它的运行时对偶）。本仓 policy 已按自身形状启用（`tenant` 包）。
+
+### 4.6 在本仓加新包的正确顺序
 
 **先改 policy 再写代码。**
 
@@ -2437,7 +2471,7 @@ egress_paths:
 不登记则 `architecture-check` 立刻红。判定面**只含生产代码**（跳过 `_test.go`）：
 依赖方向决定交付物里出现什么，测试依赖是临时的。
 
-### 4.6 结构阈值
+### 4.7 结构阈值
 
 `max_file_lines: 400`，`thresholds.enforce: true`，超限即非零退出。
 
