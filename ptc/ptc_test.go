@@ -224,6 +224,36 @@ return { merged: "ok", total: total };`
 	}
 }
 
+// TestHostBindingPanicCarriesValueType 非 error 的 panic 值也要带出类型。
+//
+// oekit/pkg 的 panic 收编单源（errors.Recovered → *PanicError）落地后：
+// 模型侧 Error 与审计侧 CallLog 都走同一份文本。收编前 CallLog 用
+// fmt.Sprint(r)，panic(42) 只剩 "42"——事后复盘看不出 panic 的是什么类型。
+func TestHostBindingPanicCarriesValueType(t *testing.T) {
+	panicky := Binding{Name: "boom", Call: func(context.Context, string) (string, error) {
+		panic(42)
+	}}
+	r := Run(context.Background(), `await host.boom("{}")`, []Binding{panicky}, Options{Stages: allowStages()})
+	if r.ErrorKind != "host_panic" {
+		t.Fatalf("ErrorKind = %q, want host_panic", r.ErrorKind)
+	}
+	if !strings.Contains(r.Error, "int") {
+		t.Fatalf("模型侧 Error 必须带出 panic 值类型（int），实得 %q", r.Error)
+	}
+	var panicRec *CallRecord
+	for i := range r.CallLog {
+		if r.CallLog[i].Status == "panic" {
+			panicRec = &r.CallLog[i]
+		}
+	}
+	if panicRec == nil {
+		t.Fatal("审计侧必须留下 panic 那一次调用的痕迹")
+	}
+	if !strings.Contains(panicRec.Error, "int") {
+		t.Fatalf("审计侧 CallLog 必须带出 panic 值类型（int），实得 %q", panicRec.Error)
+	}
+}
+
 // TestRunSurvivesHostBindingPanic 宿主绑定 panic 不得穿透 Run 的返回面：
 // callIt 直调宿主 Binding.Call，goja 对非 goja 值的异常 panic(arg) 原样重抛，
 // 此前直达主 goroutine 杀进程——doc 承诺「恒返回 Result 不 panic」却只对

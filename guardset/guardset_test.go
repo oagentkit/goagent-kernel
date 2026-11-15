@@ -195,6 +195,44 @@ func TestBrokenGuardDeniesInsteadOfPassing(t *testing.T) {
 	})
 }
 
+// TestGuardPanicCarriesValueType 守卫 panic 的**值类型**必须出现在拒绝理由里。
+//
+// 这是 oekit/pkg panic 收编单源（errors.Recovered）落地后钉住的行为：
+// 收编前 panicText 的 default 分支返回「未知」——panic(42) 与
+// panic(自定义 struct) 在模型看到的拒绝理由里完全看不出是什么炸的，
+// 而这类恰恰是最需要类型的那一类（error 与 string 的文本反而已知）。
+//
+// 判据分两半：类型在场，且「未知」不再出现（后者是失效形态的直接形状）。
+func TestGuardPanicCarriesValueType(t *testing.T) {
+	type customPayload struct{ Code int }
+	cases := []struct {
+		why  string
+		val  any
+		want string
+	}{
+		{"整数", 42, "int"},
+		{"结构体", customPayload{Code: 7}, "customPayload"},
+		{"error", errors.New("原始错误"), "原始错误"},
+		{"裸字符串", "环内部炸了", "环内部炸了"},
+	}
+	for _, c := range cases {
+		val := c.val
+		s, err := New(Guard{Name: "炸环", Rank: 1, Check: func(context.Context, invoke.Call) invoke.Verdict {
+			panic(val)
+		}})
+		if err != nil {
+			t.Fatalf("%s：构造失败 %v", c.why, err)
+		}
+		reason := s.Evaluate(context.Background(), call()).Reason()
+		if !strings.Contains(reason, c.want) {
+			t.Fatalf("%s：拒绝理由必须带出 panic 值的信息 %q，实得 %q", c.why, c.want, reason)
+		}
+		if strings.Contains(reason, "未知") {
+			t.Fatalf("%s：panic 值不得被降级成「未知」（类型信息必须完整可读），实得 %q", c.why, reason)
+		}
+	}
+}
+
 // TestUnassembledSetDenies 未构造的 Set 被拿来求值属运行期装配遗漏，
 // 按拒绝而不是放行（与构造期拒绝空集合同一条纪律）。
 func TestUnassembledSetDenies(t *testing.T) {

@@ -120,7 +120,9 @@ func mountBindings(
 						res.Calls++
 						res.CallLog = append(res.CallLog, CallRecord{
 							Name: b.Name, Status: "panic",
-							Error: fmt.Sprint(r),
+							// 留痕带值类型与身份（panicError 见 panic.go）：
+							// 此前 fmt.Sprint(r) 对 panic(42) 只剩 "42"。
+							Error: panicError(r).Error(),
 							MS:    time.Since(start).Milliseconds(),
 						})
 						panic(r)

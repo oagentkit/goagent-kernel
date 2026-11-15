@@ -270,8 +270,12 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 				}
 				logx.Error("ptc: 执行被中断打断，收敛为结果返回", "kind", kind)
 			} else {
+				// 统一处理：panic 值 → error 走上游 errors.Recovered（见 panic.go）。
+				// 日志带**现场栈**——宿主侧崩溃最需要它；此前这里只有 %v 的值，
+				// 字符串型 panic 连发生在哪都看不出来。
+				pe := panicError(r)
 				res = Result{
-					Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %v", r),
+					Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %s", pe.Error()),
 					ErrorKind: "host_panic",
 					// 已执行步骤留痕： panic 前成功的调用照常记账——
 					// 半途痕迹是审计要的，收口不留等于没发生过。
@@ -280,7 +284,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 					CallLog: res.CallLog,
 				}
 				logx.Error("ptc: 宿主绑定 panic，收敛为结果返回",
-					"panic", fmt.Sprint(r))
+					"panic", pe.Error(), "stack", string(pe.Stack))
 			}
 		}
 		if !res.OK {
