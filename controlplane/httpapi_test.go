@@ -44,6 +44,7 @@ func doJSON(h *Handler, method, path string, body any) *httptest.ResponseRecorde
 		rd = bytes.NewReader(nil)
 	}
 	req := httptest.NewRequest(method, path, rd)
+	req.Header.Set("Content-Type", "application/json") // 介入面的 Content-Type 闸（issue #198）
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -148,6 +149,7 @@ func TestHandlerErrorMapping(t *testing.T) {
 
 	// 坏 JSON → 400
 	req := httptest.NewRequest(http.MethodPost, "/tasks/t1/force-release", strings.NewReader("{bad"))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -183,4 +185,75 @@ func TestHandlerErrorMapping(t *testing.T) {
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("方法不匹配应 405，got %d", rec.Code)
 	}
+}
+
+// TestHandlerContentTypeGate 介入面的 Content-Type 闸（issue #198）。
+//
+// 反面：浏览器的跨站「简单请求」不触发 CORS 预检——text/plain 的 fetch、
+// urlencoded 的表单都能直接 POST 到 force-release 这类不可幂等介入；Go 的
+// JSON 解码器本不看 Content-Type，没有闸它们会被当合法请求处理。两种形态
+// 加上缺头一律 415，且不触达 Plane（介入未发生、留痕为空）。
+// 正面：application/json（含 charset 参数）照常通过。
+func TestHandlerContentTypeGate(t *testing.T) {
+	h, aud, m := setup(t)
+	claimCtx := tenant.WithContext(context.Background(), tenant.Context{Tenant: "acme"})
+	if _, err := m.Claim(claimCtx, "t1", "worker-a", 0); err != nil {
+		t.Fatalf("Claim: %v", err)
+	}
+
+	post := func(contentType, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/tasks/t1/force-release", strings.NewReader(body))
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	crossSite := `{"operator":"evil","basis":"跨站页面构造的强释"}`
+
+	// 反面：跨站简单请求的两种形态 + 缺头
+	for _, tc := range []struct {
+		name string
+		ct   string
+	}{
+		{"text/plain（跨站 fetch 形态）→ 415", "text/plain"},
+		{"表单 urlencoded → 415", "application/x-www-form-urlencoded"},
+		{"缺 Content-Type → 415", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := post(tc.ct, crossSite)
+			if rec.Code != http.StatusUnsupportedMediaType {
+				t.Fatalf("%s 应 415，got %d: %s", tc.name, rec.Code, rec.Body.String())
+			}
+			entries, _ := aud.Entries(context.Background(), "t1")
+			if len(entries) != 0 {
+				t.Fatalf("介入不得触达 Plane（留痕=%+v）", entries)
+			}
+			tv, err := m.TaskView(claimCtx, "t1")
+			if err != nil {
+				t.Fatalf("TaskView: %v", err)
+			}
+			if holder := tv.Task.Owner; holder != "worker-a" {
+				t.Fatalf("任务租约不得被跨站请求动掉：owner=%q", holder)
+			}
+		})
+	}
+
+	// 正面：application/json 照常（含 charset 参数的归一形态）
+	t.Run("application/json → 200", func(t *testing.T) {
+		rec := post("application/json", `{"operator":"op-1","basis":"持有者失联"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("合法介入应 200，got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+	t.Run("application/json; charset=utf-8 → 200", func(t *testing.T) {
+		if _, err := m.Claim(claimCtx, "t1", "worker-b", 0); err != nil {
+			t.Fatalf("重认领（上一轮强释后任务回开放态）: %v", err)
+		}
+		rec := post("application/json; charset=utf-8", `{"operator":"op-2","basis":"b"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("charset 参数不影响判定，应 200，got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
 }

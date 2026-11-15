@@ -101,7 +101,7 @@ func newFake(t *testing.T, f *fakeEngine) *Docker {
 	t.Helper()
 	srv := httptest.NewServer(f.handler())
 	t.Cleanup(srv.Close)
-	return NewDocker(WithEndpoint(srv.URL))
+	return NewDocker(WithEndpoint(srv.URL), WithMountPolicy(MountPolicy{AllowedSources: []string{"/src"}}))
 }
 
 func TestDockerDeclarations(t *testing.T) {

@@ -11,6 +11,21 @@
 //
 // 钩子缺位 ⇒ 全部请求 401（fail-closed）：控制面不开无鉴权的口子。
 //
+// # CSRF 边界（issue #198）：Authorization 头形态，Cookie 会话不在此面
+//
+// 介入端点全部是 POST + JSON body，而浏览器的跨站「简单请求」（表单的
+// urlencoded、fetch 的 text/plain）不触发 CORS 预检，可以直接打进来——
+// force-release / terminate / adjudicate 又都是不可幂等的介入。防线两层，
+// 都在本包写死：
+//
+//  1. Content-Type 闸（见 decode）：介入请求只收 application/json，缺省与
+//     其它类型一律 415——两种跨站简单请求形态都挡在 JSON 解码之前（Go 的
+//     JSON 解码器本不看 Content-Type，不设闸它们会被当合法请求处理）；
+//  2. 鉴权只认 Authorization 头：宿主钩子（Authorizer）从请求头解析凭据，
+//     本面**禁止 Cookie 会话**——跨站请求带不上 Authorization 头，无凭据
+//     即 401/403。宿主若坚持 Cookie 形态，CSRF 防线（同源校验 /
+//     SameSite=Strict / 双提交令牌）归宿主，内核不背书。
+//
 // # 路由（Go 1.22+ 模式路由）
 //
 //	GET  /tasks/{id}                 → TaskView
@@ -26,6 +41,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"mime"
 	"net/http"
 
 	"github.com/oekit/pkg/errors"
@@ -149,8 +165,19 @@ type okBody struct {
 	Status string `json:"status"`
 }
 
-// decode 解析 JSON 请求体（带上限）。失败时已写好 400 响应，返回 false。
+// decode 解析 JSON 请求体（带上限）。失败时已写好 4xx 响应，返回 false。
+//
+// Content-Type 闸（issue #198）：只收 application/json（charset 等参数经
+// mime.ParseMediaType 归一，不影响判定）；缺省与其它类型一律 415——判定
+// 失败不回退到「当作 JSON 试一试」，那是把闸开成摆设。
 func (h *Handler) decode(w http.ResponseWriter, r *http.Request, v any) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mt != "application/json" {
+		writeErr(w, http.StatusUnsupportedMediaType, errors.New(
+			`controlplane: 介入请求 Content-Type 必须是 application/json（got "`+
+				r.Header.Get("Content-Type")+`"）`))
+		return false
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
