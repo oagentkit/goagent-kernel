@@ -125,7 +125,11 @@ func (o Outcome) String() string {
 type Decision struct {
 	// Outcome 结论（见上）。
 	Outcome Outcome
-	// Provider 选中的执行后端（仅 OutcomeProceed 时非 nil）。
+	// Provider 选中的执行后端。
+	//
+	// OutcomeProceed 且登记簿已装配时**必非 nil**（LevelNone 也走 Resolve）。
+	// 只有登记簿整体缺失（nil）时才保持既有语义——沙箱层不构成约束、
+	// Provider 留空，由 ExecuteAndRun 的兜底拒绝执行（不解引用 nil）。
 	Provider sandbox.Provider
 	// PolicyVerdict 审批层的原始裁决（宿主可据此展示「为什么」）。
 	PolicyVerdict policy.Verdict
@@ -178,6 +182,18 @@ type Request struct {
 // 2. 计划模式 ⇒ 只审不执行（不是失败）；
 // 3. 需人审 ⇒ 人审（人比档位更该先管）；
 // 4. 最后才判档位：只有前三条都放行，才问「档位够不够」。
+//
+// # LevelNone 也要给出后端（issue #210）
+//
+// 「不要求隔离强度」只表示沙箱层对**强度**不构成约束，不表示不需要后端：
+// 本包的执行入口（ExecuteAndRun）判完就**就地执行**。故 LevelNone 同样是
+// 显式的一档，也走 Resolve 取**最弱**满足者——放行的结论总是带得出可执行的
+// 后端，执行入口不会拿着 nil Provider 去调方法。
+//
+// 装了登记簿却选不到后端（空登记簿 / 预算兜不住）时照旧拒绝
+// （OutcomeLevelShort，不降级）。只有登记簿**整体缺失**（nil）时才保持
+// 「沙箱层不构成约束、Provider 留空」的既有语义——那一态是「没装沙箱」，
+// 不是「不要求强度」，由 ExecuteAndRun 的兜底拒绝执行。
 func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, req Request) Decision {
 	d := Decision{Level: req.MinLevel}
 
@@ -219,7 +235,24 @@ func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, r
 
 	// ③ 沙箱层：只有审批放行了才轮到它。
 	if req.MinLevel == sandbox.LevelNone && !needEgress {
-		// 既不要隔离强度、也不要出口策略 ⇒ 沙箱层不构成约束，放行。
+		// 既不要隔离强度、也不要出口策略 ⇒ 沙箱层对「强度」不构成约束，放行。
+		//
+		// 但放行也必须给出**可执行的后端**（issue #210）：判据与执行在本包是
+		// 焊在一起的（ExecuteAndRun），放行却留一个 nil Provider，执行入口就
+		// 只能解引用 nil。LevelNone 是文档支持的一档（preset 的 Unsafe 组合会
+		// 合法产出它），故这里同样走 Resolve 取**最弱**满足者。
+		// 登记簿缺失（nil）时保持既有语义：沙箱层不构成约束、Provider 留空，
+		// 由 ExecuteAndRun 的兜底拒绝执行。
+		if registry != nil {
+			provider, rerr := registry.Resolve(req.MinLevel, req.Budget)
+			if rerr != nil {
+				// 装了登记簿却兑现不了（空登记簿 / 预算兜不住）⇒ 拒绝，不降级。
+				d.Outcome = OutcomeLevelShort
+				d.Reason = fmt.Sprintf("选不到满足档位 %s 的执行后端：%v", req.MinLevel, rerr)
+				return d
+			}
+			d.Provider = provider
+		}
 		d.Outcome = OutcomeProceed
 		d.Reason = "审批放行，且未要求隔离强度与出口策略"
 		return d
@@ -331,6 +364,14 @@ func (g *Guard) Run(ctx context.Context, req Request) (sandbox.Outcome, Decision
 func ExecuteAndRun(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, req Request) (sandbox.Outcome, Decision) {
 	d := Check(ctx, gate, registry, req)
 	if d.Outcome != OutcomeProceed {
+		return sandbox.Outcome{}, d
+	}
+	// 兜底（issue #210）：判据放行却没有可执行的后端——唯一能到这里的形态是
+	// 登记簿**整体缺失**（Check 在有登记簿时保证 Provider 非 nil）。绝不解引用
+	// nil：返回宿主可处置的失败结论，理由直接指向缺的是登记簿。
+	if d.Provider == nil {
+		d.Outcome = OutcomeLevelShort
+		d.Reason = "判据放行但没有可用的执行后端（未装配执行后端登记簿），无法执行"
 		return sandbox.Outcome{}, d
 	}
 	// 用**判出来的那个** provider 执行——不给调用方换后端的机会。

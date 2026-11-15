@@ -112,12 +112,30 @@ func TestEgressWithoutRegistryFailsClosed(t *testing.T) {
 }
 
 // 不要求出口策略时，判定逐字退回旧行为（零值不影响既有调用点）。
+//
+// issue #210 之后的补强：零值用例（不要求档位与出口）不只是「结论是放行」——
+// **有登记簿时必须带出非 nil 的后端**（对照 TestEgressSatisfiedProceeds）：
+// 放行却给不出后端，执行入口就只能解引用 nil（旧实现必 panic）。
 func TestEgressZeroValueUnchanged(t *testing.T) {
-	req := Request{Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}}
-	d := Check(context.Background(), gateOf(policy.VerdictAuto), nil, req)
-	if d.Outcome != OutcomeProceed {
-		t.Fatalf("既不要档位也不要出口时应放行，got %v", d.Outcome)
-	}
+	op := policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false)}
+
+	t.Run("无登记簿：结论逐字不变", func(t *testing.T) {
+		d := Check(context.Background(), gateOf(policy.VerdictAuto), nil, Request{Op: op})
+		if d.Outcome != OutcomeProceed {
+			t.Fatalf("既不要档位也不要出口时应放行，got %v", d.Outcome)
+		}
+	})
+
+	t.Run("有登记簿：放行且给出后端", func(t *testing.T) {
+		reg := registryWith(egressProvider{level: sandbox.LevelOS, mode: egress.ModeUnrestricted})
+		d := Check(context.Background(), gateOf(policy.VerdictAuto), reg, Request{Op: op})
+		if d.Outcome != OutcomeProceed {
+			t.Fatalf("既不要档位也不要出口时应放行，got %v", d.Outcome)
+		}
+		if d.Provider == nil {
+			t.Fatal("放行时必须给出判出来的后端（对照 TestEgressSatisfiedProceeds）")
+		}
+	})
 }
 
 // 审批拒绝优先于出口判定：审批已否，不必再讨论出口。
