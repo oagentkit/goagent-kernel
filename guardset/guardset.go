@@ -73,6 +73,7 @@ package guardset
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -352,12 +353,15 @@ func runGuard(ctx context.Context, g Guard, c invoke.Call) (v invoke.Verdict, ok
 
 // panicText 把 panic 值转成可读文本（值未必是 error，可能是裸字符串或任意值）。
 func panicText(r any) string {
-	switch v := r.(type) {
-	case error:
-		return v.Error()
-	case string:
-		return v
-	default:
-		return "未知"
+	// 收编走上游唯一实现（errors.Recovered）：payload 从 *PanicError.Value 取。
+	// 栈**不进 Reason**——它对模型是噪声；要留痕的宿主持有
+	// *PanicError.Stack，本包不写日志、也不把栈塞进判定结论。
+	pe, ok := errors.Recovered(r).(*errors.PanicError)
+	if !ok {
+		return "未知" // 不可达：只在 recover() 非 nil 时调用
 	}
+	if err, isErr := pe.Value.(error); isErr {
+		return err.Error() // panic(err) 的原文最清楚
+	}
+	return fmt.Sprintf("%T: %v", pe.Value, pe.Value)
 }
