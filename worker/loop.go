@@ -95,34 +95,6 @@ type Config struct {
 	OnLeaseLost func(task taskboard.TaskID, cause LeaseLostCause)
 }
 
-// LeaseLostCause 在途租约失去资格的原因（@@Config.OnLeaseLost@@ 的判别面）。
-type LeaseLostCause int
-
-const (
-	// LeaseLostTakenOver 续期报 @@taskboard.ErrLeaseLost@@：租约已易主
-	//（新持有者在位），在途执行的 ctx 随之取消。
-	LeaseLostTakenOver LeaseLostCause = iota
-	// LeaseLostUnconfirmed 连续续期失败跨过阈值：无法确认持有资格——
-	// 取消在途 ctx 并停止领取（施加之前封口；本次连「谁在持」都答不出）。
-	LeaseLostUnconfirmed
-	// LeaseLostOnFinalize 收场动作（Complete/Release）被
-	// @@taskboard.ErrLeaseLost@@ 拒：任务已归新持有者，本次结果作废。
-	LeaseLostOnFinalize
-)
-
-func (c LeaseLostCause) String() string {
-	switch c {
-	case LeaseLostTakenOver:
-		return "taken_over"
-	case LeaseLostUnconfirmed:
-		return "unconfirmed"
-	case LeaseLostOnFinalize:
-		return "on_finalize"
-	default:
-		return "unknown"
-	}
-}
-
 // NewLoop 校验配置并构造驱动。
 func NewLoop(board taskboard.RenewingBoard, registry Registry, handler Handler, cfg Config) (*Loop, error) {
 	switch {
@@ -279,13 +251,6 @@ func (l *Loop) Run(ctx context.Context) error {
 			"worker: 任务租约连续续期失败跨过 TTL，无法确认持有资格——已取消在途执行并停止领取")
 	}
 	return runErr
-}
-
-// notifyLeaseLost 租约失去资格的可观测信号（nil 钩子静默跳过）。
-func (l *Loop) notifyLeaseLost(id taskboard.TaskID, cause LeaseLostCause) {
-	if l.cfg.OnLeaseLost != nil {
-		l.cfg.OnLeaseLost(id, cause)
-	}
 }
 
 // runClaims 领取-执行主循环（claimCtx 取消即停止领取）。
