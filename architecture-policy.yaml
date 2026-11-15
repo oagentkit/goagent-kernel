@@ -791,6 +791,61 @@ modules:
       **示例**不是能力包——机制面在 worker/coord/taskboard，本目录只演示
       怎么接线；注册表落库归宿主的跨进程存储。
 
+  # ── 2026-11-15 新增（issue #167 #168，收尾域下沉提案；登记先于代码）──
+  #
+  # 两个收尾域机制包，都是「contract 词表的消费算法」——词表在内核，
+  # 「怎么安全地迁过去」的算法此前散在各宿主，各迁一套必然漂：
+  #
+  # finalize（issue #167）：Cause→终态四分路由（接管不落终态回 created /
+  # 用户取消 cancelled / 会话超时 timed_out 先于停机分支 / 进程停机不落终态
+  # 留给恢复循环）+ 其余 failed + 排队重试裁决，外加三条并发纪律（detached
+  # 写 / 零行=他路已接手不写 / 多起点收敛 + 0 行回读补发不谎报）。
+  # gorm/model 不下沉：条件迁移、回读现终态、发事件全走注入接口；
+  # 报告文案、needs_review 标记、排队结算留宿主回调。
+  #
+  # steer（issue #168）：运行中接管五件套——ErrSteered 协作中止 Cause
+  # （与用户取消/停机可区分）+ 保产摘要（已完成环节机械拼接，不调 LLM）+
+  # 不落终态回可认领态 + 队列感知（有排队条目才回 created，否则按失败收敛
+  # 不开空轮）+ 条件迁移单协程执行（无双跑窗口）。判据只依赖可注入事实
+  # （完成环节清单 / 队列非空与否 / 条件迁移结果），零领域词。
+  #
+  # 两包依赖方向是**单向**的：finalize → steer（消费 ErrSteered 哨兵），
+  # steer 不得 import finalize——接管臂的 Cause 由 steer 产出、由 finalize
+  # 路由消费，反向成环即门禁红。
+  - id: finalize
+    roots: [finalize]
+    requires: [contract, steer, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 路由目标词表来自 contract；接管 Cause 哨兵在 steer（消费方，单向不环）；留痕走 logx.Delegating；哨兵/判定用 pkg/errors
+    owner: harness
+    managed: true
+    notes: |
+      收尾漏斗（issue #167）：Route（Cause→四分 + 其余 failed 的纯函数路由表）
+      + Converge（多起点条件迁移 + 零行判定 + 0 行回读补发不谎报）+
+      AdjudicateRetry（失败臂排队重试裁决）+ Detached（脱离 ctx 派生）。
+      三条并发纪律是包级不变量（写进包头与用例）：① 终态写一律走脱离 ctx——
+      编排 ctx 已取消时存储直查中止 ⇒ 会话滞留 running 而事件谎报；② 条件
+      迁移零行 = 他路已接手，不再写任何状态；⑃ 多起点（running/waiting_approval
+      双起点，挂起期写丢失时只认 running 起点的终态写零行 ⇒ 永不入终态）+
+      零行回读库内现终态补发事件「不谎报」。
+      与 drain 的分工（互指）：drain 只管停机臂在途轮收敛且明写「不写终态」——
+      「停机不落终态」这条 case 的归属地正是本路由表。接管臂（ErrSteered）的
+      载荷与续跑语义在 steer，本包只管路由到那一臂。
+  - id: steer
+    roots: [steer]
+    requires: [contract, statemachine, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 回迁目标词表 contract；「环节成功」判定词表 statemachine；队列读失败留痕走 logx；哨兵/判定用 pkg/errors
+    owner: harness
+    managed: true
+    notes: |
+      运行中接管（issue #168）：ErrSteered 协作中止 Cause + Signal/IsSteered
+      （带 Cause 的 ctx 取消，与用户取消/停机可区分）+ BuildSummary（已完成
+      环节机械拼接，不调 LLM——收尾在脱离 ctx 里跑，须快且不引入新失败面，
+      读取失败走降级文案）+ Decide（队列感知：有排队条目回 created，否则按
+      失败收敛不开空轮）+ Run（条件迁移单协程执行，零行 = 他路已接手静默，
+      并发投喂恰有一个赢家）。与 finalize 的接缝：steer 产出 Cause、finalize
+      消费（单向依赖，不许环）；finalize 管「往哪收」的路由，steer 管接管臂
+      「怎么收与怎么续」。与 handoff（跨进程负责人字段改写）/ taskboard 的
+      「接管」（租约过期被动重跑）/ drain（进程要死了的排水）三处同词不同域，
+      包头互指。
+
 # ── 可执行规则 ──
 rules:
   # 规则一（拆分后的头号红线）：harness 不得出现领域词。
@@ -1361,7 +1416,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
