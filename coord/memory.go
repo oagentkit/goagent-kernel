@@ -2,7 +2,7 @@
 //
 // # 边界刻在名字与文档里
 //
-// MemoryBackend 的原子性来自**进程内互斥锁**：三个原语在锁内逐字原子，
+// MemoryBackend 的原子性来自**进程内互斥锁**：四个原语在锁内逐字原子，
 // 但那只对同一进程成立。拿它当生产协调存储 = 两个进程各持一把各自的锁，
 // 「Acquire 是跨进程原子操作」这条前提不存在——sideeffect 的全部判据
 // 会显示为绿，而去重已经失效（AGENTS.md「参考实现是可被误用的资产」
@@ -10,7 +10,7 @@
 //
 // 它在本包的用途只有两个：①给适配器（Board/Store）当**测试保底**——
 // 判定逻辑那份实现由契约套件验证时，不需要真实后端；②给宿主当
-// **形态示范**——照它的三个方法写 Redis/etcd 版本。
+// **形态示范**——照它的四个方法写 Redis/etcd 版本。
 package coord
 
 import (
@@ -106,6 +106,9 @@ func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mut
 // Keys 前缀列键（锁内快照语义，结果按键名排序保证确定性）。
 // 墓碑键不列——已删除的键不在键空间里（列出去，适配器的 List 会把
 // 已删任务当活任务判）。
+//
+// 注意：本方法只列键名。需要「键 + 值」的同刻视图走 ScanSnapshot（#182），
+// 不要 Keys + Snapshot 两步拼。
 func (m *MemoryBackend) Keys(_ context.Context, prefix string) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -119,5 +122,27 @@ func (m *MemoryBackend) Keys(_ context.Context, prefix string) ([]string, error)
 		}
 	}
 	sort.Strings(out)
+	return out, nil
+}
+
+// ScanSnapshot 前缀扫描：锁内一次取回前缀下全部存活键的键与值（#182）。
+//
+// 「一次原子操作」在这里字面成立：整个遍历在同一把锁内完成，调用方拿到的
+// map 是**同一个瞬间**的键集与值——遍历中途的并发写入要么整体发生在扫描前、
+// 要么整体发生在扫描后，不存在半新半旧的拼接。墓碑键不返回（与 Keys 同一
+// 可见性口径）；结果按键名排序保证确定性；Val 是独立拷贝（与 Snapshot
+// 同一条「后端不得复用底层字节」的纪律）。
+func (m *MemoryBackend) ScanSnapshot(_ context.Context, prefix string) (map[string]Entry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]Entry{}
+	for k, e := range m.kv {
+		if e.del {
+			continue
+		}
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			out[k] = Entry{Key: k, Ver: e.ver, Val: append([]byte(nil), e.val...), Exists: true}
+		}
+	}
 	return out, nil
 }

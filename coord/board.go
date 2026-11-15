@@ -3,7 +3,7 @@
 // # 判定逻辑只有这一份
 //
 // Board 的语义（认领原子、凭令牌释放/完成、续期是资格检查、接管代次严格
-// 递增）全部在本适配器里实现；宿主的后端只负责让三个原语真的原子。
+// 递增）全部在本适配器里实现；宿主的后端只负责让四个原语真的原子。
 // 判定与提交分离的窗口由断言护住：判定读过的每个键都进断言，
 // 窗口内被人动过就取新快照重判——这就是「CAS 循环」形态在 Board 上的落法。
 //
@@ -100,22 +100,24 @@ func (a *BoardAdapter) Seed(tasks ...taskboard.Task) {
 	}
 }
 
-// List 返回一致快照（按键名取全量后逐键解码，按键 ID 序返回）。
+// List 返回**同刻全量视图**（issue #182）：一次 ScanSnapshot 取回前缀下
+// 全部键与值（键集与值出自同一原子操作），逐键解码后按任务 ID 序返回。
+//
+// 为什么不能 Keys + Snapshot 两步拼：那是两次独立调用，两次之间新增/删除的
+// 任务既不出现在结果里也不会让任何断言失败——「一致快照」的承诺与实现直接
+// 矛盾，受害的是全量视图类消费（worker.claimNext 的候选挑选、恢复扫描、
+// 配额核算、运维看板）。原语契约见 Backend.ScanSnapshot。
 func (a *BoardAdapter) List(ctx context.Context) ([]taskboard.Task, error) {
-	keys, err := a.b.Keys(ctx, taskKeyPrefix)
+	scan, err := a.b.ScanSnapshot(ctx, taskKeyPrefix)
 	if err != nil {
-		return nil, errors.Wrap(err, "coord: List 列键失败")
+		return nil, errors.Wrap(err, "coord: List 前缀扫描失败")
 	}
-	if len(keys) == 0 {
+	if len(scan) == 0 {
 		return nil, nil
 	}
-	snap, err := a.b.Snapshot(ctx, keys...)
-	if err != nil {
-		return nil, errors.Wrap(err, "coord: List 快照读失败")
-	}
-	out := make([]taskboard.Task, 0, len(keys))
-	for _, k := range keys {
-		t, derr := decodeTask(snap[k])
+	out := make([]taskboard.Task, 0, len(scan))
+	for _, e := range scan {
+		t, derr := decodeTask(e)
 		if derr != nil {
 			return nil, derr
 		}

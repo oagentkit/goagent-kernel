@@ -139,6 +139,10 @@ func (b *brokenBackend) Keys(ctx context.Context, prefix string) ([]string, erro
 	return b.inner.Keys(ctx, prefix)
 }
 
+func (b *brokenBackend) ScanSnapshot(ctx context.Context, prefix string) (map[string]Entry, error) {
+	return b.inner.ScanSnapshot(ctx, prefix)
+}
+
 func TestConcurrentTxnRedOnBrokenBackend(t *testing.T) {
 	// 坏实现：两个竞争者都通过「检查」，先后写入 ⇒ 多个赢家 ⇒ 判据红。
 	err := ConcurrentTxn(context.Background(), &brokenBackend{inner: NewMemoryBackend()}, "k", 8)
@@ -178,6 +182,10 @@ func (conflictBackend) Keys(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
 }
 
+func (conflictBackend) ScanSnapshot(_ context.Context, _ string) (map[string]Entry, error) {
+	return map[string]Entry{}, nil
+}
+
 func TestCASLoopPlanErrorAborts(t *testing.T) {
 	// 判定类失败（ErrTaken 等）是结论不是冲突：plan 报错即终止，不重试。
 	runs := 0
@@ -212,6 +220,10 @@ func (c countingBackend) Txn(_ context.Context, _ []Assert, _ []Mutation) (bool,
 
 func (c countingBackend) Keys(_ context.Context, _ string) ([]string, error) {
 	return nil, nil
+}
+
+func (c countingBackend) ScanSnapshot(_ context.Context, _ string) (map[string]Entry, error) {
+	return map[string]Entry{}, nil
 }
 
 // TestVersionNotReusedOnMemoryBackend 契约判据对参考实现自检（issue #181）：
