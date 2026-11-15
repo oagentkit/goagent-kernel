@@ -335,6 +335,11 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// ── 租户门（tenant_gate 段）的形状 ──
+	//
+	// 判定本体在 tenantgate_selfcheck.go：缺形状时执行体没有判定面，必须变红。
+	out = append(out, tenantGateSelfCheck(root, policyPath, pol.TenantGate)...)
+
 	// ── 例外登记的完整性 ──
 	// 「规则存在」的口径 = policy rules 段的 id ∪ 内置规则 id。
 	//

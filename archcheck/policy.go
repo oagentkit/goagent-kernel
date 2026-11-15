@@ -317,6 +317,11 @@ type Policy struct {
 	// 而不是「宿主登记了才问」——不登记就没人问，正是这条门禁要防的静默失效。
 	EgressPaths *EgressPaths `yaml:"egress_paths"`
 
+	// TenantGate 是租户过滤漏拼门的声明面（授权上下文的类型形状、租户域
+	// 字段名、共享判定面清单）。段缺省即关闭——形状是判定前提，没有形状
+	// 就判不了；声明了段却漏形状由自校验报红。
+	TenantGate *TenantGate `yaml:"tenant_gate"`
+
 	// RequireRuleExamples 要求每条**有执行体**的规则都自带 examples。
 	//
 	// 默认 false：宿主仓不必为了升级判据而先给全部规则补样例（那会让一次

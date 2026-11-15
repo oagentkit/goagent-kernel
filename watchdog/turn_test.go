@@ -26,7 +26,7 @@ func benignEvent(sid string) eventbus.Event {
 		Payload: map[string]any{"agent": "example"}}
 }
 
-// reasons 收集指定事件类型告警的 reason 列表。
+// reasons 收集指定事件类型提示的 reason 列表。
 func reasons(r *rec, typ string) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -50,7 +50,7 @@ func TestTurnBracketCleanPairing(t *testing.T) {
 		w.observe(turnEnded("s1", "succeeded", "loop"))
 	}
 	if n := r.count(); n != 0 {
-		t.Fatalf("正常轮括号不应告警: %v", reasons(r, eventbus.EventTurnBracketViolation))
+		t.Fatalf("正常轮括号不应提示: %v", reasons(r, eventbus.EventTurnBracketViolation))
 	}
 }
 
@@ -69,7 +69,7 @@ func TestTurnBracketOpenLeak(t *testing.T) {
 	}
 	ev := r.first()
 	if ev.Level != "warn" || ev.Payload["opened_at"] == "" {
-		t.Fatalf("告警级别/载荷不符: %+v", ev)
+		t.Fatalf("提示级别/载荷不符: %+v", ev)
 	}
 }
 

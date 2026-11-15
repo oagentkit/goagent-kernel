@@ -58,7 +58,6 @@ package archcheck
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -240,6 +239,18 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 租户过滤漏拼门：服务层「授权上下文 + 租户域返回」必须有隔离证据，
+	// 登记在册的共享判定面必须真实存在（tenantgate.go）。段缺省即关闭——
+	// 授权类型/租户字段/扫描面是判定前提，没有形状就判不了（声明了段却漏
+	// 形状由 policy 自校验报红）。
+	if pol.TenantGate != nil && pol.TenantGate.on() {
+		vs, err := tenantGateViolations(root, *pol.TenantGate)
+		if err != nil {
+			return nil, err
+		}
+		res.Violations = append(res.Violations, vs...)
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
@@ -272,6 +283,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	if egPaths.on() {
 		sevOf[egressPathRuleID] = sevOrError(egPaths.Severity)
 	}
+	tenantGateSeverities(pol.TenantGate, sevOf)
 	// 未受管逃逸门禁恒为 error：它是 PTC 安全默认（缺判定环即拒）的配套护栏——
 	// 逃逸口若能在生产代码里随手写，它就从「显式声明」退化成「默认路径」。
 	sevOf[unmanagedEscapeRuleID] = "error"
@@ -350,6 +362,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 			Severity: sevOf[egressPathRuleID],
 		})
 	}
+	res.Rules = append(res.Rules, tenantGateRuleInfos(pol.TenantGate)...)
 	// 未受管逃逸门禁恒开（无 policy 段）：它判的是本仓 API 的既定事实
 	// （PTC 缺判定环即拒），不是各仓可自选的策略。
 	res.Rules = append(res.Rules, RuleInfo{
@@ -366,29 +379,11 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	// ── 阈值门禁（结构债）──
 	th := pol.Thresholds
 	res.ThresholdEnforced = th.Enforce
-	if th.MaxFileLines > 0 {
-		long, err := longFilesReport(root, th.ScanRoots, th.MaxFileLines)
-		if err != nil {
-			// 与 god object 同一条：遍历失败意味着那棵树没被判定。
-			return nil, err
-		}
-		if len(long) > 0 {
-			res.ThresholdFindings = append(res.ThresholdFindings,
-				fmt.Sprintf("超长文件（阈值 %d 行）%d 个:\n    %s", th.MaxFileLines, len(long), strings.Join(long, "\n    ")))
-		}
+	findings, err := thresholdFindings(root, th)
+	if err != nil {
+		return nil, err
 	}
-	if th.MaxMethodsPerType > 0 {
-		gods, err := godObjects(root, th.ScanRoots, th.MaxMethodsPerType, th.forwardingShellLimit())
-		if err != nil {
-			// 门禁给不出结论时不能装作通过——解析失败意味着那些文件的方法数
-			// 没被计入，门禁对它们隐形（假绿）。
-			return nil, err
-		}
-		if len(gods) > 0 {
-			res.ThresholdFindings = append(res.ThresholdFindings,
-				fmt.Sprintf("god object（阈值 %d 实质方法/类型）%d 个:\n    %s", th.MaxMethodsPerType, len(gods), strings.Join(gods, "\n    ")))
-		}
-	}
+	res.ThresholdFindings = findings
 
 	return res, nil
 }

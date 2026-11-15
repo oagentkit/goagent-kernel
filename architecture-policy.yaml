@@ -1291,6 +1291,44 @@ dependency_direction:
 # 而不是档位值（process/os/machine）：门禁不能 import 被判的包（它必须是最底层，
 # 否则「用它判别人」就变成「它自己也在被判定」），故它只能比对代码里可静态识别的
 # 那一面——常量名。两侧共用同一份真相，不另造映射表。
+# ── 租户过滤漏拼门（tenant_gate 段，issue #172）──
+#
+# 形状归 policy，执行体是通用 AST 分析（archcheck/tenantgate.go）。本仓自身
+# 的租户机制面只在 tenant 包：授权上下文类型 tenant.Context、租户域字段名
+# Tenant、过滤列 tenant_id。宿主仓复用同一执行体时，把这一段换成自己的形状
+# （如 Viewer / 自身模型字段 / team_id）——宿主字面不得进内核代码。
+#
+# 三条判据：
+#   1. tenant-surface-missing-evidence：带授权上下文形参 + 返回租户域类型的
+#      函数必须有隔离判定证据（调用登记的共享判定面 / Where|Raw 含过滤列 /
+#      显式 `// tenant:iso <理由>`）；三者皆无 = 红。
+#   2. viewer-dropped：带授权上下文形参却完全不用 = 红。
+#   3. shared-surface-missing：登记在册的共享判定面在代码里不存在 = 清单漂移
+#      = 红（一条被静默放宽的登记等于没有登记）。
+#
+# 租户域类型清单**不另立**：tenant_type_roots（缺省 = roots）下任何含
+# tenant_fields 字段名的 struct 都由代码推导，新增模型自动入面。
+#
+# 边界：本门禁判静态证据存在性，判不了「过滤是否真的生效」（调了判定面但没用
+# 返回值、过滤条件被注释掉）；语义正确性归宿主运行期判据（tenant 包的
+# Require/Can/Quota 是运行时对偶）。
+tenant_gate:
+  enabled: true
+  severity: error
+  desc: 服务层「授权上下文形参 + 租户域返回」必须有隔离判定证据；登记在册的共享判定面必须真实存在（清单漂移即红）
+  roots: [tenant]                 # 服务层读面扫描面
+  tenant_type_roots: [tenant]     # 租户域类型推导面（缺省=roots）
+  auth_context_types: [tenant.Context]
+  tenant_fields: [Tenant]
+  filter_columns: [tenant_id]
+  shared_surfaces:
+    - dir: tenant
+      name: Require
+      note: fail-closed 租户上下文要求入口（未注入即拒绝）
+    - dir: tenant
+      name: Enforce
+      note: 配额判定入口（上下文未注入即拒绝，判定与存储分离）
+
 sandbox_providers:
   enabled: true
   severity: error

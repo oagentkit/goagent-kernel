@@ -44,6 +44,9 @@ var builtinRuleIDs = []string{
 	sandboxProviderRuleID,
 	executionPathRuleID,
 	egressPathRuleID,
+	tenantSurfaceMissingRuleID,
+	tenantViewerDroppedRuleID,
+	tenantSurfaceDriftRuleID,
 }
 
 // isBuiltinRule 报告某条规则 id 是否是内置的（不在 policy 的 rules 段里）。
@@ -77,6 +80,9 @@ func builtinRuleEnforced(pol *Policy, id string) bool {
 		return pol.ExecutionPaths == nil || pol.ExecutionPaths.on()
 	case egressPathRuleID:
 		return pol.EgressPaths == nil || pol.EgressPaths.on()
+	case tenantSurfaceMissingRuleID, tenantViewerDroppedRuleID, tenantSurfaceDriftRuleID:
+		// 租户门要有形状声明才有判定面（与 facade 同款例外）：段缺省即关闭。
+		return pol.TenantGate != nil && pol.TenantGate.on()
 	}
 	return false
 }
