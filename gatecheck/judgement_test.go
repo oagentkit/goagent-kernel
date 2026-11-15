@@ -104,6 +104,43 @@ func TestNoLevelRequiredSkipsSandboxLayer(t *testing.T) {
 	}
 }
 
+// TestLevelNoneResolvesWeakestProvider 钉住 issue #210 的正解：
+// 「不要求隔离强度」也要给出**可执行的后端**——LevelNone 同样是显式的一档，
+// 也走 Resolve 取**最弱**满足者，而不是留一个 nil Provider 给执行入口。
+func TestLevelNoneResolvesWeakestProvider(t *testing.T) {
+	reg := sandbox.NewRegistry()
+	_ = reg.Register(countingProvider{level: sandbox.LevelProcess, calls: new(int)})
+	_ = reg.Register(fakeProvider{level: sandbox.LevelOS})
+
+	d := Check(context.Background(), gateOf(policy.VerdictAuto), reg, Request{
+		Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
+	})
+	if d.Outcome != OutcomeProceed {
+		t.Fatalf("不要求隔离强度时应放行，实得 %v（%s）", d.Outcome, d.Reason)
+	}
+	if d.Provider == nil {
+		t.Fatal("放行时必须给出后端（LevelNone 也要走 Resolve）")
+	}
+	if got := d.Provider.Level(); got != sandbox.LevelProcess {
+		t.Fatalf("应取最弱满足者（进程级），实得 %v", got)
+	}
+}
+
+// TestLevelNoneWithEmptyRegistryFailsClosed 钉住：装了登记簿却**一个后端都没有**
+// 时，LevelNone 也要拒绝——放行的结论必须带得出可执行的后端，否则「判据+执行」
+// 入口只能失败，而那时再报就把失败推到了执行期（宿主更晚才知道）。
+func TestLevelNoneWithEmptyRegistryFailsClosed(t *testing.T) {
+	d := Check(context.Background(), gateOf(policy.VerdictAuto), registryOf(), Request{
+		Op: policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto},
+	})
+	if d.Outcome != OutcomeLevelShort {
+		t.Fatalf("登记簿里没有后端时应拒绝（level_short），实得 %v（%s）", d.Outcome, d.Reason)
+	}
+	if d.Provider != nil {
+		t.Fatal("拒绝时不该给出后端")
+	}
+}
+
 // TestMissingRegistryWithLevelRequiredFailsClosed 钉住：要求了隔离强度
 // 却**没有登记簿** ⇒ 拒绝（fail-closed）。
 //
