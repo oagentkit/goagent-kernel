@@ -215,20 +215,22 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			return backend.Result{}, err
 		}
 		conflict, err := k.createNetworkPolicy(ctx, ns, name)
-		if err != nil {
-			if !conflict {
-				return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
-			}
-			// 同名策略已存在（重试路径）：验证它就是本作业的全拒策略才复用。
-			p, _, gerr := k.getNetworkPolicy(ctx, ns, name)
-			if gerr != nil {
-				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
-					"同名 NetworkPolicy 对账失败（fail-closed）: "+gerr.Error())
-			}
-			if !k8sPolicyIsOursDenyAll(p, name) {
-				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
-					"同名 NetworkPolicy 不是本作业的 Egress 全拒策略（拒绝复用别人的对象）")
-			}
+		if err != nil && !conflict {
+			return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
+		}
+		if err == nil {
+			// 本次创建：即便后续读回校验失败，对象也是本次请求创建的（名字
+			// 由本侧生成），交给 defer 回收。
+			policyCreated = true
+		}
+		// 创建成功也要读回校验：apiserver 接受 ≠ 落库形态正确（mutating
+		// admission webhook / 控制器可改写策略），创建结果在网络上「丢失」
+		// （超时）则连对象是否存在都未知。两类都按实测面 fail-closed：读回
+		// 不存在 / 读回不是本作业的 Egress 全拒策略 ⇒ 拒绝创建作业。
+		// 同名策略已存在（409，重试路径）走同一条校验：是本人的全拒策略才
+		// 复用（policyCreated 在校验通过后才置位——绝不在别人的对象上收场）。
+		if verr := k.verifyNetworkPolicy(ctx, ns, name); verr != nil {
+			return backend.Result{}, verr
 		}
 		policyCreated = true
 	}

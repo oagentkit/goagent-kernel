@@ -333,6 +333,16 @@ func (t *Tailer) Run(ctx context.Context) {
 						// 未存过游标（首次部署）：回退显式起点 / MaxID 初始化。
 					}
 				}
+				if !t.useMaxID {
+					// 显式起点优先（WithTailStartCursor）：CursorStore 未命中时
+					// 回退的是这个起点而非 MaxID——否则起点到当前尾部的存量被
+					// 整个跳过。初始游标立即落盘。
+					inited = true
+					if serr := t.cursorStore.SaveCursor(ctx, cursor); serr != nil {
+						log.CtxWarn(ctx, "event-tail 初始游标保存失败（重启后将重走初始化）", logx.ErrKey, serr)
+					}
+					continue // 初始化拍不读存量
+				}
 				max, err := t.store.MaxID(ctx)
 				if err != nil {
 					// 初始化失败：游标未知，绝不能拿 0 去 ListAfter（那会

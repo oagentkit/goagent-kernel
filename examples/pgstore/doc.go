@@ -40,6 +40,8 @@
 //     读侧以已提交水位线为上界（TailStore / WatermarkTailStore）。这是
 //     eventbus.TailStore 契约点名的唯一被承诺支持的生产形态；自增直读
 //     （BIGSERIAL + WHERE id > cursor）被该契约显式声明不支持。
+//     尾随游标经 TailCursorStore（pgref_tail_cursor）持久化——实现
+//     eventbus.CursorStore，崩溃/停机后从上次停点续读（#264）。
 //
 // # 时钟
 //
@@ -76,7 +78,7 @@ import (
 )
 
 // 编译期断言：本包的实现确实满足三套存储中立契约（+ 下游栅栏与续期扩展
-// + 事件面的三张接缝，#264）。
+// + 事件面的四张接缝，#264）。
 var (
 	_ sideeffect.Store            = (*EffectStore)(nil)
 	_ sideeffect.FencedSink       = (*Downstream)(nil)
@@ -86,4 +88,5 @@ var (
 	_ eventbus.Store              = (*EventStore)(nil)
 	_ eventbus.TailStore          = (*EventStore)(nil)
 	_ eventbus.WatermarkTailStore = (*EventStore)(nil)
+	_ eventbus.CursorStore        = (*TailCursorStore)(nil)
 )
