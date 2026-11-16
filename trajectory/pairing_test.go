@@ -165,6 +165,71 @@ func TestDuplicateUnpairedResultsKeepUnpairedState(t *testing.T) {
 	}
 }
 
+// TestResultBeforeCallMergesAttribution 结果先到、调用后到：就地配对必须是
+// **完整归并**，而不是只补时刻——归属字段（轮次 / 环节号 / 工具名）以调用事件
+// 为准，摘要与最终类目同源重算。
+//
+// issue #299：旧实现只写 Kind/StartAt/Status/Pairing 四项，于是第 2 轮真实发生
+// 的调用被导出成第 1 轮的子 span，工具名整段消失，摘要还写着 tool_result。
+func TestResultBeforeCallMergesAttribution(t *testing.T) {
+	var seenKinds []Kind
+	p := NewProjector(Options{Summarize: func(r Row) string {
+		seenKinds = append(seenKinds, r.Kind)
+		if r.Kind == KindToolCall {
+			return "call:" + r.Tool
+		}
+		return ""
+	}})
+	p.ApplyAll([]eventbus.Event{
+		ev(eventbus.EventTurnStarted, 0, nil),
+		// 结果先到：落在第 1 轮，载荷不带 tool、不带环节号。
+		ev(eventbus.EventToolResult, 100, map[string]any{"call_id": "c1"}),
+		ev(eventbus.EventTurnEnded, 200, nil),
+		ev(eventbus.EventTurnStarted, 300, nil),
+		stepEv(eventbus.EventStepStarted, 310, 7),
+		// 调用后到：第 2 轮、带环节号、载荷带工具名。
+		toolEv(eventbus.EventToolCall, 400, 7, "c1", "alpha_fn"),
+	})
+
+	rows := p.Rows()
+	if len(rows) != 4 {
+		t.Fatalf("应投影出 4 行（turn1/turn2/step7/tool），得到 %d：%+v", len(rows), rows)
+	}
+	row := findTool(t, rows, "c1")
+	if row.Kind != KindToolCall || row.Pairing != PairingPaired {
+		t.Fatalf("归并后应是已配对的 tool_call：%+v", row)
+	}
+	if row.Turn != 2 {
+		t.Fatalf("归属轮次必须取自调用事件（第 2 轮），实得 %d", row.Turn)
+	}
+	if !row.HasStep || row.StepID != 7 {
+		t.Fatalf("归属环节号必须取自调用事件（7），实得 has=%v id=%d", row.HasStep, row.StepID)
+	}
+	if row.Tool != "alpha_fn" {
+		t.Fatalf("工具名必须取自调用事件载荷，实得 %q", row.Tool)
+	}
+	if row.Summary != "call:alpha_fn" {
+		t.Fatalf("摘要必须按归并后的类目/工具名重算，实得 %q", row.Summary)
+	}
+	if len(seenKinds) == 0 || seenKinds[len(seenKinds)-1] != KindToolCall {
+		t.Fatalf("Summarize 钩子最后一次看到的类目必须与最终 Row.Kind 一致，实得 %v", seenKinds)
+	}
+	// 导出的 span 必须挂在调用所在轮的环节下。
+	spans := SpansOf(rows)
+	var toolSpan Span
+	for _, s := range spans {
+		if s.Attributes[AttrRowID] == "tool#c1" {
+			toolSpan = s
+		}
+	}
+	if toolSpan.ParentID != "step#7" {
+		t.Fatalf("工具 span 的父必须是调用所在轮的环节 step#7，实得 %q", toolSpan.ParentID)
+	}
+	if got := toolSpan.Attributes[AttrTurnSeq]; got != int64(2) {
+		t.Fatalf("turn.seq 必须是调用所在轮（2），实得 %v", got)
+	}
+}
+
 // TestResultBeforeCallPairsInPlace 结果先到、调用后到：就地配对，不另起一行。
 func TestResultBeforeCallPairsInPlace(t *testing.T) {
 	p := NewProjector(Options{})

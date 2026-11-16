@@ -201,8 +201,9 @@ type Options struct {
 	// Summarize 摘要注入点：宿主自定义行标签（展示文案归宿主，内核不认识
 	// 任何领域词）。返回空串时沿用本包的通用标签；nil 时全程用通用标签。
 	//
-	// 只在行创建时调用一次——行的可读字段（类目、标识、工具名、时刻）在创建
-	// 后不再变化，故摘要不需要跟着配对状态刷新。
+	// 行创建时调用一次；**「结果先到、调用后到」的就地归并会改写类目与归属
+	// 字段**，此时按归并后的行再调用一次——钩子最后一次看到的类目与最终
+	// Row.Kind 一致（issue #299）。归并完成后行的可读字段不再变化。
 	Summarize func(Row) string
 }
 
@@ -309,14 +310,24 @@ func (p *Projector) Finalize() []Row {
 func (p *Projector) append(r Row) int {
 	p.seq++
 	r.Seq = p.seq
-	r.Summary = defaultSummary(r)
+	p.rows = append(p.rows, r)
+	idx := len(p.rows) - 1
+	p.refreshSummary(idx)
+	return idx
+}
+
+// refreshSummary 按行**当前**字段重算摘要（默认标签 + 宿主钩子）。
+//
+// 两个调用点：行创建时；「结果先到、调用后到」的就地归并时——归并会改写类目与
+// 归属字段，旧摘要（例如 tool_result）不能留到归并后（issue #299）。
+func (p *Projector) refreshSummary(idx int) {
+	r := &p.rows[idx]
+	r.Summary = defaultSummary(*r)
 	if p.opts.Summarize != nil {
-		if s := p.opts.Summarize(r); s != "" {
+		if s := p.opts.Summarize(*r); s != "" {
 			r.Summary = s
 		}
 	}
-	p.rows = append(p.rows, r)
-	return len(p.rows) - 1
 }
 
 // issue 记一条配对缺口（同一类目 + call_id 只记一条）。

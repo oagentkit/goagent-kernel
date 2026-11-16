@@ -166,13 +166,28 @@ func (p *Projector) openTool(ev eventbus.Event) {
 	if callID != "" {
 		if idx, ok := p.tools[callID]; ok {
 			if p.rows[idx].Kind == KindToolResult {
-				// 结果先到、调用后到：就地配对（起点取调用时刻）。
-				// 事件顺序反了时两时刻会倒挂，Duration() 随之判定「无实测值」——
-				// 那正是事实，不拿绝对值糊过去。
-				p.rows[idx].Kind = KindToolCall
-				p.rows[idx].StartAt = ev.OccurredAt
-				p.rows[idx].Status = StatusClosed
-				p.rows[idx].Pairing = PairingPaired
+				// 结果先到、调用后到：就地**完整归并**，不是只补时刻。
+				// 归属字段（轮次 / 环节号 / 工具名）以**调用事件**为准——结果行
+				// 创建时按「当时的当前轮」记归属，而调用可能落在另一轮；只补
+				// 时刻会让第 2 轮真实发生的调用导出成第 1 轮的子 span，工具名
+				// 整段消失（issue #299）。
+				row := &p.rows[idx]
+				row.Kind = KindToolCall
+				row.Turn = p.currentTurn()
+				if id, has := stepIDOf(ev); has {
+					row.HasStep = true
+					row.StepID = id
+				} else {
+					row.HasStep = false
+					row.StepID = 0
+				}
+				row.Tool = tool
+				row.StartAt = ev.OccurredAt
+				row.Status = StatusClosed
+				row.Pairing = PairingPaired
+				// 类目被改写 ⇒ 摘要必须与最终类目同源重算（Summarize 的
+				// 「创建后类目不变」承诺在这一路径上不成立，见 Options.Summarize）。
+				p.refreshSummary(idx)
 				p.clearIssue(PairingUnpairedResult, callID)
 				return
 			}
