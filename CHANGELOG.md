@@ -2,6 +2,654 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.39.0] — 2026-11-16
+
+### 新增：多副本装配四件——持久化 Registry/ClaimReady/原子配额/持久化 Plane（#189）
+
+* feat(worker): Registry 内存参考实现移入内核并补多副本契约用例（#189）
+* feat(taskboard): 新增 ClaimReady 批量领取契约与 coord 适配器实现（#189）
+* feat(scheduling): 新增全局原子配额原语 QuotaStore 与内存参考实现（#189）
+* feat(controlplane): 新增 Store 契约与持久化 Plane（#189）
+* docs: 同步多副本四件的 README/错误表/架构策略（#189）
+
+### 新增：tenant 进存储键与领取条件（#195）
+
+- taskboard: Task.Tenant 定义 (Tenant, ID) 身份；Check 按租户判重、依赖只在同租户内解析，Problem 带租户归属
+- coord: NewTenantBoardAdapter 从 ctx 租户生成 coord/t/<escaped-tenant>/task/<id>；List/Claim/Release/Complete/Renew 全按租户过滤；缺租户 tenant.ErrNoContext fail-closed；单租户键布局与任务 JSON 逐字不变
+- boardtest: 新增 RunTenant 租户契约套件（跨租户不可见/不可领含并发、同 id 互不覆盖、跨租户令牌拒收、缺租户 fail-closed）+ 忽略租户的变异实现牙齿验证
+- 文档: tenant/coord/taskboard 包文档与 USAGE 4.8 写清已进键面与宿主责任面
+
+### 新增：worker 并发池 + 跨部署故障矩阵门禁（#196,#193）
+
+- Config.Concurrency 默认 1（0 归一为 1），串行路径逐字保留；
+  >1 时领取环单点认领、执行体在有界池并行，慢任务不再占住副本领取能力。
+- 在途集合改为 map[TaskID]*claimed：每任务独立 token/cancel/续期失败计数；
+  ErrLeaseLost 只取消它自己，续期失败跨阈值仍按既有契约停领收刀。
+- 每任务续期与收场用 claimed.mu 串行化，Complete 之后不会再冒出假 ErrLeaseLost。
+- 停机 = 停止领取 + 等在途全部收场（WithoutCancel 落库）；panic 经
+  async.GoSafe + invokeHandler 收编，仅影响该任务。
+- 用例覆盖：两慢任务真并行、并发下逐条续期、单条易主不波及另一条、
+  排水不丢在途、panic 隔离、负并发度装配期拒绝、零值归一。
+- 新增 worker/faultmatrix 可执行矩阵：并发认领唯一性 / 写库成功发布失败 /
+  DB 故障恢复 / 时钟偏移 / 网络分区租约接管 / Pod 强删副作用对账；
+  每条声明适用 Embedded/Standalone/Cluster 模式，矩阵自检漏类即红。
+- 全部挂进 make fault-injection（TestFault*）；需要真集群的格子走显式
+  requiresEnv+Skipf，不用静默跳过。
+- docs/AI-GUIDE.md 增补 3.2.1 操作手册：新增分布式能力必须补所在格子。
+* docs: README 包表/工程底座同步 rebase 后实测（worker 1261 行；51,284 行 / 280 文件 / 299 测试文件）
+
+### 新增：handoff 持久化 Store + 受管执行器编排 + 单机 SQLite 契约实现（#190,#191,#188）
+
+验证：make unit / make race / make cover-gate / make crossbuild / make vuln 全绿；相关包 go test -race 通过。
+
+### 新增：判据面四个注入/扩展接缝（#237,#238,#239,#240）
+
+#237 deadline：Outcome.Status 缺省路径逐字不变（contract 词表），新增 StatusOf/DefaultStatusOf/StatusWith，宿主可注入自有状态词表；补注入、回落与组合映射用例。
+#238 controlplane：新增纯声明的宿主类型窄契约族 HostPlane（泛型任务/运行 ID、宿主任务与问题类型）及 TaskQuerier/RunQuerier/Releaser/Adjudicator/Terminator/AuthorizerOf，配套 ForceReleaseOf/TerminationOf 复用留痕完整性判据；Plane 原生契约保持不变，窄契约零实现；补宿主自定义 ID/快照/租户类型接入用例。
+#239 metrics：新增 SpecSet（DefaultSpecs/Clone/Register/Merge/Metrics/SpecOf/Validate）与 ErrInvalidSpec/ErrDuplicateMetric；Register/Merge 返回新表（Clone 语义），Specs()/SpecOf() 改深拷贝，包级默认表不可被宿主注册或返回值改写；Validate 与 SpecSet.Validate 共用同一判定体；补注册生效、默认表隔离与失败原子性用例。
+#240 retryplan：新增 Classification/Classifier 与 DefaultClassifier，Options 增加 Classifier 注入；缺省路径与既有 toolfail 口径逐字等价，注入分类器不能绕过「无幂等键不赌重试」组合判据；补改结论、幂等门与默认对齐用例。
+门禁：make unit / make race / make cover-gate / make architecture-check / make docsync / make apilifecheck 全绿；README 工程底座 49,159 行 / 268 文件 / 283 个测试文件与四包行数同步。
+
+### 修复：批报 6 单缺陷·中——checkpoint/sideeffect/eval/pgstore(#216,#217,#218,#221,#222,#223)
+
+* fix: #216/#217——SeqGate 回滚基线改已落库事实；Renew 过期即资格终止
+#216 checkpoint.SeqGate 的 prev 只有一格：两个在途提交同时落库失败时，
+回滚把 last 钉在另一个同样失败的在途序号上，同序号重试被 ErrStaleSeq
+永久拒。修法（按 issue）：「已落库基线」记成独立字段 floor——Accept 只抬
+last（在途），落库成功由新增 MarkPersisted 抬 floor，Release 一律退回
+floor（floor=0 时退化成删除，保持「无历史」原语义）。Committer.Commit
+同步固化两侧：失败 Release、成功 MarkPersisted。Seed 灌基线时一并抬
+floor（重启后回滚只退回持久化事实）。既有单格语义（Release 认领条件、
+superseded 不动状态、Seed 不降基线）逐字保留。
+#217 sideeffect fakeStore（参考实现）的 Renew 不校验租约过期：三项联查
+只比令牌与身份，没人接管时全绿——GC 停顿超 TTL 的持有者一续就复活一段
+已作废的租约，与 Store.Renew 契约「过期即资格终止（未被接管也不例外）」
+相反。修法：Renew 在联查通过后加 now.Before(expires) 判定，过期返回
+ErrFenceStale，不续期。补两条用例（过期未接管续期被拒 + 随后 Acquire 走
+unknown 而非 contended；到期整点边界与到期前一刻的对照）。
+* fix: #218/#221——ResolveUncertain 未生效裁决统一返回 applied；Diff 按 ID 分组配对
+#218 sideeffect fakeStore 的 ResolveUncertain(applied=false) 返回
+OutcomeContended，与 Store 契约「返回 OutcomeApplied 表达『裁决成功且门已
+打开』」相反（同仓 sidetest 与 examples/pgstore 两份参考实现都是 applied
+侧）。两套相反口径下，调用方按契约判 outcome == OutcomeApplied 就立即重做，
+面对 fake 形态却会退避等待一个本该立刻执行的动作。修法：fakeStore 改返回
+OutcomeApplied 并注明 contended 是误判；uncertain_test 的断言反转为 applied
+侧；补交叉断言用例（裁决未生效后立刻 Acquire 必得 applied 且带非零令牌）。
+#221 eval.Diff 按 ID 建一对一 map：轨迹行 ID 不唯一是 trajectory 的设计事实
+（同一副作用 Key 的授予段、对账段、点观察共用一个标识），后写覆盖先写——
+只剩对账段，授予段被整条丢弃，含副作用事件的回归比对给出「差异假零」，
+缺一段也判 present↔present。修法（按 issue）：先按 ID 分组
+（map[string][]Row），再按出现序逐条配对；一侧多出/缺少整段时按出现序报
+row 缺行。Divergence 新增 Index 字段（同 ID 多行的出现序，单行恒 0，
+additive），排序键改 (ID, Index, Field) 仍确定。补夹具：含 SideEffectUncertain
+全段的授予段字段差异必显形（旧实现必红）、全同零差异、缺第三段报
+Index=2 缺行。
+* fix: #222/#223——closure 判项豁免副作用点观察行；pgstore.Acquire 补意图残缺守卫
+#222 eval.Assess 的 closure 判项只按 KindCheckpoint 豁免孤儿行：副作用的
+**点观察**行（replayed / contended，trajectory 的 pointSideEffect 落成
+StatusOrphan）被当成「起点缺失」判成违规——点观察没有括号段与 checkpoint
+点行逐字同理，都是投影的设计事实。只要轨迹里出现一次「取回既有结果」或
+「资源被别人持有」（正常路径），健康轨迹就被判不过（假红）。修法（按
+issue）：豁免收成 pointRow 白名单——checkpoint 全部点行 + KindSideEffect
+的 replayed / contended 两相位；其余相位的孤儿行（completed / abandoned /
+uncertain / resolved_* 只观测到尾部）是真实的起点缺失，照判。补成对用例：
+点观察健康轨迹全绿（旧实现必红）/ 非点观察孤儿照判 / 打开中的授予段照判。
+#223 examples/pgstore.Acquire 的 hasIntent() 只判四个意图列中的一列
+（intentFence），而判定路径解引用 intentExpires / intentResource：
+「intent_fence 有值、intent_resource 为 NULL」的部分填充行（人工订正、
+schema 迁移、仓外写入方只写部分列——ensureIdentity 为老数据留兼容路径正
+说明列可空是预期形态）会让 Acquire 在行锁持有、事务开着的路径上 panic，
+直接杀宿主进程。修法（按 issue，fail-closed）：hasIntent() 改四列任一非
+NULL 即算挂着（残缺行不得当「没有在途尝试」fail-open 放行）；新增
+intentCompleteErr 四列齐全性守卫，残缺行显式报新哨兵
+ErrIntentRowIncomplete、事务整体回滚；新增哨兵注明订正完数据即可恢复。
+补真实 PG 用例：注入部分填充行 ⇒ 显式报错不 panic、残缺行与状态行原样
+（事务回滚实证）、订正后同一 Key 恢复授予（GAK_PGREF_DSN 实跑通过，
+sidetest 全家族同跑绿）。
+* docs: 登记新哨兵 ErrIntentRowIncomplete；工程底座两数按实测重算
+- docs/error-semantics.md 增 examples/pgstore 小节：ErrIntentRowIncomplete
+  的触发条件（意图四列部分填充，包内路径不会产生）与调用方处置
+  （先订正数据再重试，订正前每次 Acquire 原样变红、事务整体回滚）——
+  apilifecheck 的错误登记是双向集合相等，新增哨兵不登记即红。
+- README 工程底座表：生产代码 47,980 → 48,110 行、测试 269 → 270 个文件
+  （docsync 的确定性量判相等，按报错里给的重算命令实测）。
+* merge: origin/main——README 取 main 基底并恢复工程底座两行（48,403 行 / 266 文件 / 274 测试文件，docsync 实测口径）
+* merge: checkpoint 包取 main 侧 inflight 实现（#216 已在 main 关单），本车道该包修复让位
+* docs: 底座计数 docsync 对齐（49,245 行 / 284 测试文件）
+
+### 修复：批报 2 单 eval 回归比对缺陷（#221,#222）
+
+* fix(eval): Diff 保留同 ID 多行，按出现序配对（#221）
+根因：Diff 按 ID 建 map，后写覆盖先写。轨迹行 ID 不唯一是 trajectory 的
+设计事实（同一副作用 Key 的授予段/对账段/点观察共用一个标识），授予段被
+整条丢弃——只改授予段的回归比对返回空差异（假绿），缺段也判 present↔present。
+修法：按 ID 分组（组内保持出现序），第 k 条对第 k 条逐字段比；一侧多出的
+段逐条报 row=present→absent / absent→present，缺条数因此显形。
+用例：
+- TestDiffSameIDRowsBothParticipate：只改授予段 start_at ⇒ Diff 非空；
+- TestDiffSameIDMissingSegment / TestDiffSideEffectMissingSegment：少一段
+  报 row 缺行；
+- TestDiffSideEffectTraceRegression：录制/重放只差授予事件时刻 ⇒ 非空。
+* fix(eval): closure 判项豁免副作用点观察行，健康轨迹不再假红（#222）
+根因：closure 只按 KindCheckpoint 豁免孤儿行。副作用点观察
+（sideeffect_replayed / sideeffect_contended）本就无括号段，投影落成
+StatusOrphan，于是「动作已完成、本次取回结果」这类正常路径被判违规。
+修法：豁免白名单收敛为 pointRow——checkpoint 提交与副作用 replayed/
+contended 点行；turn/step/tool 及副作用授予/对账的孤儿行仍照判。
+用例：
+- TestAssessClosureAcceptsSideEffectPointRows：含 replayed/contended 的
+  健康轨迹 Pass=true（旧实现必红）；
+- TestAssessClosureStillFlagsRealOrphanSideEffect：完成/裁决事件缺起点
+  仍报 closure。
+* docs: README 工程底座基线同步 rebase 后实测（49,182 行 / 285 测试文件）
+
+### 修复(sqlitestore)：Windows 残尾截断改用非 O_APPEND 句柄（#188）
+
+Windows 上以 O_APPEND 打开的句柄没有 FILE_WRITE_DATA，f.Truncate 报 Access is denied，导致崩溃残尾恢复在 windows job 必红。改为 O_RDWR 打开、追加前显式 Seek 到末尾（写者已由 flock 串行化，语义与 O_APPEND 相同）。同步 README 工程底座行数。
+
+### 修复(pgstore)：执行意图半写行 fail-closed（#223）
+
+Acquire 解引用 intentResource/intentExpires 无 nil 守卫，而 hasIntent()
+只判 intent_fence 一列：行出现「fence 有值、resource 为 NULL」（人工订正/
+schema 迁移/仓外写入）时，在行锁持有、事务开着的事务里 panic 杀进程。
+修法：
+- hasIntent 改四列口径（resource/fence/holder/expires 全有才是意图）；
+- lockAction 读到行即调 checkIntentColumns：任一部分填充返回
+  ErrIntentIncomplete（fail-closed，整体回滚），所有入口共用这一处；
+- Acquire 过期意图分支不再保留 nil holder 的宽松解引用；
+- 登记 ErrIntentIncomplete 进 docs/error-semantics.md。
+用例：16 种列组合穷举（全空/全有放行，其余 14 种必拒）+ 真实 PG 上
+构造半写行断言 Acquire 返回错误而非 panic、且不落任何一行（含全列齐的
+负对照）。无 PG 时环境入口显式跳过，CI integration 覆盖。
+
+### 修复(sideeffect)：过期租约拒续期 + 未生效裁决返回 OutcomeApplied（#217,#218）
+
+参考实现 fakeStore 与契约相反的两处：
+- #217 Renew 只比令牌/身份、不看 expires：过期且无人接管时仍能续期，
+  把已作废的租约续活，绕开 Acquire 的「过期 → 结果未知先对账」。
+  修法：Renew 在续期前判 now.Before(expires)，过期即 ErrFenceStale
+  （与 sidetest/taskboard 同口径）；补「过期未接管后续期必拒，且同 Key
+  再 Acquire 转 unknown」用例。
+- #218 ResolveUncertain(applied=false) 返回 OutcomeContended，把「门已
+  打开」误报成「没轮上」。修法：按 Store 契约第 2 条返回 OutcomeApplied；
+  用例改断言该侧，并在 fakeStore 与 sidetest 两套实现上各钉一条交叉断言
+  （裁决返回值与随后 Acquire 同一口径）。
+
+### 修复(checkpoint)：SeqGate 在途序号改多格，两次并发失败都能重试（#216）
+
+prev 只有一格，而包文档公开的正规用法是 Accept → Store.Save → 失败
+Release，Store 又要求并发安全（多环节可同时落库）。两次在途提交同时失败
+时：先回滚 7 再回滚 6 会把地板跌到 0（陈旧慢写重新获得通行权）；先回滚 6
+（因非最大值被拒）再回滚 7 会把 last 停在 6——而 6 并未落库，它的重试从此
+被 ErrStaleSeq 永久拒，该 run 卡死。
+- prev 换成 inflight map[runID][]uint64（严格升序的在途序号）；
+- Release 只移除 seq 对应一格：是当前最大值则 last 回落到剩余末元素，
+  不是则返回 false 但该格照样移除（调用方已宣布它没落库成功，日后更高
+  序号回滚时不得把它当地板）；
+- Seed 抬高基线时整批作废在途格（重启后内存历史不可信）；
+- 新增任意回滚顺序、地板仍挡陈旧写、重复回滚 no-op 用例。
+
+### 修复(ptc)：discover 计入三预算闸，堵住唯一不记账的宿主数据入口（#200）
+
+发现入口此前是三预算闸唯一不经记账的路径：程序循环 discover() 既不触发
+MaxCalls 也不触发 MaxBytes，只有墙钟能停，返回的 signature / description
+全部物化进 VM——binding.go 声称的「三预算闸在包装层」在这条路径上是假的。
+- mountDiscover 接收 res / maxCalls / maxBytes，与 host.<tool> 同口径：
+  调用前查调用数（超限 vm.Interrupt），调用后按物化载荷的 JSON 字节数
+  记账（超限中断），并写 CallLog；
+- 旧用例「发现不消耗调用预算」随契约反转，注释写明理由：发现结果是宿主
+  数据进入程序，不是「本地目录检索」；
+- 新增 discover 超调用数 / 超字节数 / 未装配不挂全局三条用例。
+
+### 修复：批报 5 单缺陷·中——coord/eventbus/spill/memorypipe/commitgate(#182,#183,#199,#201,#204)
+
+* fix: coord List 收口单次原子扫描 + eventbus 游标可见序契约与持久化接缝(#182,#183)
+#182 coord.BoardAdapter.List 此前 Keys + Snapshot 两次调用却声明「一致快照」
+——两次之间新增/删除的任务既不进结果也不报错，是跨两个时刻的拼接。修法按
+issue 取单次快照形态：Backend 原语契约新增 ScanSnapshot(ctx, prefix)（一次
+原子操作返回前缀下全部存活键的键与值，墓碑不返、Val 独立拷贝），List 改走
+它，Keys 文档改口「只供宿主枚举键名，键+值同刻视图必须走 ScanSnapshot」。
+回归：TestListIsSingleAtomicScan 钉调用序列必须恰好一次 scan（旧两步拼在此
+红）；TestScanSnapshotIsPointInTime 并发写下同刻全集（-race）；TestListExcludes
+DeletedTasks / TestMemoryBackendScanSnapshotCopyIndependence 钉可见性与值独立。
+#183 eventbus 游标契约补「ID 序 == 提交可见序（无空洞推进）」硬要求：DB 序列
+下 A 拿 id=10 未提交、B 拿 id=11 先提交，READ COMMITTED 读侧把游标推到 11
+后 id=10 永久丢失且静默。修法三件：① TailStore 契约写死硬要求（实现只推进
+到无空洞最大 ID，或走 Outbox 让铸造序==可见序）；② 新增游标持久化接缝
+CursorStore（LoadCursor/SaveCursor）+ WithTailCursorStore——重启从上次停点
+续随，停机窗口内事件不再被 MaxID 重初始化跳过；Load 失败停摆重试绝不静默
+回退 MaxID（宁可停摆不可跳读），Save 失败只 warn（游标落后只会重读，订阅侧
+幂等吸收）；③ 新增 WithTailOnGap 空洞哨兵——违约跳号从静默丢帧变响亮信号
+（缺省包内 warn，注入即接管）。回归：TestTailerOutOfOrderCommitNotSkipped
+（10 迟到提交必须先送达）、TestTailerGapAlarmFiresOnHole、
+TestTailerCursorPersistsAcrossRestart（停机窗口补灌，且初始化游标立即落盘
+——不落盘重启重走 MaxID 正好跳过窗口）、Load 失败停摆 / Save 失败不停摆 /
+首次部署回退 MaxID 三态各有钉子。
+判据：go build ./... && go test ./coord/ ./eventbus/ -race -count=1 全绿。
+* fix: spill 分页取回 rune 无损 + memorypipe 裁剪预算含省略号与 Reason 归位(#199,#201)
+#199 spill.ReadPage 按字节切页把切片直接当字符串回包：页边界落在多字节字符
+中间 ⇒ Content 是非法 UTF-8，而 Page 全字段带 json 标签直接进 read_spill
+回包/控制台取回面，encoding/json 对非法 UTF-8 替换 U+FFFD——每个跨页字符
+静默丢 1–2 字节且不可复原，与截断提示「分页取回中段原文」的承诺直接冲突
+（测试没拦住是因为载荷全是 ASCII）。修法三条：① 尾部回退——预算终点切进
+字符时回退到最近 rune 起点，被截字符整字符挪到下一页（NextOffset 用回退后
+的量），顺序分页逐页拼接与原文逐字节相等；② 头部回退——非顺序分页传入
+落在字符中间的 off 时回退到所在字符起点（页重叠不跳字节）；③ 进度保底
+——limit 小于单字符宽度时至少前进一个完整字符（略超预算 ≤ UTFMax-1），
+分页器不死循环。回归：验收用例「内容甲乙丙 limit=4」每页 utf8.ValidString
+且拼接无损、limit=1 不死循环逐字符无损、ASCII 分页语义逐条不变（含越界
+offset 空尾页）、off 落字符中间回退重对齐、NextOffset 恒为字符起点。
+#201 memorypipe 的 clip 先 TruncBytes(n) 再拼 3 字节省略号 ⇒ 实际可达 n+3，
+usedBytes 按超额量累计，MaxBytes 上限被突破（预算成软约束）；且自带测试
+先剥掉省略号再断言 len ≤ 100，预算契约在测试里被绕过，坏实现全绿。修法：
+clip 按 n-3 截再拼省略号（返回值总长恒 ≤ n；n<3 装不下省略号只裁不标），
+测试改为对含省略号的整串直接断言。同块另一信号缺陷一并修：字节预算耗尽
+（remain<=0）分支不设 Reason，落进循环末尾的「候选数超过 MaxItems」兜底
+——字节预算耗尽被报成条数预算耗尽，宿主照提示调 MaxItems 永远修不好；
+该分支显式赋值 Reason 指向 MaxBytes。回归：TestClipBudgetIsHardCap 各预算
+边界（含 n<3）恒 ≤ n 且合法 UTF-8、TestBuildMaxBytesBudgetNeverExceeded
+（issue 原文触发面：旧实现注入 102 字节 > MaxBytes=100，现总字节 ≤ 100）、
+TestBuildReasonReportsMaxBytesWhenBudgetExhausted（旧实现在此报成 MaxItems）。
+判据：go build ./... && go test ./spill/ ./memorypipe/ -race -count=1 全绿。
+* fix: commitgate 回灌面不再吞 Store 故障——SeedE 响亮上抛、Seed 留痕可断言(#204)
+SeedE（自称「响亮形态」）在空 Ref 与词表判定之后 `_ = store.SeedIfAbsent(...)`
+丢弃错误仍返回 nil：多副本宿主启动对账逐行回灌时，Store 单行故障（连接重置/
+序列化冲突/唯一键冲突）被吞——宿主认为回灌完成，而该环节的闸实际是空的，
+同一 (run, 环节) 的重复终态提交重新敞开（副作用双写），且无日志、无计数、
+返回 nil。这正是包头写明要防的那件事，以完全静默的形态发生。
+修法（fail-loud，Stable 包 additive）：
+- SeedE：SeedIfAbsent 失败即 errors.Wrap 上抛（带 run_id/step，错误链可
+  Unwrap 到 Store 原始故障）；「回灌失败」「坏引用」「没有需要回灌的行」
+  三个形态从此全部可分；
+- Seed（Deprecated，无 error 通道）：故障经新增 SeedWarn 留痕钩子显式报告
+  （WithSeedWarn 装配期注入，注入即接管留痕通道）；缺省走包内 logx warn
+  （Delegating 懒解析）——依赖新增 ext:github.com/oekit/logx 已按「先改
+  policy 再写代码」登记进 architecture-policy.yaml 的 commitgate.requires。
+- Guard 新增 seedWarn 字段与 WithSeedWarn；「跳过非终态行」「空 Ref 跳过」
+  属正常路径，不触发留痕（留痕只在真故障时响）。
+回归（store_test.go 的 errStore 替身此前只测过 Seed 静默，没有任何
+SeedE × Store 故障用例）：TestSeedEReturnsErrorOnStoreFailure（旧实现必红）、
+TestSeedEWrappedStoreErrorUnwraps、TestSeedWarnHookOnStoreFailure（验收二：
+可断言钩子被调用）、TestSeedWarnNotCalledOnSkip（正常路径不响）、
+TestSeedESucceedsOnHealthyStore（健康路径语义不回退，回灌真记上闸）。
+判据：go test ./commitgate/ -race -count=1 全绿。
+* docs: README 包表行数按实测重算（coord/eventbus/spill/memorypipe/commitgate）+ 工程底座三项重算 + 五单修法补进包表职责列
+docsync 判据：commitgate 依赖列补 oekit/logx（#204 引入回灌留痕通道，policy
+已同步登记）；生产代码 47,980 → 48,315 行；测试文件 269 → 273。包表行数按
+各包实测重算：coord 1790 / eventbus 1034 / spill 341 / memorypipe 250 /
+commitgate 484。职责列同步五单修法（#182 四原语 + ScanSnapshot、#183 无空洞
+推进契约与游标持久化接缝、#199 rune 无损分页、#201 预算含省略号、#204 回灌
+fail-loud）。
+* docs: docsync 四项收口——coord 去重行/底座 48608·277/USAGE 52 包
+* docs: USAGE 包数 52→51（coord 重复行移除后回修）+ coord 测试适配 NewBoardAdapter 双返回值
+* test: scanRecordingBackend 声明 SingleMachine——适配 #194 装配判据
+
+### 修复：ticket/gatecheck 缺陷·中两单——票据空间过期回收、受管判据透传出口（#208,#212）
+
+后端同样生效），容量判据由此落到「未过期张数」——被签发但没人点开的
+链接等不到 Take 来删，累计满 DefaultMaxEntries 张过期票后 Put 恒报
+「票据空间已满」、签发永久停摆的病由此修掉；满了显式拒发的立场不变。
+回收是尽力面：GC 故障不拦签发。
+却宣称「三层都同意（审批 × 档位 × 出口）」）；新增装配面钉死的
+Managed.Egress 字段，在 Check 与 Exec 两个入口都判（sandbox.Request 没有
+出口通道，钉死策略是 Exec 路径唯一能带进判据的出口要求），与请求级
+取更严一档合成、不被调用放宽；包级 Check 的放行理由改只陈述真正判过的
+维度（未判出口不出现「出口」字样）。
+附带：coord/store.go 按 store_reconcile.go 同款判据拆出持有期收尾五入口
+（store_lease.go），回到 400 行结构阈值内；README 工程底座三项与
+coord/controlplane/ticket/gatecheck 包表行数按实测重算（docsync 判相等
+口径全绿）。
+
+### 修复：coord/controlplane 缺陷·中两单——租约时钟统一存储口径、读路径租户 fail-closed（#194,#197）
+
+#194 coord.BoardAdapter/StoreAdapter 的租约到期判定改由存储时钟算：
+Backend 增 ClockSource 时间原语（Now(ctx)），装配期检查时间权威——
+后端既不实现 ClockSource 也未声明 SingleMachine（仅单机）时拒绝装配
+（ErrNoTimeAuthority），不再静默退化成节点本地时钟；UseClock 保留为
+契约套件测试注入，文档写明生产路径不得注入本地时钟。多副本两节点
+时钟差 30s 时「A 还在跑、B 认领成功」的双执行窗口由此封死，与
+examples/pgstore「到期由存储时钟算」同一口径。
+#197 controlplane 读路径补租户 fail-closed：MemPlane.TaskView/RunView
+与写路径共用同一道 tenant.Require 闸；匿名只读改为显式装配选项
+AllowAnonymousRead（缺省不放行）。宿主 Authorizer 返回零值 Context +
+nil error 时，两类读 + 三类写一律 401，不再「只有读放行」。
+回归：存储时钟偏移数年的双节点认领/续期/接管、存储取时失败 fail-loud、
+装配期拒绝、五端点零值上下文全 401、匿名读显式 opt-in。
+
+### 修复：批报 11 单缺陷·中低/低——静默丢内容与契约反文的收口
+
+* fix(delta): FlushAll 冲刷全部实际存在的 kind，不再硬编码 reasoning/text
+#202：kind 是开放词表（Offer 接受任意串），此前收口只扫 reasoning/text
+两类——其它 kind 的残尾永久留在 pacer 里（Sealed 恒 false），流式观测面
+最后一个窗口静默不发布。现按 (轮, kind) 汇总未收口 kind 冲刷，序仍确定：
+轮升序 × reasoning→text→其余按名排序。
+fix(drain): 无期限 ctx 按 budget 自建兜底期限
+#206：budget 只进留痕、超时判定只看 ctx，Background 这类无期限 ctx 让
+Drain 永不返回（停机链卡死到外层 SIGKILL），正对着包级承诺「最坏情况和
+没排水一样」的反面。现 awaitConverged 入口处 ctx 无期限即按 ShutdownBudget
+派生兜底期限（WithTimeoutCause，父取消通路保留），并显式告警「ctx 无期限」；
+同步修正包级承诺与 Drain/awaitConverged 文档。
+回归：TestDeltaFlushAllCoversOpenKinds、
+TestDrainBudgetBoundsDeadlinelessCtx、TestDrainWarnsOnDeadlinelessCtx。
+* fix(checkpoint): 词表外快照状态按阻塞侧处理，不再 fail-open 成可续跑
+#219：isTerminal 两态判据把词表外的值全吞进「非终态」——宿主自定义终态
+（aborted）或 contract 新增终态未跟时，已终结运行被静默重开且无异常报告。
+现归类三态（open/terminal/unknown），unknown 且有待执行项时报
+AnomalyUnknownStatus（新增）并作废计划，处置对齐 Reconcile 对未登记闸态
+的口径（判不了不是放行的理由）。
+fix(memorypipe): 排序回退用去重键，空 ID 条目渲染显式标注
+#203：比较器回退读条目 ID，两条空 ID 条目恒比出 0，slices.SortFunc 非稳定
+——输出顺序随 map 迭代序漂移，配 MaxItems/MaxBytes 时哪条被注入随运行
+变化。回退改用去重键 k（空 ID 键为 text:正文，必异）。Prompt 对空 ID
+渲染「<无id>」，不再交出一个空的 id= 槽位。
+回归：TestUnknownStatusNotResumed、TestUnknownStatusFullyDoneRunsNothing、
+TestBuildDeterministicForEmptyIDEntries、TestPromptMarksEmptyID。
+* fix(delegate): Route 全拒时逐 offer 携带拒绝原因，不再一律归因能力不足
+#209：Accept 拒绝时报错就是为了「拒绝的理由要能进报告」，而 Route 把每个
+offer 的错误扔了、统一包装成「请求需要能力 X」——目标超长/无名字/目标为空
+被指去补能力声明，真实修法是缩短目标/补名字。现收集逐 offer 原因进错误
+文本；只有全部原因为能力缺失才归 ErrUnsupported，否则保持 ErrNoRunner
+（无名 offer 以序号归因）。
+fix(hookengine): Event/ToolPrefix 归一化后存回，带空白声明不再永不匹配
+#213：New 只 TrimSpace 判空、却存原值，匹配用原值严格比较——带尾随空格的
+阻塞 hook 通过自检却一次都不执行。现与 Name 同款：TrimSpace 后存回。
+回归：TestRouteNoRunner（改判据）、TestRouteAttributesGoalTooLong、
+TestRouteMixedReasonsPerOffer、TestWhitespaceEventStillMatches。
+* fix(guardset): fail-closed 分支补填 Primary，拒绝可归因
+#214：零值 Set 的拒绝分支只填 Denials、不填 Primary——宿主按文档只读
+Primary 留痕时恰好在这个「没人看着调用、必须显性告警」的场景拿到零值
+Denial。现补 Primary 并顺手把字面量 "guardset" 换成 stageUnassembled
+常量（与 nil 分支一致）；顺带移除死条件（nil 已在首行提前返回）。
+fix(tenant): nil ctx 不再 panic，From 返零值 / Require 返 ErrNoContext
+#215：From 的契约是「读路径不因缺上下文而崩」、Require 是 fail-closed
+入口，但 nil ctx 直接在 ctx.Value 上崩——与两处契约正相反。两个入口
+首行判 nil。
+回归：TestZeroValueSetFailsClosed（补 Primary 断言）、
+TestNilContextDoesNotPanic。
+* fix(taskboard): 非认领态残留租约判据补 Lease.Until，收敛为 Lease.IsZero
+#220：Check 的「非认领态残留租约」只查 Token/Fence 两列租约字段——宿主
+Release/Complete 漏清 Until 时，体检绿与「还能不能被接管」的读路径给相反
+结论。新增 Lease.IsZero 单点收敛（今后加字段不会漏），判据改用它；文案
+补「含到期时刻」。
+fix(sidetest): 「标记写失败」注入点前移到宿主写入之前，断言收紧为 contended
+#224：装饰器此前先让宿主实现跑完再换返回值——参考实现的事务已提交，
+Acquire 走的是 uncertain 分支，场景点名的「意图还在挡着」从未被制造。
+现装饰器对被注入的调用什么都不写、只返回错误（写失败的语义），断言从
+「不是 Applied」收紧为「必须 contended」；负对照坏点随之挪到 Acquire
+不留意图。pgstore 用例注释同步（真库回滚语义仍由真库用例钉）。
+回归：TestCheckCatchesEachInvariant 增「非认领态残留到期时刻」、
+TestMarkFailureScenarioRejectsBrokenStore（负对照重写）；
+coord / reference-runtime / sidetest 自测实现全部按新判据复跑绿。
+* fix(worktree): Workspaces() 深拷贝交付，返回值改不动已定稿计划
+#225：Plan 直接返回内部切片——调用方改返回值的任意元素（Writable 追加、
+ID 改写），New 的一致性自检与 Conflicts 结论随之静默作废。现逐元素克隆
+ReadOnly/Writable 后交付，与 metrics.Specs() 同一条「登记表只读」纪律。
+回归：TestWorkspacesReturnsDefensiveCopy。
+* test(tenant): nil ctx 用例加 nolint 标注（SA1012：nil ctx 正是被测契约）
+* docs(readme): 工程底座生产行数按实测重算（47334→47535，docsync 判相等项）
+* test(drain): 测试文案去运维词面（archcheck harness-test-fixture-domain-vocabulary）
+* docs(readme): 合并后按实测重算底座行数（47779→47980）
+
+### 修复：批报 3 单安全·中(#187,#198,#211)
+
+* fix(#187): containerbackend 挂载白名单——network=none 不许被一个 bind 绕开
+Job.Mounts 此前直连 HostConfig.Binds、来源不做判定：挂 docker.sock 拿走
+宿主容器控制权、挂 /etc/$HOME/.ssh 交出凭据，断网隔离整个落空。
+引入 MountPolicy（WithMountPolicy 装配）：来源白名单（目录=子树）、缺省
+只读、bind 选项注入与命名卷形态拒绝、零值策略=全拒（fail-closed）；
+不满足即创建阶段拒绝（ErrMountDenied），先于任何引擎调用，不降级。
+回归两面：docker.sock//etc/读写未放开/:rw 注入/相对来源/前缀串接均拦下
+且不触达引擎；白名单内只读/子树内路径/放开读写照常通过。
+* fix(#198): 控制面介入请求强制 application/json + 写死鉴权/CSRF 边界
+decode 此前只管 JSON 解码不问 Content-Type：跨站「简单请求」（text/plain
+fetch / urlencoded 表单）不触发 CORS 预检，可直打 force-release / terminate /
+adjudicate 三类不可幂等介入。
+decode 增设 Content-Type 闸：经 mime.ParseMediaType 归一后只收
+application/json（charset 参数不受影响），缺省与其它类型一律 415——两种
+跨站简单请求形态都挡在 JSON 解码之前。包内 httpapi 头注写死 CSRF 边界：
+本面鉴权只认 Authorization 头、禁止 Cookie 会话（跨站请求带不上该头）；
+宿主坚持 Cookie 形态则 CSRF 防线归宿主，内核不背书。
+回归两面：text/plain / urlencoded / 缺头均 415 且不触达 Plane（留痕为空、
+租约不动）；application/json 与 charset 变体照常 200。
+* fix(#211): netguard 传输层守卫与代理互斥——显式 Proxy 报错，环境代理剥离
+配置代理时拨号层收到的是代理的 host:port（CONNECT/绝对 URI 的目标由代理解析），
+守卫三道判据（名字层/解析后预检/建连核对 RemoteAddr）全部落在代理上、真实目标
+一道不过：NewClient(nil,…) + 环境里 HTTP_PROXY 即整体落空——本仓 egress 包还会
+主动为子进程写代理变量。「守卫看起来接上了，实际没接」正是本包拒绝的失败形态。
+NewTransport 改 (*http.Transport, error)：base 显式 Proxy != nil ⇒ 构造报错
+（与自定义 RoundTripper 同一条纪律：挂不上宁可不接）；base 为 nil ⇒ 克隆
+DefaultTransport 后剥掉环境代理——守卫传输层一律直连，只会经代理出网的宿主
+在请求期得到拨号错误（fail-closed），不是绕过守卫的静默放行。NewClient 透传。
+回归两面：显式 Proxy 两层（传输/客户端）构造报错；端到端设 HTTP_PROXY 指向
+来者不拒的假代理后，零值放行面拒回环目标（假代理未得逞）、放行回环时直连
+照常（剥离不误伤合法流量）。
+* refactor(#187): 挂载白名单判据与回归面拆独立文件——过 400 行结构阈值
+architecture-check 报 docker.go 465 行 / containerbackend_test.go 451 行超
+max_file_lines=400。MountPolicy 判据与 TestDockerMountPolicy 各自拆出
+（mountpolicy.go / mountpolicy_test.go），不改任何行为。
+* docs: 登记 ErrMountDenied 错误语义 + 工程底座行数实测重算
+apilifecheck 抓到新增哨兵未登记（触发条件 + 调用方处置，#187）；
+docsync 工程底座三项是确定性量按实测重算（47492 行 / 263 文件 / 268 测试文件）。
+
+### 修复：批报 4 单缺陷·高(#179,#180,#181,#210)
+
+* fix(worker): 心跳失败不再吞掉同拍的租约续期（#179）
+注册表心跳与在途任务租约续期是两个故障域：续期先于心跳做，
+注册表抖动只影响身份本身，不再整拍跳过租约续期（租约静默过期、
+旧执行体继续施加副作用的入口）。
+- 续期连续失败跨过 ceil(TTL/HeartbeatInterval)（可配 RenewFailMax）
+  = 无法确认持有资格：取消在途 ctx + 停止领取收刀，报新哨兵
+  ErrLeaseUnconfirmed（不再静默）；
+- Renew 报 ErrLeaseLost 与收场 Complete/Release 被 ErrLeaseLost 拒
+  均经新增 Config.OnLeaseLost 钩子留痕（三个触发点见 LeaseLostCause），
+  不再当成功路径吞掉。
+* fix(controlplane): Terminate 先留痕后变更，留痕失败即状态/代次不动（#180）
+对齐同文件 ForceRelease/Adjudicate 的候选变更口径：先算 nextGen，
+audit 成功后才写回 status/gen——audit 失败时介入一字不生效，
+「介入返回 error ⇒ 状态与代次一律未变」的包文档承诺成立。
+* fix(coord): 删除保留墓碑版本，同名键重建不复用历史版本（#181）
+版本存在条目里、随条目一起删，删除后同名键重建版本从 1 重来
+——「写 k@1 → 删 → 重建@1 → 旧断言 k==1 重新成立」恰好制造
+Backend 契约（版本单调、不复用）要拦的 ABA。
+- Txn 的 Del 转墓碑：条目保留（Exists=false）+ 版本推进；从未写过
+  的键 Del 同样立墓碑（此后对 VerMissing 的断言不再成立——「写过
+  又删了」正是断言要拦的窗口）；
+- Snapshot 对墓碑键返回 Exists=false + 墓碑版本；Keys 不列墓碑
+  （已删的键不在键空间，列出去 List 会把死键当活键判）；
+- backend.go 把「删除推进版本」「VerMissing 仅指从未写过」「旧版本
+  断言对重建后的键必失败」钉成无实现自由的硬条款；
+- TestMemoryBackendVersionMonotone 尾段反转：旧断言钉的正是本单
+  判违反契约的行为。
+* fix(gatecheck): 零值请求的放行分支不再解引用 nil Provider（#210）
+Check 的「不要求隔离强度与出口策略」放行分支从不赋值 Provider，
+ExecuteAndRun 无条件 d.Provider.Exec ⇒ nil 接口调用必 panic——
+preset.GateRequest 合法产出 MinLevel=LevelNone，这条 panic 落在
+文档支持的配置上，任何 g.Run(...) 都成进程级 DoS。
+- 放行分支在登记簿在位时 Resolve 取满足要求的最弱后端（判定结论
+  与理由不变；选不到不改判定，执行面显式报）；
+- ExecuteAndRun 对 Provider == nil 返回 OutcomeLevelShort（「判定
+  放行但没有可用的执行后端」），不再解引用。
+* test: 四单缺陷·高的回归用例（#179/#180/#181/#210）
+- worker：心跳持续失败租约照常续期（旧实现必红）；心跳+续期双故障
+  跨阈值取消在途 + ErrLeaseUnconfirmed 收刀 + 留痕；TakenOver /
+  OnFinalize 两条 ErrLeaseLost 路径的可观测信号（loop_lease_test.go，
+  全部 -race）；
+- controlplane：三类介入共用「留痕失败 ⇒ 状态/代次/裁决账一字不动」
+  用例（brokenAuditor 注入）；
+- coord：VersionNotReused 共享契约判据（写→删→重建→旧版本 CAS 必败，
+  宿主换后端跑同一套）+ MemoryBackend 自检 + ABA 场景直钉；
+- gatecheck：零值请求 Run 不 panic 且结论有意义（LevelShort）；零值
+  请求 + 登记簿在位 ⇒ 取最弱后端就地执行。
+* refactor(worker): 租约资格可观测面拆出 lease.go（结构阈值 400 行）
+loop.go 因 #179 新增判别面超阈值（412 行），按判据的一侧切：
+驱动循环留在 loop.go，LeaseLostCause 词表 + notifyLeaseLost 进
+lease.go。
+* docs(readme): 工程底座表按实测重算（47207 行 / 263 文件 / 266 测试文件）
+本批新增 coord/monotonic.go、worker/lease.go 与回归用例后，
+docsync 的三项确定性量判相等报漂移，按门禁给出的实测值改。
+* docs(readme): 工程底座表按合并后实测重算（47621 行 / 264 文件 / 268 测试文件）
+
+### 修复：批报 5 单——下沉件反馈收口(#184,#205,#207,#177,#178)
+
+* fix(reconcile): CloseBracket 错误上抛并入聚合（#184 最小修复）
+Store.CloseBracket 签名补 error——宿主实现失败时此前连「失败了」都表达不了；
+reclaim 在 CAS 命中后把括号关闭失败并入返回值带出留痕，session_finished 照发
+（终态事实已由 CAS 成立，事件驱动收尾的下游不因审计面故障停摆）。调用方对
+(true, err) 同时计数与聚合。
+* test(reconcile): 括号失败可见性/零行静默回归（#184）
+崩溃点注入形态：bracketErr 注入两条扫描入口，断言错误带出+收敛计数+事件照发+
+动作序不变；零行臂断言括号与事件一律不发生。
+* fix(steer): 先仲裁后写终报——输家不再覆写赢家终报（#205 最小修复）
+Run 两条臂的 SetReport 全部移到 Migrate 命中之后：并发投喂恰有一个赢家，
+报告写在迁移之前会让 N−1 个输家把赢家终报覆写成相反结论（失败臂与回迁臂
+文本完全不同）。清单读取仍在迁移前（只读面，输家读了对事实无影响），
+迁移错误/零行时一律不落报告写。
+* test(steer): 并发赢家终报唯一 + 零行/迁移错误不落报告（#205）
+8 路并发接管断言 len(reports)==1（修复前实为 8，恰是 issue 指出的输家覆写形态）；
+两条臂的零行与迁移错误路径断言 0 次 SetReport。
+* fix(dispatch): 文本兜底词表中英双语对称 + 收窄裸「拒绝」（#207 最小修复）
+transient 补中文（超时/连接/拒绝连接/暂时不可用/限流）——此前中文瞬态整类
+不可达：跨域兜底对中文错误静默失效，「连接被拒绝」还被 fatal 的裸「拒绝」
+升级成终态、改派环一次都不跑。裸「拒绝」收窄为「权限拒绝」「拒绝访问」。
+* test(dispatch): 中文瞬态/权限成对正反例（#207）
+验收两用例（连接被拒绝→transient、权限拒绝→fatal）+ 暂时不可用/限流/
+拒绝访问正例 + 裸「拒绝」收窄负例（无权限语义拒绝→other）。
+* fix(metrics): 禁区判据拆出 CheckLabels——宿主指标可复用 ForbiddenLabels（#178 最小修复）
+「标签是否无界」是通用知识、「指标名是否登记」是内核自有口径——此前焊在
+Validate 里，宿主指标名（如 bianque_intents_total）第一步就拿到
+ErrUnregisteredMetric，禁区判据永远走不到，宿主只能照抄清单成第二份真相。
+Validate 改为先 CheckLabels 再查登记表；禁区键循环按 ForbiddenLabels 声明序
+遍历（报错确定化）。
+* test(metrics): CheckLabels 宿主指标复用面回归（#178）
+宿主指标名（bianque_intents_total 同形）带无界键判红、干净标签与登记表无关、
+全部禁区键逐个可见、Validate 两入口语义一致（禁区先于登记表）。
+* refactor(steer): 写序回归测试拆独立文件（max_file_lines 阈值）
+steer_test.go 加 #205 用例后 435 行超 400 阈值（本仓结构门禁同样判测试文件）；
+写序面单独成档（steer_writeorder_test.go），用例不合并。
+* feat(archcheck): tenant_gate 补租户表登记面三条判据（#177 最小修复）
+方案 A（判定收编）：TenantGate 新增 tenant_tables_manifest（相对仓根清单，
+每行一个物理表名）与 table_name_method（缺省 TableName）；声明清单后执行体
+做双向核对——tenant-policy-missing（模型面表缺登记）、tenant-policy-drift
+（清单登记的表模型面已不存在）、tenant-table-name-missing（租户域模型没有
+可解析表名方法）。与 bianque tenantcheck 补齐到 6 条同口径；不声明清单则
+只跑原三条。policy 段注释与 USAGE §4.5 同步扩。
+* test(archcheck): 租户表登记面三判据 AST 正反例（#177）
+全绿/缺登记/登记漂移/无方法/方法不可解析/自定义方法名/未声明不启用/清单缺失
+两层红（Run 响亮报错 + 自校验点名）/severity 与规则元信息登记面。
+* docs(readme): 包表行数/工程底座三项按实测重算 + 租户门判据口径三条→六条
+docsync 确定性量判相等（47293 行 / 262 文件 / 267 测试文件）；五个涉及包
+行数按实测重算；archcheck 行与门禁行补 #177 登记面判据。
+
+### 修复(gatecheck)：放行分支给出可执行后端，执行入口不再解引用 nil Provider（#210）
+
+根因：Check 的放行分支（MinLevel==LevelNone && 无出口要求）只设
+Outcome/Reason，从不赋值 Decision.Provider；而 ExecuteAndRun 无条件
+d.Provider.Exec(...) ⇒ nil 接口调用方法必 panic。LevelNone 是文档支持的
+一档（preset 的 Unsafe 组合会合法产出它），故「判据+执行」的唯一入口在
+最常见的一份配置上必崩，等于进程级 DoS。
+修法（两条都做）：
+1. Proceed 分支也给出后端：装了登记簿就同样走 Registry.Resolve 取最弱
+   满足者；装了却选不到（空登记簿/预算兜不住）⇒ OutcomeLevelShort 拒绝，
+   不降级。只有登记簿整体缺失（nil）时保持「沙箱层不构成约束、Provider
+   留空」的既有语义（Check 的文档口径不变）。
+2. ExecuteAndRun 兜底：d.Provider == nil 时返回 OutcomeLevelShort + 明确
+   理由（未装配登记簿），绝不解引用 nil。
+验证：
+- 新增 TestRunWithLevelNoneDoesNotPanic（旧实现必 panic，已在修改前确认红）
+- 新增 TestExecuteAndRunWithoutRegistryFailsClosed（nil Provider 兜底）
+- 新增 TestLevelNoneResolvesWeakestProvider / TestLevelNoneWithEmptyRegistryFailsClosed
+- TestEgressZeroValueUnchanged 补「有登记簿 ⇒ Provider != nil」子用例
+- go test ./gatecheck/... 与 -race 绿；make unit 全绿（docsync 已同步
+  工程底座行数与 gatecheck 包表行数）
+
+### 重构：接口债两单——commitgate 全链 ctx / ticket 存储权威时钟（#185,#186）
+
+* refactor!: 接口债两单——commitgate 全链 ctx / ticket 存储权威时钟（#185 #186）
+BREAKING（两个 Stable 包的接口形状变更，迁移说明见 PR body 与 docs/USAGE.md §3.6.2）：
+ReleaseLease / Seed / SeedE / Status / Committed 逐层透传。ctx 已取消时
+Acquire 不进入存储，返回可 errors.Is 判定为 context.Canceled /
+context.DeadlineExceeded 的错误。ReleaseLease 是补偿动作——回滚必须用
+不随请求取消的 ctx（WithoutCancel + 短超时），否则残留占用会卡死环节。
+按存储时钟落 expires_at 并返回该时刻；Take/GC 不带时间参数、只用存储
+时钟比较；Store 不再持有节点时钟。memoryBackend 的存储时钟经
+NewMemoryBackendWithClock 注入。契约文档写死「节点时钟不得参与过期判定」。
+测试：
+- commitgate/context_test.go：取消短路（不触达存储）、等待期间取消穿透、
+  五方法 ctx 透传、nil ctx 归一、内存参考实现守取消不留半条状态；
+- ticket/clock_test.go：存储时钟 2001 vs 节点真实时钟 2026，任何偷用节点
+  时钟的实现都会翻转结论；两节点共享存储、GC 同判据。
+- 变异验证：去掉 Guard 短路 / Store 收下 ctx 不用 / Put 与 Take 改用
+  time.Now，均按预期打红后撤销。
+- make unit 全绿（lint 钉 2.14.0）。
+* docs: README 工程底座基线同步 rebase 后实测（49,344 行 / 285 测试文件）
+
+### 重构(sideeffect)：HashPayload 走上游 encoding.Sha256Hex 单源 + 格式钉住测试
+
+吃依赖升级红利（oekit/pkg v0.48.0）的最后一块精确等价替换：本仓手写的
+sha256.Sum256 + hex.EncodeToString 与上游 encoding.Sha256Hex 逐字等价
+（小写十六进制、全长），换成单源实现。
+为什么这条值得单列：HashPayload 是**动作身份三元组之一**（ErrActionConflict
+的判据），输出会持久化进数据库并跨版本比对。算法或编码口径一旦分叉，
+同一个 Payload 在旧行与新行上算出不同摘要 ⇒ 所有既有 Key 判身份冲突，
+而且是「库里的行看起来完好」的那种坏，比崩溃难查。故配套：
+- sideeffect/hash_test.go 钉的是**对外承诺的字节形态**（空/nil 同值、
+  单字节、多字节四个已知向量 + 全长 64 字符），不是「调用了哪个函数」；
+- offload/state_test.go 的测试摘要同步改走同一入口——测试与生产各写一份
+  sha256，正是「测试绿但生产换过算法」这种漂移没人挡的成因
+  （该包生产代码本就已用 encoding.Sha256Hex）。
+反向验证：把 HashPayload 改成 encoding.Sha256Hex(p)[:12] ⇒
+TestHashPayloadFormatPinned 当场红（"got e3b0c44298fc"），还原后复跑绿。
+本轮逐包挖掘的结论（详见 PR 说明）：本仓在 errors/stringx/slicex/
+pagination/encoding/async/shellx 等面上此前已收编上游单源，本次扫描后
+**可精确等价的替换已基本扫空**；看起来诱人的几处经核对是语义陷阱，不换。
+验收：make check exit 0；README 工程底座 47,782 行 / 270 测试文件（docsync 判相等）。
+
+### 重构(panic)：panic→error 收编统一走上游 errors.Recovered——三处转换点收敛 + 修「未知」降级
+
+oekit/pkg v0.45.0 把「panic 值 → error」收成唯一实现 errors.Recovered
+（*PanicError：原始值 + 现场栈 + error 身份经 Unwrap 保留），org 内各仓
+按 wave 消费同一 API；concurrency v0.34.0 起 async 家族已全部改走它。
+本提交是本仓的消费点收敛——此前三处各写一份「拼字符串」，类型与栈随
+调用点漂移。
+1. guardset.panicText（真实缺陷）
+   default 分支返回「未知」：panic(42) 与 panic(自定义 struct) 在模型
+   看到的拒绝理由里完全看不出是什么炸的，而 error/string 反而已知。
+   改为走上游单源取 payload 并渲染 "%T: %v"。栈不进 Reason（对模型是
+   噪声），*PanicError.Stack 留给宿主。
+2. ptc.Run 的 host_panic 收口
+   文本从 %v 改 pe.Error()（类型恒在场），日志新增 stack 属性——宿主侧
+   崩溃最需要的那份现场栈，此前日志里根本没有，字符串型 panic 连发生在
+   哪都看不出来。
+3. ptc/binding 的调用留痕（CallLog）
+   fmt.Sprint(r) → pe.Error()：panic(42) 此前只剩 "42"，事后复盘看不出
+   类型。收编单源见新增的 ptc/panic.go（一处取，两处用）。
+反向验证（坏实现必红，均已还原）：
+- 把 panicText 的 "%T: %v" 退回 "%v" ⇒ TestGuardPanicCarriesValueType
+  红（"实得 [炸环] 守卫 炸环 panic：42"，int 不在场）；
+- 把 CallLog 退回 fmt.Sprint(r) ⇒ TestHostBindingPanicCarriesValueType
+  红（"审计侧必须带出 panic 值类型（int），实得 \"42\""）。
+刻意不改的两处（附理由）：
+- internal/subhub 的 _ = recover()：吞是**有意**的（订阅者失败不得把
+  已落地的事实改写成没发生），且该包零依赖是刻意的——留痕要走宿主注入，
+  是另一件事；
+- ptc/rejection 的渲染兜底：那里的占位文本是安全取向（不渲染敌意对象的
+  toString），不是信息缺失。
+上游能力盘点结论（本轮不适用的，见 PR 说明）：reflectx / config.SetFromString
+（本仓无反射手写实现）、convert（无手写 any→标量）、distlock / singleflight /
+ratelimit / budget（本仓无对应手写原语；租约是领域机制，套 backend-neutral
+契约反而多一层）、concurrency/syncx Slot.Panicked（未使用）、logx shutdown
+（未调用）。
+验收：make check exit 0；README 工程底座 46,891 行 / 261 文件（docsync 判相等）。
+
+- 文档：README 工程底座基线同步 rebase 后实测（49,208 行 / 285 测试文件）
+- 文档：README 工程底座基线同步 rebase 后实测（48,692 行 / 279 测试文件）
+- 文档：README 工程底座基线同步 rebase 后实测（48,273 行 / 266 文件 / 273 测试文件）
+
+- 测试(worker)：收刀等待上限放宽到 30s（race CI 调度抖动，非机制变更）
+
+CI 的 race job 在 2026-11-16 一次运行里 TestLoopRegistrationLossStopsClaiming 于 5s 上限处超时；本机 50 次 -race 重跑全绿。等待上限放宽到 30s：机制断言（ErrNotRegistered 收刀 + 在途释放）不变，只避免把 runner 调度抖动误报成驱动卡死。
+
+
 ## [v0.38.0] — 2026-11-15
 
 ### 新增(watchdog,archcheck)：轮括号不变量 INV3 + 租户过滤漏拼门（#171 #172）
