@@ -202,9 +202,15 @@ func newK8sJobName() string {
 }
 
 // buildK8sJob 把 backend.Job 映射成 batch/v1 Job（docker.go 的同一张表）。
-// 禁网路径装配出站探测 init 容器：作业启动即尝试访问外部地址（issue #262）。
+// 禁网路径装配出站探测 init 容器（issue #262）；稳定执行标识绑定 Job 名与
+// 标签（issue #263，harness.io/execution-id：Job 对象与 Pod 模板都带）。
 func buildK8sJob(name, ns string, j backend.Job, k *K8sJob) k8sJobObject {
 	labels := map[string]string{k8sJobLabel: name, k8sManagedByLabel: k8sManagedByValue}
+	podLabels := map[string]string{k8sJobLabel: name}
+	if j.ExecutionID != "" {
+		labels[k8sExecutionIDLabel] = j.ExecutionID
+		podLabels[k8sExecutionIDLabel] = j.ExecutionID
+	}
 	env := make([]k8sEnvVar, 0, len(j.Env))
 	for _, kv := range j.Env {
 		key, value, _ := strings.Cut(kv, "=")
@@ -241,7 +247,7 @@ func buildK8sJob(name, ns string, j backend.Job, k *K8sJob) k8sJobObject {
 			TTLSecondsAfterFinished: k.ttlSeconds,
 			ActiveDeadlineSeconds:   deadline,
 			Template: k8sPodTemplate{
-				Metadata: k8sTemplateMeta{Labels: map[string]string{k8sJobLabel: name}},
+				Metadata: k8sTemplateMeta{Labels: podLabels},
 				Spec: k8sPodSpec{
 					RestartPolicy:                "Never",
 					ServiceAccountName:           k.serviceAccount,

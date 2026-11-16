@@ -143,16 +143,22 @@ func (k *K8sJob) execNS() string {
 	return k.namespace
 }
 
-// Exec 执行一次作业：策略面对账 → NetworkPolicy → Job → 轮询 → 取日志/退出码
-// → 清理。
+// Exec 执行一次作业：执行标识对账 → 策略面对账 → NetworkPolicy → Job →
+// 轮询 → 取日志/退出码 → 清理。
 //
 // 步骤契约：
 //
 //   - 挂载先过 MountPolicy（缺省拒绝一切），不满足即创建阶段拒绝（ErrMountDenied）；
+//   - Job.ExecutionID 非空 ⇒ 作业名确定性派生 + harness.io/execution-id 标签，
+//     创建前按派生名对账：已存在 ⇒ 不发创建请求、返回既有作业的结果（幂等键，
+//     issue #263）；对账失败 ⇒ 拒绝创建（fail-closed）；
 //   - 禁网路径先对账执行命名空间的策略面（叠加语义 ⇒ ErrNetworkPolicy），
 //     Egress 策略建不出来 ⇒ ErrNetworkPolicy，Job 根本不创建（fail-closed）；
 //   - 禁网作业携带出站探测 init 容器：探测未通过（连上外部或不可判）⇒
 //     作业被拒；实测结果进 Detail["egress_verified"]；
+//   - 创建结果分级（issue #263）：409 在幂等路径上=「并发创建者已建成」，
+//     等它的终态；传输失败/5xx=结果不明 ⇒ 不删 Job 不删策略（删了可能砍掉
+//     已建成作业的禁网面与作业本体，孤儿由 TTL 兜底）；其余 4xx=一定没建成；
 //   - Budget.MaxMemory ⇒ Pod limits.memory；Budget.WallClock ⇒
 //     activeDeadlineSeconds + 截止 watcher（到点删 Job，返回作业失败，不是引擎故障）；
 //   - 终态以 Job conditions 为准（Complete / Failed）；对账给不出结论时
@@ -177,20 +183,83 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 
 	ns := k.execNS()
 	name := newK8sJobName()
-	if k.networkPolicy {
-		// 严格策略装配：先对账策略面，叠加语义可能放行出站即拒绝（先于任何创建）。
-		if err := k8sCheckForeignPolicies(ctx, k, ns, name); err != nil {
+	reconciled := false
+	if j.ExecutionID != "" {
+		// 稳定执行标识：名与标签都由它派生，创建因此具备幂等键。
+		name = k8sStableJobName(j.ExecutionID)
+		found, err := k.k8sReconcileJob(ctx, ns, name, j.ExecutionID)
+		if err != nil {
 			return backend.Result{}, err
 		}
-		if err := k.createNetworkPolicy(ctx, ns, name); err != nil {
-			return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
+		reconciled = found
+	}
+
+	jobCreated, policyCreated, uncertain := false, false, false
+	defer func() {
+		if uncertain {
+			// 创建结果不明：不删。删了可能砍掉已建成作业的禁网面（NetworkPolicy）
+			// 与作业本体（Job）；孤儿由 TTL 兜底，全拒策略孤儿只会拒绝不会放行。
+			return
 		}
-		defer k.cleanup(ctx, ns, k.deleteNetworkPolicy, name)
+		if jobCreated || reconciled {
+			k.cleanup(ctx, ns, k.deleteJob, name)
+		}
+		if policyCreated {
+			k.cleanup(ctx, ns, k.deleteNetworkPolicy, name)
+		}
+	}()
+
+	if k.networkPolicy {
+		// 严格策略装配：先对账策略面，叠加语义可能放行出站即拒绝（先于任何创建）。
+		if err := k8sCheckForeignPolicies(ctx, k, ns, name, j.ExecutionID); err != nil {
+			return backend.Result{}, err
+		}
+		conflict, err := k.createNetworkPolicy(ctx, ns, name)
+		if err != nil {
+			if !conflict {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
+			}
+			// 同名策略已存在（重试路径）：验证它就是本作业的全拒策略才复用。
+			p, _, gerr := k.getNetworkPolicy(ctx, ns, name)
+			if gerr != nil {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
+					"同名 NetworkPolicy 对账失败（fail-closed）: "+gerr.Error())
+			}
+			if !k8sPolicyIsOursDenyAll(p, name) {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
+					"同名 NetworkPolicy 不是本作业的 Egress 全拒策略（拒绝复用别人的对象）")
+			}
+		}
+		policyCreated = true
 	}
-	if err := k.createJob(ctx, ns, name, j); err != nil {
-		return backend.Result{}, err
+
+	if !reconciled {
+		outcome, err := k.createJob(ctx, ns, name, j)
+		switch {
+		case err == nil:
+			jobCreated = true
+		case outcome == k8sCreateConflict && j.ExecutionID != "":
+			// 对账（404）与创建之间的竞态窗口：同标识的并发创建者先到了。
+			reconciled = true
+		default:
+			uncertain = outcome == k8sCreateUncertain
+			return backend.Result{}, err
+		}
 	}
-	defer k.cleanup(ctx, ns, k.deleteJob, name)
+
+	stamp := func(res backend.Result) backend.Result {
+		res = k8sAttachEgressFacts(k, res, k.verifiedOrNone())
+		if j.ExecutionID == "" {
+			return res
+		}
+		if d, ok := res.Detail.(map[string]any); ok {
+			d["execution_id"] = j.ExecutionID
+			if reconciled {
+				d["reconciled"] = true
+			}
+		}
+		return res
+	}
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -216,11 +285,11 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 	res, err := k.await(runCtx, ns, name)
 	if err != nil {
 		if errors.Is(context.Cause(runCtx), errWallClock) {
-			return k8sAttachEgressFacts(k, backend.Result{
+			return stamp(backend.Result{
 				OK:     false,
 				Stderr: errWallClock.Error(),
 				Detail: map[string]any{"budget_exceeded": "wall_clock"},
-			}, k.verifiedOrNone()), nil
+			}), nil
 		}
 		return backend.Result{}, err
 	}
@@ -231,7 +300,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			res.Stderr = errWallClock.Error()
 		}
 	}
-	return k8sAttachEgressFacts(k, res, k.verifiedOrNone()), nil
+	return stamp(res), nil
 }
 
 // verifiedOrNone 实测面的兜底值：await 未能从 Pod 状态读出探测事实时（Job 消失、

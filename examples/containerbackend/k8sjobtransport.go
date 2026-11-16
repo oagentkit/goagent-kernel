@@ -16,8 +16,6 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
-
-	"github.com/yi-nology/goagent-kernel/backend"
 )
 
 type k8sResponse struct {
@@ -91,13 +89,7 @@ func k8sAPIError(op string, resp k8sResponse) error {
 	return errors.Wrap(ErrAPICall, fmt.Sprintf("containerbackend: %s 返回 %d: %s", op, resp.status, msg))
 }
 
-func (k *K8sJob) createJob(ctx context.Context, ns, name string, j backend.Job) error {
-	resp, err := k.call(ctx, http.MethodPost, k8sJobsPath(ns, ""), buildK8sJob(name, ns, j, k), nil)
-	if err != nil {
-		return err
-	}
-	return k8sAPIError("创建 Job", resp)
-}
+// createJob 在 k8sjobidem.go（创建落点分级：created/conflict/rejected/uncertain）。
 
 func (k *K8sJob) getJob(ctx context.Context, ns, name string) (k8sJobResponse, bool, error) {
 	resp, err := k.call(ctx, http.MethodGet, k8sJobsPath(ns, name), nil, nil)
@@ -145,12 +137,36 @@ func (k *K8sJob) podLogs(ctx context.Context, ns, pod string) (string, error) {
 	return string(resp.body), nil
 }
 
-func (k *K8sJob) createNetworkPolicy(ctx context.Context, ns, name string) error {
+// createNetworkPolicy 建 Egress 全拒策略；同名已存在（重试路径）回 conflict=true，
+// 由调用方对账验证后复用。
+func (k *K8sJob) createNetworkPolicy(ctx context.Context, ns, name string) (conflict bool, err error) {
 	resp, err := k.call(ctx, http.MethodPost, k8sNetworkPoliciesPath(ns, ""), buildK8sNetworkPolicy(name, ns), nil)
 	if err != nil {
-		return err
+		return false, err // 传输失败：结果不明，调用方按 fail-closed 拒绝
 	}
-	return k8sAPIError("创建 NetworkPolicy", resp)
+	if resp.status == http.StatusConflict {
+		return true, k8sAPIError("创建 NetworkPolicy", resp)
+	}
+	return false, k8sAPIError("创建 NetworkPolicy", resp)
+}
+
+// getNetworkPolicy 读单个策略（重试路径上同名重建遇 409 后的复用校验）。
+func (k *K8sJob) getNetworkPolicy(ctx context.Context, ns, name string) (k8sNetworkPolicy, bool, error) {
+	resp, err := k.call(ctx, http.MethodGet, k8sNetworkPoliciesPath(ns, name), nil, nil)
+	if err != nil {
+		return k8sNetworkPolicy{}, false, err
+	}
+	if resp.status == http.StatusNotFound {
+		return k8sNetworkPolicy{}, false, nil
+	}
+	if err := k8sAPIError("查询 NetworkPolicy", resp); err != nil {
+		return k8sNetworkPolicy{}, false, err
+	}
+	var out k8sNetworkPolicy
+	if err := json.Unmarshal(resp.body, &out); err != nil {
+		return k8sNetworkPolicy{}, false, errors.Wrap(ErrAPICall, "containerbackend: 解析 NetworkPolicy 应答失败: "+err.Error())
+	}
+	return out, true, nil
 }
 
 // listNetworkPolicies 执行命名空间的策略面全量（严格策略装配的对账入口）。

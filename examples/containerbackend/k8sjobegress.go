@@ -103,7 +103,7 @@ func (k *K8sJob) k8sEgressProbeRequired() bool {
 // 的策略且可能选中本作业 Pod 时，NetworkPolicy 的叠加语义会放行出站 ⇒
 // 拒绝创建作业（fail-closed）。LIST 失败同样拒绝——对账不了策略面就是
 // 兑现不了禁网。
-func k8sCheckForeignPolicies(ctx context.Context, k *K8sJob, ns, name string) error {
+func k8sCheckForeignPolicies(ctx context.Context, k *K8sJob, ns, name, executionID string) error {
 	policies, err := k.listNetworkPolicies(ctx, ns)
 	if err != nil {
 		return errors.Wrap(ErrNetworkPolicy, "策略面对账失败（fail-closed）: "+err.Error())
@@ -112,7 +112,7 @@ func k8sCheckForeignPolicies(ctx context.Context, k *K8sJob, ns, name string) er
 		if p.Metadata.Name == name {
 			continue // 本作业同名策略：重试路径上的既有对象，由创建侧校验其语义
 		}
-		if len(p.Spec.Egress) == 0 || !k8sCouldSelectOurPods(p, name) {
+		if len(p.Spec.Egress) == 0 || !k8sCouldSelectOurPods(p, name, executionID) {
 			continue // 选不中本作业 Pod，或只拒不放 ⇒ 不构成叠加
 		}
 		return errors.Wrap(ErrNetworkPolicy, fmt.Sprintf(
@@ -124,16 +124,19 @@ func k8sCheckForeignPolicies(ctx context.Context, k *K8sJob, ns, name string) er
 
 // k8sCouldSelectOurPods 判别人的策略是否可能选中本作业的 Pod。
 //
-// 本作业 Pod 的标签集 = {gak-job: 名, app.kubernetes.io/managed-by: …}。
-// NetworkPolicy 的 podSelector 是**子集匹配**（Pod 带有 selector 全部键值即被
-// 选中），故 matchLabels 是本作业标签集子集 ⇒ 可能选中；matchExpressions
-// 无法在本侧求值 ⇒ 按可能选中处理（fail-closed）；空 selector 选中全命名
-// 空间 ⇒ 可能选中。
-func k8sCouldSelectOurPods(p k8sNetworkPolicy, jobName string) bool {
+// 本作业 Pod 的标签集 = {gak-job: 名, app.kubernetes.io/managed-by: …,
+// harness.io/execution-id: …(幂等作业)}。NetworkPolicy 的 podSelector 是
+// **子集匹配**（Pod 带有 selector 全部键值即被选中），故 matchLabels 是本
+// 作业标签集子集 ⇒ 可能选中；matchExpressions 无法在本侧求值 ⇒ 按可能选中
+// 处理（fail-closed）；空 selector 选中全命名空间 ⇒ 可能选中。
+func k8sCouldSelectOurPods(p k8sNetworkPolicy, jobName, executionID string) bool {
 	if len(p.Spec.PodSelector.MatchExpressions) > 0 {
 		return true
 	}
 	ours := map[string]string{k8sJobLabel: jobName, k8sManagedByLabel: k8sManagedByValue}
+	if executionID != "" {
+		ours[k8sExecutionIDLabel] = executionID
+	}
 	for key, want := range p.Spec.PodSelector.MatchLabels {
 		if got, ok := ours[key]; !ok || got != want {
 			return false
