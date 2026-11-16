@@ -43,6 +43,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/yi-nology/goagent-kernel/internal/subhub"
 )
 
 // Store 持久化存储接缝（宿主实现；issue #160，形态与 #145 的
@@ -129,8 +131,9 @@ type DurablePublisher struct {
 	store Store
 
 	// mu 发布临界区：insert→ID→broadcast 的原子次序与并发单调序都由它保证
-	// （见并发序说明；onDrop 同步调用也在这把锁内——drop 与 publish 全时序
-	// 单一化，不留「半条事件」的中间态）。
+	// （见并发序说明）。onDrop 在该临界区**之外**调用——失败路径的旁路留痕
+	// 不参与次序不变量，把它拖进锁内只会让宿主钩子的慢/重入/panic 波及
+	// 整个发布面（issue #328）。
 	mu     sync.Mutex
 	onDrop func(ev Event, cause error)
 }
@@ -141,9 +144,11 @@ type DurableOption func(*DurablePublisher)
 // WithOnDrop 注入落库失败留痕钩子（缺省 nil ⇒ 静默丢弃，与宿主拷贝的
 // onDrop 可选形一致）。
 //
-// 同步调用、在发布锁内：不得阻塞、不得回调 Publish/Insert（Store 契约的
-// 重入红线同款）。本包不重试——重试会把「失败不广播」变成「失败晚广播」，
-// 次序不变量就破了；重试/死信/告警是留痕钩子宿主侧的事。
+// 同步调用、在发布临界区**之外**（失败不广播，onDrop 不参与次序不变量）：
+// 回调可以安全查询发布面；但仍不得回调 Publish/Insert——那会再走一次落库，
+// 失败时递归 onDrop。panic 已由本包隔离（与 internal/subhub 的回调纪律同款）
+// ——宿主留痕钩子的异常不得掀翻发布面。本包不重试——重试会把「失败不广播」
+// 变成「失败晚广播」，次序不变量就破了；重试/死信/告警是留痕钩子宿主侧的事。
 func WithOnDrop(fn func(ev Event, cause error)) DurableOption {
 	return func(p *DurablePublisher) { p.onDrop = fn }
 }
@@ -177,6 +182,19 @@ func NewDurablePublisher(b *Bus, store Store, opts ...DurableOption) *DurablePub
 //   - Level 空 ⇒ info，OccurredAt 零值 ⇒ 当前时刻——与 Bus.Publish 的
 //     既有缺省行为同口径，本包不新增字段语义。
 func (p *DurablePublisher) Publish(ctx context.Context, ev Event) (Event, error) {
+	ev, err := p.publishLocked(ctx, ev)
+	if err != nil {
+		// 失败路径的旁路留痕在临界区之外（issue #328）：钩子慢不占发布锁、
+		// 钩子 panic 由 subhub.Do 隔离，不得掀翻发布面。
+		p.drop(ev, err)
+		return Event{}, err
+	}
+	return ev, nil
+}
+
+// publishLocked 发布临界区：insert→铸造 ID→广播。返回的 Event 在失败路径
+// 是**归一后**的事件（onDrop 要看到的形态），成功路径是广播帧。
+func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -190,12 +208,19 @@ func (p *DurablePublisher) Publish(ctx context.Context, ev Event) (Event, error)
 
 	id, err := p.store.Insert(ctx, ev)
 	if err != nil {
-		if p.onDrop != nil {
-			p.onDrop(ev, err)
-		}
-		return Event{}, err
+		return ev, err
 	}
 	ev.ID = id
 	p.bus.Broadcast(ev)
 	return ev, nil
+}
+
+// drop 落库失败留痕（nil 钩子静默跳过）。panic 隔离与 internal/subhub 的
+// 回调纪律同款：留痕钩子的异常不得把一次「已确定失败」的发布变成进程级
+// 事故（调用方的发布路径也随之中断）。
+func (p *DurablePublisher) drop(ev Event, cause error) {
+	if p.onDrop == nil {
+		return
+	}
+	subhub.Do(func() { p.onDrop(ev, cause) })
 }

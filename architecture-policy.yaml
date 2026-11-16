@@ -78,7 +78,7 @@ modules:
 
   - id: eventbus
     roots: [eventbus]
-    requires: ["ext:github.com/oagentkit/runtime", "ext:github.com/oekit/logx"]
+    requires: [subhub, "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/logx"] # onDrop 留痕回调的 panic 隔离复用 subhub（#328）
     owner: harness
     managed: true
     notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责；durable 发布面（#160 写侧）与 event-tail 补灌面（#166 读侧）各为可选接缝，包仍零 DB 依赖
