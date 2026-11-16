@@ -171,7 +171,11 @@ func dedupeSpans(in []Span) []Span {
 }
 
 // maskSpan 保长度打码：手机号留前 3 尾 4（+86/0086 前缀保留——归属信息不敏感），
-// 身份证留前 4 尾 2（省市级可见、生日与顺序码全掩）。
+// 身份证留前 4（省市级可见；生日、顺序码、MOD 11-2 校验位全掩）。
+//
+// 校验位**不保留**（issue #298）：MOD 11-2 校验位原样留下，就成了对
+// 「生日 × 顺序码 × 区县」候选的免费验算器——原本候选还需自洽才算命中。
+// 留前 4 已够宿主做省市级定位，尾 2 没有等价的定位价值。
 func maskSpan(v string, kind Kind) string {
 	switch kind {
 	case KindMobile:
@@ -182,7 +186,7 @@ func maskSpan(v string, kind Kind) string {
 		}
 		return prefix + digits[:3] + "****" + digits[7:]
 	case KindResidentID:
-		return v[:4] + strings.Repeat("*", 12) + v[16:]
+		return v[:4] + strings.Repeat("*", 14)
 	}
 	return strings.Repeat("*", len(v))
 }

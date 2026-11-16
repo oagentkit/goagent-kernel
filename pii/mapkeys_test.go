@@ -38,7 +38,7 @@ func TestMapKeysDisposedSameAsValues(t *testing.T) {
 	}
 	want := map[string]string{
 		"138****5678":         "order A",
-		"1101************2X":  "order B",
+		"1101**************":  "order B",
 		"order_id":            "ORD-1",
 		"ts=1728643200000_ms": "plain",
 	}
