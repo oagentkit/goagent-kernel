@@ -24,6 +24,7 @@ package pii
 
 import (
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/oekit/pkg/errors"
@@ -96,6 +97,68 @@ func (ss SurfaceSet) Has(s Surface) bool {
 func ValidateSurface(s Surface) error {
 	_, err := SurfaceBit(s)
 	return err
+}
+
+// ErrUnsupportedShape 未登记的载荷形状（运行期 ApplyValue 对它 fail-closed）。
+var ErrUnsupportedShape = errors.New("未登记的载荷形状")
+
+// ValidateShape 校验载荷形状是否全部落在 ApplyValue 的**登记面**内，供宿主在
+// **接线期**自查——与 ValidateSurface 对偶：那边管「面名契约」，这边管
+// 「载荷形状契约」。
+//
+// # 为什么需要它
+//
+// 运行期 ApplyValue 对未登记形状 fail-closed（整段替换 + 要求阻断）——那是
+// 保险，代价是该子树的数据出不去。宿主若能提前知道自己的载荷形状（工具返回
+// 的解码产物），应该在启动时把典型样本过一遍本函数，把「运行期整段替换」
+// 挡在装配期。放行面与运行期放行面共用同一条判据（shapeScalar）：
+//
+//   - 登记容器：string / map[string]any / map[string]string / []any / []string
+//     （递归下探）；
+//   - 标量：数字 / 布尔 / 字符串命名类型（json.Number 等）——文档化盲区，原样放行；
+//   - nil（无类型与带类型）——原样放行；
+//
+// 其余（[]map[string]string、map[string][]string、[]byte、struct、数组…）报
+// ErrUnsupportedShape，错误信息带可定位的路径（如 `$.items[0].blob`）。
+func ValidateShape(v any) error {
+	return validateShape(v, "$")
+}
+
+func validateShape(v any, path string) error {
+	switch t := v.(type) {
+	case string, map[string]string, []string:
+		return nil
+	case map[string]any:
+		if t == nil {
+			return nil
+		}
+		// 按键名排序下探：报错与 map 迭代顺序无关（错误信息必须确定）。
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			if err := validateShape(t[k], path+"."+k); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []any:
+		if t == nil {
+			return nil
+		}
+		for i, e := range t {
+			if err := validateShape(e, fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if shapeScalar(v) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s 是 %T（ApplyValue 会整段替换并要求阻断）", ErrUnsupportedShape, path, v)
 }
 
 // ParseSurfaces 由宿主配置解析面集合（未知面名报错，不静默丢弃）。

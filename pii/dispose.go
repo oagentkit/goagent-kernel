@@ -13,6 +13,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -243,8 +244,43 @@ func applyValue(v any, fn, fk func(string) (string, bool)) (any, bool) {
 		}
 		return out, blocked
 	default:
-		return v, false
+		// 未登记形状**不静默放行**（与「未登记面名」同档 fail-closed）：宿主没有
+		// 手段区分「没命中敏感值」与「根本没看」，而这里的载荷恰恰常被解码成
+		// []map[string]string / map[string][]string / []byte（json.RawMessage）——
+		// 静默透传等于整段 PII 外发还报平安。整段替换 + 要求阻断，宿主在返回值里
+		// 看见异常（取舍同未登记面名：不 panic，可恢复，但绝不「假装检查过」）。
+		if shapeScalar(v) {
+			return v, false
+		}
+		return redactedPlaceholder, true
 	}
+}
+
+// shapeScalar 未登记形状里按「标量/空」放行的判据（ValidateShape 与运行期
+// default 分支共用同一条，两处口径永不漂移）。
+//
+// 标量放行是**文档化的覆盖盲区**，不是疏漏：检出面只认 string，数字/布尔不是
+// 本包的判定对象（USAGE.md「不下探标量」）；字符串命名类型（json.Number、
+// 自定义 ~string）同理——type switch 只认 exact string，扩展它们属于支持面
+// 扩张，须与「防止支持面扩大成误检面」的纪律一起另行决策。
+//
+// nil 容器（含未登记类型的 nil）原样保留：与 JSON null 同义，无可处置内容，
+// 同四容器的 nil 纪律。
+func shapeScalar(v any) bool {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Invalid, // 无类型 nil
+		reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Complex64, reflect.Complex128,
+		reflect.String: // 含 json.Number 等字符串命名类型（文档化盲区）
+		return true
+	case reflect.Slice, reflect.Map, reflect.Pointer, reflect.Chan, reflect.Func, reflect.UnsafePointer:
+		return rv.IsNil()
+	}
+	return false // Array / Struct / 其余复合：未登记，fail-closed
 }
 
 // keyForm 单个映射键的处置结果。

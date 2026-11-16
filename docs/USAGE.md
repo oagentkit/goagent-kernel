@@ -1646,6 +1646,11 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
   但会再触发一轮通知，**递归深度由订阅者自己收敛**。
 - **15 位旧身份证不检**（已停用 20 年）；**裸 `86` 前缀不认**，只认 `+86` / `0086`。
 - **不下探标量**：数字/布尔原样返回——JSON number 形态的手机号不在覆盖面。
+- **未登记容器形状 fail-closed**：`[]map[string]string`、`map[string][]string`、
+  `[]byte`（含 `json.RawMessage`）、struct 等未登记结构不再静默透传——
+  `ApplyValue` 整段替换为 `"[redacted]"` 并回报 blocked，宿主不会再把
+  「根本没看」误读成「没命中」。接线期用 `ValidateShape` 对典型载荷自查，
+  报错带可定位路径（如 `$.items[0].blob`）。
 - **`Redact` / `RedactValue` 已于 2026-11-06 删除**（面无关且不回报是否阻断——
   宿主把策略配成 `block` 时它拿不到信号，等于只能靠自觉）。唯一入口是
   `Apply` / `ApplyValue`，**必须显式指定面**；每个出口声明自己在哪一面，
