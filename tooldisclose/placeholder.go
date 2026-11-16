@@ -1,5 +1,11 @@
 package tooldisclose
 
+import (
+	"unicode/utf8"
+
+	"github.com/oekit/pkg/stringx"
+)
+
 // PlaceholderNotice 未加载工具描述里追加的取回指令。
 //
 // 为什么指令必须落在**描述**里而不是指望空 schema 自己表达：模型读的是描述里的祈使句。
@@ -11,7 +17,18 @@ const PlaceholderNotice = "（schema 未加载：先用检索工具按关键词�
 
 // PlaceholderDescription 给工具描述追加取回指令（原文保留在前，宿主可自行决定是否换文案，
 // 但必须保留「先取回 schema 再调用」这句语义）。
-func PlaceholderDescription(description string) string { return description + PlaceholderNotice }
+//
+// # 总长不得越过 MaxDescriptionLen（#290）
+//
+// 旧实现把指令追加到已截断的描述后面，占位面反而成了唯一越过声明上限的披露形态
+// （实测 363 rune > 320）——「描述在构造时截到上限」的承诺被自己的指令破坏。
+// 指令占用的空间从**原文尾部**扣除：原文先截到「上限 − 指令长度」再拼接，
+// 占位面与完整面共享同一条单条上限。
+func PlaceholderDescription(description string) string {
+	budget := MaxDescriptionLen - utf8.RuneCountInString(PlaceholderNotice)
+	base, _ := stringx.TruncRunes(description, budget)
+	return base + PlaceholderNotice
+}
 
 // Placeholder 构造未加载工具的占位披露面：退化 schema + 带取回指令的描述。
 //
