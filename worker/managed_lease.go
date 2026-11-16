@@ -39,6 +39,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/taskboard"
@@ -143,7 +144,8 @@ func NewLeaseSession(ctx context.Context, board taskboard.RenewingBoard, task ta
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
-	go s.renewLoop()
+	// 走 async.GoSafe 而非裸 go（本仓门禁：panic 无法被外层 recover）。
+	async.GoSafe(s.renewLoop)
 	return s, nil
 }
 
