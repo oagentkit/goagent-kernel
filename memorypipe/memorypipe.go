@@ -149,6 +149,10 @@ func Build(entries []Entry, q Query) (Result, error) {
 				if remain <= 0 {
 					res.Truncated = true
 					res.Dropped = append(res.Dropped, Drop{ID: e.ID, Why: "超过 MaxBytes"})
+					// Reason 必须显式赋值（issue #201）：这里不赋值会被循环末尾
+					// 的兜底改写成「候选数超过 MaxItems」——字节预算耗尽被报成
+					// 条数预算耗尽，宿主调 MaxItems 永远修不好，排障方向直接错。
+					res.Reason = "预算耗尽（超过 MaxBytes），其余条目未注入"
 					continue
 				}
 				text = clip(text, remain)
@@ -222,14 +226,25 @@ func (r Result) Prompt() string {
 	return b.String()
 }
 
-// clip 把正文裁到 n 字节以内（不足则原样返回）。
+// clip 把正文裁到 n 字节以内（不足则原样返回），省略号**计入预算**。
+//
+// issue #201：旧实现 TruncBytes(s, n) 后再拼 3 字节的 "…"，实际长度可达
+// n+3，usedBytes 按超额量累计——MaxBytes 上限被突破（预算成了软约束，
+// 且自带测试先剥掉省略号再断言，坏实现全绿）。现在按 n-3 截再拼省略号，
+// 返回值总长恒 ≤ n；n 装不下省略号（<3 字节）时只裁不标——预算是硬上限，
+// 标记装不下就放弃标记。
 func clip(s string, n int) string {
 	if n <= 0 || len(s) <= n {
 		return s
 	}
+	const ellipsis = "…" // 3 字节
 	// 与 hookengine 同一判据（stringx.TruncBytes）：按字节切会把多字节字符切成
 	// 半个，产出的**非法 UTF-8** 会跟着注入体一起进模型上下文——而这里正是
 	// 「不可信正文」的入口，坏字节在两侧都读不出原因。
-	cut, _ := stringx.TruncBytes(s, n)
-	return cut + "…"
+	if n < len(ellipsis) {
+		cut, _ := stringx.TruncBytes(s, n)
+		return cut
+	}
+	cut, _ := stringx.TruncBytes(s, n-len(ellipsis))
+	return cut + ellipsis
 }

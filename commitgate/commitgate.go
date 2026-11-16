@@ -68,8 +68,12 @@
 package commitgate
 
 import (
+	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 )
+
+// log 回灌留痕。Delegating 懒解析：宿主 SetDefault 之前也能用，之后自动跟随。
+var log = logx.Delegating("commitgate")
 
 // Ref 环节引用：一次编排运行里的一个环节。
 //
@@ -131,6 +135,8 @@ type Guard struct {
 	// isTerminal 由宿主注入的状态词表判定；nil 时按「全部都是终态」处理，
 	// 这是更保守的一侧（宁可多拦，不可在不知道词表时漏拦）。
 	isTerminal func(status string) bool
+	// seedWarn 回灌失败留痕钩子（WithSeedWarn 装配期注入；nil 走包内 logx）。
+	seedWarn SeedWarn
 }
 
 // NewGuard 构造闸（进程内参考存储）。isTerminal 判定某状态是否为终态；
@@ -161,11 +167,17 @@ func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
 // 首次真正终态提交撞 ErrAlreadyCommitted，环节永远收不了口。
 // isTerminal 为 nil 时与 Acquire 同侧（全部按终态，宁可多拦）。
 //
+// Store 故障**不再静默**（issue #204）：SeedIfAbsent 失败时该环节的闸实际是
+// 空的——重复终态提交重新敞开，这正是本包要防的那件事。本方法没有 error
+// 通道，故障经留痕面显式报告：缺省走包内 logx warn，宿主可用 [Guard.SeedE]
+// （error 直返）或注入 [Guard.SeedWarn] 钩子（接告警/指标）。回灌失败与
+// 「没有需要回灌的行」从此可分。
+//
 // Deprecated: 空 Ref（RunID 或 Step 为空）在本方法**静默跳过**，与 Acquire 的
 // ErrEmptyRef 响亮失败不同侧——回灌数据不干净时坏行被吞、闸的覆盖面静默缩水。
-// 请迁移到 [Guard.SeedE]：同一判定、空 Ref 返回 ErrEmptyRef（五步破坏性变更
-// 流程的 Deprecated 过渡步，见 docs/api-compat.md；本包仍 Stable，Seed 在
-// minor 边界按流程拆除）。
+// 请迁移到 [Guard.SeedE]：同一判定、空 Ref 返回 ErrEmptyRef、Store 故障返回
+// error（五步破坏性变更流程的 Deprecated 过渡步，见 docs/api-compat.md；
+// 本包仍 Stable，Seed 在 minor 边界按流程拆除）。
 //
 // 幂等：以同一条记录重复 Seed 结果相同。已存在的记录不会被更旧的覆盖。
 func (g *Guard) Seed(c Commit) {
@@ -178,12 +190,21 @@ func (g *Guard) Seed(c Commit) {
 		return
 	}
 	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
-	_ = g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	// 故障吞掉的后果（issue #204）：闸为空、重复终态提交重新敞开——必须留痕。
+	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+		g.reportSeedFailure(c, err)
+	}
 }
 
-// SeedE 是 Seed 的**响亮形态**（issue #154 空 Ref 半面）：判定与 Seed 完全同一份
-// （isTerminal 词表、不覆盖幂等），仅空 Ref 从「静默跳过」改为返回
-// ErrEmptyRef——与 Acquire 的非法输入处置同侧，回灌数据不干净时不再吞行。
+// SeedE 是 Seed 的**响亮形态**（issue #154 空 Ref 半面 / issue #204 Store
+// 故障半面）：判定与 Seed 完全同一份（isTerminal 词表、不覆盖幂等），仅失败
+// 从「静默」改为返回 error——空 Ref 报 ErrEmptyRef，Store 故障原样上抛
+// （带 run_id/step 上下文）。回灌失败的三个形态（坏引用、存储故障）与
+// 「没有需要回灌的行」（跳过，返回 nil）从此全部可分。
+//
+// 多副本宿主启动对账逐行回灌时，本方法的 error **必须中止启动**或显式处置：
+// 吞掉它 = 宿主认为回灌完成而闸实际是空的，同一 (run, 环节) 的终态可被
+// 重复提交（副作用双写）——正是本包要防的那件事。
 //
 // 五步破坏性变更流程（docs/api-compat.md）：本符号是 Deprecated 过渡步给
 // Seed 指定的替代；宿主迁移完成后，Seed 在 minor 边界按流程拆除。
@@ -194,8 +215,36 @@ func (g *Guard) SeedE(c Commit) error {
 	if g.isTerminal != nil && !g.isTerminal(c.Status) {
 		return nil
 	}
-	_ = g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+		return errors.Wrap(err, "回灌终态失败（闸未记上，重复终态提交将重新敞开）",
+			"run_id", c.Ref.RunID, "step", c.Ref.Step)
+	}
 	return nil
+}
+
+// SeedWarn 回灌失败留痕钩子（可选，装配期注入）：Deprecated Seed 没有 error
+// 通道，Store 故障经此显式报告。缺省（未注入）走包内 logx warn；注入即
+// 接管留痕通道（宿主接告警/指标），两者不叠发。要 error 直返的响亮形态
+// 用 [Guard.SeedE]。
+type SeedWarn func(c Commit, cause error)
+
+// WithSeedWarn 注入回灌失败留痕钩子（装配期调用；nil 忽略）。
+func (g *Guard) WithSeedWarn(fn SeedWarn) *Guard {
+	if fn != nil {
+		g.seedWarn = fn
+	}
+	return g
+}
+
+// reportSeedFailure 回灌失败的留痕：钩子优先，缺省 logx warn——
+// 「回灌失败」与「没有需要回灌的行」不可分的旧口径到此为止（issue #204）。
+func (g *Guard) reportSeedFailure(c Commit, cause error) {
+	if g.seedWarn != nil {
+		g.seedWarn(c, cause)
+		return
+	}
+	log.Warn("commitgate: 回灌终态失败（闸未记上，重复终态提交将重新敞开）",
+		"run_id", c.Ref.RunID, "step", c.Ref.Step, logx.ErrKey, cause)
 }
 
 // Acquire 抢终态独占权并返回**占用凭证**。成功时持凭证者独占该环节；
