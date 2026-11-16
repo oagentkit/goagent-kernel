@@ -41,13 +41,26 @@ const storePlaneCASMaxAttempts = 32
 
 // StorePlane 基于 Store 的 Plane 实现：查询 + 三类介入。
 //
+// 两个构造器对应两种装配形态：
+//
+//   - NewStorePlane：任务/运行/效果键全部走 Store（单进程参考实现或与
+//     运行时同源的持久化 Store；同源与否由宿主保证）；
+//   - NewAuthoritativeStorePlane：强制释放走运行时的 taskboard.Board、
+//     裁决走副作用闸（sideeffect.Store）的同一份状态——结构上不构造第二份
+//     可写任务/效果状态（issue #268）。
+//
 // 多个 StorePlane 实例共享同一个 Store 即多副本部署的替身（跨实例可见、
-// 代次单调、冲突串行化）。经 NewStorePlane 构造；并发安全与否取决于
-// Store 实现的并发契约。
+// 代次单调、冲突串行化）；并发安全与否取决于 Store 实现的并发契约。
 type StorePlane struct {
 	store Store
 	aud   Auditor
 	cfg   memConfig
+
+	// tasks/effects 非 nil = 权威控制面（issue #268，NewAuthoritativeStorePlane）：
+	// 任务快照与强制释放走 tasks（与运行时同一份任务板），裁决走 effects
+	// （与副作用闸同一份状态）；不再调用 store 的任务/效果提交面。
+	tasks   TaskAuthority
+	effects EffectAuthority
 }
 
 // NewStorePlane 构造持久化控制面。
@@ -105,6 +118,9 @@ func (p *StorePlane) audit(ctx context.Context, operator string, action Action, 
 
 // TaskView 实现 Plane：任务视图 + run 级不变量在该任务上的投影。
 func (p *StorePlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error) {
+	if p.tasks != nil {
+		return p.taskViewAuthoritative(ctx, id)
+	}
 	if err := p.requireTenant(ctx); err != nil {
 		return TaskView{}, err
 	}
@@ -153,6 +169,10 @@ func (p *StorePlane) ForceRelease(ctx context.Context, req ForceRelease) error {
 	}
 	if _, err := tenant.Require(ctx); err != nil {
 		return err
+	}
+	if p.tasks != nil {
+		// 权威模式：直接复用运行时任务板的原子状态迁移（issue #268）。
+		return p.forceReleaseAuthoritative(ctx, req)
 	}
 	target := string(req.TaskID)
 	for range storePlaneCASMaxAttempts {
@@ -207,6 +227,10 @@ func (p *StorePlane) Adjudicate(ctx context.Context, req Adjudication) error {
 	}
 	if _, err := tenant.Require(ctx); err != nil {
 		return err
+	}
+	if p.tasks != nil || p.effects != nil {
+		// 权威模式：裁决落到副作用闸的同一份状态（issue #268）。
+		return p.adjudicateAuthoritative(ctx, req)
 	}
 	for range storePlaneCASMaxAttempts {
 		snap, err := p.store.SnapshotEffect(ctx, req.EffectKey)

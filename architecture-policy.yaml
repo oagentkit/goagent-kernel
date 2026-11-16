@@ -67,7 +67,7 @@ modules:
     requires: [contract, sideeffect, taskboard, tenant, "ext:github.com/oekit/pkg"] # 介入契约引用编排/副作用/任务板/租户四面
     owner: harness
     managed: true
-    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，判定逻辑一份（StorePlane），介入走令牌授权；Store 契约给一致快照 + 带版本锚的原子提交（状态与留痕同事务），MemStore/MemPlane 是进程内参考实现（issue #189）
+    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，判定逻辑一份（StorePlane），介入走令牌授权；Store 契约给一致快照 + 带版本锚的原子提交（状态与留痕同事务），MemStore/MemPlane 是进程内参考实现（issue #189）。权威控制面（NewAuthoritativeStorePlane，issue #268）把强制释放接到运行时的同一份 taskboard.Board、裁决接到 sideeffect.Store 读取的同一份状态，结构上不构造第二份可写任务/效果状态
 
   - id: statemachine
     roots: [statemachine]
