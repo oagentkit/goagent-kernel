@@ -31,15 +31,14 @@ type Divergence struct {
 // 空切片 = 完全复现（issue #111 的验收线：回放能复现一条已录制轨迹，
 // 差异为零）。比对字段覆盖轨迹行的全部投影事实（ID 是键、Seq 是顺序锚、
 // 两侧时刻都来自事件本身——时刻不同只说明事件被改过，照样报）。
+//
+// 行 ID **不唯一**是 trajectory 的设计事实：同一个副作用 Key 的授予段、
+// 对账段、点观察共用一个标识。故按键分组后**按出现序逐条配对**（第 k 条对
+// 第 k 条），一侧多出的段逐条报 row=present→absent / absent→present。
+// 按 ID 建 map 会让后写覆盖先写——同 ID 的前段永远不参与比对，含副作用
+// 事件的轨迹回归比对因此给出「差异假零」（issue #221）。
 func Diff(want, got []trajectory.Row) []Divergence {
-	byID := func(rows []trajectory.Row) map[string]trajectory.Row {
-		m := make(map[string]trajectory.Row, len(rows))
-		for _, r := range rows {
-			m[r.ID] = r
-		}
-		return m
-	}
-	wm, gm := byID(want), byID(got)
+	wm, gm := groupRows(want), groupRows(got)
 
 	var out []Divergence
 	ids := make([]string, 0, len(wm)+len(gm))
@@ -54,21 +53,31 @@ func Diff(want, got []trajectory.Row) []Divergence {
 	slices.Sort(ids)
 
 	for _, id := range ids {
-		w, wok := wm[id]
-		g, gok := gm[id]
-		switch {
-		case wok && !gok:
-			out = append(out, Divergence{ID: id, Field: "row", Want: "present", Got: "absent"})
-		case !wok && gok:
-			out = append(out, Divergence{ID: id, Field: "row", Want: "absent", Got: "present"})
-		case wok && gok:
-			out = append(out, rowDiff(id, w, g)...)
+		w, g := wm[id], gm[id]
+		for i := 0; i < len(w) || i < len(g); i++ {
+			switch {
+			case i >= len(w):
+				out = append(out, Divergence{ID: id, Field: "row", Want: "absent", Got: "present"})
+			case i >= len(g):
+				out = append(out, Divergence{ID: id, Field: "row", Want: "present", Got: "absent"})
+			default:
+				out = append(out, rowDiff(id, w[i], g[i])...)
+			}
 		}
 	}
 	slices.SortStableFunc(out, func(a, b Divergence) int {
 		return cmp.Or(cmp.Compare(a.ID, b.ID), cmp.Compare(a.Field, b.Field))
 	})
 	return out
+}
+
+// groupRows 按 ID 分组，组内保持出现序（同 ID 多行的配对顺序）。
+func groupRows(rows []trajectory.Row) map[string][]trajectory.Row {
+	m := make(map[string][]trajectory.Row, len(rows))
+	for _, r := range rows {
+		m[r.ID] = append(m[r.ID], r)
+	}
+	return m
 }
 
 // rowDiff 比对同一行的全部投影字段（字段表驱动，漏一个字段就是假绿）。
