@@ -78,13 +78,6 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 		// hasIntent 要求四列齐全；半写行已由 lockAction 的 checkIntentColumns
 		// 拒绝（ErrIntentIncomplete），不会走到下面解引用 NULL 的路径。
 		if a.hasIntent() {
-			// 部分填充守卫（fail-closed）：判定路径要解引用 intentExpires /
-			// intentResource / intentFence，残缺行在这里显式报错、事务整体回滚，
-			// 而不是 panic（行锁持有、事务开着的路径上 panic 直接杀宿主进程），
-			// 更不是当「没有在途尝试」放行。
-			if err := a.intentCompleteErr(act.Key); err != nil {
-				return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
-			}
 			if now.Before(*a.intentExpires) {
 				return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
 			}
