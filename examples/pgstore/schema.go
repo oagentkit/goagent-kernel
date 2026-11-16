@@ -7,6 +7,8 @@
 //   - pgref_downstream      下游资源（已见最大令牌 + 参考业务数据，FencedSink 的落点）
 //   - pgref_board_task      任务认领面（taskboard.Board）
 //   - pgref_snapshot        进度快照（checkpoint.StoreCAS）
+//   - pgref_event_watermark 已提交水位线（单行；事件 ID 分配的串行化点，#264）
+//   - pgref_event           事件行（与业务状态同事务提交的落点，#264）
 package pgstore
 
 import (
@@ -69,6 +71,28 @@ CREATE TABLE IF NOT EXISTS pgref_snapshot (
     status TEXT   NOT NULL DEFAULT '',
     done   TEXT[] NOT NULL DEFAULT '{}',
     fields TEXT   NOT NULL DEFAULT ''
+);
+
+-- 事件面（issue #264）：Outbox 形态的两张表。水位行是 ID 分配的串行化点
+-- （UPDATE … RETURNING 拿号并持行锁到事务提交），committed 就是「已提交
+-- 水位线」——事件行与它的推进同事务落库，可观测态下恒有
+-- committed == max(pgref_event.id) 且行集恰为 1..committed（无洞无孤儿）。
+CREATE TABLE IF NOT EXISTS pgref_event_watermark (
+    id        SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    committed BIGINT NOT NULL DEFAULT 0
+);
+
+INSERT INTO pgref_event_watermark (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS pgref_event (
+    id          BIGINT PRIMARY KEY,
+    session_id  TEXT        NOT NULL DEFAULT '',
+    case_id     TEXT        NOT NULL DEFAULT '',
+    step_id     BIGINT,
+    type        TEXT        NOT NULL DEFAULT '',
+    level       TEXT        NOT NULL DEFAULT 'info',
+    payload     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 `
 
