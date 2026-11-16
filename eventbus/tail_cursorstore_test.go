@@ -212,3 +212,47 @@ func TestTailerCursorNotFoundFallsBackToMaxID(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 }
+
+// TestTailerCursorNotFoundUsesExplicitStart CursorStore 未命中时，**显式起点
+// 优先于 MaxID**（WithTailStartCursor 的契约：未命中回退显式起点，再回退
+// MaxID）。实况曾与文档相反：未命中分支直接读 MaxID，把显式起点到当前尾部
+// 的存量整个跳过——回归判据钉死它。
+func TestTailerCursorNotFoundUsesExplicitStart(t *testing.T) {
+	tail := &fakeTailStore{maxID: 5}
+	tail.append(Event{ID: 1, SessionID: "s", Type: "stored-1"})
+	tail.append(Event{ID: 2, SessionID: "s", Type: "stored-2"})
+	cursor := &memCursorStore{} // saved=false：首次部署
+	hub := NewHub()
+	ch, stop := hub.Subscribe("s")
+	defer stop()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond),
+		WithTailStartCursor(0), WithTailCursorStore(cursor)).Run(ctx)
+
+	ev := waitTail(t, ch)
+	if ev.ID != 1 {
+		t.Fatalf("未命中时显式起点 0 必须生效（先送 1），实得 %d——MaxID 初始化把存量跳过了", ev.ID)
+	}
+	if ev := waitTail(t, ch); ev.ID != 2 {
+		t.Fatalf("显式起点之后应续读 2, got %d", ev.ID)
+	}
+	if got := tail.maxIDs(); got != 0 {
+		t.Fatalf("有显式起点时不得调用 MaxID（调了 %d 次 = 跳过起点到尾部的存量）", got)
+	}
+	// 初始游标 0 与推进后的 2 都应落盘（重启不再走未命中分支）。
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		cursor.mu.Lock()
+		saved := cursor.cur
+		cursor.mu.Unlock()
+		if saved == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("游标应持久化到 2, 实得 %d", saved)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

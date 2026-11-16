@@ -9,6 +9,7 @@
 //   - pgref_snapshot        进度快照（checkpoint.StoreCAS）
 //   - pgref_event_watermark 已提交水位线（单行；事件 ID 分配的串行化点，#264）
 //   - pgref_event           事件行（与业务状态同事务提交的落点，#264）
+//   - pgref_tail_cursor     尾随游标持久化（eventbus.CursorStore，#264 重启续读）
 package pgstore
 
 import (
@@ -93,6 +94,14 @@ CREATE TABLE IF NOT EXISTS pgref_event (
     level       TEXT        NOT NULL DEFAULT 'info',
     payload     JSONB       NOT NULL DEFAULT '{}'::jsonb,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 尾随游标（eventbus.CursorStore，#264「崩溃点重启续读」）：一行一个消费者。
+-- cursor_pos 单调不减由 SaveCursor 的 UPSERT 保证；updated_at 仅作对账留痕。
+CREATE TABLE IF NOT EXISTS pgref_tail_cursor (
+    consumer   TEXT PRIMARY KEY,
+    cursor_pos BIGINT      NOT NULL DEFAULT 0 CHECK (cursor_pos >= 0),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 `
 
