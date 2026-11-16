@@ -271,24 +271,37 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		res.Reason = "候选数超过 Max"
 	}
 	if b.MaxBytes > 0 {
+		// 裁剪策略：**按分数序贪心装载，放不下的跳过（skip），继续看后面的候选**
+		// （#292）。旧实现 first-fit + break——第一条放不下就整体停止，后面更小的
+		// 候选被连带丢弃：预算越紧、候选大小越参差，被浪费的额度越多，宿主花了
+		// 预算额度却拿到更少内容。跳过当前这条不是「顺序换位」：分数序是确定性
+		// 判据（判据 1/2 不动），被跳过的候选也不会被更差的候选顶替。
 		var kept []Scored
 		used := 0
+		dropped := false
 		for _, sc := range picked {
 			// 计费口径 = 交付口径（#289）：按 skillBytes 全量计量（含 Tags 与
 			// Resources），与塞进 res.Skills 的内容逐字节同源。
 			n := skillBytes(sc.Skill)
 			if used+n > b.MaxBytes {
-				res.Truncated = true
-				if res.Reason == "" {
-					res.Reason = "元数据字节数超过 MaxBytes"
-				}
-				break
+				dropped = true // 这条太大放不下：跳过，后面的更小候选继续装
+				continue
 			}
 			used += n
 			kept = append(kept, sc)
 		}
+		if dropped {
+			res.Truncated = true
+			if res.Reason == "" {
+				res.Reason = "有候选超出剩余元数据预算被裁掉（候选过大）"
+			}
+		}
 		picked = kept
 		if len(picked) == 0 {
+			// 到这里才成立「连一条都放不下」：旧实现把这个消息挂在「第一条太大」上，
+			// 而更小的明明放得下——宿主据这句话会误调 MaxBytes，真正的修法是换裁剪
+			// 策略。一条都没披露**也是**裁剪，Truncated 必须置位。
+			res.Truncated = true
 			res.Reason = "预算连一条元数据都放不下（MaxBytes 太小）"
 		}
 	}
