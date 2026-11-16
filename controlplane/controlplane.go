@@ -217,6 +217,12 @@ var (
 	// ErrTerminalRun 运行已是终态：无需也无法终止（介入重试撞上它说明
 	// 第一次介入已生效）。
 	ErrTerminalRun = errors.New("controlplane: 运行已是终态，无需终止")
+	// ErrUnknownRunStatus 运行状态不在已知词表内：无法判定是否终态（issue #334）。
+	//
+	// 词表外状态可能是宿主自定义终态（如 "aborted"）。按「非终态」放行会把
+	// 已终结的运行静默改写成 cancelled（fail-open）——与 checkpoint 的三态
+	// 判据方向相反。此类状态拒绝终止并回本哨兵，由宿主显式决定。
+	ErrUnknownRunStatus = errors.New("controlplane: 运行状态不在已知词表内，无法判定是否终态")
 )
 
 // Validate 介入请求的留痕完整性判定（Operator 与 Basis 必填——无归责不介入）。

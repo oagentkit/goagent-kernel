@@ -116,3 +116,23 @@ func TestRouteMultipleUserCancelSentinels(t *testing.T) {
 		t.Fatalf("第二个哨兵命中应判 cancelled, got %s", got)
 	}
 }
+
+// TestSessionDeadlineSentinelSharedWithContract issue #333：墙钟超时只有
+// 一个身份。deadline 的哨兵必须是 contract.ErrSessionDeadline 的别名，
+// 否则收尾侧（用同一个值判定）认不出来——同一 ctx 上两侧结论相反。
+func TestSessionDeadlineSentinelSharedWithContract(t *testing.T) {
+	if !errors.Is(ErrSessionDeadline, contract.ErrSessionDeadline) ||
+		!errors.Is(contract.ErrSessionDeadline, ErrSessionDeadline) {
+		t.Fatal("deadline.ErrSessionDeadline 必须是 contract.ErrSessionDeadline（同一 error 值）")
+	}
+
+	ctx, cancel := WithCause(context.Background(), time.Millisecond)
+	defer cancel()
+	<-ctx.Done()
+
+	if got := Route(ctx); got != OutcomeTimedOut {
+		t.Fatalf("墙钟到点必须判 timed_out, got %s", got)
+	} else if got.Status() != contract.StatusTimedOut {
+		t.Fatalf("timed_out 必须落 contract.StatusTimedOut, got %q", got.Status())
+	}
+}

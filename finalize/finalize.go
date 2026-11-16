@@ -78,7 +78,12 @@ var ErrUserCancelled = errors.New("会话被用户取消")
 // 裸 deadline（未带本 Cause）归停机臂：宿主设置会话超时必须写
 // context.WithTimeoutCause(parent, d, ErrSessionDeadline)，否则超时会被
 // 误判成停机、会话滞留 running。
-var ErrSessionDeadline = errors.New("会话超过会话级时限")
+//
+// 身份来自 contract.ErrSessionDeadline（issue #333）：本变量是**别名**而不是
+// 第二份 errors.New。deadline 包装的 ctx 与收尾侧判定必须指向同一个值，
+// 否则 errors.Is 互不认领——同一 ctx 上 deadline.Route 判 timed_out、
+// finalize.Route 判 shutdown（Status() 为空 = 会话永久滞留 running）。
+var ErrSessionDeadline = contract.ErrSessionDeadline
 
 // Action 路由结论（Route 的输出 = 该收去哪条臂）。
 type Action int

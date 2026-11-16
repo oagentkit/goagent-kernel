@@ -94,7 +94,7 @@ func readyCandidates(tasks []taskboard.Task, now time.Time, limit int) []taskboa
 		case taskboard.StateOpen, taskboard.StateFailed:
 			// 可认领（含失败重做）。
 		case taskboard.StateClaimed:
-			if leaseHeld(t, now) {
+			if taskboard.LeaseHeld(t, now) {
 				continue // 活着持有：不是候选
 			}
 		default:

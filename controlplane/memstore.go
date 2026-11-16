@@ -25,6 +25,7 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/oekit/pkg/errors"
 
@@ -40,6 +41,10 @@ type MemStore struct {
 	aud    Auditor
 	ver    Version
 	tokens uint64 // 令牌铸造序号（参考实现不承诺随机性）
+	// clock 存储时钟（UseClock 注入；nil = time.Now）。租约到期由存储
+	// 自己的时刻判定——与 taskboard.ClaimRequest 的「TTL 按存储时钟推算」
+	// 同一条口径（issue #335）。
+	clock func() time.Time
 
 	tasks   map[taskboard.TaskID]*memTask
 	runs    map[RunID]*memRun

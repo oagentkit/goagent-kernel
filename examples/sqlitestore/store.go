@@ -294,7 +294,7 @@ func (s *Store) Renew(_ context.Context, id taskboard.TaskID, token string, req 
 		if rec.Task.State != taskboard.StateClaimed || rec.Task.Lease.Token != token {
 			return nil, oerrors.Wrap(taskboard.ErrLeaseLost, "sqlitestore: 租约令牌不匹配", "task", string(id))
 		}
-		if !rec.Task.Lease.Until.IsZero() && !now.Before(rec.Task.Lease.Until) {
+		if !taskboard.LeaseHeld(rec.Task, now) {
 			return nil, oerrors.Wrap(taskboard.ErrLeaseLost,
 				"sqlitestore: 租约已过期，资格终止（请重新认领）", "task", string(id))
 		}

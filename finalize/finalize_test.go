@@ -125,3 +125,21 @@ func TestDetachedCutsCancellationKeepsValues(t *testing.T) {
 		t.Fatalf("脱离 ctx 丢失父值: %v", got)
 	}
 }
+
+// TestRouteRecognizesContractDeadlineSentinel issue #333：内核 deadline 包装的
+// ctx 与收尾侧判定必须指向同一个哨兵（contract.ErrSessionDeadline）。此前
+// 两侧各写一份 errors.New("会话超过会话级时限")，同一 ctx 上 deadline 判
+// timed_out、finalize 判 shutdown（Status() 为空 ⇒ 会话永久滞留 running）。
+func TestRouteRecognizesContractDeadlineSentinel(t *testing.T) {
+	if !errors.Is(finalize.ErrSessionDeadline, contract.ErrSessionDeadline) {
+		t.Fatal("finalize.ErrSessionDeadline 必须是 contract.ErrSessionDeadline（同一 error 值）")
+	}
+	ctx := withCause(t, contract.ErrSessionDeadline)
+	got := finalize.Route(ctx)
+	if got != finalize.ActionTimedOut {
+		t.Fatalf("契约哨兵的墙钟超时必须判 timed_out, got %s", got)
+	}
+	if status := got.Status(); status != contract.StatusTimedOut {
+		t.Fatalf("必须落非空终态 contract.StatusTimedOut, got %q", status)
+	}
+}
