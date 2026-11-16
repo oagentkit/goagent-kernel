@@ -14,7 +14,10 @@ import (
 func TestStoreAdapterContractSuite(t *testing.T) {
 	sidetest.Run(t, func(t *testing.T, clock *sidetest.FakeClock) sidetest.ClockedStore {
 		t.Helper()
-		s := NewStoreAdapter(NewMemoryBackend())
+		s, err := NewStoreAdapter(NewMemoryBackend())
+		if err != nil {
+			t.Fatal(err)
+		}
 		s.UseClock(clock.Now)
 		return s
 	})

@@ -61,16 +61,22 @@ type RunID string
 //     「先介入、留痕以后补」——补的留痕无法证明发生在动作之前；
 //   - 介入请求**可归责**：Operator 与 Basis 必填（各请求的 Validate 判）。
 //
-// 查询面无此约束：查询不改变状态，未注入租户上下文时由宿主自行裁剪
-// （httpapi 的 Authorizer 是宿主裁剪的落点）。
+// 查询面与介入面共用同一道租户 fail-closed 闸（issue #197）：TaskView /
+// RunView 对未注入租户上下文的请求同样返回 tenant.ErrNoContext——写路径
+// 靠 tenant.Require 兜住了宿主 Authorizer 的 bug（对任何请求返回零值
+// Context + nil），读路径若不设闸，「同样的鉴权钩子、同样的错误，只有读
+// 放行」就是控制面自己开的口子。确需匿名只读（健康检查式读取）的宿主在
+// 实现里**显式**放开（参考实现经 AllowAnonymousRead）并在装配期记录，
+// 不许缺省放行。
 type Plane interface {
 	// ── 查询 ──
 
 	// TaskView 任务的运行状态视图（快照 + 该任务身上的不变量违反）。
-	// 不存在 → ErrNotFound。
+	// 上下文未注入租户信息 → tenant.ErrNoContext（fail-closed，除非实现
+	// 显式声明匿名只读）；不存在 → ErrNotFound。
 	TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error)
 	// RunView 运行的状态视图（状态、代次、全部任务、全 run 不变量视图）。
-	// 不存在 → ErrNotFound。
+	// 租户 fail-closed 判据与 TaskView 相同；不存在 → ErrNotFound。
 	RunView(ctx context.Context, id RunID) (RunView, error)
 
 	// ── 介入 ──

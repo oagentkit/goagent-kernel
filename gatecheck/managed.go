@@ -6,10 +6,23 @@ import (
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // errNoInner 受管后端没有内层真后端。
 var errNoInner = errors.New("gatecheck: 受管后端缺少内层执行后端")
+
+// effectiveEgress 合成受管层钉死的出口策略（pinned）与请求级要求（req）：
+// 取**更严一档**生效（ModeUnrestricted < ModeProxy < ModeDenied）；同档时
+// 明细归请求侧（Proxy/Allow/Bypass 是这次调用的执行细节）。返回的 spec
+// 交给 Check 判——钉死的档位由此不被任何调用放宽（issue #212）。
+func effectiveEgress(pinned, req egress.Spec) egress.Spec {
+	if pinned.Mode > req.Mode {
+		return pinned
+	}
+	return req
+}
 
 // Managed 把一个执行后端包成「**受联合判据管辖**」的后端。
 //
@@ -30,8 +43,8 @@ var errNoInner = errors.New("gatecheck: 受管后端缺少内层执行后端")
 //
 // # 它怎么工作
 //
-// `Managed.Exec` 里：先做联合判据（审批 + 档位），通过则**委派**给真后端执行。
-// 判据不通过 ⇒ **不委派**（副作用不会发生）。
+// `Managed.Exec` 里：先做联合判据（审批 + 档位 + 出口），通过则**委派**给
+// 真后端执行。判据不通过 ⇒ **不委派**（副作用不会发生）。
 //
 // # 档位语义：声明保证的下限，运行期按登记簿取真后端
 //
@@ -62,6 +75,18 @@ type Managed struct {
 	Registry *sandbox.Registry
 	// MinLevel 受管后端要求的最弱档位（缺省 = 不额外要求）。
 	MinLevel sandbox.Level
+	// Egress 受管层**钉死的出口策略下限**（issue #212；零值 = 不要求）。
+	//
+	// 为什么住在装配面：受管后端的执行入口 `Exec` 实现的是上游
+	// `sandbox.Provider` 接口，`sandbox.Request` 没有出口通道——「出口策略
+	// 必须判」若只能经 Check 的请求字段表达，Exec 路径就永远判不到，而
+	// Exec 才是「判据紧挨执行」的那条路。钉在这里 ⇒ 每次 Exec 都判。
+	//
+	// 与请求级 `Request.Egress` 的合成：取**更严一档**生效
+	//（ModeUnrestricted < ModeProxy < ModeDenied，见 effectiveEgress），
+	// 同档时明细（Proxy/Allow/Bypass）归请求侧。钉死的档位不被任何调用
+	// 放宽——「策略写得很严，实际流量自由出网」正是这条拦的形态。
+	Egress egress.Spec
 	// OpFunc 从「程序 + 预算」推出审批层要判的操作。
 	//
 	// 缺省时用 `OpToolCall` 且**不设变更标记**（三态 nil=未知）——上游对
@@ -112,6 +137,10 @@ func (m *Managed) Level() sandbox.Level { return sandbox.LevelProcess }
 // 单独暴露它是为了让调用方能**只判不跑**（先看结论再决定要不要执行），
 // 以及让「要求的档位」可被断言——它是本包的关键不变量：
 // 受管后端**至少**要求达到真后端自报的档位。
+//
+// 出口策略（issue #212）：请求级 `req.Egress` **透传**给包级 Check（此前
+// 这里把它整个丢掉，放行理由却宣称「出口」已同意）；装配钉死的 `m.Egress`
+// 与它取更严一档合成（见 effectiveEgress）。
 func (m *Managed) Check(ctx context.Context, req Request) Decision {
 	if m == nil || m.Inner == nil {
 		return Check(ctx, nil, nil, req)
@@ -125,6 +154,7 @@ func (m *Managed) Check(ctx context.Context, req Request) Decision {
 		Op:       req.Op,
 		MinLevel: minLevel,
 		Budget:   req.Budget,
+		Egress:   effectiveEgress(m.Egress, req.Egress),
 		Program:  req.Program,
 	})
 }
@@ -147,11 +177,14 @@ func (m *Managed) Exec(ctx context.Context, req sandbox.Request) (sandbox.Outcom
 	}
 
 	// 判据走 Check（**判据只有一份**）——这里只补「操作映射」，
-	// 档位下限由 Check 内部的同款逻辑给。
+	// 档位下限由 Check 内部的同款逻辑给。出口策略钉在装配面（issue #212）：
+	// sandbox.Request 没有出口通道，钉死的 m.Egress 是 Exec 路径唯一能
+	// 带进判据的出口要求——不带上它，Exec 就是「策略写着禁网、实际自由出网」。
 	d := m.Check(ctx, Request{
 		Op:       op,
 		MinLevel: m.MinLevel,
 		Budget:   req.Budget,
+		Egress:   m.Egress,
 		Program:  req.Program,
 	})
 	if d.Outcome != OutcomeProceed {
