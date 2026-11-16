@@ -67,7 +67,7 @@ modules:
     requires: [contract, sideeffect, taskboard, tenant, "ext:github.com/oekit/pkg"] # 介入契约引用编排/副作用/任务板/租户四面
     owner: harness
     managed: true
-    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，纯接口零实现，介入走令牌授权
+    notes: 控制平面接口面（issue #115）：任务查看/运行状态/失败诊断/人工介入四类操作契约，判定逻辑一份（StorePlane），介入走令牌授权；Store 契约给一致快照 + 带版本锚的原子提交（状态与留痕同事务），MemStore/MemPlane 是进程内参考实现（issue #189）
 
   - id: statemachine
     roots: [statemachine]
@@ -792,8 +792,8 @@ modules:
   # taskboard 都不含「执行子任务的 worker 自己怎么活」——注册/心跳/领取/
   # 续期/恢复/优雅退出此前各宿主各写一套。心跳接 RenewingBoard.Renew
   # （续期是资格检查，租约易主即取消在途——危险窗口在施加之前封口）；
-  # 参考实现与注册表的参考落库在 examples/worker-runtime（不进内核依赖面，
-  # issue #106 的边界声明）。
+  # 进程内注册表参考实现 MemRegistry 在本包（单进程演示 + 契约用例；
+  # 跨进程落库归宿主），端到端演示在 examples/worker-runtime。
   #
   # scheduling（issue #108）：Agent 调度的**判据面**（优先级/公平/配额/背压）。
   # 归属结论见 docs/adr/ADR-0008（证据：上游 oagentkit/agent/dispatch 的全部
@@ -819,7 +819,8 @@ modules:
       Worker 生命周期契约（Registry 注册/心跳/注销）与驱动（Loop 六段生命周期）。
       心跳与续期接 taskboard 的租约续期（Renew = 资格检查不是心跳摆设）；
       恢复（Recover）判资格不判时钟——过期判定归任务板侧，不建第二套时钟判据。
-      注册表的参考实现放 examples/worker-runtime（issue #106 边界）。
+      注册表的进程内参考实现 MemRegistry 也在本包（单进程演示 + 契约用例；
+      跨进程落库归宿主，内核零数据库依赖），端到端演示在 examples/worker-runtime。
 
       受管执行器（managed.go，issue #191）只做编排：Claim → sideeffect.Runner
       （Acquire/执行意图/栅栏/结果未知）→ checkpoint.Committer（单调提交）→
@@ -838,6 +839,8 @@ modules:
       资源配额账本（账平判据：整单占用 / 超释放拒）、背压裁决（拒绝必须带
       机器可判的原因）。纯函数面，不做队列不做执行；可达性/深度归上游
       oagentkit/agent/dispatch（原 dispatch 门面 v0.35.0 已整包删除）。
+      多副本配额原语 QuotaStore（Reserve/Release 存储侧原子预占；issue #189）
+      是接口 + MemQuotaStore 进程内参考实现，跨进程落库归宿主。
 
   # ── 2026-11-15 新增（issue #169 #170，下沉提案落地）─────────────────
   #

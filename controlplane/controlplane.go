@@ -38,8 +38,11 @@
 //     运行状态存储实现它）；
 //  2. 宿主自有类型的窄契约族（HostPlane / AuthorizerOf——泛型 ID 与宿主
 //     快照/租户类型，纯接口零实现，见 hostiface.go；issue #238）；
-//  3. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
-//     也是测试与演练的最小运行时面）；
+//  3. 存储中立实现：Store 契约（任务/运行/效果键的一致快照 + 带版本锚的
+//     原子提交，留痕与状态同事务）+ StorePlane（查询/介入的唯一一份判定
+//     逻辑，多副本共享同一 Store 即跨实例可见）；进程内参考实现见
+//     MemStore / MemPlane / MemAuditor（判据怎么落的演示体，也是测试与
+//     演练的最小运行时面）；
 //  4. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权）。
 package controlplane
 

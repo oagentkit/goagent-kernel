@@ -1,9 +1,10 @@
-// runtime.go —— MemPlane 的**最小运行时面**（建场景与认领/提交/归还）。
+// runtime.go —— MemStore 的**最小运行时面**（建场景与认领/提交/归还）。
 //
-// 控制面的介入判据必须对着运行时的租约与代次演示（强释之后旧令牌提交被拒、
-// 下一次认领代次严格递增），没有运行时面就没有可演示的「同一套判据」。
-// 这些方法不是 Plane 契约的一部分——它们是「运行时那一侧」的参考实现：
-// 宿主的真实运行时是自己的 taskboard.Board / sideeffect Runner / 状态存储。
+// 控制面的介入判据必须对着运行时的租约与代次演示（强释之后旧令牌提交
+// 被拒、下一次认领代次严格递增），没有运行时面就没有可演示的「同一套
+// 判据」。这些方法不是 Store / Plane 契约的一部分——它们是「运行时那一侧」
+// 的参考实现：宿主的真实运行时是自己的 taskboard.Board / sideeffect
+// Runner / 状态存储。
 //
 // Seed* 先整单校验再落账：部分落账的 run 是半成品状态，视图会把
 // 「建了一半」当成「建成了」。
@@ -24,7 +25,7 @@ import (
 // status 为空取 contract.StatusCreated。重复 run / 重复任务 → ErrAlreadyExists。
 // 先整单校验再落账：部分落账的 run 是半成品状态，视图会把「建了一半」
 // 当成「建成了」。
-func (m *MemPlane) SeedRun(id RunID, status string, tasks []taskboard.Task) error {
+func (m *MemStore) SeedRun(id RunID, status string, tasks []taskboard.Task) error {
 	if id == "" {
 		return errors.Wrap(ErrInvalidRequest, "SeedRun: run id 为空")
 	}
@@ -33,6 +34,7 @@ func (m *MemPlane) SeedRun(id RunID, status string, tasks []taskboard.Task) erro
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureLocked()
 	if _, ok := m.runs[id]; ok {
 		return errors.Wrap(ErrAlreadyExists, "SeedRun: run 已存在")
 	}
@@ -55,29 +57,33 @@ func (m *MemPlane) SeedRun(id RunID, status string, tasks []taskboard.Task) erro
 		run.taskIDs = append(run.taskIDs, t.ID)
 	}
 	m.runs[id] = run
+	m.ver++
 	return nil
 }
 
 // SeedEffect 运行时侧：登记一个处于「结果未知」态的副作用键。
 // unsafe 对应 sideeffect 的 RetrySafetyUnsafe（未生效裁决不自动开门）。
-func (m *MemPlane) SeedEffect(key string, unsafe bool) error {
+func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 	if key == "" {
 		return errors.Wrap(ErrInvalidRequest, "SeedEffect: 效果键为空")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureLocked()
 	if _, ok := m.effects[key]; ok {
 		return errors.Wrap(ErrAlreadyExists, "SeedEffect: 效果键已存在")
 	}
 	m.effects[key] = &memEffect{uncertain: true, unsafe: unsafe}
+	m.ver++
 	return nil
 }
 
 // Claim 运行时侧：认领（铸造令牌与接管代次，语义对齐 taskboard.Board.Claim
 // ——被占用 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked）。
-func (m *MemPlane) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
+func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.ensureLocked()
 	mt, ok := m.tasks[id]
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
@@ -106,21 +112,22 @@ func (m *MemPlane) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 		mt.task.Lease.Until = time.Now().Add(ttl)
 	}
 	mt.task.Seq++
+	m.ver++
 	return cloneTask(mt.task), nil
 }
 
 // Complete 运行时侧：凭 token 完成（旧令牌 / 非认领态 → taskboard.ErrLeaseLost）。
-func (m *MemPlane) Complete(_ context.Context, id taskboard.TaskID, token string) error {
+func (m *MemStore) Complete(_ context.Context, id taskboard.TaskID, token string) error {
 	return m.finish(id, token, taskboard.StateDone)
 }
 
 // Release 运行时侧：凭 token 归还认领（旧令牌 → taskboard.ErrLeaseLost）。
-func (m *MemPlane) Release(_ context.Context, id taskboard.TaskID, token string) error {
+func (m *MemStore) Release(_ context.Context, id taskboard.TaskID, token string) error {
 	return m.finish(id, token, taskboard.StateOpen)
 }
 
 // finish 凭令牌的租约变更（Complete / Release 共用判据）。
-func (m *MemPlane) finish(id taskboard.TaskID, token string, to taskboard.State) error {
+func (m *MemStore) finish(id taskboard.TaskID, token string, to taskboard.State) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mt, ok := m.tasks[id]
@@ -136,5 +143,6 @@ func (m *MemPlane) finish(id taskboard.TaskID, token string, to taskboard.State)
 	mt.task.Owner = ""
 	mt.task.Lease = taskboard.Lease{}
 	mt.task.Seq++
+	m.ver++
 	return nil
 }
