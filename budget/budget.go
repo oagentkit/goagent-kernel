@@ -85,6 +85,15 @@ var canonicalSegments = []Segment{
 	SegmentSkills, SegmentMCP, SegmentConversation,
 }
 
+// canonicalSegment 规范分段集合（Reset 用它区分「保留零值」与「删键」）。
+var canonicalSegment = func() map[Segment]bool {
+	m := make(map[Segment]bool, len(canonicalSegments))
+	for _, s := range canonicalSegments {
+		m[s] = true
+	}
+	return m
+}()
+
 // SegmentUsage 单段计量结果。
 type SegmentUsage struct {
 	Segment Segment
@@ -193,11 +202,22 @@ func (m *Meter) Segments() []SegmentUsage {
 	return out
 }
 
-// Reset 清零（新一轮计量）。保留 map 复用——计量每轮都调，不必每次重新分配。
+// Reset 清零（新一轮计量），并**删除宿主动态分段的键**。
+//
+// 规范分段保留零值（Segments/Snapshot 本来就会列出它们）；非规范分段
+// （宿主按会话 / 按 key 建名——开放键纪律明确允许）必须连键一起删：
+// 只清值不删键时，m.seg 随会话数无界增长，且每轮 Segments()/Snapshot()
+// 仍遍历全量。账是 0、段却全在，正是「无界但看不出来」的形态。
+//
+// map 本身保留复用（计量每轮都调，不必每次重新分配）。
 func (m *Meter) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for s := range m.seg {
+		if !canonicalSegment[s] {
+			delete(m.seg, s)
+			continue
+		}
 		m.seg[s] = 0
 	}
 }

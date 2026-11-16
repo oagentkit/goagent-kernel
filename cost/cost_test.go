@@ -324,3 +324,29 @@ func TestAggregateNULInDimsDoesNotCollide(t *testing.T) {
 		t.Fatalf("第一组维度或合计被改写：%+v", got)
 	}
 }
+
+// TestLedgerReset 账本必须有可用的清理入口：进程内参考实现被文档定位为
+// 「每轮计量」，没有边界就是长生命周期进程里的单调增长。Reset 后 Count
+// 归零，且 Events 不再产出旧事件。
+func TestLedgerReset(t *testing.T) {
+	var l Ledger
+	for i := range 3 {
+		if err := l.Record(Event{Kind: KindToolCalls, Amount: int64(i + 1), Dims: map[string]string{DimTenant: "acme"}}); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	l.Reset()
+	if got := l.Count(); got != 0 {
+		t.Fatalf("Reset 后 Count 应为 0，实得 %d", got)
+	}
+	for e := range l.Events() {
+		t.Fatalf("Reset 后 Events 不得再产出旧事件：%+v", e)
+	}
+	// 清理后可继续入账。
+	if err := l.Record(Event{Kind: KindToolCalls, Amount: 7}); err != nil {
+		t.Fatalf("Reset 后应可继续入账：%v", err)
+	}
+	if got := l.Count(); got != 1 {
+		t.Fatalf("Reset 后新入账计数应为 1，实得 %d", got)
+	}
+}

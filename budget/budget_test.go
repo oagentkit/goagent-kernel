@@ -262,3 +262,33 @@ func TestProviderDisplayFallsBack(t *testing.T) {
 		t.Fatalf("无报数时 Drift 应为 0，实得 %d", got)
 	}
 }
+
+// TestMeterResetDropsDynamicSegments Reset 必须清掉宿主动态段名的键：
+// 只清值不删键时，按会话建段的宿主会让 seg 表随会话数无界增长，且每轮
+// Segments/Snapshot 仍遍历全量（账是 0，段却全在）。
+func TestMeterResetDropsDynamicSegments(t *testing.T) {
+	var m Meter
+	m.Add("session-a", 10)
+	m.Add("session-b", 20)
+	m.Add(SegmentConversation, 5)
+	m.Reset()
+	for _, u := range m.Segments() {
+		if u.Segment == "session-a" || u.Segment == "session-b" {
+			t.Fatalf("Reset 后动态段 %q 不得再出现在 Segments()：%+v", u.Segment, m.Segments())
+		}
+	}
+	if got := m.Total(); got != 0 {
+		t.Fatalf("Reset 后总量应为 0，实得 %d", got)
+	}
+	// 规范分段照旧以零值列出（调用方不必判空）。
+	seen := map[Segment]bool{}
+	for _, u := range m.Segments() {
+		seen[u.Segment] = true
+		if u.Tokens != 0 {
+			t.Fatalf("Reset 后规范段 %q 应为 0，实得 %d", u.Segment, u.Tokens)
+		}
+	}
+	if !seen[SegmentConversation] {
+		t.Fatal("Reset 后规范分段仍须列出（零值）")
+	}
+}
