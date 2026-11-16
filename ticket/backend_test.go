@@ -86,6 +86,11 @@ func TestStore判定落在注入Backend上(t *testing.T) {
 	if spy.puts != 1 {
 		t.Fatalf("Issue 必须经 Backend.Put（实得 puts=%d）", spy.puts)
 	}
+	// 签发前顺手回收过期票据（issue #208）：Issue 自身要触发一次 GC——
+	// 否则过期票无人回收，长期运行后容量被过期票占满、签发永久失败。
+	if spy.gcs != 1 {
+		t.Fatalf("Issue 签发前必须顺手 GC（实得 gcs=%d）", spy.gcs)
+	}
 	if _, ok := s.Consume(id); !ok {
 		t.Fatal("消费应成功")
 	}
@@ -93,8 +98,8 @@ func TestStore判定落在注入Backend上(t *testing.T) {
 		t.Fatalf("Consume 必须经 Backend.Take（实得 takes=%d）", spy.takes)
 	}
 	_ = s.GC()
-	if spy.gcs != 1 {
-		t.Fatalf("GC 必须经 Backend.GC（实得 gcs=%d）", spy.gcs)
+	if spy.gcs != 2 {
+		t.Fatalf("显式 GC 必须经 Backend.GC（实得 gcs=%d）", spy.gcs)
 	}
 	if n := s.Len(); n != 0 {
 		t.Fatalf("Len 必须经 Backend.Len（实得 n=%d）", n)

@@ -35,9 +35,35 @@ import (
 // 介入对已存在目标的语义是执行，不是登记）。
 var ErrAlreadyExists = errors.New("controlplane: 目标已存在")
 
+// MemOption MemPlane 的装配选项。
+type MemOption func(*memConfig)
+
+// memConfig MemPlane 的装配期决策（只经 MemOption 显式给，零值 = 全部
+// fail-closed）。
+type memConfig struct {
+	// anonRead 读路径（TaskView/RunView）跳过租户 fail-closed 判定。
+	// 缺省 false：读与写同一道闸（issue #197）。
+	anonRead bool
+}
+
+// AllowAnonymousRead 显式放开读路径的匿名访问（TaskView/RunView 不再做
+// tenant.Require）。**缺省不放行**——控制面读路径与写路径共用同一道
+// fail-closed 闸（issue #197）：宿主 Authorizer 实现有 bug（对任何请求
+// 返回零值 tenant.Context + nil）时，写路径被 tenant.Require 拦下、
+// 读路径若不设闸就成了「同样的鉴权钩子、同样的错误，只有读放行」的口子。
+//
+// 这是给「健康检查式只读」场景的**显式**出口：装配时写明，装配期可见，
+// 不许静默缺省开。开了它之后读路径的可归责性由宿主的 Authorizer 独自
+// 承担——内核不再有第二道闸。
+func AllowAnonymousRead(v bool) MemOption {
+	return func(c *memConfig) { c.anonRead = v }
+}
+
 // MemPlane 进程内参考实现。经 NewMemPlane 构造；并发安全。
 type MemPlane struct {
 	aud Auditor
+
+	cfg memConfig
 
 	mu      sync.Mutex
 	tasks   map[taskboard.TaskID]*memTask
@@ -70,9 +96,17 @@ type memEffect struct {
 
 // NewMemPlane 构造参考实现。aud 可为 nil——留痕面缺位时介入一律拒绝
 // （ErrNoAuditor），这正是契约要演示的 fail-closed 形态。
-func NewMemPlane(aud Auditor) *MemPlane {
+// opts 可变参装配选项（见 MemOption；缺省全部 fail-closed）。
+func NewMemPlane(aud Auditor, opts ...MemOption) *MemPlane {
+	c := memConfig{}
+	for _, o := range opts {
+		if o != nil {
+			o(&c)
+		}
+	}
 	return &MemPlane{
 		aud:     aud,
+		cfg:     c,
 		tasks:   make(map[taskboard.TaskID]*memTask),
 		runs:    make(map[RunID]*memRun),
 		effects: make(map[string]*memEffect),
@@ -81,8 +115,26 @@ func NewMemPlane(aud Auditor) *MemPlane {
 
 // ── 查询 ──
 
+// requireTenant 读/写共用的租户 fail-closed 判定（issue #197）：返回错误
+// 即拒绝。anonRead 只放开显式声明过的读路径。
+func (m *MemPlane) requireTenant(ctx context.Context) error {
+	if m.cfg.anonRead {
+		return nil
+	}
+	_, err := tenant.Require(ctx)
+	return err
+}
+
 // TaskView 实现 Plane：任务视图 + run 级不变量在该任务上的投影。
-func (m *MemPlane) TaskView(_ context.Context, id taskboard.TaskID) (TaskView, error) {
+//
+// 租户 fail-closed 与写路径同一道闸（issue #197）：上下文未注入租户信息
+// → tenant.ErrNoContext——宿主 Authorizer 返回零值 Context 时读路径
+// 同样 401，不留「只有读放行」的口子。匿名读须装配期显式
+// AllowAnonymousRead(true)。
+func (m *MemPlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error) {
+	if err := m.requireTenant(ctx); err != nil {
+		return TaskView{}, err
+	}
 	m.mu.Lock()
 	mt, ok := m.tasks[id]
 	if !ok {
@@ -103,7 +155,11 @@ func (m *MemPlane) TaskView(_ context.Context, id taskboard.TaskID) (TaskView, e
 }
 
 // RunView 实现 Plane：运行视图（状态 / 代次 / 全部任务 / 全 run 不变量）。
-func (m *MemPlane) RunView(_ context.Context, id RunID) (RunView, error) {
+// 租户 fail-closed 与 TaskView 同一道闸（见上，issue #197）。
+func (m *MemPlane) RunView(ctx context.Context, id RunID) (RunView, error) {
+	if err := m.requireTenant(ctx); err != nil {
+		return RunView{}, err
+	}
 	m.mu.Lock()
 	run, ok := m.runs[id]
 	if !ok {

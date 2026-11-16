@@ -31,7 +31,10 @@
 // 用变更的次数而不是变更后的内容认变更。
 package coord
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Version 键版本：每次成功写入 +1，单调不回退，由后端保证。
 //
@@ -82,6 +85,58 @@ type Mutation struct {
 	Key string
 	Val []byte
 	Del bool
+}
+
+// ClockSource 权威时间原语（issue #194）：租约/占用的「到期时刻」由**存储
+// 自己的时钟**算——调用方的时钟与存储的时钟可能对不上，跨进程时更不能
+// 假设一致。这是 examples/pgstore 的硬纪律（「到期由存储时钟算」）在
+// Backend 这个更通用的接缝上的同一落法：多副本下两个节点时钟差 30 秒，
+// 用节点时钟判「租约已过期」就是让第二个人在第一个人还在跑时认领成功。
+//
+// 实现形态示例：Redis → Lua 脚本内 TIME；PostgreSQL → 事务内
+// clock_timestamp()（examples/pgstore 即此形态）；etcd → 以 revision 或
+// 专门的存储侧时间键为锚。拿不出权威时间的后端见 SingleMachine。
+type ClockSource interface {
+	// Now 存储侧当前时刻。
+	Now(ctx context.Context) (time.Time, error)
+}
+
+// SingleMachine 仅单机声明：拿不出权威时间的后端在**装配期**显式声明
+// 「只在单进程内使用」，适配器才允许用节点本地时钟判到期——单进程内只有
+// 一个时钟，不存在跨进程不一致。不声明也不实现 ClockSource 的后端
+// **拒绝装配**（@@ErrNoTimeAuthority@@），不静默退化成节点时钟。
+type SingleMachine interface {
+	// SingleMachine 报告后端是否只在单进程内使用。
+	SingleMachine() bool
+}
+
+// hasTimeAuthority 装配期检查（issue #194 判据）：后端要么实现 ClockSource
+// （到期由存储时钟算），要么显式声明 SingleMachine。两者皆无 ⇒ 拒绝装配。
+func hasTimeAuthority(b Backend) bool {
+	if _, ok := b.(ClockSource); ok {
+		return true
+	}
+	sm, ok := b.(SingleMachine)
+	return ok && sm.SingleMachine()
+}
+
+// resolveNow 判定用当前时刻的时间权威次序（issue #194）：
+//
+//  1. UseClock 注入——boardtest/sidetest 契约套件的过期场景专用，**生产
+//     路径不得注入本地时钟**（租约到期是跨进程共享的事实，时间真相在存储）；
+//  2. ClockSource——存储时钟（到期由存储算，与 examples/pgstore 同一口径）；
+//  3. 仅单机声明——节点时钟（装配期已显式声明，不是静默退化）。
+//
+// 只在装配期检查（hasTimeAuthority）通过后才可达：步骤 3 的 time.Now 是
+// 「声明过仅单机」的那条路，不是缺省。
+func resolveNow(b Backend, injected func() time.Time, ctx context.Context) (time.Time, error) {
+	if injected != nil {
+		return injected(), nil
+	}
+	if cs, ok := b.(ClockSource); ok {
+		return cs.Now(ctx)
+	}
+	return time.Now(), nil
 }
 
 // Backend 协调后端的最小原语契约。

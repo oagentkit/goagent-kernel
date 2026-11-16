@@ -39,6 +39,12 @@ func NewMemoryBackend() *MemoryBackend {
 	return &MemoryBackend{kv: map[string]memEntry{}}
 }
 
+// SingleMachine 仅单机声明（issue #194）：进程内互斥锁就是它的全部原子性，
+// 时间真相只有节点本地时钟——显式声明给装配器看，适配器才允许用它判到期
+// （并继续给契约套件留 UseClock 注入的口子）。它同时重申本类型的边界：
+// 不得上生产。
+func (m *MemoryBackend) SingleMachine() bool { return true }
+
 // Snapshot 一致快照读（锁内逐字一致）。
 //
 // 墓碑键返回 Exists=false 但**携带墓碑版本**（不是 VerMissing）——

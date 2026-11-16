@@ -85,3 +85,12 @@ var ErrTxnConflict = errors.New("coord: 条件事务反复冲突，重试上限�
 // 它说明这批键不是本适配器写的（键前缀撞了，或后端被别的写者占用）——
 // 放行会把别人的字节当自己的状态判，静默给出错误结论。
 var ErrMalformedRecord = errors.New("coord: 记录解码失败（键下内容不是本适配器的编码）")
+
+// ErrNoTimeAuthority 装配期拒绝（issue #194）：后端既不实现 ClockSource
+// （租约/占用到期由存储时钟算）也未声明 SingleMachine（仅单机）。
+//
+// 适配器**不静默退化**成节点本地时钟：多副本下节点间时钟差会直接改写
+// 「租约是否到期」的判定——快 30 秒的节点把还在跑的租约判成已过期、
+// 第二个人认领成功（副作用被施加两次）；慢的节点让真过期的租约没人接。
+// 拿不出权威时间就在装配时说清楚，不把「两套时间真相」留给运行期。
+var ErrNoTimeAuthority = errors.New("coord: 后端拿不出权威时间（未实现 ClockSource 也未声明仅单机），拒绝装配")
