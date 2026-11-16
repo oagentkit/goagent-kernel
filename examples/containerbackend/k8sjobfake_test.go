@@ -37,6 +37,7 @@ type fakeKube struct {
 	podsNS     string
 
 	npCreateStatus  int
+	npGetStatus     int // 非 0 ⇒ 单读 NetworkPolicy 回该状态码（读回校验失败用例）
 	jobCreateStatus int
 	jobGetStatus    int // 非 0 ⇒ 每次 GET 都回该状态码（404 用例）
 	podsStatus      int
@@ -51,12 +52,15 @@ type fakeKube struct {
 	foreignNPs []json.RawMessage // LIST 回给后端的「别人家」策略（叠加语义用例）
 
 	// ── 幂等创建（issue #263）的仿真面 ──
-	preseeded  map[string]fakeJobSeed       // Exec 之前就存在的 Job（对账命中用例）
-	created    map[string]map[string]string // POST 过的 Job（名 → 标签），含响应丢失场景
-	getNames   []string                     // GET /jobs/{name} 的名字轨迹（稳定名断言）
-	jobGets    int
-	npCreated  map[string]json.RawMessage // 已存在的 NetworkPolicy（同名重建回 409）
-	createLost bool                       // POST Job：先落对象再回 504（创建响应丢失）
+	preseeded map[string]fakeJobSeed       // Exec 之前就存在的 Job（对账命中用例）
+	created   map[string]map[string]string // POST 过的 Job（名 → 标签），含响应丢失场景
+	getNames  []string                     // GET /jobs/{name} 的名字轨迹（稳定名断言）
+	jobGets   int
+	npCreated map[string]json.RawMessage // 已存在的 NetworkPolicy（同名重建回 409）
+	// npStoreMutate 模拟 mutating admission webhook / 控制器对策略的改写：
+	// POST 成功后、GET 读回前改写落库形态（读回校验用例）。
+	npStoreMutate func(json.RawMessage) json.RawMessage
+	createLost    bool // POST Job：先落对象再回 504（创建响应丢失）
 }
 
 // fakeJobSeed 预置 Job 的对账应答。
@@ -94,13 +98,23 @@ func (f *fakeKube) handler() http.Handler {
 			return
 		}
 		f.mu.Lock()
-		f.npCreated[bodyName(raw)] = raw
+		mutate := f.npStoreMutate
+		f.mu.Unlock()
+		stored := raw
+		if mutate != nil {
+			stored = mutate(raw)
+		}
+		f.mu.Lock()
+		f.npCreated[bodyName(raw)] = stored
 		f.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{"metadata": map[string]any{"name": bodyName(raw)}})
 	})
 	mux.HandleFunc("GET /apis/networking.k8s.io/v1/namespaces/{ns}/networkpolicies", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		items := append([]json.RawMessage(nil), f.foreignNPs...)
+		for _, raw := range f.npCreated { // 已存在的策略同真集群一样出现在 LIST 里
+			items = append(items, raw)
+		}
 		code := f.npListStatus
 		f.mu.Unlock()
 		if code != 0 {
@@ -112,7 +126,12 @@ func (f *fakeKube) handler() http.Handler {
 	mux.HandleFunc("GET /apis/networking.k8s.io/v1/namespaces/{ns}/networkpolicies/{name}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		raw, ok := f.npCreated[r.PathValue("name")]
+		code := f.npGetStatus
 		f.mu.Unlock()
+		if code != 0 {
+			writeStatus(w, code, "networkpolicy get rejected")
+			return
+		}
 		if !ok {
 			writeStatus(w, http.StatusNotFound, "networkpolicy not found")
 			return

@@ -135,8 +135,12 @@ func (k *K8sJob) createJob(ctx context.Context, ns, name string, j backend.Job) 
 
 // k8sPolicyIsOursDenyAll 判同名既有策略是否就是本作业的全拒策略（重试路径上
 // 策略重建遇 409 时复用它；不是 ⇒ 拒绝，绝不在别人的对象上收场）。
+//
+// 四层都判：对象名、对象标签、Pod 选择器只选中本作业、policyTypes=[Egress]
+// 且 egress 为空（全拒）。读回校验（verifyNetworkPolicy）也用同一判据——
+// 创建成功后的落库形态必须与声明面逐层一致。
 func k8sPolicyIsOursDenyAll(p k8sNetworkPolicy, name string) bool {
-	if p.Metadata.Labels[k8sJobLabel] != name {
+	if p.Metadata.Name != name || p.Metadata.Labels[k8sJobLabel] != name {
 		return false
 	}
 	sel := p.Spec.PodSelector

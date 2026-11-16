@@ -17,10 +17,14 @@
 //  2. 独立执行命名空间：WithK8sExecutionNamespace 让禁网作业整体落在专用
 //     命名空间（job / policy / pod / 日志 / 清理同namespace），把「别人家」的
 //     策略面与业务面隔在门外。
-//  3. 严格策略装配：创建前 LIST 执行命名空间的全部 NetworkPolicy，发现
-//     「允许出站且可能选中本作业 Pod」的策略即拒绝创建作业——叠加语义
-//     被显式处理掉，不是碰运气；LIST 失败同样拒绝（对账不了策略面 = 兑现
-//     不了禁网，fail-closed）。
+//  3. 严格策略装配 + 创建后读回：创建前 LIST 执行命名空间的全部
+//     NetworkPolicy，发现「允许出站且可能选中本作业 Pod」的策略即拒绝
+//     创建作业——叠加语义被显式处理掉，不是碰运气；LIST 失败同样拒绝
+//     （对账不了策略面 = 兑现不了禁网，fail-closed）。**创建成功也不代表
+//     落库形态正确**（mutating webhook / 控制器可改写，响应丢失时对象存在
+//     与否未知）：建后必须 GET 读回并断言「就是本作业的 Egress 全拒策略」，
+//     读回失败 / 不存在 / 形态不符一律拒绝创建作业（verifyNetworkPolicy）；
+//     409 同名复用走同一条读回校验。
 //  4. 实际出站探测：禁网作业装配 init 容器（探测镜像/命令由宿主注入），
 //     作业启动即尝试访问外部地址。约定：exit 0 = 出站尝试失败（禁网实测
 //     成立，放行业务容器）；exit ≠ 0 = 连上外部或探测自身不可判 ⇒ init
@@ -116,6 +120,31 @@ func k8sCheckForeignPolicies(ctx context.Context, k *K8sJob, ns, name, execution
 		return errors.Wrap(ErrNetworkPolicy, fmt.Sprintf(
 			"执行命名空间 %q 存在允许出站的策略 %q 且可能选中本作业 Pod——NetworkPolicy 叠加语义会放行出站，拒绝创建作业",
 			ns, p.Metadata.Name))
+	}
+	return nil
+}
+
+// verifyNetworkPolicy 读回并断言策略就是本作业的 Egress 全拒策略（issue #262
+// 的「创建时实测校验」）：apiserver 接受创建请求不代表落库形态正确——
+// mutating admission webhook / 集群控制器可以改写 spec，创建响应也可能在
+// 网络上丢失（超时）。两类都按 fail-closed：读回失败 / 读回不存在 / 读回
+// 不是本作业的全拒策略，一律 ErrNetworkPolicy，作业不创建。
+//
+// 注意回收边界：本函数不登记 policyCreated（由调用方决定）——409 复用路径
+// 上校验失败的对象可能是别人的，绝不能删。
+func (k *K8sJob) verifyNetworkPolicy(ctx context.Context, ns, name string) error {
+	p, found, err := k.getNetworkPolicy(ctx, ns, name)
+	if err != nil {
+		return errors.Wrap(ErrNetworkPolicy,
+			"NetworkPolicy 读回校验失败（创建结果不可证，fail-closed）: "+err.Error())
+	}
+	if !found {
+		return errors.Wrap(ErrNetworkPolicy,
+			"NetworkPolicy 创建成功但读回不存在（创建结果不可证，fail-closed）")
+	}
+	if !k8sPolicyIsOursDenyAll(p, name) {
+		return errors.Wrap(ErrNetworkPolicy,
+			"NetworkPolicy 读回形态不是本作业的 Egress 全拒策略（拒绝创建作业）")
 	}
 	return nil
 }
