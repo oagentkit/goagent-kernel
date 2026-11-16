@@ -19,6 +19,32 @@
 // 判定做成同一份原语，机制面（如 controlplane 的介入动作）按同一口径
 // 声明与检查。
 //
+// # 数据面落点（issue #195）
+//
+// 「数据面归宿主」不等于「内核什么都不提供」：存储键与领取条件是**可判定
+// 的落点**，现已进内核（由宿主显式装配，不改默认路径）：
+//
+//   - `taskboard.Task.Tenant`：任务身份是 (Tenant, ID)；空租户 = 默认/
+//     单租户命名空间（旧布局逐字不变）；
+//   - `coord.NewTenantBoardAdapter`：键由 ctx 租户作用域生成
+//     （`coord/t/<escaped-tenant>/task/<id>`），List/Claim/Release/
+//     Complete/Renew 全部按租户过滤；缺租户一律 ErrNoContext
+//     （fail-closed，与本包 Require 同口径）；
+//   - 共享契约套件 `boardtest.RunTenant`：跨租户不可见/不可领（含并发）、
+//     同 id 互不覆盖、缺租户 fail-closed 的可跑断言。
+//
+// 仍归宿主（内核不提供、也不假装提供）：
+//
+//   - **副作用幂等键**（sideeffect 的 Key 由宿主组装）：多租户宿主必须把
+//     租户纳入身份，否则 A 租户的副作用会让 B 租户被判「已施加」；
+//   - **事件面**（eventbus）：Event 没有租户字段、Hub 不按租户过滤——
+//     共享 Hub 时由宿主在载荷/订阅侧自筛，或每租户一个 Hub；
+//   - **运行留痕/审计/轨迹**（trajectory、controlplane 的 AuditEntry）：
+//     租户归属由宿主记录，内核只透传 ctx；
+//   - **数据库行级隔离**（RLS / 唯一约束 / 连接级租户变量）：存储后端的
+//     责任；任何自定义 Board 实现不接 `boardtest.RunTenant` 就不算声明
+//     支持租户隔离。
+//
 // # 传递契约
 //
 // 租户/权限上下文经 context.Context 传递（WithContext 注入 / From 提取）

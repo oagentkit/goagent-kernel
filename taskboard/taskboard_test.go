@@ -108,3 +108,58 @@ func TestCheckIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckTenantIdentity 任务身份是 (Tenant, ID)：同 id 不同租户不是重复。
+func TestCheckTenantIdentity(t *testing.T) {
+	tasks := []Task{
+		{Tenant: "tenant-a", ID: "t1", State: StateOpen},
+		{Tenant: "tenant-b", ID: "t1", State: StateOpen},
+	}
+	if ps := Check(tasks); len(ps) != 0 {
+		t.Fatalf("同 id 不同租户是两条任务，不得报重复: %v", ps)
+	}
+	// 同租户内同 id 仍是重复。
+	tasks = append(tasks, Task{Tenant: "tenant-a", ID: "t1", State: StateOpen})
+	ps := Check(tasks)
+	if len(ps) != 1 || ps[0].Code != CodeDuplicateID || ps[0].Tenant != "tenant-a" {
+		t.Fatalf("同租户内 id 重复必须报出且带租户归属，实得 %v", ps)
+	}
+}
+
+// TestCheckTenantDepsResolveWithinTenant 依赖只在同租户内解析：
+// 他租户的同 id 任务不可见，按「依赖不存在」处理。
+func TestCheckTenantDepsResolveWithinTenant(t *testing.T) {
+	tasks := []Task{
+		{Tenant: "tenant-a", ID: "t1", State: StateDone},
+		{Tenant: "tenant-b", ID: "t1", State: StateOpen},
+		{Tenant: "tenant-b", ID: "t2", State: StateOpen, Deps: []TaskID{"t1"}},
+	}
+	if ps := Check(tasks); len(ps) != 0 {
+		t.Fatalf("同租户内依赖 t1 已完成，不该报问题: %v", ps)
+	}
+	// 跨租户依赖：tenant-a 的 t1 已完成，不能替 tenant-b 的依赖作数。
+	tasks = []Task{
+		{Tenant: "tenant-a", ID: "t1", State: StateDone},
+		{Tenant: "tenant-b", ID: "t2", State: StateOpen, Deps: []TaskID{"t1"}},
+	}
+	ps := Check(tasks)
+	if len(ps) != 1 || ps[0].Code != CodeUnknownDep || ps[0].Tenant != "tenant-b" {
+		t.Fatalf("跨租户依赖必须按不存在报出，实得 %v", ps)
+	}
+}
+
+// TestCheckTenantCyclesArePerTenant 环按租户分别判定：一个租户的环不得
+// 把另一个租户的同 id 任务卷进来。
+func TestCheckTenantCyclesArePerTenant(t *testing.T) {
+	tasks := []Task{
+		// tenant-a 内部成环。
+		{Tenant: "tenant-a", ID: "t1", State: StateOpen, Deps: []TaskID{"t2"}},
+		{Tenant: "tenant-a", ID: "t2", State: StateOpen, Deps: []TaskID{"t1"}},
+		// tenant-b 是自洽的同 id 图。
+		{Tenant: "tenant-b", ID: "t1", State: StateOpen},
+	}
+	ps := Check(tasks)
+	if len(ps) != 1 || ps[0].Code != CodeCycle || ps[0].Tenant != "tenant-a" {
+		t.Fatalf("环必须只报 tenant-a 且带租户归属，实得 %v", ps)
+	}
+}

@@ -37,8 +37,15 @@ import (
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
-// taskKeyPrefix 任务键前缀（Board 适配器的键空间与其余适配器隔离）。
+// taskKeyPrefix 任务键前缀（Board 适配器的单租户键空间，与其余适配器隔离）。
+//
+// 单租户布局（空租户）逐字不变：coord/task/<id>。租户作用域的键布局见
+// taskKey/taskPrefix（独立根 coord/t/<escaped-tenant>/task/，理由见包文档）。
 const taskKeyPrefix = "coord/task/"
+
+// tenantRootPrefix 租户作用域的键根。独立于 coord/task/：旧布局的任务 id
+// 是任意字符串（可含 '/'），把租户段接在 coord/task/ 后面会与旧 id 撞键。
+const tenantRootPrefix = "coord/t/"
 
 // fenceKeyPrefix 接管代次计数器前缀。
 //
@@ -56,6 +63,11 @@ const fenceKeyPrefix = "coord/taskfence/"
 type BoardAdapter struct {
 	b Backend
 
+	// tenantScoped 装配期决策：所有操作必须从 ctx 取租户，键按租户作用域
+	// 生成（NewTenantBoardAdapter）。false = 单租户（旧布局，ctx 里的租户
+	// 不参与判定——这是「默认路径零回归」的边界）。
+	tenantScoped bool
+
 	// now 测试注入的时钟（UseClock；nil = 未注入）。缺省 nil 是刻意的：
 	// 判定时刻一律走 resolveNow 的时间权威次序（注入 → 存储时钟 → 声明过
 	// 仅单机才用节点时钟），绝不静默落回节点本地时钟（issue #194）。
@@ -63,17 +75,37 @@ type BoardAdapter struct {
 	now func() time.Time
 }
 
-// NewBoardAdapter 构造 Board 适配器。
+// NewBoardAdapter 构造**单租户**任务板适配器（旧布局；默认路径零回归）。
 //
-// 装配期检查时间权威（issue #194）：后端既不实现 ClockSource 也不声明
-// SingleMachine 时返回 @@ErrNoTimeAuthority@@——拒绝装配，而不是静默
-// 退化成节点本地时钟。
+// 单租户适配器不解释 ctx 里的租户上下文：键恒为 coord/task/<id> 与
+// coord/taskfence/<id>。要做多租户隔离必须显式用 NewTenantBoardAdapter
+// （装配期可见，不静默切换作用域）。
 func NewBoardAdapter(b Backend) (*BoardAdapter, error) {
+	return newBoardAdapter(b, false)
+}
+
+// NewTenantBoardAdapter 构造**租户作用域**任务板适配器（issue #195）。
+//
+// 所有 Board 操作从 tenant.Context（ctx 通道）取租户：
+//
+//   - 缺租户/空租户 ⇒ tenant.ErrNoContext（fail-closed，与写路径同一口径）；
+//   - 键由作用域生成（coord/t/<escaped-tenant>/task/<id>），调用方不拼租户；
+//   - List 只含本租户任务；Claim/Release/Complete/Renew 对他租户任务一律
+//     taskboard.ErrNotFound（不可见 = 不存在，不泄露存在性）。
+//
+// 空租户与缺租户不是一回事：空租户是**单租户适配器**的默认命名空间；
+// 租户作用域适配器拒绝空租户。
+func NewTenantBoardAdapter(b Backend) (*BoardAdapter, error) {
+	return newBoardAdapter(b, true)
+}
+
+// newBoardAdapter 共享构造路径（时间权威检查只有这一份）。
+func newBoardAdapter(b Backend, tenantScoped bool) (*BoardAdapter, error) {
 	if !hasTimeAuthority(b) {
 		return nil, errors.Wrap(ErrNoTimeAuthority,
 			"coord: BoardAdapter 拒绝装配（租约到期必须由存储时钟算，或显式声明仅单机）")
 	}
-	return &BoardAdapter{b: b}, nil
+	return &BoardAdapter{b: b, tenantScoped: tenantScoped}, nil
 }
 
 // UseClock 注入时钟（boardtest 契约套件要求：过期判定必须读可注入的时钟）。
@@ -109,12 +141,15 @@ func (a *BoardAdapter) Seed(tasks ...taskboard.Task) {
 		if t.ID == "" {
 			continue
 		}
+		if err := a.checkSeedScope(t.Tenant); err != nil {
+			panic(err.Error())
+		}
 		t.Seq++ // 摆入也是一次变更，Seq 前进
 		enc, err := json.Marshal(t)
 		if err != nil {
 			panic("coord: Seed 编码任务失败（任务体是纯数据，不应发生）: " + string(t.ID))
 		}
-		muts = append(muts, Mutation{Key: taskKeyPrefix + string(t.ID), Val: enc})
+		muts = append(muts, Mutation{Key: taskKey(t.Tenant, t.ID), Val: enc})
 	}
 	if _, err := a.b.Txn(ctx, nil, muts); err != nil {
 		panic("coord: Seed 提交失败（套件接缝无 error 通道）: " + err.Error())
@@ -129,7 +164,11 @@ func (a *BoardAdapter) Seed(tasks ...taskboard.Task) {
 // 矛盾，受害的是全量视图类消费（worker.claimNext 的候选挑选、恢复扫描、
 // 配额核算、运维看板）。原语契约见 Backend.ScanSnapshot。
 func (a *BoardAdapter) List(ctx context.Context) ([]taskboard.Task, error) {
-	scan, err := a.b.ScanSnapshot(ctx, taskKeyPrefix)
+	scope, err := a.scope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	scan, err := a.b.ScanSnapshot(ctx, taskPrefix(scope))
 	if err != nil {
 		return nil, errors.Wrap(err, "coord: List 前缀扫描失败")
 	}
@@ -138,7 +177,7 @@ func (a *BoardAdapter) List(ctx context.Context) ([]taskboard.Task, error) {
 	}
 	out := make([]taskboard.Task, 0, len(scan))
 	for _, e := range scan {
-		t, derr := decodeTask(e)
+		t, derr := decodeTaskIn(e, scope)
 		if derr != nil {
 			return nil, derr
 		}
@@ -152,7 +191,11 @@ func (a *BoardAdapter) List(ctx context.Context) ([]taskboard.Task, error) {
 //
 // 代次与认领在同一事务里推进（fenceKey +1 + 任务落库，同一次原子操作铸造）。
 func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
-	tk, fk := taskKeyPrefix+string(id), fenceKeyPrefix+string(id)
+	scope, serr := a.scope(ctx)
+	if serr != nil {
+		return taskboard.Task{}, serr
+	}
+	tk, fk := taskKey(scope, id), fenceKey(scope, id)
 	keys := []string{tk, fk}
 	for range casMaxAttempts {
 		// 判定时刻取存储时钟（issue #194）：每次重判都重取——CAS 循环的
@@ -165,7 +208,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		if err != nil {
 			return taskboard.Task{}, errors.Wrap(err, "coord: Claim 快照读失败")
 		}
-		cur, derr := decodeTask(snap[tk])
+		cur, derr := decodeTaskIn(snap[tk], scope)
 		if derr != nil {
 			return taskboard.Task{}, derr
 		}
@@ -176,7 +219,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
 		}
 		// 依赖键动态展开：清单与当前快照键集不一致 ⇒ 重取快照（带依赖键）。
-		need := claimKeySet(id, cur.Deps)
+		need := claimKeySet(scope, id, cur.Deps)
 		if !sameStrings(need, keys) {
 			keys = need
 			continue
@@ -184,12 +227,12 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		// 依赖判定读的是同一份快照：依赖键都在断言里——判定与提交之间
 		// 有人改了任何一侧，这次认领因断言失败而重判。
 		for _, dep := range cur.Deps {
-			dk := taskKeyPrefix + string(dep)
+			dk := taskKey(scope, dep)
 			if !snap[dk].Exists {
 				return taskboard.Task{}, errors.Wrap(taskboard.ErrBlocked,
 					"依赖未完成（依赖不存在）", "task", string(id), "dep", string(dep))
 			}
-			d, dderr := decodeTask(snap[dk])
+			d, dderr := decodeTaskIn(snap[dk], scope)
 			if dderr != nil {
 				return taskboard.Task{}, dderr
 			}
@@ -212,6 +255,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		}
 		fence := curFence + 1
 		next := cur
+		next.Tenant = scope
 		next.State = taskboard.StateClaimed
 		next.Owner = agent
 		next.Lease = taskboard.Lease{Token: token, Fence: taskboard.Fence(fence)}
@@ -245,18 +289,23 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 
 // Release 归还认领（凭令牌；非持有者一律 ErrLeaseLost，不静默成功）。
 func (a *BoardAdapter) Release(ctx context.Context, id taskboard.TaskID, token string) error {
-	tk := taskKeyPrefix + string(id)
-	_, err := casLoop(ctx, a.b, []string{tk},
+	scope, err := a.scope(ctx)
+	if err != nil {
+		return err
+	}
+	tk := taskKey(scope, id)
+	_, err = casLoop(ctx, a.b, []string{tk},
 		func(snap map[string]Entry) (taskboard.Task, []Assert, []Mutation, error) {
-			cur, err := requireClaimed(snap[tk], id, token)
+			cur, err := requireClaimed(snap[tk], scope, id, token)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
+			cur.Tenant = scope
 			cur.State = taskboard.StateOpen
 			cur.Owner = ""
 			cur.Lease = taskboard.Lease{}
 			cur.Seq++
-			muts, err := setTaskMutation(cur)
+			muts, err := setTaskMutation(scope, cur)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
@@ -268,18 +317,23 @@ func (a *BoardAdapter) Release(ctx context.Context, id taskboard.TaskID, token s
 // Complete 标记完成（凭令牌；终态不带 owner，避免「谁做完的」与
 // 「谁还占着」混在一起）。
 func (a *BoardAdapter) Complete(ctx context.Context, id taskboard.TaskID, token string) error {
-	tk := taskKeyPrefix + string(id)
-	_, err := casLoop(ctx, a.b, []string{tk},
+	scope, err := a.scope(ctx)
+	if err != nil {
+		return err
+	}
+	tk := taskKey(scope, id)
+	_, err = casLoop(ctx, a.b, []string{tk},
 		func(snap map[string]Entry) (taskboard.Task, []Assert, []Mutation, error) {
-			cur, err := requireClaimed(snap[tk], id, token)
+			cur, err := requireClaimed(snap[tk], scope, id, token)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
+			cur.Tenant = scope
 			cur.State = taskboard.StateDone
 			cur.Owner = ""
 			cur.Lease = taskboard.Lease{}
 			cur.Seq++
-			muts, err := setTaskMutation(cur)
+			muts, err := setTaskMutation(scope, cur)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
@@ -291,10 +345,14 @@ func (a *BoardAdapter) Complete(ctx context.Context, id taskboard.TaskID, token 
 // Renew 续期并确认持有资格（taskboard.RenewingBoard）：令牌不匹配或已过期
 // 都报 ErrLeaseLost 且不做任何修改——续期不是心跳，是资格检查。
 func (a *BoardAdapter) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
-	tk := taskKeyPrefix + string(id)
+	scope, serr := a.scope(ctx)
+	if serr != nil {
+		return taskboard.Task{}, serr
+	}
+	tk := taskKey(scope, id)
 	return casLoop(ctx, a.b, []string{tk},
 		func(snap map[string]Entry) (taskboard.Task, []Assert, []Mutation, error) {
-			cur, err := requireClaimed(snap[tk], id, token)
+			cur, err := requireClaimed(snap[tk], scope, id, token)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
@@ -313,8 +371,9 @@ func (a *BoardAdapter) Renew(ctx context.Context, id taskboard.TaskID, token str
 			} else {
 				cur.Lease.Until = time.Time{} // TTL=0 = 不限期（与 Claim 同一语义）
 			}
+			cur.Tenant = scope
 			cur.Seq++
-			muts, err := setTaskMutation(cur)
+			muts, err := setTaskMutation(scope, cur)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
