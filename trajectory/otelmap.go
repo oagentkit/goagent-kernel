@@ -138,9 +138,9 @@ var AttrSpecs = []AttrSpec{
 		Source: "Row.Pairing（仅工具行，且不为 PairingNone）",
 		Domain: Domain{Kind: "string", Values: []string{
 			string(PairingPaired), string(PairingMissingResult), string(PairingDuplicateResult),
-			string(PairingUnpairedResult), string(PairingDuplicateCall),
+			string(PairingUnpairedResult), string(PairingDuplicateCall), string(PairingNoCallID),
 		}},
-		Card:      Cardinality{Max: 5, Why: "Pairing 词表五值（PairingNone 是「不适用」，不写进属性）"},
+		Card:      Cardinality{Max: 6, Why: "Pairing 词表六值（PairingNone 是「不适用」，不写进属性；no_call_id = 调用方未提供标识，不是缺口）"},
 		LabelSafe: true,
 	},
 	{

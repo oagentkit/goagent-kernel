@@ -319,6 +319,11 @@ func spanStatusOf(r Row) SpanStatus {
 		// 调用从未被声明。
 		return SpanStatusError
 	}
+	// 无 call_id：调用方未提供配对键，配对完整性无从判断——不是 error
+	// （「没有标识」与「结果找不到对应调用」是两件事，issue #306）。
+	if r.Pairing == PairingNoCallID {
+		return SpanStatusUnset
+	}
 	if r.Pairing == PairingMissingResult {
 		return SpanStatusUnset
 	}

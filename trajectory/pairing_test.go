@@ -230,6 +230,102 @@ func TestResultBeforeCallMergesAttribution(t *testing.T) {
 	}
 }
 
+// TestAnonymousCallResultNoGap 不带 call_id 的「调用 + 结果」是一次正常调用：
+// 按无 id 路径归并成一行，不产生 unpaired_result 缺口（issue #306）。
+func TestAnonymousCallResultNoGap(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		ev(eventbus.EventToolCall, 100, map[string]any{"tool": "alpha_fn"}),
+		ev(eventbus.EventToolResult, 300, map[string]any{"tool": "alpha_fn"}),
+	})
+	rows := p.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("无 id 的正常调用应归并成 1 行（不拆成 tool_call + tool_result），得到 %d：%+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.Kind != KindToolCall || row.Pairing != PairingPaired || row.Status != StatusClosed {
+		t.Fatalf("无 id 的调用/结果应正常配对：%+v", row)
+	}
+	if row.CallID != "" || row.Tool != "alpha_fn" {
+		t.Fatalf("无 id 行不得凭空补标识：%+v", row)
+	}
+	if d, ok := row.Duration(); !ok || d != 200*time.Millisecond {
+		t.Fatalf("配对应给出实测时长 200ms，实得 %v ok=%v", d, ok)
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("无 id 的正常调用不得记缺口（旧实现记一条空 call_id 的 unpaired_result）：%+v", p.Issues())
+	}
+	if open := p.Finalize(); len(open) != 0 {
+		t.Fatalf("已配对的调用不应报未收口：%+v", open)
+	}
+}
+
+// TestAnonymousResultWithoutCallIsNotGap 独立到达的无 id 结果：落成显式
+// no_call_id 行，但**不是**「结果无对应调用」——不记 unpaired_result。
+func TestAnonymousResultWithoutCallIsNotGap(t *testing.T) {
+	p := NewProjector(Options{})
+	p.Apply(ev(eventbus.EventToolResult, 300, map[string]any{"tool": "gamma_fn"}))
+	rows := p.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("无 id 的结果应落成 1 行（不得丢弃）：%+v", rows)
+	}
+	row := rows[0]
+	if row.Kind != KindToolResult || row.Status != StatusOrphan {
+		t.Fatalf("无 id 的孤立结果应是 tool_result 孤儿行：%+v", row)
+	}
+	if row.Pairing != PairingNoCallID {
+		t.Fatalf("无 id 的配对状态应显式表达「调用方未提供标识」，实得 %q", row.Pairing)
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("「没有 call_id」不是缺口（与「找不到对应调用」两件事）：%+v", p.Issues())
+	}
+}
+
+// TestNamedResultWithoutCallStillGap 真正的「结果无对应调用」仍记缺口（不回退）。
+func TestNamedResultWithoutCallStillGap(t *testing.T) {
+	p := NewProjector(Options{})
+	p.Apply(toolEv(eventbus.EventToolResult, 300, 1, "c9", "gamma_fn"))
+	if !hasIssue(p.Issues(), PairingUnpairedResult, "c9") {
+		t.Fatalf("带 call_id 的无对应结果仍必须记 unpaired_result：%+v", p.Issues())
+	}
+}
+
+// TestAnonymousResultBeforeCallMerges 无 id 的结果先到、调用后到：按先进先出
+// 就地归并（归属字段以调用事件为准），不产生缺口。
+func TestAnonymousResultBeforeCallMerges(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		ev(eventbus.EventTurnStarted, 0, nil),
+		ev(eventbus.EventToolResult, 100, map[string]any{}),
+		ev(eventbus.EventTurnEnded, 150, nil),
+		ev(eventbus.EventTurnStarted, 200, nil),
+		stepEv(eventbus.EventStepStarted, 210, 7),
+		ev(eventbus.EventToolCall, 300, map[string]any{"tool": "alpha_fn"}),
+	})
+	rows := p.Rows()
+	var tool *Row
+	for i := range rows {
+		if rows[i].Kind == KindToolCall || rows[i].Kind == KindToolResult {
+			if tool != nil {
+				t.Fatalf("无 id 的结果先到 + 调用后到应只剩 1 条工具行：%+v", rows)
+			}
+			tool = &rows[i]
+		}
+	}
+	if tool == nil {
+		t.Fatalf("缺少工具行：%+v", rows)
+	}
+	if tool.Kind != KindToolCall || tool.Pairing != PairingPaired || tool.Tool != "alpha_fn" {
+		t.Fatalf("归并后应取调用事件的归属：%+v", *tool)
+	}
+	if tool.Turn != 2 {
+		t.Fatalf("归属轮次应取自调用事件（2），实得 %d", tool.Turn)
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("无 id 路径不记配对缺口：%+v", p.Issues())
+	}
+}
+
 // TestResultBeforeCallPairsInPlace 结果先到、调用后到：就地配对，不另起一行。
 func TestResultBeforeCallPairsInPlace(t *testing.T) {
 	p := NewProjector(Options{})
