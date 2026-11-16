@@ -259,11 +259,27 @@ func TestTailerCursorPersistsAcrossRestart(t *testing.T) {
 		t.Fatalf("第二程不得重走 MaxID 初始化（%d → %d）", maxIDBeforeRestart, got)
 	}
 	// 游标推进后已保存：重启场景下持久化值应为 6。
-	cursor.mu.Lock()
-	saved := cursor.cur
-	cursor.mu.Unlock()
-	if saved != 6 {
-		t.Fatalf("游标推进后应持久化（实得 %d）", saved)
+	//
+	// 必须**等**它落盘：实现是「逐条 Publish（同步写入订阅者 channel）→ 整批
+	// 处理完再 SaveCursor」（见 tail.go 的 Publish 与 SaveCursor 两处）。订阅者
+	// 拿到事件的那一刻，Tailer 还没走到保存——直接读会读到上一批的值。CI 实测
+	// 偶发红（run 43896997349：实得 5），本地高频复跑不复现（窗口在微秒级）。
+	//
+	// 等的是「最终持久化」（与实现契约一致）；超时说明真的没存，那就是实现
+	// 缺陷，报错带实得值便于定位。
+	var saved uint64
+	persistDeadline := time.Now().Add(2 * time.Second)
+	for {
+		cursor.mu.Lock()
+		saved = cursor.cur
+		cursor.mu.Unlock()
+		if saved == 6 {
+			break
+		}
+		if time.Now().After(persistDeadline) {
+			t.Fatalf("游标推进后应持久化（2s 内仍实得 %d）", saved)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
