@@ -254,6 +254,37 @@ func init() {
 // 处置路径必须经由本函数拿快照，不得分字段调访问器再拼——那正是撕裂读的来源。
 func CurrentPolicy() Policy { return *curPolicy.Load() }
 
+// ── 快照的只读访问面（issue #296）──
+//
+// # 为什么必须有方法
+//
+// Subscribe 的回调参数是 Policy 值，包头承诺「收到即所见」；但字段全部非导出
+// 且此前没有任何方法，订阅者在回调里**读不出任何字段**——只能转身调包级
+// 访问器（Enabled/Strategy/...），而那读的是**此刻的全局**，可能已经换代。
+// 包头与 USAGE 因此互相矛盾：一个说「收到的快照可读」，一个说「包级访问器读」。
+//
+// 这一组方法让回调参数真正可读且可断言「读到的是收到的那一代」：方法只读
+// 接收者自己的字段，不碰 curPolicy。**不提供任何 setter**，Policy 仍是
+// 不可变值；CurrentPolicy 的返回值依旧是副本，调用方改不动全局。
+
+// Gen 该快照的代次（订阅者据此断言单调：后收到的快照代次不得更小）。
+func (p Policy) Gen() uint64 { return p.gen }
+
+// Enabled 该快照的全局开关。
+func (p Policy) Enabled() bool { return p.enabled }
+
+// Surfaces 该快照的面集合。
+func (p Policy) Surfaces() SurfaceSet { return p.surfaces }
+
+// SurfaceEnabled 该快照中指定面是否启用。
+func (p Policy) SurfaceEnabled(s Surface) bool { return p.surfaces.Has(s) }
+
+// Strategy 该快照的处置策略。
+func (p Policy) Strategy() StrategyKind { return p.strategy }
+
+// DigestKeyed 该快照是否已注入摘要密钥（StrategyHash 的接线期自查口径）。
+func (p Policy) DigestKeyed() bool { return p.digestKey != "" }
+
 // Gen 当前策略代次（与快照同步递增，供可观测性使用）。
 func Gen() uint64 { return curPolicy.Load().gen }
 
