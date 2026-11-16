@@ -29,7 +29,8 @@
 //     不是维度。禁区清单见 ForbiddenLabels。
 //  4. **先登记再埋点**：每个指标的名称 / 类型 / 维度 / 基数上界在 Specs 里登记，
 //     自校验（metrics_test）保证登记表自洽。埋一个没登记的指标 = 看板口径外
-//     的暗数，Validate 会显式报错。
+//     的暗数，Validate 会显式报错。登记表是**开放的**（issue #239）：宿主
+//     自有指标装配期经 Register 注册后，复用同一份 Validate / 基数门。
 //
 // # 覆盖清单（issue #100 验收的五类量）
 //
@@ -44,7 +45,13 @@
 // 各量的**接入点**（在哪个包哪个函数上埋）见 [ACCESS-POINTS.md]。
 package metrics
 
-import "slices"
+import (
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/oekit/pkg/errors"
+)
 
 // ── 指标名 ──────────────────────────────────────────────────────────────────
 //
@@ -213,9 +220,11 @@ type Metric struct {
 	Labels []LabelDim
 }
 
-// specs 登记表本体。**先登记再埋点**：新增指标在这里加一行 + ACCESS-POINTS.md
-// 加一个接入点，自校验才认。
-var specs = []Metric{
+// kernelSpecs 内核登记表（harness.* 口径）。**先登记再埋点**：内核新增指标
+// 在这里加一行 + ACCESS-POINTS.md 加一个接入点，自校验（metrics_test 对本表
+// 跑全量不变量）才认。宿主指标不进本表——宿主注册进 hostSpecs（见
+// [Register]），harness.* 命名空间保留给内核，看板才分得清口径来源。
+var kernelSpecs = []Metric{
 	{
 		Name: NameExecDuration,
 		Kind: KindHistogram,
@@ -300,15 +309,122 @@ var specs = []Metric{
 	},
 }
 
-// Specs 返回登记表的副本（调用方改不动登记表——口径只有一处能改）。
-func Specs() []Metric { return slices.Clone(specs) }
+// specsMu 保护登记表（kernelSpecs 只读 + hostSpecs 注册写）的并发。
+// 宿主在装配期 Register、埋点/校验路径随时读——并发安全由这里统一给
+// （SetDefault 同款装配语义）。
+var (
+	specsMu sync.RWMutex
+	// hostSpecs 宿主经 [Register] 注册的自有指标（issue #239 开放登记面）。
+	hostSpecs []Metric
+)
 
-// SpecOf 按名取登记项。未登记的指标名 = 埋点面之外的暗数，Validate 会拦。
+// Specs 返回登记表的副本：内核 harness.* 口径 + 宿主经 [Register] 注册的
+// 自有指标（调用方改不动登记表——口径只有一处能改）。
+func Specs() []Metric {
+	specsMu.RLock()
+	defer specsMu.RUnlock()
+	out := make([]Metric, 0, len(kernelSpecs)+len(hostSpecs))
+	out = append(out, kernelSpecs...)
+	out = append(out, hostSpecs...)
+	return out
+}
+
+// SpecOf 按名取登记项（内核表与宿主开放表同查）。未登记的指标名 =
+// 埋点面之外的暗数，Validate 会拦。
 func SpecOf(name string) (Metric, bool) {
-	for _, m := range specs {
+	specsMu.RLock()
+	defer specsMu.RUnlock()
+	for _, m := range kernelSpecs {
+		if m.Name == name {
+			return m, true
+		}
+	}
+	for _, m := range hostSpecs {
 		if m.Name == name {
 			return m, true
 		}
 	}
 	return Metric{}, false
+}
+
+// ErrInvalidSpec 指标登记项不合法（[Register] 的判据拒绝）。
+var ErrInvalidSpec = errors.New("metrics: 指标登记项不合法")
+
+// Register 登记一个指标到**开放的**宿主登记面（issue #239）：宿主自有指标
+// 装配期注册后即可复用本包全部判据面——SpecOf / Specs / Validate /
+// Mem.Strict 对宿主指标与 harness.* 一视同仁（同一份名称/维度/基数门，
+// 不必各抄一份第二真相）。重复注册同一指标报错收口（静默覆盖会让
+// 「两处各登记一份、口径已分叉」没有信号）。
+//
+// 判据（fail-closed，违者 ErrInvalidSpec 包装上抛）：
+//
+//   - Name / Kind / Unit / Desc 非空，Kind 在三类词表内——「数的是什么」
+//     写不出来 = 没想清楚，不许登记；
+//   - Name **不得带 harness. 前缀**（内核命名空间保留；看板按前缀分得清
+//     口径来源），且与登记表任一项（内核 + 已注册宿主指标）不重复；
+//   - 维度键非空、不在 [ForbiddenLabels] 禁区清单里、同一指标内不重复；
+//   - 维度取值域 Values 非空且无重复——空域/含重复的「封闭枚举」是
+//     声明自相矛盾，基数门会失去可信上界。
+//
+// 装配期调用一次；运行期注册是宿主自己的并发决定，本包保证调用安全
+// （读写锁），但登记表在中途膨胀会让「看板见到哪些指标」随时刻漂移。
+func Register(m Metric) error {
+	if m.Name == "" {
+		return errors.Wrap(ErrInvalidSpec, "缺指标名")
+	}
+	if strings.HasPrefix(m.Name, "harness.") {
+		return errors.Wrap(ErrInvalidSpec, "harness. 前缀保留给内核口径（宿主指标不得冒用）："+m.Name)
+	}
+	if m.Desc == "" {
+		return errors.Wrap(ErrInvalidSpec, "缺语义说明（Desc）："+m.Name)
+	}
+	switch m.Kind {
+	case KindCounter, KindGauge, KindHistogram:
+	default:
+		return errors.Wrap(ErrInvalidSpec, "Kind 不在词表内（counter/gauge/histogram）："+m.Name)
+	}
+	if m.Unit == "" {
+		return errors.Wrap(ErrInvalidSpec, "缺单位（Unit）："+m.Name)
+	}
+	seenKeys := make(map[string]bool, len(m.Labels))
+	for _, d := range m.Labels {
+		if d.Key == "" {
+			return errors.Wrap(ErrInvalidSpec, "维度键为空："+m.Name)
+		}
+		if seenKeys[d.Key] {
+			return errors.Wrap(ErrInvalidSpec, "维度键重复："+m.Name+" / "+d.Key)
+		}
+		seenKeys[d.Key] = true
+		for _, f := range ForbiddenLabels {
+			if f.Name == d.Key {
+				return errors.Wrap(ErrInvalidSpec,
+					fmt.Sprintf("维度 %q 在禁区清单里（%s）：%s", d.Key, f.Why, m.Name))
+			}
+		}
+		if len(d.Values) == 0 {
+			return errors.Wrap(ErrInvalidSpec, "维度取值域为空（封闭枚举必须至少一个值）："+m.Name+" / "+d.Key)
+		}
+		seenVals := make(map[string]bool, len(d.Values))
+		for _, v := range d.Values {
+			if seenVals[v] {
+				return errors.Wrap(ErrInvalidSpec, "维度取值域含重复值："+m.Name+" / "+d.Key+" / "+v)
+			}
+			seenVals[v] = true
+		}
+	}
+
+	specsMu.Lock()
+	defer specsMu.Unlock()
+	for _, existing := range kernelSpecs {
+		if existing.Name == m.Name {
+			return errors.Wrap(ErrInvalidSpec, "指标名与内核口径撞名："+m.Name)
+		}
+	}
+	for _, existing := range hostSpecs {
+		if existing.Name == m.Name {
+			return errors.Wrap(ErrInvalidSpec, "指标名已注册（静默覆盖会让口径分叉没有信号）："+m.Name)
+		}
+	}
+	hostSpecs = append(hostSpecs, m)
+	return nil
 }

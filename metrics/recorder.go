@@ -123,7 +123,9 @@ func CheckLabels(labels Labels) error {
 // 都在登记的维度里、取值落在封闭枚举内。宿主测试用它把「埋错标签」拦在
 // 测试期——这类错在生产里不报错，只会在看板上静默拼不起来。
 //
-// 宿主自有指标不走本函数（登记表只认 harness.*），改用 CheckLabels 判禁区。
+// 宿主自有指标经 [Register] 装配期注册后同样走本函数（登记表开放，
+// issue #239）——名称/维度/基数门对宿主指标与 harness.* 同一套；
+// 不注册只想判禁区键的，用 CheckLabels。
 func Validate(name string, labels Labels) error {
 	if err := CheckLabels(labels); err != nil {
 		return err

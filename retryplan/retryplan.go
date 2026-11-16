@@ -56,8 +56,11 @@
 //
 // # 关键取舍三：失败类别的判定归上游，本包不重新分类
 //
-// 本包**不重新判定**失败是什么类别（那是 `toolfail` 的事，判定口径必须
-// 跨宿主一致）。它只把既有判定**组合**成决策。
+// 本包**不重新判定**失败是什么类别（那是判据上游的事）。缺省上游是
+// `toolfail`（判定口径跨宿主一致）；宿主自有错误体系经 [Classifier]
+// 注入（Options.Classifier，issue #240），本包只把判定结论**组合**成决策。
+// 路径合成的三个判定位（Retryable / SafeToResubmit / 幂等键可用性）
+// 语义不随分类器变化——换分类器换的是「失败是什么」，不是「怎么组合」。
 //
 // # 与 sideeffect 的关系
 //
@@ -136,40 +139,55 @@ type Options struct {
 	// 置 true 时，该档降级为 PathNone：值得重试，但没有安全的重试路径
 	// （见 §关键取舍二：宁可如实失败，不赌一次重复副作用）。
 	WithoutIdempotency bool
+	// Classifier 宿主注入的**失败分类器**（issue #240，可选）。
+	//
+	// nil（缺省）⇒ [DefaultClassifier]：toolfail 的既有判定（Classify +
+	// PolicyOf），口径跨宿主一致。宿主自有错误体系（非 toolfail 词表）
+	// 实现 [Classifier] 经本字段注入：分类与处置位随宿主口径，
+	// 路径合成逻辑（三问 → Decision）不因换分类器而有第二份。
+	// 逐次表态（toolfail.As 的 SafeToResubmit/RetryAfter）仍从 err 本身
+	// 读取——那是「这次调用的现场事实」，与分类器无关。
+	Classifier Classifier
 }
 
 // Decide 依据一次失败与当前条件，产出重试处置决策。
 //
 // err 为 nil 时返回 PathNone（没有失败可处置）。
 //
-// 判定完全基于 `toolfail` 的既有结论，本包不重新分类失败。
+// 失败分类经 opts.Classifier（nil ⇒ [DefaultClassifier]，即 `toolfail`
+// 的既有判定）；本包不重新分类失败，只把分类结论**组合**成决策——
+// 组合逻辑（三问 → Decision）只有一份。
 func Decide(err error, opts Options) Decision {
 	if err == nil {
 		return Decision{Path: PathNone, Reason: "无失败，无需处置"}
 	}
 
-	cls := toolfail.Classify(err)
-	policy := toolfail.PolicyOf(cls)
+	c := opts.Classifier
+	if c == nil {
+		c = DefaultClassifier()
+	}
+	verdict := c.Classify(err)
 
 	d := Decision{
-		Retryable:     policy.Retryable,
-		Backoff:       policy.Backoff,
+		Retryable:     verdict.Retryable,
+		Backoff:       verdict.Backoff,
 		RetryAfter:    retryAfterOf(err),
-		NeedsOperator: policy.NeedsOperator,
+		NeedsOperator: verdict.NeedsOperator,
 	}
 
 	// 取逐次表态（宿主对该次调用的幂等性声明），它优先于类别缺省。
+	// 逐次表态住在 err 本身（toolfail.As），与分类器是谁无关。
 	f, ok := toolfail.As(err)
-	safeToResubmit := policy.SafeToResubmit
+	safeToResubmit := verdict.SafeToResubmit
 	if ok {
 		safeToResubmit = f.SafeToResubmit()
 	}
 
 	switch {
-	case !policy.Retryable:
+	case !verdict.Retryable:
 		// 不可重试：终态，换处置路径（改参数 / 找人工 / 收口）。
 		d.Path = PathNone
-		d.Reason = "该失败不可重试：" + string(cls)
+		d.Reason = "该失败不可重试：" + verdict.Class
 	case safeToResubmit:
 		// 可重试且原样重发安全：直接重发。
 		d.Path = PathDirect
