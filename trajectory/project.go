@@ -127,12 +127,20 @@ func (p *Projector) openStep(ev eventbus.Event) {
 }
 
 // closeStep 收一个步骤行；没有可收口的步骤行时落成孤儿行。
+//
+// 轮次上下文不允许配对（当前轮已收口且没有新轮打开）时，孤儿行按**轮次之外**
+// 处理（Turn=0）：挂回已结束的轮，导出的 span 就会出现「子 span 结束晚于
+// 父 span 结束」的时序倒挂（issue #300）。
 func (p *Projector) closeStep(ev eventbus.Event) {
 	idx := p.matchOpenStep(ev)
 	if idx < 0 {
+		turn := p.currentTurn()
+		if !p.pairableTurn() {
+			turn = 0
+		}
 		r := Row{
 			Kind:   KindStep,
-			Turn:   p.currentTurn(),
+			Turn:   turn,
 			EndAt:  ev.OccurredAt,
 			Status: StatusOrphan,
 		}
@@ -149,24 +157,42 @@ func (p *Projector) closeStep(ev eventbus.Event) {
 	p.dropOpen(idx)
 }
 
+// pairableTurn 当前的轮上下文是否允许步骤配对：没有任何轮次行（轮次外上下文，
+// 行都无轮可挂、不会产生父子倒挂）或当前轮次行仍打开。轮已收口后到达的结束
+// 事件一律不配对——它声称的轮已经结束，收进任何一轮都是让子 span 比父 span
+// 活得久（issue #300）。
+func (p *Projector) pairableTurn() bool {
+	if p.turn < 0 {
+		return true
+	}
+	return p.rows[p.turn].Status == StatusOpen
+}
+
 // matchOpenStep 找出可与该结束事件配对的步骤行。
 //
+// 配对作用域与行标识的唯一性范围一致，都是**轮**（issue #300）：只配与结束
+// 事件同轮、且该轮仍打开的步骤行。上一轮遗留的打开行由此不被跨轮改写——
+// 它保持 open，Finalize 时作为未完成行显形；跨轮到达的结束事件落成孤儿行。
 // 带环节号：配**最近**一条同号且仍打开的步骤行——同一环节号被重新开过一次时
 // （重试），后一条才是本次结束对应的。
 // 不带环节号：配**最早**一条仍打开的无环节号步骤行（先进先出）。
 // 都配不上时返回 -1（调用方落孤儿行）。
 func (p *Projector) matchOpenStep(ev eventbus.Event) int {
+	if !p.pairableTurn() {
+		return -1
+	}
+	turn := p.currentTurn()
 	if id, ok := stepIDOf(ev); ok {
 		for i := len(p.opens) - 1; i >= 0; i-- {
 			idx := p.opens[i]
-			if p.rows[idx].HasStep && p.rows[idx].StepID == id {
+			if p.rows[idx].Turn == turn && p.rows[idx].HasStep && p.rows[idx].StepID == id {
 				return idx
 			}
 		}
 		return -1
 	}
 	for _, idx := range p.opens {
-		if !p.rows[idx].HasStep {
+		if p.rows[idx].Turn == turn && !p.rows[idx].HasStep {
 			return idx
 		}
 	}
