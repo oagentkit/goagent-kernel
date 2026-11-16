@@ -42,7 +42,8 @@ func TestK8sStableJobName(t *testing.T) {
 			t.Fatalf("派生名越界：%q (id=%q)", name, id)
 		}
 		for _, r := range name {
-			if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-') {
+			inLabelVocab := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-'
+			if !inLabelVocab {
 				t.Fatalf("派生名含非法字符 %q：%q", r, name)
 			}
 		}
