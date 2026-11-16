@@ -72,3 +72,57 @@ func TestTerminal(t *testing.T) {
 		}
 	}
 }
+
+// TestStepTypeValid 词表外取值必须可判定：宿主需要区分「这个类别免审」与
+// 「内核不认识这个类别」。
+func TestStepTypeValid(t *testing.T) {
+	valid := []StepType{
+		TypeReadonly, TypePlan, TypeApproval, TypeExecute, TypeVerify,
+		// 写法变体归一后仍属词表内（同一类别，不是新类别）。
+		"PLAN", " plan ", "Execute", "READONLY", " verify ",
+	}
+	for _, typ := range valid {
+		if !typ.Valid() {
+			t.Errorf("StepType(%q).Valid() 应为 true", typ)
+		}
+	}
+	invalid := []StepType{"", "remediate", "PLANN", "exec", "审批", "approval "}
+	// "approval " 归一后合法，单列出来说明它不是非法值。
+	invalid = invalid[:len(invalid)-1]
+	for _, typ := range invalid {
+		if typ.Valid() {
+			t.Errorf("StepType(%q).Valid() 应为 false", typ)
+		}
+	}
+}
+
+// TestRequiresApprovalFailClosed 审批类判定面的沉默必须落在**最严**一侧：
+// 词表外类别（含大小写变体写成词表外）一律要求审批，不得判免审。
+func TestRequiresApprovalFailClosed(t *testing.T) {
+	cases := []struct {
+		typ  StepType
+		want bool
+	}{
+		{TypeReadonly, false},
+		{TypePlan, true},
+		{TypeApproval, false},
+		{TypeExecute, true},
+		{TypeVerify, false},
+		// 大小写/空白变体与规范形态结论一致。
+		{"PLAN", true},
+		{"Execute", true},
+		{" plan ", true},
+		{"READONLY", false},
+		{" verify ", false},
+		// 词表外：保守侧（要求审批）。
+		{"remediate", true},
+		{"", true},
+		{"PLANN", true},
+		{"审批", true},
+	}
+	for _, c := range cases {
+		if got := RequiresApproval(c.typ); got != c.want {
+			t.Errorf("RequiresApproval(%q)=%v, want %v", c.typ, got, c.want)
+		}
+	}
+}

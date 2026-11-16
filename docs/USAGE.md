@@ -253,6 +253,9 @@ func advance(from, to statemachine.StepStatus) error {
 - **`statemachine` 的终态包含 `interrupted`**：环节因用户取消/会话超时/进程中断而中止，
   **区别于失败**（执行了但失败）。下一轮对话历史如实携带，LLM 自行决定重做或跳过。
 - **`RequiresApproval(TypePlan)` 与 `TypeExecute` 为真**；`readonly` 裁剪审批。
+  大小写/空白变体（`"PLAN"` / `" plan "`）先归一，结论与规范形态一致；
+  **词表外类别一律要求审批**（fail-closed），宿主可用 `StepType.Valid()`
+  区分「本就免审」与「内核不认识」。
 - `statemachine` 零外部依赖，纯 stdlib。
 
 ---

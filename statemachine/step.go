@@ -8,7 +8,10 @@
 // 所有状态迁移走条件 UPDATE（repo 层），影响行数=0 即竞态失败——standalone/cluster 同一写法。
 package statemachine
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // StepStatus 环节状态。
 type StepStatus string
@@ -72,9 +75,48 @@ func MustTransition(from, to StepStatus) error {
 	return fmt.Errorf("非法状态转移: %s → %s", from, to)
 }
 
+// normalized 写法归一：类别取值来自计划文件/配置（字符串），大小写与空白
+// 是常见漂移，不应改变治理语义。
+func (t StepType) normalized() StepType {
+	return StepType(strings.ToLower(strings.TrimSpace(string(t))))
+}
+
+// Valid 报告该类别是否在内核词表内（归一化后判定）。
+//
+// 为什么必须有：RequiresApproval 对词表外取值走保守侧（要求审批），宿主
+// 还需要一个手段区分「这类别本就免审」与「内核不认识它」。此前 StepType
+// 没有 Valid()，宿主只能看到 false，连「词表里没有它」都查不到。
+// 口径向 backend.Isolation.Valid() 对齐：越界值不得被当成最弱档。
+func (t StepType) Valid() bool {
+	switch t.normalized() {
+	case TypeReadonly, TypePlan, TypeApproval, TypeExecute, TypeVerify:
+		return true
+	default:
+		return false
+	}
+}
+
 // RequiresApproval 该环节类别是否必须经过审批态。
+//
+// # 口径（issue #322）
+//
+//   - 规范类别按治理语义判定：plan / execute 必经审批，readonly / approval /
+//     verify 免审；
+//   - 大小写与空白先归一（"PLAN" / "Execute" / " plan " 与规范形态同结论）——
+//     旧实现用精确相等，模型或配置里的大小写变体会静默落进「免审」；
+//   - **词表外一律返回 true**：这是审批类判定面，沉默必须落在最严一侧。
+//     旧实现在这里返回 false，一条 "remediate" / "" / 拼写错误就能把治理闸
+//     静默拆掉，而宿主没有任何信号（同包 CanTransition 对词表外是 fail-closed，
+//     两处口径本来就该一致）。
 func RequiresApproval(t StepType) bool {
-	return t == TypePlan || t == TypeExecute
+	switch t.normalized() {
+	case TypePlan, TypeExecute:
+		return true
+	case TypeReadonly, TypeApproval, TypeVerify:
+		return false
+	default:
+		return true // 内核不认识这个类别：保守要求审批，不得静默放行
+	}
 }
 
 // IsTerminal 是否终态。
