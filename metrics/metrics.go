@@ -30,6 +30,9 @@
 //  4. **先登记再埋点**：每个指标的名称 / 类型 / 维度 / 基数上界在 Specs 里登记，
 //     自校验（metrics_test）保证登记表自洽。埋一个没登记的指标 = 看板口径外
 //     的暗数，Validate 会显式报错。
+//  5. **宿主自有指标不挤进内核登记表**：DefaultSpecs().Register/Merge 得到一份
+//     SpecSet，复用同一套 Validate 与基数门；Register/Merge 返回新表（Clone
+//     语义），包级表不被篡改（issue #239）。
 //
 // # 覆盖清单（issue #100 验收的五类量）
 //
@@ -43,8 +46,6 @@
 //
 // 各量的**接入点**（在哪个包哪个函数上埋）见 [ACCESS-POINTS.md]。
 package metrics
-
-import "slices"
 
 // ── 指标名 ──────────────────────────────────────────────────────────────────
 //
@@ -300,15 +301,15 @@ var specs = []Metric{
 	},
 }
 
-// Specs 返回登记表的副本（调用方改不动登记表——口径只有一处能改）。
-func Specs() []Metric { return slices.Clone(specs) }
+// Specs 返回登记表的**深拷贝**（调用方改不动登记表——口径只有一处能改；
+// Labels / Values 子切片同样复制）。
+func Specs() []Metric { return cloneMetrics(specs) }
 
-// SpecOf 按名取登记项。未登记的指标名 = 埋点面之外的暗数，Validate 会拦。
+// SpecOf 按名取登记项（深拷贝）。未登记的指标名 = 埋点面之外的暗数，Validate 会拦。
 func SpecOf(name string) (Metric, bool) {
-	for _, m := range specs {
-		if m.Name == name {
-			return m, true
-		}
+	m, ok := findSpec(specs, name)
+	if !ok {
+		return Metric{}, false
 	}
-	return Metric{}, false
+	return cloneMetric(m), true
 }

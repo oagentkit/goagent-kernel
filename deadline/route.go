@@ -41,11 +41,22 @@ func (o Outcome) String() string {
 	return "unknown"
 }
 
-// Status 该结论对应的终态词表值——**消费 contract 的词表**，不另造一份。
+// StatusOf 结论 → 终态词表值的映射钩子（issue #237）。
+//
+// 宿主的状态词表不归内核假定：contract 的词表只是**缺省**，使用自有状态机
+// （不 import contract、或状态名不同）的宿主可注入自己的映射，不必先把
+// Outcome 转成 contract 的状态常量再自映射。返回空串 = 该结论不落终态
+// （与缺省映射对 None / Shutdown 的处理同一口径）。
+type StatusOf func(Outcome) string
+
+// DefaultStatusOf 缺省映射：**消费 contract 的词表**，不另造一份。
 //
 // 不落终态的两档（None / Shutdown）返回空串：空串即「本轮没有终态要写」，
 // 宿主据此跳过状态迁移，而不是写一个空状态。
-func (o Outcome) Status() string {
+//
+// 独立导出是为了让宿主能「只覆盖个别档、其余仍走缺省」——在注入的
+// StatusOf 里回落本函数即可（见 StatusWith）。
+func DefaultStatusOf(o Outcome) string {
 	switch o {
 	case OutcomeTimedOut:
 		return contract.StatusTimedOut
@@ -54,6 +65,24 @@ func (o Outcome) Status() string {
 	default:
 		return ""
 	}
+}
+
+// Status 该结论对应的缺省终态词表值（contract 词表）。
+//
+// 行为与既有版本逐字一致（issue #237 的零值兼容要求）：不注入映射的调用方
+// 一行不改。自有词表的宿主用 StatusWith 注入 StatusOf。
+func (o Outcome) Status() string { return DefaultStatusOf(o) }
+
+// StatusWith 按注入的映射钩子取终态词；mapper 为 nil 时回落 DefaultStatusOf
+// （contract 词表）——「没注入」与「注入缺省实现」是同一个行为。
+//
+// 映射是逐次参数而不是全局开关：同一个进程里 contract 模型与自有模型的
+// 宿主可以各用各的，互不污染。
+func (o Outcome) StatusWith(mapper StatusOf) string {
+	if mapper == nil {
+		return DefaultStatusOf(o)
+	}
+	return mapper(o)
 }
 
 // Route 收尾段的三分路由（判据面；宿主的 finalize 路由表按同一形状实现）。

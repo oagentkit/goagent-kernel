@@ -45,7 +45,8 @@
 //     是两个 Cause，三分路由归收尾侧（Route 只认本包的哨兵）。
 //   - **vs watchdog**：监视不变量，不做时限强制。
 //   - **vs contract**：contract 给了 StatusTimedOut 词表（本包的 Outcome.Status
-//     消费它），没有时限机制——本包补机制不改词表。
+//     缺省消费它），没有时限机制——本包补机制不改词表；宿主自有状态词表经
+//     StatusOf/StatusWith 注入（issue #237），缺省路径逐字不变。
 package deadline
 
 import (
