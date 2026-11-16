@@ -17,7 +17,9 @@
 //   - bytes：模型据此估算取回成本，决定要不要取；
 //   - mime：决定取回后如何解释；缺失时模型只能盲解。
 //
-// 解析面要求各字段不含空格（path 已由 StorePath 净化保证），这是格式契约的一部分。
+// 解析面要求各字段不含空格；path 由**写入侧 StorePath 与解析面共用的
+// validRelPath** 双向净化（写入侧产出后自检、解析面收下前校验）——解析面是读入面，
+// 文本可来自模型复述或被注入的外部内容，不能依赖写入侧的保证。
 package offload
 
 import (
@@ -71,12 +73,12 @@ func Render(r Ref, hint string) string {
 	}
 	var b strings.Builder
 	b.WriteString(markerPrefix)
-	b.WriteString("kind=" + r.Kind)
-	b.WriteString(" id=" + r.ID)
+	b.WriteString("kind=" + escapeFieldValue(r.Kind))
+	b.WriteString(" id=" + escapeFieldValue(r.ID))
 	b.WriteString(" path=" + r.Path)
 	b.WriteString(" bytes=" + strconv.Itoa(r.Bytes))
 	if r.MimeType != "" {
-		b.WriteString(" mime=" + r.MimeType)
+		b.WriteString(" mime=" + escapeFieldValue(r.MimeType))
 	}
 	b.WriteString(markerSuffix)
 	b.WriteString(" ")
@@ -103,13 +105,16 @@ func Parse(text string) (Ref, bool) {
 	for _, kv := range strings.Split(rest[:j], " ") {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
-			continue
+			// 字段区里的裸词是破损文本：旧实现 continue 跳过它，于是一段
+			// 「kind=image large」会以 ok=true 返回 Kind=image——静默丢字段。
+			// 宁可漏判（当普通文本）也不把破损文本认成合法占位。
+			return Ref{}, false
 		}
 		switch k {
 		case "kind":
-			r.Kind = v
+			r.Kind = unescapeFieldValue(v)
 		case "id":
-			r.ID = v
+			r.ID = unescapeFieldValue(v)
 		case "path":
 			r.Path = v
 		case "bytes":
@@ -120,11 +125,101 @@ func Parse(text string) (Ref, bool) {
 			r.Bytes = b
 			n++
 		case "mime":
-			r.MimeType = v
+			r.MimeType = unescapeFieldValue(v)
 		}
 	}
 	if r.Kind == "" || r.ID == "" || r.Path == "" || n == 0 {
 		return Ref{}, false
 	}
+	// 解析面是读入面：path 必须过与写入侧同一份形状判据。原样收下会让宿主按
+	// Ref.Path 取回时踩到路径穿越（`..`、分隔符、空白都进来过）。
+	if !validRelPath(r.Path) {
+		return Ref{}, false
+	}
 	return r, true
+}
+
+// fieldSafe 字段值里可原样出现的字节集。空格与 '%' 不在内：空格是字段分隔符，
+// '%' 是转义引导符。'=' 也不在内，免得将来解析面改按 '=' 分词时出现第二套口径。
+func fieldSafe(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		return true
+	case c == '-', c == '.', c == '_', c == '~', c == ':', c == '/', c == '+', c == '@':
+		return true
+	default:
+		return false
+	}
+}
+
+const upperHex = "0123456789ABCDEF"
+
+// escapeFieldValue 把字段值编码成不含空格的形态（按 UTF-8 字节百分号转义）。
+//
+// 为什么渲染面必须转义而不是「解析面宽容地按多个空格切」：Kind/MimeType 是宿主
+// 自由文本，含空格的形态真实存在（"image large"、带参数的 mime）。解析面按空格
+// 切字段是格式契约，唯一能让两边一致的做法是渲染前把分隔符转义掉——否则往返
+// 静默丢字段而 ok=true，错位的一份还会逐轮复用。
+func escapeFieldValue(s string) string {
+	need := false
+	for i := 0; i < len(s); i++ {
+		if !fieldSafe(s[i]) {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if fieldSafe(c) {
+			b.WriteByte(c)
+			continue
+		}
+		b.WriteByte('%')
+		b.WriteByte(upperHex[c>>4])
+		b.WriteByte(upperHex[c&0x0f])
+	}
+	return b.String()
+}
+
+// unescapeFieldValue 还原 escapeFieldValue 的编码。
+//
+// 宽容策略：不是合法 %XX 的 '%' 原样保留（历史占位文本里的字面 '%' 因此仍可读）。
+// 新渲染的值里 '%' 恒被转义成 %25，故合法输入不会与旧文本混淆。
+func unescapeFieldValue(s string) string {
+	if !strings.Contains(s, "%") {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '%' && i+2 < len(s) {
+			hi, lo := hexVal(s[i+1]), hexVal(s[i+2])
+			if hi >= 0 && lo >= 0 {
+				b.WriteByte(byte(hi<<4 | lo))
+				i += 2
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// hexVal 十六进制字符值；非十六进制返回 -1。
+func hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	default:
+		return -1
+	}
 }
