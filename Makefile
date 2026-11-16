@@ -323,7 +323,8 @@ contract:
 	$(EXPORT) $(GOENV) go test ./sidetest/... ./taskboard/boardtest/... -count=1
 	@echo "契约套件自测 ✓（sidetest + boardtest）"
 
-# fault-injection：故障注入层（checkpoint 的注入矩阵 + ptc 的注入场景）。
+# fault-injection：故障注入层（checkpoint 的注入矩阵 + ptc 的注入场景 +
+# worker/faultmatrix 的跨部署模式故障矩阵，issue #193）。
 # -run '^TestFault' 只跑注入用例：这类用例构造的是「坏实现必红」的对照形态，
 # 与普通单测分开成层，是为了它红的时候信号不被大批绿灯淹没。
 # -v 让每个注入场景的失败形态直接可见（这类用例的红就是它们的文档）。
