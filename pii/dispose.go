@@ -13,6 +13,8 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -153,10 +155,30 @@ func applyValueWith(p Policy, s Surface, v any) (any, bool) {
 			return v, false
 		}
 	}
-	return applyValue(v, func(t string) (string, bool) { return applyWith(p, s, t) })
+	return applyValue(v,
+		func(t string) (string, bool) { return applyWith(p, s, t) },
+		func(k string) (string, bool) { return applyKeyWith(p, s, k) })
 }
 
-// applyValue 递归下探：字符串交给 fn 处置，标量原样返回。
+// applyKeyWith 键位处置：与值走**同一条判定面**（同一份快照、同一个 Detect、
+// 同一套策略形态——键位命中同样产出 span 级处置与 blocked 信号）。
+//
+// # 为什么键不继承「未登记面名整段替换」这一档
+//
+// 值的 fail-closed 把整个字符串换成占位，是因为值本身就是被保护的对象；键还兼着
+// **结构导航**的职责——整段替换会把普通键一并砸掉，宿主连「哪些字段出了问题」
+// 都定位不到。键退到 span 级判定：PII 键按当前策略处置（不给明文留位），普通键
+// 逐字保留，阻断信号照发。面被显式关闭时键与值一样透传（既定语义），走
+// applyWith 的既有分支自然保住。
+func applyKeyWith(p Policy, s Surface, k string) (string, bool) {
+	if _, err := SurfaceBit(s); err != nil {
+		return applySpansAs(k, p.strategy, p.digestKey)
+	}
+	return applyWith(p, s, k)
+}
+
+// applyValue 递归下探：字符串交给 fn 处置，映射键交给 fk 处置（键与值同一条
+// 判定面，见 applyKeyWith），标量原样返回。
 //
 // # 为什么 nil 容器必须原样返回
 //
@@ -164,7 +186,7 @@ func applyValueWith(p Policy, s Surface, v any) (any, bool) {
 // 按这个形状做判断。make(...) 出来的非 nil 空容器会把 null 悄悄改写成 [] / {}，
 // 且改写不可逆——事后没人能分辨该字段本来是 null 还是空。四个容器分支因此各自先判
 // nil 并**返回原值**（连动态类型一起保留，调用方的类型断言仍成立）。
-func applyValue(v any, fn func(string) (string, bool)) (any, bool) {
+func applyValue(v any, fn, fk func(string) (string, bool)) (any, bool) {
 	switch t := v.(type) {
 	case string:
 		return fn(t)
@@ -172,22 +194,30 @@ func applyValue(v any, fn func(string) (string, bool)) (any, bool) {
 		if t == nil {
 			return t, false
 		}
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		forms, blocked := disposeMapKeys(keys, fk)
 		out := make(map[string]any, len(t))
-		blocked := false
-		for k, vv := range t {
-			ov, ob := applyValue(vv, fn)
-			out[k], blocked = ov, blocked || ob
+		for i, k := range keys {
+			ov, ob := applyValue(t[k], fn, fk)
+			out[forms[i].final], blocked = ov, blocked || ob
 		}
 		return out, blocked
 	case map[string]string:
 		if t == nil {
 			return t, false
 		}
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		forms, blocked := disposeMapKeys(keys, fk)
 		out := make(map[string]string, len(t))
-		blocked := false
-		for k, vv := range t {
-			sv, sb := fn(vv)
-			out[k], blocked = sv, blocked || sb
+		for i, k := range keys {
+			sv, sb := fn(t[k])
+			out[forms[i].final], blocked = sv, blocked || sb
 		}
 		return out, blocked
 	case []any:
@@ -197,7 +227,7 @@ func applyValue(v any, fn func(string) (string, bool)) (any, bool) {
 		out := make([]any, len(t))
 		blocked := false
 		for i, vv := range t {
-			ov, ob := applyValue(vv, fn)
+			ov, ob := applyValue(vv, fn, fk)
 			out[i], blocked = ov, blocked || ob
 		}
 		return out, blocked
@@ -215,4 +245,55 @@ func applyValue(v any, fn func(string) (string, bool)) (any, bool) {
 	default:
 		return v, false
 	}
+}
+
+// keyForm 单个映射键的处置结果。
+type keyForm struct {
+	orig    string // 原键
+	final   string // 处置后的键
+	blocked bool   // 该键判定的阻断信号
+}
+
+// disposeMapKeys 把一批键送进与值**同一条判定面**（fk），并做与迭代顺序无关的
+// 冲突消解。
+//
+// # 为什么需要冲突消解
+//
+// 键位参与处置后，不同原键可能处置出同一形态：redact 下所有 PII 键都变占位
+// （必然同形）；mask 抹掉中段，同前缀同尾号也可能同形。直接写回会**静默合并
+// 丢条目**——一次数据完整性事故，比漏打更难被发现。消解规则：同形组内按原键
+// 字典序编 "#n"。编号只依赖键集合本身，Go map 的随机迭代序进不了结果——
+// 同一载荷重复处置，键形态恒同（可关联性），条目数恒不变。
+//
+// blocked 为全部键判定信号的 OR（bool OR 与顺序无关）。
+func disposeMapKeys(origs []string, fk func(string) (string, bool)) ([]keyForm, bool) {
+	forms := make([]keyForm, len(origs))
+	blocked := false
+	for i, k := range origs {
+		f, b := fk(k)
+		forms[i] = keyForm{orig: k, final: f, blocked: b}
+		blocked = blocked || b
+	}
+	byForm := make(map[string][]int, len(origs))
+	for i := range forms {
+		byForm[forms[i].final] = append(byForm[forms[i].final], i)
+	}
+	for _, idxs := range byForm {
+		if len(idxs) < 2 {
+			continue // 同形必同原键（map 键唯一），无冲突
+		}
+		group := make([]string, 0, len(idxs))
+		for _, i := range idxs {
+			group = append(group, forms[i].orig)
+		}
+		slices.Sort(group)
+		rank := make(map[string]int, len(group))
+		for j, o := range group {
+			rank[o] = j + 1
+		}
+		for _, i := range idxs {
+			forms[i].final += "#" + strconv.Itoa(rank[forms[i].orig])
+		}
+	}
+	return forms, blocked
 }
