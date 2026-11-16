@@ -12,6 +12,7 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
@@ -28,14 +29,19 @@ func (f fakeAuth) Authorize(_ *http.Request, _ Action, _ string) (tenant.Context
 	return f.ctx, nil
 }
 
-func setup(t *testing.T) (*Handler, *MemAuditor, *MemPlane) {
+// Inject 实现 Authorizer：kernel tenant 体系 = TenantInject（issue #238）。
+func (f fakeAuth) Inject(ctx context.Context, tc tenant.Context) context.Context {
+	return TenantInject(ctx, tc)
+}
+
+func setup(t *testing.T) (*Handler[taskboard.TaskID, taskboard.Task, taskboard.Problem, tenant.Context], *MemAuditor, *MemPlane) {
 	t.Helper()
 	m, aud := seededPlane(t)
 	h := NewHandler(m, fakeAuth{ctx: tenant.Context{Tenant: "acme", Scopes: []string{"control.intervene"}}})
 	return h, aud, m
 }
 
-func doJSON(h *Handler, method, path string, body any) *httptest.ResponseRecorder {
+func doJSON(h *Handler[taskboard.TaskID, taskboard.Task, taskboard.Problem, tenant.Context], method, path string, body any) *httptest.ResponseRecorder {
 	var rd *bytes.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -63,13 +69,13 @@ func errBody(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 func TestHandlerNoAuthorizerFailsClosed(t *testing.T) {
 	m, _ := seededPlane(t)
-	h := NewHandler(m, nil) // 鉴权面缺位：控制面不开无鉴权的口子
+	h := NewHandler[taskboard.TaskID, taskboard.Task, taskboard.Problem, tenant.Context](m, nil) // 鉴权面缺位：控制面不开无鉴权的口子
 
 	rec := doJSON(h, http.MethodGet, "/tasks/t1", nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("无鉴权面查询应 401，got %d", rec.Code)
 	}
-	rec = doJSON(h, http.MethodPost, "/tasks/t1/force-release", ForceRelease{Operator: "op", Basis: "b"})
+	rec = doJSON(h, http.MethodPost, "/tasks/t1/force-release", ForceRelease[taskboard.TaskID]{Operator: "op", Basis: "b"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("无鉴权面介入应 401，got %d", rec.Code)
 	}
@@ -83,7 +89,7 @@ func TestHandlerQueryEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /tasks/t1 = %d: %s", rec.Code, rec.Body.String())
 	}
-	var tv TaskView
+	var tv TaskView[taskboard.Task, taskboard.Problem]
 	if err := json.Unmarshal(rec.Body.Bytes(), &tv); err != nil {
 		t.Fatalf("响应不是 TaskView： %v", err)
 	}
@@ -96,7 +102,7 @@ func TestHandlerQueryEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /runs/r1 = %d", rec.Code)
 	}
-	var rv RunView
+	var rv RunView[taskboard.Task, taskboard.Problem]
 	if err := json.Unmarshal(rec.Body.Bytes(), &rv); err != nil {
 		t.Fatalf("响应不是 RunView： %v", err)
 	}
@@ -119,7 +125,7 @@ func TestHandlerInterventionEndpoints(t *testing.T) {
 
 	// 鉴权钩子拒绝 → 403，不触达 Plane
 	denied := NewHandler(m, fakeAuth{deny: true})
-	rec := doJSON(denied, http.MethodPost, "/tasks/t1/force-release", ForceRelease{Operator: "op", Basis: "b"})
+	rec := doJSON(denied, http.MethodPost, "/tasks/t1/force-release", ForceRelease[taskboard.TaskID]{Operator: "op", Basis: "b"})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("钩子拒绝应 403，got %d", rec.Code)
 	}
@@ -130,7 +136,7 @@ func TestHandlerInterventionEndpoints(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 	rec = doJSON(h, http.MethodPost, "/tasks/t1/force-release",
-		ForceRelease{TaskID: "body-声称的其他任务", Operator: "op-1", Basis: "持有者失联"})
+		ForceRelease[taskboard.TaskID]{TaskID: "body-声称的其他任务", Operator: "op-1", Basis: "持有者失联"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("强释应 200，got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -157,14 +163,14 @@ func TestHandlerErrorMapping(t *testing.T) {
 	}
 
 	// 介入请求缺归责字段 → 400
-	rec = doJSON(h, http.MethodPost, "/tasks/t1/force-release", ForceRelease{Operator: "op"})
+	rec = doJSON(h, http.MethodPost, "/tasks/t1/force-release", ForceRelease[taskboard.TaskID]{Operator: "op"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("缺 basis 应 400，got %d", rec.Code)
 	}
 
 	// 未注入租户上下文（钩子给了零值）→ Plane 拒收 → 401
 	anon := NewHandler(m, fakeAuth{})
-	rec = doJSON(anon, http.MethodPost, "/tasks/t1/force-release", ForceRelease{Operator: "op", Basis: "b"})
+	rec = doJSON(anon, http.MethodPost, "/tasks/t1/force-release", ForceRelease[taskboard.TaskID]{Operator: "op", Basis: "b"})
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("零值租户上下文应 401（Plane fail-closed），got %d", rec.Code)
 	}

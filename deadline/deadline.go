@@ -44,8 +44,9 @@
 //     **会话**生命周期的总时限。drain.ErrDeadline 与本包 ErrSessionDeadline
 //     是两个 Cause，三分路由归收尾侧（Route 只认本包的哨兵）。
 //   - **vs watchdog**：监视不变量，不做时限强制。
-//   - **vs contract**：contract 给了 StatusTimedOut 词表（本包的 Outcome.Status
-//     消费它），没有时限机制——本包补机制不改词表。
+//   - **vs contract**：contract 给了 StatusTimedOut 词表（Outcome.Status 缺省
+//     消费它；非 contract 模型的宿主经 StatusOf 钩子注入自有词表映射，
+//     issue #237），contract 本身没有时限机制——本包补机制不改词表。
 package deadline
 
 import (

@@ -34,19 +34,22 @@
 //
 // 控制平面是**接口面**，不是 UI；具体界面归宿主。本包给三样：
 //
-//  1. Plane 契约（宿主包着自己的 taskboard.Board / sideeffect Runner /
-//     运行状态存储实现它）；
+//  1. Plane 契约（宿主包着自己的任务/运行状态源实现它）——**泛型契约**
+//     （issue #238）：任务 ID / 任务快照 / 不量项三型由宿主选型
+//     （Plane[ID, Task, Problem]），用本仓 taskboard 的宿主不必动
+//     （MemPlane 实现的就是 taskboard 三型的实例化）；自有任务 ID /
+//     快照形态的宿主用自己的类型实现同一份契约，不必再经过
+//     taskboard.TaskID/Task/Problem 的强制转换面；
 //  2. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
-//     也是测试与演练的最小运行时面）；
-//  3. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权）。
+//     也是测试与演练的最小运行时面；它演示的是 taskboard 实例化）；
+//  3. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权；
+//     租户上下文类型同样由宿主选型，Authorizer[TC]）。
 package controlplane
 
 import (
 	"context"
 
 	"github.com/oekit/pkg/errors"
-
-	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // RunID 运行标识（一轮编排；宿主生成，与 contract.RunContext.ID 同源）。
@@ -54,7 +57,16 @@ type RunID string
 
 // Plane 控制面契约：查询 + 介入。存储中立——实现方是宿主。
 //
-// 实现方必须保证（三条硬契约，缺一即破）：
+// # 泛型参数（issue #238：宿主用自己的 ID / 快照 / 不变量类型接入）
+//
+//   - ID 任务标识（~string 约束：HTTP 面按路径字符串定位目标，宿主的
+//     自有 ID 类型须能从 string 转换；用本仓 taskboard 的宿主传
+//     taskboard.TaskID）；
+//   - Task 任务快照（视图载荷；用 taskboard 的宿主传 taskboard.Task，
+//     自有运行时形态的宿主传自己的快照 struct）；
+//   - Problem 一条不变量违反项（用 taskboard 的宿主传 taskboard.Problem）。
+//
+// 契约本身（三条硬契约）不随型参变化：
 //
 //   - 介入**走运行时的同一套判据**（令牌 / 代次 / 栅栏），不绕闸；
 //   - 介入**留痕**：Auditor 缺位时一律拒绝（ErrNoAuditor），不允许
@@ -68,39 +80,39 @@ type RunID string
 // 放行」就是控制面自己开的口子。确需匿名只读（健康检查式读取）的宿主在
 // 实现里**显式**放开（参考实现经 AllowAnonymousRead）并在装配期记录，
 // 不许缺省放行。
-type Plane interface {
+type Plane[ID ~string, Task any, Problem any] interface {
 	// ── 查询 ──
 
 	// TaskView 任务的运行状态视图（快照 + 该任务身上的不变量违反）。
 	// 上下文未注入租户信息 → tenant.ErrNoContext（fail-closed，除非实现
 	// 显式声明匿名只读）；不存在 → ErrNotFound。
-	TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error)
+	TaskView(ctx context.Context, id ID) (TaskView[Task, Problem], error)
 	// RunView 运行的状态视图（状态、代次、全部任务、全 run 不变量视图）。
 	// 租户 fail-closed 判据与 TaskView 相同；不存在 → ErrNotFound。
-	RunView(ctx context.Context, id RunID) (RunView, error)
+	RunView(ctx context.Context, id RunID) (RunView[Task, Problem], error)
 
 	// ── 介入 ──
 
 	// ForceRelease 强制释放任务认领（契约见 ForceRelease）。
-	ForceRelease(ctx context.Context, req ForceRelease) error
+	ForceRelease(ctx context.Context, req ForceRelease[ID]) error
 	// Adjudicate 裁决未知结果（契约见 Adjudication）。
 	Adjudicate(ctx context.Context, req Adjudication) error
 	// Terminate 终止运行（契约见 Termination）。
 	Terminate(ctx context.Context, req Termination) error
 }
 
-// TaskView 任务的运行状态视图。
-type TaskView struct {
+// TaskView 任务的运行状态视图（型参 = Plane 的 Task / Problem 选型）。
+type TaskView[Task any, Problem any] struct {
 	// Task 任务快照（状态 / owner / 租约 / 代次——与运行时读到的同一份）。
-	Task taskboard.Task
-	// Problems 该任务身上的不变量违反（run 级 taskboard.Check 的投影；
+	Task Task
+	// Problems 该任务身上的不变量违反（run 级不变量视图的投影；
 	// 空 = 干净）。控制面不止报状态，还报「这份状态是否自相矛盾」——
 	// 人工介入的结论（Basis）往往正是一条 Problem。
-	Problems []taskboard.Problem
+	Problems []Problem
 }
 
-// RunView 运行的状态视图。
-type RunView struct {
+// RunView 运行的状态视图（型参 = Plane 的 Task / Problem 选型）。
+type RunView[Task any, Problem any] struct {
 	// RunID 运行标识。
 	RunID RunID
 	// Status 运行状态。取值建议用 contract 的状态常量（内核不解释词表；
@@ -111,9 +123,9 @@ type RunView struct {
 	// 两次介入之间状态若已前进，旧视图上的动作必须重查。
 	Gen uint64
 	// Tasks 该 run 的全部任务快照（按任务 id 排序，确定性输出）。
-	Tasks []taskboard.Task
-	// Problems 全 run 的不变量视图（taskboard.Check）。
-	Problems []taskboard.Problem
+	Tasks []Task
+	// Problems 全 run 的不变量视图。
+	Problems []Problem
 }
 
 // ForceRelease 强制释放任务认领。
@@ -131,9 +143,9 @@ type RunView struct {
 //
 // 对不在认领态的任务强释 → 包装 taskboard.ErrLeaseLost 的错误（该任务
 // 的租约已经不在了；介入重试撞上它说明第一次介入已生效）。
-type ForceRelease struct {
-	// TaskID 要释放的任务。
-	TaskID taskboard.TaskID
+type ForceRelease[ID ~string] struct {
+	// TaskID 要释放的任务（型参 = Plane 的 ID 选型）。
+	TaskID ID
 	// Operator 谁在介入（留痕必填）。
 	Operator string
 	// Basis 依据什么结论（留痕必填：证据 / 判据 / 单号，宿主词表）。
@@ -211,7 +223,7 @@ var (
 )
 
 // Validate 介入请求的留痕完整性判定（Operator 与 Basis 必填——无归责不介入）。
-func (r ForceRelease) Validate() error {
+func (r ForceRelease[ID]) Validate() error {
 	return validateIntervention(string(r.TaskID), r.Operator, r.Basis)
 }
 

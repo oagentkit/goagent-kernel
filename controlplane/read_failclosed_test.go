@@ -13,6 +13,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
+	"github.com/yi-nology/goagent-kernel/taskboard"
 	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
@@ -57,7 +58,7 @@ func TestAllowAnonymousReadIsExplicitOptIn(t *testing.T) {
 		t.Fatalf("显式匿名只读的 RunView 应放行（实得 %v）", err)
 	}
 	// 写路径不随匿名读放开：介入仍要可归责的租户上下文。
-	if err := m.ForceRelease(ctx, ForceRelease{TaskID: "t1", Operator: "op", Basis: "b"}); !errors.Is(err, tenant.ErrNoContext) {
+	if err := m.ForceRelease(ctx, ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op", Basis: "b"}); !errors.Is(err, tenant.ErrNoContext) {
 		t.Fatalf("匿名只读不得放开写路径（实得 %v）", err)
 	}
 
@@ -85,7 +86,7 @@ func TestHandlerZeroValueContextAllEndpoints401(t *testing.T) {
 	}{
 		{"读·任务视图", http.MethodGet, "/tasks/t1", nil},
 		{"读·运行视图", http.MethodGet, "/runs/r1", nil},
-		{"写·强制释放", http.MethodPost, "/tasks/t1/force-release", ForceRelease{Operator: "op", Basis: "b"}},
+		{"写·强制释放", http.MethodPost, "/tasks/t1/force-release", ForceRelease[taskboard.TaskID]{Operator: "op", Basis: "b"}},
 		{"写·裁决", http.MethodPost, "/effects/effect-1/adjudicate", Adjudication{Verdict: VerdictApplied, Operator: "op", Basis: "b"}},
 		{"写·终止", http.MethodPost, "/runs/r1/terminate", Termination{ExpectedGen: 1, Operator: "op", Basis: "b"}},
 	}

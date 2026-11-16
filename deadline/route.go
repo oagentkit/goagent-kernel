@@ -41,11 +41,25 @@ func (o Outcome) String() string {
 	return "unknown"
 }
 
-// Status 该结论对应的终态词表值——**消费 contract 的词表**，不另造一份。
+// StatusOf Outcome → 终态词表的**可注入映射钩子**（issue #237，装配期注入）。
+//
+// nil（缺省）⇒ [DefaultStatus]：消费 contract 的词表（StatusTimedOut /
+// StatusCancelled）。非 contract 模型的宿主把自有词表的映射函数赋到这里
+// （一次、装配期；运行期换映射是宿主自己的并发决定），此后全部 Status()
+// 读数随宿主词表——宿主不必再把 contract 词表自映射一遍。
+//
+// 钩子收到的 o 已是**纯 enum**（Route 的返回值就是它）：只想要枚举、
+// 不想要任何词表的宿主直接 switch o，可以不碰本钩子。
+var StatusOf func(Outcome) string
+
+// DefaultStatus 内建映射：Outcome → contract 终态词表（[StatusOf] 缺省所指）。
+//
+// 单独导出是因为宿主钩子的典型形态是「只重映射个别档、其余回落内建」——
+// 没有这个名字，回落就得把 contract 词表抄一遍（第二份真相）。
 //
 // 不落终态的两档（None / Shutdown）返回空串：空串即「本轮没有终态要写」，
 // 宿主据此跳过状态迁移，而不是写一个空状态。
-func (o Outcome) Status() string {
+func DefaultStatus(o Outcome) string {
 	switch o {
 	case OutcomeTimedOut:
 		return contract.StatusTimedOut
@@ -54,6 +68,19 @@ func (o Outcome) Status() string {
 	default:
 		return ""
 	}
+}
+
+// Status 该结论对应的终态词表值：经 [StatusOf] 钩子映射（nil ⇒ 内建
+// [DefaultStatus]，即 contract 的词表——**消费它，不另造一份**）。
+//
+// 宿主词表（非 contract 模型）经装配期给 StatusOf 注入自有映射（issue #237）；
+// 注入前/后的零值语义不变：不落终态的两档（None / Shutdown）映射为空串
+// 「本轮没有终态要写」（钩子实现应保持这一约定）。
+func (o Outcome) Status() string {
+	if StatusOf != nil {
+		return StatusOf(o)
+	}
+	return DefaultStatus(o)
 }
 
 // Route 收尾段的三分路由（判据面；宿主的 finalize 路由表按同一形状实现）。
