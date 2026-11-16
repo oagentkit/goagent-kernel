@@ -35,9 +35,22 @@
 // # 内存边界
 //
 // 目录是本包唯一随工具数量线性增长的内存，故「单个工具最多占多少」必须是可核对的事实：
-// 描述在构造时截到 MaxDescriptionLen，故目录占用有上界，宿主不必逐条自查描述长度。
+//
+//   - 描述在构造时截到 MaxDescriptionLen（按 rune）；
+//   - 参数描述在构造时截到 MaxParamDescriptionLen（按 rune）；
+//   - schema 的内容字节（Type + 参数名/类型/描述 + Required）总量超 MaxSchemaBytes 时，
+//     按确定顺序丢弃参数项并同步过滤 Required，置 Schema.Truncated=true。
+//
+// 故单条目录记录的持有量上界 = len(Name) + MaxDescriptionLen + MaxSchemaBytes
+// （按内容字节计，不含 map/slice 容器开销）。**工具名不截断**——它是调用身份，
+// 截断会让「在目录内」与宿主实际能调的名字不一致；其长度归宿主自查（调用身份不应是
+// 无界自由文本，但本包不能替宿主改名）。
+//
 // 检索用的小写形态另存一份，但它只在描述**真含大写**时才单独占内存（strings.ToLower
-// 在无字符改变时原样返回入参），故上界是「每条至多两份截断描述」——仍是有界的。
+// 在无字符改变时原样返回入参），故上界还要加上「每条至多一份 MaxDescriptionLen 的小写描述」。
+//
+// 占位披露面的描述（原文 + 取回指令）也受 MaxDescriptionLen 约束：追加指令不得让
+// 模型实际收到的描述超过声明的单条上限（见 placeholder.go）。
 //
 // 反过来，**跨轮复用的缓存不归本包管**：本包没有隐式的请求作用域（参考实现靠 Python 的
 // contextvar 天然拿到 thread 级缓存，Go 没有等价物），凭空造一个就是替宿主决定生命周期。
@@ -76,6 +89,9 @@ type Schema struct {
 	Properties map[string]Param
 	// Required 必填参数名；退化占位恒为 nil。
 	Required []string
+	// Truncated 构造期是否裁剪过 schema（参数描述截断或参数项超 MaxSchemaBytes 被丢弃）。
+	// 宿主可据此决定是否回源取完整定义；未裁剪恒为 false。
+	Truncated bool
 }
 
 // Param 单个入参的最小定义。
@@ -128,6 +144,19 @@ const (
 	// 取 320 与参考实现对齐：同一份注册表在两侧应得到同一长度的目录，否则「谁更长」
 	// 变成实现细节，而目录内容是要逐轮发给模型的。
 	MaxDescriptionLen = 320
+
+	// MaxParamDescriptionLen 单个参数描述的字符上限（按 rune 计）。
+	//
+	// 参数描述与工具描述一样是宿主自由文本；不设界时「单个工具占多少」没有上界
+	// （50 个参数 × 5000 字 ≈ 750 KB 全量留在目录里，issue #290）。截断只削文档，
+	// 不改参数名/类型与 Required 语义。
+	MaxParamDescriptionLen = 320
+
+	// MaxSchemaBytes 单个工具 schema 的内容字节上限（Type + 参数名/类型/描述 + Required）。
+	//
+	// 超过时按确定顺序丢弃参数项（先丢最大的、同大小按名字升序）并同步过滤 Required，
+	// 置 Schema.Truncated=true。上界按**内容字节**计，不含 map/slice 容器开销。
+	MaxSchemaBytes = 64 << 10
 )
 
 // truncateDescription 把描述截到 MaxDescriptionLen 个字符；未超长原样返回（不复制）。
@@ -138,6 +167,81 @@ func truncateDescription(s string) string {
 	// （未超长时不分配），再转 []rune 切——旧写法每次超长都要先把整串摊成
 	// []rune（描述动辄数 KB），只为取前 320 个字符。
 	out, _ := stringx.TruncRunes(s, MaxDescriptionLen)
+	return out
+}
+
+// schemaBytes schema 的内容字节数（不含容器开销）：用于核对 MaxSchemaBytes 上界。
+func schemaBytes(s Schema) int {
+	n := len(s.Type)
+	for name, p := range s.Properties {
+		n += len(name) + len(p.Type) + len(p.Description)
+	}
+	for _, r := range s.Required {
+		n += len(r)
+	}
+	return n
+}
+
+// propertyBytes 单个参数项的内容字节数（含键名）。
+func propertyBytes(name string, p Param) int {
+	return len(name) + len(p.Type) + len(p.Description)
+}
+
+// sanitizeSchema 深拷贝 schema 并落到声明的占用上界内。
+//
+// 两步，顺序固定：
+//  1. 单参描述截到 MaxParamDescriptionLen（只削文档，不改参数名/类型）；
+//  2. 内容字节仍超 MaxSchemaBytes 时，按「最大项优先、同大小名字升序」确定性丢弃参数项，
+//     并同步过滤 Required；置 Truncated=true。
+//
+// 为什么丢弃而不是继续截参数名/类型：名字是调用契约的键，截断会产出无法调用的 schema；
+// 丢弃是显式缩小契约，且有 Truncated 标记让宿主知道「这里不是完整定义」。
+func sanitizeSchema(s Schema) Schema {
+	out := cloneSchema(s)
+	truncated := out.Truncated
+	if n := len(out.Type); n > MaxParamDescriptionLen {
+		out.Type, _ = stringx.TruncRunes(out.Type, MaxParamDescriptionLen)
+		truncated = true
+	}
+	for name, p := range out.Properties {
+		if d, clipped := stringx.TruncRunes(p.Description, MaxParamDescriptionLen); clipped {
+			p.Description = d
+			out.Properties[name] = p
+			truncated = true
+		}
+	}
+	trimmed := false
+	if schemaBytes(out) > MaxSchemaBytes {
+		trimmed = true
+		names := slices.Sorted(maps.Keys(out.Properties))
+		for schemaBytes(out) > MaxSchemaBytes && len(names) > 0 {
+			drop := 0
+			for i := 1; i < len(names); i++ {
+				ci := propertyBytes(names[i], out.Properties[names[i]])
+				cd := propertyBytes(names[drop], out.Properties[names[drop]])
+				if ci > cd || (ci == cd && names[i] < names[drop]) {
+					drop = i
+				}
+			}
+			delete(out.Properties, names[drop])
+			names = append(names[:drop], names[drop+1:]...)
+		}
+	}
+	if trimmed {
+		kept := out.Required[:0]
+		for _, r := range out.Required {
+			if _, ok := out.Properties[r]; ok {
+				kept = append(kept, r)
+			}
+		}
+		if len(kept) == 0 {
+			out.Required = nil
+		} else {
+			out.Required = slices.Clone(kept)
+		}
+		truncated = true
+	}
+	out.Truncated = truncated
 	return out
 }
 
@@ -223,9 +327,9 @@ func NewCatalogWithLimit(tools []Tool, limit int) *Catalog {
 		// 在**存进目录前**截断，而不是渲染时再截：检索打分读的就是这份存储值，
 		// 惰性截断会让打分面对全文、模型面对摘要，两边看到的不是同一件事。
 		t.Description = truncateDescription(t.Description)
-		// 深拷贝 schema：宿主在构造后改自己的原 map/slice 不得改穿目录。
-		// 值拷贝只复制了 map/slice 头，引用仍与宿主同一份（issue #316）。
-		t.Schema = cloneSchema(t.Schema)
+		// 深拷贝 + 设界：宿主在构造后改自己的原 map/slice 不得改穿目录；参数描述与
+		// schema 总量同在这一步收口（issue #290/#316）。
+		t.Schema = sanitizeSchema(t.Schema)
 		// 小写形态按**截断后**的描述算：检索打分读的是存储值，两者必须是同一串，
 		// 否则模型看到摘要、打分看到全文（这条纪律原本就写在截断处）。
 		c.tools[t.Name] = entry{
