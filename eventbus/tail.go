@@ -9,8 +9,19 @@
 // 各写一份**（bianque background.go 的 event-tail 段），各判一套必然漂移。
 //
 // 本包把读侧四步收进包内：初始化游标 → 轮询 → 回灌 → 推进。判据与宿主无关：
-// append-only id 游标、初始化取 MaxID、读失败游标不动（幂等补读）、回灌经
-// Hub.Publish。存储形状只有两个方法（TailStore），包零 DB 依赖。
+// append-only id 游标、初始化取 MaxID（或经 CursorStore 续随上次停点）、读失败
+// 游标不动（幂等补读）、回灌经 Hub.Publish。存储形状只有两个方法（TailStore），
+// 包零 DB 依赖；游标持久化（CursorStore）与游标空洞告警（WithTailOnGap）是
+// 可选面（issue #183）。
+//
+// # 「读失败游标不动 ⇒ 不丢」的完整前提（issue #183，必须写死）
+//
+// 「读失败游标不动 + append-only ⇒ 幂等补读，不丢不重」只在**「ID 序 ==
+// 提交可见序」**时成立。数据库自增/序列形态下有个经典缺口：A 事务拿到
+// id=10 尚未提交，B 事务拿到 id=11 先提交；读侧在 READ COMMITTED 下看到
+// 11 并把游标推到 11——A 提交后 id=10 **永远读不到**，且是静默丢帧。这条
+// 缺口不在调用方能修：它必须由 TailStore 实现按契约排除（见 TailStore 的
+// 可见序硬要求），Tailer 侧的 WithTailOnGap 只是最后的哨兵，不是兜底。
 //
 // # scope:replica——每副本一条，**不套 leader 门**（AGENTS.md 门控教训的实弹对象）
 //
@@ -65,10 +76,19 @@ const (
 // TailStore 尾随读侧存储接缝（宿主实现；issue #166，形态与 durable.go 的
 // Store 同风格：判定留包内、状态归存储、包零 DB 依赖）。
 //
-// 契约三条：
+// 契约四条：
 //   - **游标空间 append-only 且单调**：ListAfter 只回 id > cursor 的行，
 //     且**必须按 ID 升序**——游标推进建立在这个序上（乱序返回会让游标
 //     回退或跳号，两者都不在本包的观测面内）；
+//   - **「ID 序 == 提交可见序」（无空洞推进，硬要求；issue #183）**：
+//     ListAfter 返回的段从 cursor 之后第一条起必须**连续可见**——只要存在
+//     「已铸造但本拍不可见」的 ID（典型：DB 序列下小 ID 的事务尚未提交），
+//     就**不得返回比它大的行**。违反这条 ⇒ 迟到提交的小 ID 被永久跳过
+//     （游标已越过它），且是静默丢帧——这正是「读失败游标不动 ⇒ 不丢」
+//     的隐含前提，此前契约没写。实现口径两选一：① 读侧只推进到**无空洞的
+//     最大 ID**（观测到空洞即截断返回段，下一拍重读）；② Outbox 形态——
+//     事件行与业务状态同事务提交，铸造序天然等于可见序。Tailer 的
+//     WithTailOnGap 是对违约的**哨兵**（响即实现已违约），不是兜底机制；
 //   - **行→Event 的转换归实现**：ID 取存储铸造的权威游标，Payload 已是
 //     解析好的载荷（与 DurablePublisher 的 Insert 入参转换对称——那边是
 //     发布前构造，这边是读出后还原）。本包**不改写**回读到的字段（权威行
@@ -80,7 +100,30 @@ type TailStore interface {
 	// MaxID 当前权威游标空间的最大 ID（空表 = 0）。只在初始化时调用一次。
 	MaxID(ctx context.Context) (uint64, error)
 	// ListAfter 列出 id > cursor 的事件（limit 为单拍上限，升序）。
+	//
+	// 返回段必须满足上面的「无空洞推进」硬要求：从 cursor+1 起连续可见，
+	// 有「已铸造未可见」的 ID 卡在中间时，只返回它之前的段（可以是空段）。
 	ListAfter(ctx context.Context, cursor uint64, limit int) ([]Event, error)
+}
+
+// CursorStore 游标持久化接缝（宿主实现，可选；issue #183）。
+//
+// Tailer 的游标是 Run 的局部状态，停机即失。缺省（不装配本接缝）重启后走
+// MaxID 初始化——**停机窗口内他副本发布的事件不会补灌**（从当前尾部起随，
+// 是「补灌不是回放」的既有语义）。宿主要「重启后从上次停点续随」，就把
+// 游标存进自己的存储并经 WithTailCursorStore 装配本接缝。
+type CursorStore interface {
+	// LoadCursor 读上次保存的游标。found=false 表示从未存过（首次部署）
+	// ——此时 Tailer 回退既有初始化（显式起点 / MaxID）。
+	//
+	// error ⇒ Tailer 停摆重试（每拍再试），**绝不静默回退 MaxID**：回退
+	// 就会把停机窗口内的事件整个跳过——宁可停摆不可跳读。
+	LoadCursor(ctx context.Context) (cursor uint64, found bool, err error)
+	// SaveCursor 游标推进后保存（每拍至多一次，只在游标前进时调用）。
+	//
+	// 失败只 warn 不停摆：游标落后只会导致重启后**重读**（订阅侧游标幂等
+	// 吸收，不丢不重——重读方向安全），停摆反而把实时补灌桥拆了。
+	SaveCursor(ctx context.Context, cursor uint64) error
 }
 
 // Tailer 跨副本事件尾随器：每副本一条，把权威存储里 id > 游标 的新事件
@@ -99,6 +142,11 @@ type Tailer struct {
 	// 时跳过 MaxID 初始化，直接从该值起随。缺省 useMaxID=true。
 	startCursor uint64
 	useMaxID    bool
+	// cursorStore 游标持久化接缝（WithTailCursorStore 设定，可选）。
+	cursorStore CursorStore
+	// onGap 游标空洞哨兵（WithTailOnGap 设定，可选）：收到「跳号」事件段时
+	// 调用（from..to = 被跳过的 ID 闭区间）。缺省走包内 warn 日志。
+	onGap func(from, to uint64)
 }
 
 // TailerOption 尾随器可选项。
@@ -127,10 +175,44 @@ func WithTailBatchLimit(n int) TailerOption {
 // 缺省（不给本选项）走 MaxID 初始化——从当前尾部起随、不回放存量，那是
 // 补灌面的常态。显式给游标用于宿主已知起点的形态（如从上次停机点续随）；
 // 给 0 即从头回放，回放量由宿主自己负责。
+//
+// 同时装配了 CursorStore 时，**已持久化的游标优先**：LoadCursor 命中
+// （found=true）就从持久化值起随；未命中（found=false，首次部署）才回退
+// 到本选项的显式起点，再回退到 MaxID。
 func WithTailStartCursor(id uint64) TailerOption {
 	return func(t *Tailer) {
 		t.startCursor = id
 		t.useMaxID = false
+	}
+}
+
+// WithTailCursorStore 装配游标持久化接缝（issue #183）。
+//
+// 装配后初始化顺序：LoadCursor 命中 ⇒ 从持久化游标起随（重启续随，停机
+// 窗口内的事件仍被补灌）；未命中 ⇒ 回退显式起点 / MaxID（首次部署）；
+// Load 失败 ⇒ 停摆重试，**绝不静默回退 MaxID**（那会跳过停机窗口）。
+// 游标每前进一拍即 SaveCursor；保存失败只 warn 不停摆（游标落后只会
+// 重读，订阅侧幂等吸收）。
+func WithTailCursorStore(s CursorStore) TailerOption {
+	return func(t *Tailer) {
+		if s != nil {
+			t.cursorStore = s
+		}
+	}
+}
+
+// WithTailOnGap 注入游标空洞哨兵（issue #183）：Tailer 观测到跳号——
+// 返回段的首条 ID 大于游标+1，或段内相邻两条不连续——即回调
+// fn(from, to)（from..to = 被跳过的 ID 闭区间）。缺省走包内 warn 日志。
+//
+// 哨兵响 = TailStore 违反「无空洞推进」契约（乱序提交漏防或行被删），
+// 被跳的 ID 大概率**永久丢失**（游标已越过）——宿主该把它接告警/指标，
+// 不是当正常路径。回调同步调用、在尾随拍内：不得阻塞、不得回调 Publish。
+func WithTailOnGap(fn func(from, to uint64)) TailerOption {
+	return func(t *Tailer) {
+		if fn != nil {
+			t.onGap = fn
+		}
 	}
 }
 
@@ -160,27 +242,56 @@ func NewTailer(store TailStore, hub *Hub, opts ...TailerOption) *Tailer {
 
 // Run 尾随循环：每 interval 一拍，直到 ctx 取消（同步返回）。
 //
-// 四步语义（与宿主原实现逐条同款）：
+// 五步语义：
 //
-//  1. **初始化取 MaxID**：首拍只读游标、不读存量——本面是**补灌**不是
-//     回放（存量窗口回放归连接侧 after-cursor 应答），且初始化失败下一拍
-//     重试，不推进任何状态；
+//  1. **初始化游标**：装配了 CursorStore ⇒ 先 LoadCursor——命中即从上次
+//     停点起随（#183 重启续随）；未命中回退显式起点 / MaxID；Load 失败
+//     停摆重试，绝不静默回退 MaxID（那会跳过停机窗口）。未装配 CursorStore
+//     ⇒ 取 MaxID（首拍只读游标、不读存量——本面是**补灌**不是回放，存量
+//     窗口回放归连接侧 after-cursor 应答）；初始化失败下一拍重试，不推进
+//     任何状态。初始化完成的游标立即落盘（#183）——不落盘，重启会重走
+//     MaxID，而停机窗口里游标空间已前进，重走正好把窗口内的事件跳过；
 //  2. **读 id > 游标 的新事件回灌**，逐条 Publish 后推进游标；
-//  3. **读失败游标不动**：瞬时存储抖动下，下一拍用同一个游标重读
-//     （append-only ⇒ 幂等补读，不丢不重——重的部分由订阅侧游标吸收）；
-//  4. **ctx 取消即退出**：select ctx.Done 是唯一退出式（`for range` 永不
+//  3. **空洞即哨兵响**（#183）：段内出现跳号（首条 > 游标+1 或相邻不连续）
+//     时告警——TailStore 违反「无空洞推进」契约，被跳的 ID 大概率永久丢失。
+//     事件段照常投递（停摆只会让缺口更大），但失败必须响，不静默；
+//  4. **读失败游标不动**：瞬时存储抖动下，下一拍用同一个游标重读
+//     （append-only + 无空洞推进契约 ⇒ 幂等补读，不丢不重——重的部分由
+//     订阅侧游标吸收）；
+//  5. **ctx 取消即退出**：select ctx.Done 是唯一退出式（`for range` 永不
 //     返回的教训见 Hub 包注释），ticker 随 defer 停止，无泄漏。
+//
+// 游标前进后经 CursorStore.SaveCursor 落盘（每拍至多一次）；保存失败只
+// warn——游标落后只会导致重启后重读（订阅侧幂等吸收），停摆反而拆了桥。
 func (t *Tailer) Run(ctx context.Context) {
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 	cursor := t.startCursor
 	inited := !t.useMaxID
+	if t.cursorStore != nil {
+		inited = false // 持久化游标面接管初始化（命中/未命中/失败三态在拍内判）
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if !inited {
+				if t.cursorStore != nil {
+					cur, found, err := t.cursorStore.LoadCursor(ctx)
+					switch {
+					case err != nil:
+						// 持久化游标读失败：停摆重试。绝不静默回退 MaxID——
+						// 回退就把停机窗口内的事件整个跳过了（宁可停摆不可跳读）。
+						log.CtxWarn(ctx, "event-tail 持久化游标读取失败（下拍重试，不回退 MaxID）", logx.ErrKey, err)
+						continue
+					case found:
+						cursor, inited = cur, true
+						continue
+					default:
+						// 未存过游标（首次部署）：回退显式起点 / MaxID 初始化。
+					}
+				}
 				max, err := t.store.MaxID(ctx)
 				if err != nil {
 					// 初始化失败：游标未知，绝不能拿 0 去 ListAfter（那会
@@ -189,6 +300,13 @@ func (t *Tailer) Run(ctx context.Context) {
 					continue
 				}
 				cursor, inited = max, true
+				// 初始化的游标立即落盘（#183）：不落盘，重启会重走 MaxID——
+				// 而停机窗口里游标空间已前进，回退初始化正好把窗口内的事件跳过。
+				if t.cursorStore != nil {
+					if serr := t.cursorStore.SaveCursor(ctx, cursor); serr != nil {
+						log.CtxWarn(ctx, "event-tail 初始游标保存失败（重启后将重走初始化）", logx.ErrKey, serr)
+					}
+				}
 				continue // 初始化拍不读存量
 			}
 			evs, err := t.store.ListAfter(ctx, cursor, t.limit)
@@ -198,9 +316,33 @@ func (t *Tailer) Run(ctx context.Context) {
 				continue
 			}
 			for i := range evs {
+				if next := cursor + 1; next != 0 && evs[i].ID > next { // next==0：游标已到 uint64 上界，无从再跳号
+					// 跳号 = TailStore 违反「无空洞推进」契约（#183）：
+					// 迟到提交/被删的行已被游标越过，大概率永久丢失——
+					// 哨兵必须响，不静默。事件段照常投递（停摆只会让缺口更大）。
+					t.reportGap(ctx, cursor+1, evs[i].ID-1)
+				}
 				t.hub.Publish(evs[i])
 				cursor = evs[i].ID
 			}
+			if len(evs) > 0 && t.cursorStore != nil {
+				if serr := t.cursorStore.SaveCursor(ctx, cursor); serr != nil {
+					// 保存失败不停摆：游标落后 ⇒ 重启后重读（订阅侧幂等吸收），
+					// 方向安全；停摆反而把实时补灌桥拆了。
+					log.CtxWarn(ctx, "event-tail 游标保存失败（重启后可能重读，不丢不跳）", logx.ErrKey, serr)
+				}
+			}
 		}
 	}
+}
+
+// reportGap 空洞哨兵：缺省走包内 warn，装配了 WithTailOnGap 则交给宿主
+// （接告警/指标），两者不叠发——注入即接管留痕通道。
+func (t *Tailer) reportGap(ctx context.Context, from, to uint64) {
+	if t.onGap != nil {
+		t.onGap(from, to)
+		return
+	}
+	log.CtxWarn(ctx, "event-tail 游标空洞（TailStore 违反无空洞推进契约，被跳 ID 可能永久丢失）",
+		"gap_from", from, "gap_to", to)
 }

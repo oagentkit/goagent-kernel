@@ -124,21 +124,25 @@ type Store interface {
 type SeqGate struct {
 	mu   sync.Mutex
 	last map[string]uint64
-	// floor 已确认**落库**的基线，是 Release 的唯一回滚目标。
+	// inflight 每个 RunID **已 Accept 但尚未 Release** 的序号（严格升序，
+	// 末元素恒等于 last）。
 	//
-	// 为什么不能像旧实现那样记一格「上一个 last」（prev）：Accept → Save 失败
-	// → Release 是公开用法，而 Store 允许多个环节**并发**落库。两个在途提交
-	// 同时失败时，单格 prev 会被第二次 Accept 覆盖——回滚就把 last 钉在另一个
-	// 同样失败了的在途序号上，该序号重试被判 ErrStaleSeq，永远写不进去
-	// （该 run 从此卡死）。基线必须是「最后一次确认写进存储的序号」
-	// （Save 成功时由 MarkPersisted 抬升），它不随在途 Accept 抬升，
-	// 回滚永远有可靠的落点。
-	floor map[string]uint64
+	// 为什么不是单格 prev：Accept → Store.Save → 失败 Release 是包文档公开的
+	// 正规用法，而 Store 要求并发安全（多个环节可同时落库）。两次在途提交
+	// 同时失败时，单格 prev 在第一次回滚后就丢掉更早的地板，第二次回滚要么
+	// 把 last 停在「前一个在途值」上（它同样没落库成功），要么把地板跌到 0。
+	// 前者的后果是该序号的重试被 ErrStaleSeq **永久拒**——恢复点不是回退，
+	// 是整个 run 卡死（issue #216）；后者会让陈旧慢写重新获得通行权。
+	//
+	// 记录的是「已接受、调用方尚未宣布失败」的序号，故地板 = 其中最大值 =
+	// 末元素。Release 只移除对应格（回滚顺序任意），last 回落到剩余末元素；
+	// 全部移除即删掉该 RunID 的记录（本来就没有地板）。
+	inflight map[string][]uint64
 }
 
 // NewSeqGate 构造单调闸。
 func NewSeqGate() *SeqGate {
-	return &SeqGate{last: make(map[string]uint64), floor: make(map[string]uint64)}
+	return &SeqGate{last: make(map[string]uint64), inflight: make(map[string][]uint64)}
 }
 
 // Seed 用**已持久化的**快照初始化序号基线。宿主重启后必须调用一次，
@@ -154,34 +158,9 @@ func (g *SeqGate) Seed(runID string, seq uint64) {
 	defer g.mu.Unlock()
 	if cur, ok := g.last[runID]; !ok || cur < seq {
 		g.last[runID] = seq
-		// Seed 灌的是持久化事实：回滚基线一并抬到它。宿主重启场景下内存里的
-		// 历史本就不可信，日后的 Release 只该退回这份持久化基线。
-		g.floor[runID] = seq
-	}
-}
-
-// MarkPersisted 确认某序号**已成功落库**，抬高回滚基线。
-//
-// 调用顺序 Accept → Save：Save 返回 nil 后**必须**调本方法，否则后续某次
-// Release 会把闸退回更旧的基线、甚至退回「无记录」——陈旧慢写重新获得
-// 通行权，恢复点静默回退（正是本闸存在的理由被自己打开）。
-//
-// 幂等：重复确认同一序号结果相同；seq 不大于当前基线时是空操作。
-// （checkpoint.Committer 已把 Accept → SaveIfNewer → 成功 MarkPersisted /
-// 失败 Release 固化成一个调用，手写这条顺序的宿主才需要直接用本方法。）
-func (g *SeqGate) MarkPersisted(runID string, seq uint64) {
-	if runID == "" || seq == 0 {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if seq > g.floor[runID] {
-		g.floor[runID] = seq
-	}
-	// 持久化事实不可回滚：确认值若高于 last（宿主绕过 Accept 的非常规形态），
-	// last 一并抬到它——闸的地板不会高过天花板。
-	if seq > g.last[runID] {
-		g.last[runID] = seq
+		// 基线被持久化事实抬高后，旧的在途格不再是合法回滚目标（宿主重启场景下
+		// 内存里的历史本就不可信），整批作废，免得日后 Release 退回到一个陈旧地板。
+		delete(g.inflight, runID)
 	}
 }
 
@@ -193,16 +172,13 @@ func (g *SeqGate) MarkPersisted(runID string, seq uint64) {
 // # 调用顺序（重要）
 //
 // Accept 只保证「不倒退」，它**不保证「已落库」**——落库成败由 Store 决定。
-// 因此正确顺序是 Accept → Store.Save：**Save 失败时调 Release 回滚**，
-// **Save 成功时调 MarkPersisted 抬回滚基线**：
+// 因此正确顺序是 Accept → Store.Save，**且 Save 失败时必须调 Release 回滚**：
 //
 //	gate.Accept(s)   // 挡住并发的陈旧写
 //	if err := store.Save(ctx, s); err != nil {
 //	    gate.Release(s.RunID, s.Seq) // 不回滚的话闸会跑到实际存储前面，
 //	    return err                    // 同序号重试将被判为陈旧而永远写不进去
 //	}
-//	gate.MarkPersisted(s.RunID, s.Seq) // 成功也要记下：不抬基线，日后某次
-//	                                   // Release 会退回比已落库事实更旧的值
 //
 // 不回滚的真实后果不是「多花一个序号」，而是**这个 run 从此卡死**：闸认为
 // seq=N 已落库，实际没有；重试 N 被拒、跳过 N 又留下一条永远补不回来的空洞。
@@ -215,9 +191,9 @@ func (g *SeqGate) Accept(s Snapshot) error {
 	if prev, ok := g.last[s.RunID]; ok && s.Seq <= prev {
 		return ErrStaleSeq
 	}
-	// 只抬 last（在途），不碰 floor：落库与否由 MarkPersisted / Release 说话。
-	// 多个环节并发 Accept 时 last 记最大在途值，回滚目标始终是已落库基线，
-	// 不依赖「Release 只回滚最近一次 Accept」这一在并发落库下不成立的假设。
+	// 记下本次在途序号供 Release 精确回滚。严格升序由上面的判定保证：
+	// seq > last == 末尾元素，故 append 后仍升序。
+	g.inflight[s.RunID] = append(g.inflight[s.RunID], s.Seq)
 	g.last[s.RunID] = s.Seq
 	return nil
 }
@@ -231,32 +207,58 @@ func (g *SeqGate) Last(runID string) uint64 {
 
 // Release 回滚一次已接受但**未成功落库**的序号，使同序号可以重试。
 //
-// 仅当该 RunID 当前记录的最大序号**恰好等于** seq 时才回滚，返回 true。
-// 若期间已有更新的写入落地（last > seq），返回 false 且不动任何状态——
-// 那时把闸退回去反而会让陈旧写重新获得通行权。
+// 返回 true 表示 seq 是当前最大值且地板已回落到剩下的最大在途值（全无则删记录）；
+// 返回 false 表示该序号**不是当前最大值**（已被更高序号取代），或从未 Accept /
+// 已被重复回滚。
 //
-// # 回滚到已落库基线（floor），不是「前一个接受值」
+// # 任意回滚顺序都成立（issue #216）
 //
-// 回滚目标是 MarkPersisted 确认过的基线，而不是「上一个 Accept 的值」：
-// Store 允许多个环节并发落库，Accept → Save 失败 → Release 可能交错发生，
-// 按「上一个接受值」回滚会把 last 钉在另一个**同样失败**的在途序号上——
-// 该序号重试被判 ErrStaleSeq，永远写不进去（该 run 从此卡死）。
-// 基线是唯一可靠的落点：它是最后一次确认写进存储的序号。
-// 基线为 0（本就没有已落库记录）时退化成删除——那才是「本来就没有地板」。
+// 在途序号按 RunID 记**多格**（升序切片），Release 只移除 seq 对应那一格；
+// 它是否当前最大值只决定返回值与 last 是否回落。高于 seq 的在途格不受影响，
+// 低于 seq 的在途格也不会被误当新地板——所以两次并发失败无论先回滚谁，
+// 最终地板都回到「最后一次成功落库的序号」，两次重试都能通过。
+//
+// 被取代的 seq 回滚时虽然返回 false（当前最大值未变），它的在途格**仍会被移除**：
+// 调用方说它没落库成功，日后更高序号也失败回滚时就不能把地板停在它上面
+// ——那正是单格 prev 把 run 卡死的形态。重复回滚同一序号是正常形态，no-op。
+//
+// # 回滚到已落库地板，不是清零
+//
+// 这里退回到剩余的**最大在途值**（即最后一次 Accept 而调用方尚未宣布失败的
+// 序号），而不是把记录删掉：删记录会把上一个已成功落库的序号一起抹掉，闸的
+// 地板从 5 跌到「无」，于是 seq=3 的陈旧慢写畅通无阻——恢复点静默回退，
+// 正是本闸要防的那件事。只有在没有剩余在途值时（本来就没有地板）才删记录。
 func (g *SeqGate) Release(runID string, seq uint64) bool {
 	if seq == 0 {
 		return false
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	cur, ok := g.last[runID]
-	if !ok || cur != seq {
+	pending, ok := g.inflight[runID]
+	if !ok {
 		return false
 	}
-	if back := g.floor[runID]; back != 0 {
-		g.last[runID] = back
-	} else {
-		delete(g.last, runID) // 本就无已落库基线，退回「无记录」
+	idx := -1
+	for i, v := range pending {
+		if v == seq {
+			idx = i
+			break
+		}
 	}
-	return true
+	if idx < 0 {
+		return false // 未在途（未知 / 重复回滚）
+	}
+	wasMax := g.last[runID] == seq
+	pending = append(pending[:idx], pending[idx+1:]...)
+	if len(pending) == 0 {
+		delete(g.inflight, runID)
+		delete(g.last, runID) // 本就无地板，退回「无记录」
+		return wasMax
+	}
+	g.inflight[runID] = pending
+	if wasMax {
+		// 剩余元素严格小于 seq，故末元素就是回落后仍成立的最大在途值。
+		g.last[runID] = pending[len(pending)-1]
+	}
+	return wasMax
 }

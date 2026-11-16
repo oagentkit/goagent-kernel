@@ -192,7 +192,8 @@ func mountBindings(
 	_ = vm.Set("host", host)
 
 	// 程序内工具发现：装配了才挂，没装配就不存在这个全局。
-	if derr := mountDiscover(vm, discover); derr != nil {
+	// 发现结果同样是宿主数据入口，故与 host.<tool> 共用同一套三预算闸（#200）。
+	if derr := mountDiscover(vm, discover, res, maxCalls, maxBytes); derr != nil {
 		return &Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: "runtime"}
 	}
 

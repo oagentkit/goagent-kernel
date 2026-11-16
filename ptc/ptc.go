@@ -102,6 +102,10 @@ type Options struct {
 	// Discover 可选：暴露程序内工具发现入口 discover(query)。
 	// 为 nil 则**根本不暴露**该全局——没装配的东西不该以空壳形式出现在沙箱里，
 	// 那会让模型以为「没有别的工具了」而放弃检索。
+	//
+	// 发现调用与 host.<tool> **同受三预算闸约束**（issue #200）：每次发现计入
+	// MaxCalls，返回的 name/signature/description 物化字节计入 MaxBytes。
+	// 发现结果同样是宿主数据进入程序，不计账就是三预算闸的缺口。
 	Discover Discoverer
 	// Stages 每次绑定调用前必过的判定环，与普通工具调用走的是**同一套** Stage。
 	//

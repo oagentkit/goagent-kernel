@@ -498,13 +498,14 @@ modules:
 
   - id: commitgate
     roots: [commitgate]
-    requires: ["ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"]
     owner: harness
     managed: true
     notes: |
       环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次。
       statemachine 是纯谓词、checkpoint 只排快照序号，两者都排不出
       「两条并行分支都赢了」——那条边界只有独占提交闸能表达。
+      logx：Deprecated Seed 的回灌失败留痕（issue #204，缺省 warn 通道）。
       本条登记是 2026-10-18 依赖方向门禁落地时补的：包早已存在并被 docsync
       计入 README 包表，却从未进过 modules 段，故对本门禁隐形（依赖方向无人判定）。
 

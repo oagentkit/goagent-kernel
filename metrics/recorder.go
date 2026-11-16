@@ -119,33 +119,15 @@ func CheckLabels(labels Labels) error {
 	return nil
 }
 
-// Validate 校验一次埋点是否在契约面内：禁区键不出现、指标名已登记、标签键
-// 都在登记的维度里、取值落在封闭枚举内。宿主测试用它把「埋错标签」拦在
-// 测试期——这类错在生产里不报错，只会在看板上静默拼不起来。
+// Validate 校验一次埋点是否在**包级缺省登记表**内：禁区键不出现、指标名已
+// 登记、标签键都在登记的维度里、取值落在封闭枚举内。宿主测试用它把「埋错标签」
+// 拦在测试期——这类错在生产里不报错，只会在看板上静默拼不起来。
 //
-// 宿主自有指标不走本函数（登记表只认 harness.*），改用 CheckLabels 判禁区。
+// 宿主自有指标不走本函数（默认登记表只认 harness.*）：用
+// [DefaultSpecs]().Register 把自有指标登记进一份 SpecSet，再调
+// [SpecSet].Validate——同一套判据，包级表不被篡改（issue #239）。
 func Validate(name string, labels Labels) error {
-	if err := CheckLabels(labels); err != nil {
-		return err
-	}
-	m, ok := SpecOf(name)
-	if !ok {
-		return errors.Wrap(ErrUnregisteredMetric, fmt.Sprintf("埋点 %q", name))
-	}
-	declared := make(map[string]LabelDim, len(m.Labels))
-	for _, d := range m.Labels {
-		declared[d.Key] = d
-	}
-	for k, v := range labels {
-		d, ok := declared[k]
-		if !ok {
-			return fmt.Errorf("指标 %s 未声明标签 %q（登记表是口径的唯一来源）", name, k)
-		}
-		if !slices.Contains(d.Values, v) {
-			return fmt.Errorf("标签 %s=%q 越界：登记的取值域是 %v", k, v, d.Values)
-		}
-	}
-	return nil
+	return validateAgainst(specs, name, labels)
 }
 
 // ── 进程内参考实现 ──────────────────────────────────────────────────────────
