@@ -35,6 +35,10 @@ name: ci
 on:
   push:
     branches: [main]
+    # tag 推送也跑：make check 里的 releasecheck 只在 tag 快照上判（四条发版
+    # 纪律），而「tag 必须打在 CI 全绿的提交上」这条也只有 tag 运行能兑现
+    # （v0.39.0 的快照编译缺陷就是普通推送覆盖不到全量 build 时溜过的）。
+    tags: ["v*"]
   pull_request:
     branches: [main]
 

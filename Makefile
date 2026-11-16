@@ -100,7 +100,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync integration bench site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync releasecheck integration bench site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -345,6 +345,14 @@ bench: ## 性能基线复跑（issue #101；独立目标，不在 check——基
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
 
+releasecheck: ## 发版纪律门禁（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间无混装提交）
+	@# 只在 **tag 快照** 上判：HEAD 无 exact tag（普通提交 / PR 分支）时显式跳过
+	@# 并 exit 0，故可安全挂进 check——日常绿，打 tag 后必判。
+	@# 四条纪律此前只写在 AGENTS.md「发版纪律」与 AI-GUIDE §3.6 里靠人核对，
+	@# 而它们各自对应一种「只有下游才会发现」的残缺（tag 快照缺本版说明 /
+	@# 编码损坏 / 行为变更藏进依赖段 / 轻量 tag 无说明）。
+	$(EXPORT) $(GOENV) go run ./cmd/releasecheck
+
 apilifecheck: ## API 生命周期门禁（清单 ↔ 包注释 ↔ 生产包覆盖 ↔ 错误登记表，issue #113/#104）
 	@# 与 architecture-check / docsync 同一条纪律：声明面（api-lifecycle.yaml +
 	@# 包注释标记 + 错误语义总表）必须有机器判据，否则「文档里写了但代码里
@@ -423,7 +431,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck modreplace modwork
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck releasecheck modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
