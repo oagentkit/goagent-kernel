@@ -38,7 +38,8 @@
 > | [docs/DISTRIBUTED-EVOLUTION-20261117.md](docs/DISTRIBUTED-EVOLUTION-20261117.md) | **分布式演进方向**：外部评审逐条核验台账 + L1/L2/L3 三阶段路线 + 场景化部署配方的当前缺口 | 活文档（评审核验，2026-11-17）|
 > | [docs/CROSS-ENV-VERIFY-20261021.md](docs/CROSS-ENV-VERIFY-20261021.md) | 跨环境验证：平台相关的机制怎么在「CI 绿但其实跳过」的情况下真验（实测环境矩阵 + 交叉编译流程）| 活文档 |
 > | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
-> | [docs/ENGINEERING-HISTORY.md](docs/ENGINEERING-HISTORY.md) | 「工程底座」表**九轮校准**的过程与账：为什么它漂过、后来怎么接进门禁 | **历史快照**（从 README 下沉，2026-11-11）|
+> | [docs/BENCH-BASELINE-20261113.md](docs/BENCH-BASELINE-20261113.md) | **性能基线数字的唯一口径来源**：五个基准包的口径 / 采集方法 / 演进纪律（`make bench` 两处引用） | 活文档（机器判定）|
+| [docs/ENGINEERING-HISTORY.md](docs/ENGINEERING-HISTORY.md) | 「工程底座」表**九轮校准**的过程与账：为什么它漂过、后来怎么接进门禁 | **历史快照**（从 README 下沉，2026-11-11）|
 > | [docs/SPLIT_PLAN.md](docs/SPLIT_PLAN.md) | 从宿主仓拆分的分层依据（L1/L2/L3）| **历史快照**（2026-10-17 写于 10 个包时）|
 > | [docs/MIGRATION_OAGENTKIT_20261018.md](docs/MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 | **历史快照**（已于 2026-10-18 执行完毕）|
 > | [docs/SELF-AUDIT-20261018.md](docs/SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 | **历史快照**（2026-10-18 收尾）|
@@ -223,8 +224,8 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 59,624 行 / 314 文件（不含 `_test.go`）|
-| 测试 | 371 个测试文件 |
+| 生产代码 | 59,751 行 / 315 文件（不含 `_test.go`）|
+| 测试 | 372 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 9 条规则（`rules` 段）+ 9 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 58 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |
@@ -346,7 +347,10 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 | [ADR-0003](docs/adr/ADR-0003-与上游矩阵的分层.md) | 本仓不是孤岛——家规只写在别处的文档里等于没有规矩，必须落成本仓自己执行的门禁。 |
 | [ADR-0004](docs/adr/ADR-0004-执行沙箱入口唯一.md) | 执行只允许经 `sandbox` 登记簿，档位声明必须有人签字——否则声明强度与实际执行强度之间没有信号。 |
 | [ADR-0005](docs/adr/ADR-0005-门面包不可变.md) | 门包只许转发、不许长胖——门面一旦自己长出实现，就成了与上游并存的第二份真相。 |
-| [ADR-0008](docs/adr/ADR-0008-调度判据归属.md) | 调度判据的归属靠证据：上游 dispatch 的判定面只有可达性/深度/自派发三条，优先级/公平/配额/背压落本仓 `scheduling`，可达性仍归门面。 |
+| [ADR-0006](docs/adr/ADR-0006-通用化判据.md) | 内核只给**机制**——判定语义归内核、判定依据与展示文案归宿主。 |
+| [ADR-0007](docs/adr/ADR-0007-执行意图.md) | 意图的存在本身就是一条判据——没结论不是「没做过」，而是一次**尚未裁决**的尝试。 |
+| [ADR-0008](docs/adr/ADR-0008-跨进程任务交接契约.md) | 跨进程交接的契约不是队列，是**负责人字段的原子改写**——交接点、幂等键、回执地址、时限四问各有一条可机械判定的答案。 |
+| [ADR-0009](docs/adr/ADR-0009-调度判据归属.md) | 调度判据的归属靠证据：上游 dispatch 的判定面只有可达性/深度/自派发三条，优先级/公平/配额/背压落本仓 `scheduling`，可达性仍归门面。 |
 
 ## 通用化判据
 

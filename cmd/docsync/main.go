@@ -164,11 +164,23 @@ func run() error {
 	}
 	problems = append(problems, usageProblems...)
 
+	// ── ADR 索引 / README ADR 速览 / 文档一览（issue #314 / #315）──
+	//
+	// 三张表都是手抄，此前零判据：ADR-0009 的结论挂在 ADR-0008 的编号与
+	// 文件名上（两条死链），README 文档一览漏登性能基线口径文档。
+	docProblems, adrCount, docCount, derr := checkDocIndex()
+	if derr != nil {
+		return derr
+	}
+	problems = append(problems, docProblems...)
+
 	if len(problems) > 0 {
 		return fmt.Errorf("README 与仓库实际状态不一致（%d 项）：\n  - %s\n"+
 			"修法：包表按各包 *.go（不含 _test.go）重算行数与外部依赖；"+
 			"工程底座表按报错里给的三条命令重算，改 README；"+
-			"USAGE.md 的机器口径块按报错里给的三个数改（包数 / policy 登记数 / 安装行版本）。\n"+
+			"USAGE.md 的机器口径块按报错里给的三个数改（包数 / policy 登记数 / 安装行版本）；"+
+			"ADR 索引 / README 速览表按 docs/adr/ADR-*.md 实际编号与文件名补齐（链接必须可解析），"+
+			"README 文档一览按 docs/*.md 实际清单补齐。\n"+
 			"两套口径别混：包表行数按 %.0f%% 相对容差判（容差内的逐行涨落不报），"+
 			"工程底座的三项是确定性量，**判相等**。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
@@ -177,8 +189,8 @@ func run() error {
 
 	if present {
 		actual, _ := measureBaseline()
-		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件）%s✓\n",
-			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles, usageNote(usageChecked))
+		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件；ADR %d 条 / docs %d 篇已登记）%s✓\n",
+			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles, adrCount, docCount, usageNote(usageChecked))
 		return nil
 	}
 	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）%s✓\n", len(rows), usageNote(usageChecked))
