@@ -10,6 +10,7 @@ package commitgate
 // 故障用例——判据缺牙，坏实现全绿。
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ import (
 // 必须可分（旧实现在此返回 nil，必红）。
 func TestSeedEReturnsErrorOnStoreFailure(t *testing.T) {
 	g := NewGuardWithStore(errStore{}, isTerminal)
-	err := g.SeedE(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1})
+	err := g.SeedE(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1})
 	if err == nil {
 		t.Fatal("Store 故障时 SeedE 必须返回非 nil（吞掉 = 闸为空、重复终态提交重新敞开）")
 	}
@@ -40,7 +41,7 @@ func TestSeedEReturnsErrorOnStoreFailure(t *testing.T) {
 // Cause 能拿到 Store 原始故障（宿主判定连接类故障做退避重试靠它）。
 func TestSeedEWrappedStoreErrorUnwraps(t *testing.T) {
 	g := NewGuardWithStore(errStore{}, isTerminal)
-	err := g.SeedE(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1})
+	err := g.SeedE(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1})
 	if err == nil {
 		t.Fatal("Store 故障必须报错")
 	}
@@ -61,7 +62,7 @@ func TestSeedWarnHookOnStoreFailure(t *testing.T) {
 		causes = append(causes, cause)
 	})
 
-	g.Seed(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1}) // 旧实现静默
+	g.Seed(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1}) // 旧实现静默
 
 	if len(warned) != 1 {
 		t.Fatalf("Store 故障时 Seed 留痕钩子必须被调用（实得 %d 次——静默 = 闸为空无人知）", len(warned))
@@ -81,8 +82,8 @@ func TestSeedWarnNotCalledOnSkip(t *testing.T) {
 	hook := func(Commit, error) { calls++ }
 
 	g := NewGuardWithStore(NewMemoryStore(), isTerminal).WithSeedWarn(hook)
-	g.Seed(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}) // 非终态跳过
-	g.Seed(Commit{Ref: Ref{RunID: "", Step: "s"}, Status: "succeeded", Seq: 1})    // 空 Ref 跳过
+	g.Seed(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}) // 非终态跳过
+	g.Seed(context.Background(), Commit{Ref: Ref{RunID: "", Step: "s"}, Status: "succeeded", Seq: 1})    // 空 Ref 跳过
 
 	if calls != 0 {
 		t.Fatalf("跳过路径不得触发留痕（实得 %d 次）", calls)
@@ -93,14 +94,14 @@ func TestSeedWarnNotCalledOnSkip(t *testing.T) {
 // 跳过非终态行是正常路径，不是失败）。
 func TestSeedESucceedsOnHealthyStore(t *testing.T) {
 	g := NewGuardWithStore(NewMemoryStore(), isTerminal)
-	if err := g.SeedE(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}); err != nil {
+	if err := g.SeedE(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}); err != nil {
 		t.Fatalf("非终态行跳过是正常路径: %v", err)
 	}
-	if err := g.SeedE(Commit{Ref: ref("s2"), Status: "succeeded", Branch: "done", Seq: 2}); err != nil {
+	if err := g.SeedE(context.Background(), Commit{Ref: ref("s2"), Status: "succeeded", Branch: "done", Seq: 2}); err != nil {
 		t.Fatalf("健康存储回灌应成功: %v", err)
 	}
 	// 回灌生效：后续重复终态提交被挡（闸真的记上了——不是「没报错但没记上」）。
-	if _, err := g.Acquire(Commit{Ref: ref("s2"), Status: "failed", Branch: "b2", Seq: 3}); !errors.Is(err, ErrAlreadyCommitted) {
+	if _, err := g.Acquire(context.Background(), Commit{Ref: ref("s2"), Status: "failed", Branch: "b2", Seq: 3}); !errors.Is(err, ErrAlreadyCommitted) {
 		t.Fatalf("回灌的终态行应挡住后续提交，实得 %v", err)
 	}
 }

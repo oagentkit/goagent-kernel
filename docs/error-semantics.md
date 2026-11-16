@@ -83,6 +83,8 @@
 | `ErrTerminalRun` | 运行已是终态，无需也无法终止（介入重试撞上它说明第一次介入已生效） | 幂等收手：视为首次介入已成功，不重试 |
 | `ErrAlreadyExists` | Seed* 重复登记（run / 任务 / 效果键已存在）——介入类动作不会报它，介入对已存在目标的语义是执行 | 修声明：登记前先查重；重复登记重试无意义 |
 | `ErrInvalidAudit` | 留痕条目不完整（谁/动作/目标/依据缺一不可，或动作不在词表内） | 修声明：补齐留痕字段；留痕面拒收不完整的条目，不得静默补空 |
+| `ErrNoStore` | 未装配 Store 就构造持久化 Plane（`NewStorePlane(nil, ...)`） | 修声明：装配 Store（任务/运行/效果键的持久化后端）；不得静默退化成进程内状态——多副本下两份真相 |
+| `ErrStoreConflict` | Store 的版本锚不匹配：快照之后目标被另一个副本改过 | **重试**：重读快照、重判后再提交；StorePlane 已内部重试，穷尽后仍见它说明并发介入持续冲突 |
 
 ### coord
 
@@ -169,6 +171,8 @@
 | `ErrNotSource` | 收回者不是交接发起方 | 修声明：收回权只在 From |
 | `ErrLeaseLost` | 领取令牌不匹配（凭令牌认人，不凭内容） | 对账：责任期已易主或已收口，迟到动作一律放弃 |
 | `ErrAlreadySettled` | 交接单已是终态 | 放弃本次动作；重新交接开新一代 |
+| `ErrConflict` | 持久化记录的 Revision 已被并发写者推进（条件写失败，`Ledger.Save`） | 对账：重新 `Load` 并按最新状态重新判定；不得盲目重放同一次写入（并发领取的输家要在最新状态下读到 accepted，才能返回 `ErrTaken`） |
+| `ErrStaleEpoch` | 出示的所有权代次不是当前代（旧代 `Save` / `TakeAt` / Delete 重建后用旧代） | 放弃本次动作，按最新代次重新挂出/领取；重试同一次旧代写入无意义（防 ABA 的判据） |
 
 ### netguard
 
@@ -267,6 +271,7 @@
 | `ErrBlocked` | 依赖未完成 | 等：依赖完成后再来认领（可稍后重试） |
 | `ErrTerminal` | 任务已是终态 | 放弃：读既有结论，不重开 |
 | `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过） | 对账：本次操作作废，重新 `Claim` |
+| `ErrInvalidBatch` | 批量领取数量非正（`ClaimReady` 的 n <= 0） | 修声明：给正整数；零/负数不是「暂时没有活」，不得静默当空结果 |
 
 ### tenant
 
@@ -289,7 +294,7 @@
 
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
-| `ErrIntentRowIncomplete` | 动作行的执行意图四列（intent_resource / intent_fence / intent_holder / intent_expires）**部分填充**——包内写入路径总是四列同写同清，残缺只可能来自仓外（人工订正 / schema 迁移 / 仓外写入方只写部分列）。Acquire 判「有没有在途尝试」按最宽口径（任一列非 NULL 即算挂着，残缺行不得 fail-open 放行），判定前先过四列齐全性守卫（#223，fail-closed） | **先订正数据再重试**：把残缺行的意图四列补齐或全部置 NULL（同一次作废尝试的资源持有一并清掉），此后同一 Key 恢复可用；不得绕过判定强行授予，也不得吞错重试（订正前每次 Acquire 都会原样变红，事务整体回滚、不落任何一行） |
+| `ErrIntentIncomplete` | 动作行的执行意图四列（`intent_resource` / `intent_fence` / `intent_holder` / `intent_expires`）部分为 NULL——半写行（人工订正 / schema 迁移 / 仓外写入），本包写入路径只产生「四列全有」或「四列全空」 | 修数据：把该行补齐成完整意图或整体清空；**不得绕过**——半写行既解引用不了（panic）也不能当「无意图」放行（会重新授予执行权 ⇒ 重复施加） |
 
 ### tooldisclose
 

@@ -350,11 +350,7 @@ func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resoluti
 		// 未知标记原样保留（仍被硬阻塞），放行必须显式签字。
 		return OutcomeUncertain, Result{}, ErrUnsafeNotRetryable
 	}
-	delete(s.uncertain, act.Key)
-	// 契约第 2 条：未生效的裁决 = 「裁决成功且门已打开」，返回 OutcomeApplied
-	// 表达这个结论。返回 OutcomeContended 是误判——那会把「可执行了」
-	// 误报成「没轮上」，调用方按契约写 `if outcome == OutcomeApplied { 立即重做 }`
-	// 时会退避等待一个本该立刻执行的动作（与 sidetest / pgstore 参考实现同一口径）。
+	delete(s.uncertain, act.Key) // 契约第 2 条：裁决成功且门已打开 ⇒ OutcomeApplied（不是 OutcomeContended）。
 	return OutcomeApplied, Result{}, nil
 }
 
@@ -369,15 +365,10 @@ func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.D
 		return Lease{}, err
 	}
 	now := s.clockLocked()
-	// 过期即资格终止（Store.Renew 契约）：租约已过期而**尚未被他人接管**时，
-	// 旧持有者的续期同样必须被拒——三项联查只看令牌与身份，令牌没换、身份
-	// 没变，它判不出「过期」。放行过期续期等于允许 GC 停顿超 TTL 的持有者
-	// 复活一段已作废的租约，绕开 Acquire「过期 → 结果未知，必须先对账」
-	// 的判定：两份闸同时开着，且无任何观测点。
 	cur := s.holders[act.Resource]
+	// 过期即资格终止（无论是否已被接管）：放行过期续期等于允许 GC 停顿超 TTL 的持有者复活一段已作废的租约。
 	if !now.Before(cur.expires) {
-		return Lease{}, errors.Wrap(ErrFenceStale, "凭据被拒：租约已过期，资格已终止（未被接管也不例外）",
-			"resource", act.Resource)
+		return Lease{}, errors.Wrap(ErrFenceStale, "租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）", "key", string(act.Key), "resource", act.Resource)
 	}
 	cur.expires = now.Add(ttl)
 	cur.lease.TTL = ttl

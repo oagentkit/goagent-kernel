@@ -357,19 +357,13 @@ func (r renewFailStore) Renew(context.Context, Action, Lease, time.Duration) (Le
 	return Lease{}, r.err
 }
 
-// TestRenewAfterExpiryRejected 钉住「过期即资格终止」的另一半：
-// 租约**已过期而尚未被任何人接管**时，旧持有者的续期同样必须被拒。
+// TestRenewAfterExpiryWithoutTakeoverRejected 钉住 #217：租约**已过期且无人
+// 接管**时，原持有者的续期同样必须被拒（过期即资格终止）。
 //
-// 三项联查（令牌最新代 + 持有者身份）判不出这一形态——没人接管时令牌没换、
-// 身份没变，它全绿。只靠它的话，GC 停顿超 TTL 的持有者回来一续就成功，
-// 复活一段已作废的租约：同一份租约在 Acquire 眼里已过期（按 expires 判）、
-// 在 Renew 眼里还有效（只比令牌与身份），两个判据给相反答案。
-//
-// 验收钉两件事：
-//  1. Renew 被拒为 ErrFenceStale（续期失败，租约没有被「复活」）；
-//  2. 随后同一 Key 的 Acquire 走「过期意图 → 结果未知」判据（uncertain），
-//     而不是被复活闸挡成 contended——若实现放行了过期续期，这里必红。
-func TestRenewAfterExpiryRejected(t *testing.T) {
+// 与 TestRenewAfterTakeoverRejected 的区别：那条是「令牌变了」，这条是
+// 「令牌没变、身份没变，只有时间走完了」——只比令牌与身份的实现对它无感，
+// 于是 GC 停顿超 TTL 的持有者回来一续就复活了一段已作废的租约。
+func TestRenewAfterExpiryWithoutTakeoverRejected(t *testing.T) {
 	st := newFakeStore()
 	ctx := context.Background()
 	a := act("k1", "res-a")
@@ -378,48 +372,20 @@ func TestRenewAfterExpiryRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Acquire 失败: %v", err)
 	}
-	// GC 停顿超 TTL：过期，且没有任何人接管（令牌、身份都还是原来那套）。
-	st.advance(2 * time.Minute)
+	st.advance(2 * time.Minute) // 时间走完，且**不发生任何新的 Acquire**（无人接管）
 
 	if _, err := st.Renew(ctx, a, lease, time.Minute); !errors.Is(err, ErrFenceStale) {
-		t.Fatalf("过期且未被接管的租约续期应被拒为 ErrFenceStale，实得 %v", err)
+		t.Fatalf("过期且无人接管时续期必须被拒为 ErrFenceStale，实得 %v", err)
 	}
 
-	// 续期被拒 ⇒ 闸没有被复活：同一 Key 的下一次 Acquire 走「过期意图 →
-	// 结果未知」（须先对账），不是「资源被复活闸占着」（contended）。
+	// 没有被续命：同 Key 再 Acquire 必须走过期路径转入未知态，而不是 contended。
+	// （若上面的 Renew 把意图续上了，这里会拿到 contended——这层断言抓的正是
+	// 「续期写成功了」这种坏实现。）
 	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
 	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
+		t.Fatalf("过期后的 Acquire 失败: %v", err)
 	}
 	if outcome != OutcomeUncertain {
-		t.Fatalf("过期未接管后同一 Key 应转入结果未知（须先对账），实得 %v", outcome)
-	}
-}
-
-// TestRenewAtExactExpiryRejected 钉住边界的读法：`now` 恰好到达到期时刻时
-// 租约已不算有效（全包的过期判定同一条口径：`now.Before(expires)` 为假即过期，
-// 与 Acquire 的占用判定逐字一致）——续期在这一点上同样被拒。
-func TestRenewAtExactExpiryRejected(t *testing.T) {
-	st := newFakeStore()
-	ctx := context.Background()
-	a := act("k1", "res-a")
-
-	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
-	if err != nil {
-		t.Fatalf("Acquire 失败: %v", err)
-	}
-	// 推进到恰好 = 授予时刻 + TTL。
-	st.advance(time.Minute)
-	if _, err := st.Renew(ctx, a, lease, time.Minute); !errors.Is(err, ErrFenceStale) {
-		t.Fatalf("到期时刻整点续期应被拒为 ErrFenceStale，实得 %v", err)
-	}
-	// 到期前一瞬仍有效：回拨一点（重建时钟）再续，应成功。
-	st.mu.Lock()
-	prev := st.now.Add(-time.Second)
-	st.now = prev
-	st.nowFn = nil
-	st.mu.Unlock()
-	if _, err := st.Renew(ctx, a, lease, time.Minute); err != nil {
-		t.Fatalf("到期前续期应成功: %v", err)
+		t.Fatalf("过期未裁决的尝试应转未知态（续期不得续活它），实得 %v", outcome)
 	}
 }

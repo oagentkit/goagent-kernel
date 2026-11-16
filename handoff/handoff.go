@@ -123,6 +123,10 @@ type Ticket struct {
 	TTL time.Duration
 	// Generation 代次（同 Key 严格递增，由存储铸造）。重新交接 = 新一代；
 	// 迟到者凭代次即可被判为旧持有者。
+	//
+	// 它是 @@Epoch@@（所有权代次）在交接单上的**投影**：Ledger 的
+	// Record.Epoch 是持久化真相，跨终态与 Delete 都不复用（防 ABA）；
+	// 本字段只是把它带在交接单上，不是第二个计数器。
 	Generation uint64
 	// Deadline 截止时刻（存储按自己的时钟推算；零值 = 无界，契约禁止）。
 	Deadline time.Time
@@ -170,6 +174,10 @@ type Receipt struct {
 }
 
 // Store 跨进程交接的存储中立契约。
+//
+// 实现形态有两类：进程内的 @@LocalDesk@@（参考实现）与基于 @@Ledger@@
+// 的 @@Desk@@（可持久化：两个 Desk 共用一个 Ledger 即两个客户端）。
+// 持久化面的 Save/Load/Delete、条件写与代次水位见 ledger.go。
 //
 // 实现方必须保证（与 taskboard.Board 的实现义务同构）：
 //

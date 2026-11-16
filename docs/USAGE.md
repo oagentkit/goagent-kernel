@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 23 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **51** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **57** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **58** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **58** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **59** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **51** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **57** 个包目录。
+> `architecture-policy.yaml` 的 `modules` 段登记 **58** 个包目录。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -1178,6 +1178,8 @@ seq=5、seq=6 是完全合法的递增，两个都被接受，后写的覆盖先
 package myapp
 
 import (
+	"context"
+
 	"github.com/yi-nology/goagent-kernel/commitgate"
 )
 
@@ -1193,15 +1195,17 @@ func newCommitGate() *commitgate.Guard {
 	})
 }
 
-func commitStep(g *commitgate.Guard, ref commitgate.Ref,
-	status, branch string, seq uint64, save func() error) error {
+func commitStep(ctx context.Context, g *commitgate.Guard, ref commitgate.Ref,
+	status, branch string, seq uint64, save func(context.Context) error) error {
 	c := commitgate.Commit{Ref: ref, Status: status, Branch: branch, Seq: seq}
-	lease, err := g.Acquire(c) // ★ 抢终态独占权（拿凭证）
+	lease, err := g.Acquire(ctx, c) // ★ 抢终态独占权（拿凭证）；取消/超时透传到存储
 	if err != nil {
 		return err // 抢不到就别干后面的活
 	}
-	if err := save(); err != nil {
-		g.ReleaseLease(lease) // ★ 落库失败必须回滚，否则该环节闸被永久占住
+	if err := save(ctx); err != nil {
+		// ★ 落库失败必须回滚，否则该环节闸被永久占住。
+		// 释放是补偿动作：不要用已随请求取消的 ctx（取消会让释放不执行）。
+		g.ReleaseLease(context.WithoutCancel(ctx), lease)
 		return err
 	}
 	return nil
@@ -1212,6 +1216,11 @@ func commitStep(g *commitgate.Guard, ref commitgate.Ref,
 
 - **Commit / Release 必须成对**。落库失败不 Release，该环节闸被永久占住，
   从此**再也无法提交终态**——不是「多花一个序号」，是彻底卡死。
+- **下一版（#185，BREAKING）：`Store` 五方法与 `Guard` 全部触及存储的方法都收 `context.Context`**。
+  网络 DB 实现的取消/超时从此能穿到底层驱动；`Acquire` 在 ctx 已取消时**不进入
+  存储**，直接返回可 `errors.Is(err, context.Canceled)` 判定的错误。迁移时每个
+  调用点补一个 ctx 即可；`ReleaseLease` / `Seed` / `SeedE` / `Status` / `Committed`
+  同样多一个 ctx 首参。**回滚用的 ctx 不要随请求取消**（见上例 `WithoutCancel`）。
 - **`Ref` 必须是「运行 + 环节」两级**：不同 run 的同名环节是不同对象，
   只按环节名去重会把第二次运行整个判成重复提交。
 - **`isTerminal == nil` 时按「全部都是终态」处理**——保守侧，宁可多拦。
@@ -2498,6 +2507,51 @@ tenant_gate:
 「转发壳」= 方法体只有一条转发语句、且剥掉注释与空白后长度 ≤
 `forwarding_shell_max_chars`（**不写 = 缺省 140**；显式写 0 = 关闭该区分，
 判定逐字退回旧行为）。老 policy 无需改动即可享受修正。
+
+---
+
+### 4.8 多租户隔离的落点（issue #195）
+
+内核不实现租户体系，但也不再把「数据面」整个推给宿主——任务板这一面已有
+**可判定的落点**，其余面仍归宿主。边界写死在这里，不留实现自由。
+
+**已进存储键与领取条件（内核）**
+
+- `taskboard.Task.Tenant`：任务身份是 `(Tenant, ID)`；空租户 = 默认/单租户
+  命名空间（旧布局逐字不变）。
+- `coord.NewTenantBoardAdapter`：键由 **ctx 里的租户作用域**生成
+  （`coord/t/<escaped-tenant>/task/<id>`），`List/Claim/Release/Complete/Renew`
+  全部按租户过滤；他租户任务在 List 不可见、在写路径一律
+  `taskboard.ErrNotFound`（不可见 = 不存在）；缺租户/空租户一律
+  `tenant.ErrNoContext`（fail-closed，与写路径现有判据同口径）。
+- `taskboard.Check`：混合租户快照按 `(Tenant, ID)` 判重，依赖只在同租户内
+  解析（跨租户依赖按不存在处理）。
+- `boardtest.RunTenant`：租户契约套件——跨租户不可见/不可领（含并发）、
+  同 id 不同租户互不覆盖、跨租户令牌不能收场、缺租户 fail-closed。
+
+**接线（宿主）**
+
+```go
+board, err := coord.NewTenantBoardAdapter(backend) // 不是 NewBoardAdapter
+if !board.TenantScoped() { /* 启动自检：多租户部署拿错适配器 */ }
+// 请求入口把租户注入 ctx；worker/Board 调用原样透传（WithoutCancel 保留值）：
+ctx = tenant.WithContext(ctx, tenant.Context{Tenant: tenantID})
+```
+
+单租户部署保持 `NewBoardAdapter`：键布局、任务记录 JSON、行为逐字不变。
+**隔离必须显式装配**——单租户适配器不解释 ctx 里的租户上下文，注入租户
+不会静默变成隔离，也不会报错；多租户部署用 `TenantScoped()` 做启动断言。
+
+**仍归宿主（内核不提供、也不假装提供）**
+
+- 副作用幂等键（`sideeffect` 的 Key 由宿主组装：必须把租户纳入身份，
+  否则 A 租户的副作用会让 B 租户被判「已施加」）；
+- 事件流（`eventbus.Event` 没有租户字段，Hub 不按租户过滤：共享 Hub 时
+  由宿主在载荷/订阅侧自筛，或每租户一个 Hub）；
+- 运行留痕/审计/轨迹（`trajectory`、`controlplane.AuditEntry`）的租户归属；
+- 数据库行级隔离（RLS / 唯一约束 / 连接级租户变量）；
+- 自定义 `taskboard.Board` 实现：不接 `boardtest.RunTenant` 不算声明支持
+  租户隔离。
 
 ---
 

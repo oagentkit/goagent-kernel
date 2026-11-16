@@ -1,31 +1,8 @@
 package pgstore
 
-// pg_intent_guard_test.go —— 「部分填充」意图行在 Acquire 上的处置（issue #223）。
-//
-// 四个意图列（intent_resource / intent_fence / intent_holder / intent_expires）
-// 各自独立可空，写入按指针写（nil → NULL）。包内写入路径总是四列同写同清，
-// 但人工订正、schema 迁移、仓外写入方只写部分列都可能留下「部分填充」的行
-// ——ensureIdentity 为老数据行留兼容路径，正说明列可空是预期形态。
-//
-// 旧实现 hasIntent() 只判 intentFence 一列，而 Acquire 的判定路径解引用
-// intentExpires / intentResource：「intent_fence 有值、intent_resource 为 NULL」
-// 的行会让 Acquire 在**行锁持有、事务开着**的路径上 panic——库层 panic 直接
-// 杀宿主进程，连接与锁的处置完全交给上层 recover，「校验失败即整体回滚、
-// 不落任何一行」的包纪律根本没走到判定就被打断。
-//
-// 修法后的判据（fail-closed，不 panic）：
-//  1. 部分填充的行 → Acquire 显式报 ErrIntentRowIncomplete，事务整体回滚；
-//  2. 残缺行不得被当成「没有在途尝试」放行执行权（错误不是放行的别名）；
-//  3. 订正数据（四列补齐或全部置 NULL）后同一 Key 恢复可用——报错是
-//     「先修数据」的指令，不是死刑。
-//
-// # 为什么必须在真实 PG 上钉
-//
-// 「部分填充」是**列式存储里的数据形态**，内存替身造不出来——它没有「列」，
-// 也就没有「只写部分列」。判据是：真实库里存在残缺行时，入口必须显式变红
-// 而不是崩。
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -34,91 +11,144 @@ import (
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
-func TestPGPartialIntentRowFailsClosedNotPanic(t *testing.T) {
+// 本文件钉住 #223：执行意图四列**同存同缺**，半写行 fail-closed。
+//
+// 触发形态（issue 原文）：`intent_fence` 有值、`intent_resource` 为 NULL。
+// 旧实现 hasIntent() 只判 intentFence，于是 Acquire 在**行锁持有、事务开着**
+// 的路径上解引用 NULL —— 库层 panic 直接杀宿主进程。修法有两层：
+//   - hasIntent / checkIntentColumns 按四列口径判（全有才是意图）；
+//   - lockAction 在读到行时就把半写行拒成 ErrIntentIncomplete（所有入口
+//     共用这一处，不是只给 Acquire 打补丁）。
+
+// TestActionRowIntentColumnsAllOrNone 穷举 16 种列填充组合（确定性、无数据库）。
+//
+// 只测「半写会报错」不够：三个正常形态（全空 / 全有）必须放行，否则
+// 判据从「漏判」变成「误拒」，同样不可用。
+func TestActionRowIntentColumnsAllOrNone(t *testing.T) {
+	res, holder := "res-a", "holder-a"
+	fence := int64(7)
+	expires := time.Unix(1_700_000_000, 0).UTC()
+
+	for mask := 0; mask < 16; mask++ {
+		var row actionRow
+		if mask&1 != 0 {
+			row.intentResource = &res
+		}
+		if mask&2 != 0 {
+			row.intentFence = &fence
+		}
+		if mask&4 != 0 {
+			row.intentHolder = &holder
+		}
+		if mask&8 != 0 {
+			row.intentExpires = &expires
+		}
+
+		t.Run(fmt.Sprintf("cols=%04b", mask), func(t *testing.T) {
+			err := row.checkIntentColumns()
+			switch mask {
+			case 0: // 四列全空 = 没有未裁决的尝试（正常形态）
+				if err != nil {
+					t.Fatalf("全空行不得被拒: %v", err)
+				}
+				if row.hasIntent() {
+					t.Fatal("全空行不得报告有意图")
+				}
+			case 15: // 四列全有 = 可判定的意图（正常形态）
+				if err != nil {
+					t.Fatalf("四列齐全不得被拒: %v", err)
+				}
+				if !row.hasIntent() {
+					t.Fatal("四列齐全应报告有意图")
+				}
+			default: // 其余 14 种半写组合一律 fail-closed
+				if !errors.Is(err, ErrIntentIncomplete) {
+					t.Fatalf("半写行必须返回 ErrIntentIncomplete，实得 %v", err)
+				}
+				if row.hasIntent() {
+					t.Fatal("半写行不得报告有意图（否则会被当空行放行）")
+				}
+			}
+		})
+	}
+}
+
+// TestAcquireFailsClosedOnPartialIntentRow 在真实 PostgreSQL 上钉 Acquire 的
+// 行为：半写行返回明确错误（不 panic），且整笔事务回滚——资源行也不落。
+//
+// 没有可连的 PostgreSQL 时在**环境入口**显式跳过（同 pg_test.go 的口径）；
+// CI 的 integration job 必跑本用例。
+func TestAcquireFailsClosedOnPartialIntentRow(t *testing.T) {
 	dsn := requireDSN(t)
-	eff, pool := freshEffectEnv(t, dsn)
+	eff, _, _, _ := freshStores(t, dsn)
 	ctx := context.Background()
 
-	act := sideeffect.Action{
-		Key:      sideeffect.Key("pg-intent-guard-key"),
-		Resource: "pg-intent-guard-res",
+	cases := []struct {
+		name     string
+		key      string
+		resource string
+		insert   string
+		complete bool
+	}{
+		{
+			name:     "fence 有值 resource 为 NULL（#223 触发形态）",
+			key:      "k-partial-fence",
+			resource: "res-partial-fence",
+			insert:   `INSERT INTO pgref_effect_action (key, intent_fence) VALUES ($1, 7)`,
+		},
+		{
+			name:     "resource/fence/expires 齐全但 holder 为 NULL（四列口径）",
+			key:      "k-partial-holder",
+			resource: "res-partial-holder",
+			insert: `INSERT INTO pgref_effect_action (key, intent_resource, intent_fence, intent_expires)
+			         VALUES ($1, 'res-elsewhere', 7, clock_timestamp() + interval '1 hour')`,
+		},
+		{
+			name:     "只有 resource（fence/expires 为 NULL）",
+			key:      "k-partial-resource",
+			resource: "res-partial-resource",
+			insert:   `INSERT INTO pgref_effect_action (key, intent_resource) VALUES ($1, 'res-elsewhere')`,
+		},
+		{
+			name:     "四列齐全（负对照：不得被误拒）",
+			key:      "k-complete-intent",
+			resource: "res-complete-intent",
+			insert: `INSERT INTO pgref_effect_action (key, intent_resource, intent_fence, intent_holder, intent_expires)
+			         VALUES ($1, 'res-complete-intent', 7, 'holder-a', clock_timestamp() + interval '1 hour')`,
+			complete: true,
+		},
 	}
 
-	// 造行：先正常授予一次（动作行、身份登记、意图四列齐备），再把
-	// intent_resource 单列置 NULL——「fence 有值、resource 为 NULL」的部分
-	// 填充形态。这一步模拟的是仓外写入方，不是包内路径。
-	if _, _, _, err := eff.Acquire(ctx, act, time.Minute); err != nil {
-		t.Fatalf("前置授予失败: %v", err)
-	}
-	if _, err := pool.Exec(ctx,
-		`UPDATE pgref_effect_action SET intent_resource = NULL WHERE key = $1`,
-		string(act.Key)); err != nil {
-		t.Fatalf("注入部分填充行失败: %v", err)
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := eff.pool.Exec(ctx, tc.insert, tc.key); err != nil {
+				t.Fatalf("构造行失败: %v", err)
+			}
+			outcome, _, _, err := eff.Acquire(ctx, sideeffect.Action{
+				Key: sideeffect.Key(tc.key), Resource: tc.resource, Payload: []byte("p"),
+			}, time.Minute)
 
-	// Acquire 必须显式报错（fail-closed），不是 panic，更不是放行。
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("部分填充的意图行不得让 Acquire panic（旧实现在这里必崩）: %v", r)
-		}
-	}()
-	// Acquire 必须显式报错（fail-closed），不是 panic，更不是放行。
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("部分填充的意图行不得让 Acquire panic（旧实现在这里必崩）: %v", r)
-		}
-	}()
-	// 出错时返回值里的 Outcome 是事务骨架的零值（无意义），凭据以错误为准。
-	_, lease, _, err := eff.Acquire(ctx, act, time.Minute)
-	if err == nil {
-		t.Fatal("部分填充的意图行必须显式报错（fail-closed），不得静默返回")
-	}
-	if !errors.Is(err, ErrIntentRowIncomplete) {
-		t.Fatalf("应报 ErrIntentRowIncomplete，实得 %v", err)
-	}
-	if lease.Fence != 0 {
-		t.Fatalf("被拒的授予不得发放令牌，实得 Fence=%d", lease.Fence)
-	}
-
-	// 事务整体回滚的实证：残缺行原样（intent_fence 仍有值、resource 仍 NULL），
-	// 动作行既没被记成完成、也没被置成未知态——「校验失败即整体回滚、
-	// 不落任何一行」发生在判定之前，库内没有任何行被这次失败的 Acquire 改动。
-	var fence *int64
-	var res *string
-	var done, uncertain bool
-	if err := pool.QueryRow(ctx,
-		`SELECT intent_fence, intent_resource, done, uncertain
-		   FROM pgref_effect_action WHERE key = $1`, string(act.Key)).
-		Scan(&fence, &res, &done, &uncertain); err != nil {
-		t.Fatalf("读回动作行失败: %v", err)
-	}
-	if fence == nil || res != nil {
-		t.Fatalf("失败的 Acquire 不得改动残缺行（事务须整体回滚）：fence=%v resource=%v", fence, res)
-	}
-	if done || uncertain {
-		t.Fatalf("失败的 Acquire 不得写任何状态行：done=%v uncertain=%v", done, uncertain)
-	}
-
-	// 订正数据（意图四列全部置 NULL = 「没有在途尝试」；当初那次授予遗留的
-	// 资源持有随订正一并清掉——它是同一次作废尝试的另一个投影）后同一 Key
-	// 恢复可用：报错是「先修数据」的指令，不是死刑。
-	if _, err := pool.Exec(ctx,
-		`UPDATE pgref_effect_action
-		    SET intent_resource = NULL, intent_fence = NULL,
-		        intent_holder = NULL, intent_expires = NULL
-		  WHERE key = $1`, string(act.Key)); err != nil {
-		t.Fatalf("订正数据行失败: %v", err)
-	}
-	if _, err := pool.Exec(ctx,
-		`UPDATE pgref_effect_resource SET holder = NULL, until = NULL WHERE resource = $1`,
-		act.Resource); err != nil {
-		t.Fatalf("订正资源行失败: %v", err)
-	}
-	outcome, _, _, err := eff.Acquire(ctx, act, time.Minute)
-	if err != nil {
-		t.Fatalf("订正后的 Acquire 应恢复可用: %v", err)
-	}
-	if outcome != sideeffect.OutcomeApplied {
-		t.Fatalf("订正后应重新授予执行权，实得 %v", outcome)
+			if tc.complete {
+				if err != nil {
+					t.Fatalf("四列齐全的意图行不得被拒: %v", err)
+				}
+				if outcome != sideeffect.OutcomeContended {
+					t.Fatalf("未过期的完整意图应判 contended，实得 %v", outcome)
+				}
+				return
+			}
+			if !errors.Is(err, ErrIntentIncomplete) {
+				t.Fatalf("半写意图行必须 fail-closed 返回 ErrIntentIncomplete，实得 %v", err)
+			}
+			// 整体回滚：拒绝发生在任何写入之前，资源行也不得留下。
+			var n int
+			if qerr := eff.pool.QueryRow(ctx,
+				`SELECT count(*) FROM pgref_effect_resource WHERE resource = $1`, tc.resource).Scan(&n); qerr != nil {
+				t.Fatalf("查资源行失败: %v", qerr)
+			}
+			if n != 0 {
+				t.Fatalf("拒绝的判定不得留下资源行（实得 %d 行）", n)
+			}
+		})
 	}
 }

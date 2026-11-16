@@ -19,6 +19,7 @@
 package commitgate
 
 import (
+	"context"
 	"sync"
 	"testing"
 )
@@ -36,13 +37,13 @@ func leaseRef() Ref { return Ref{RunID: "run-1", Step: "s1"} }
 func TestLeaseLoserLateReleaseDoesNotStealWinner(t *testing.T) {
 	g := NewGuard(leaseIsTerminal)
 
-	winner, err := g.Acquire(Commit{Ref: leaseRef(), Status: "succeeded", Branch: "agent-x", Seq: 1})
+	winner, err := g.Acquire(context.Background(), Commit{Ref: leaseRef(), Status: "succeeded", Branch: "agent-x", Seq: 1})
 	if err != nil {
 		t.Fatalf("首个终态占用应成功: %v", err)
 	}
 
 	// 同名分支的第二次终态占用：被拒，且不产生任何凭证。
-	loser, err := g.Acquire(Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-x", Seq: 1})
+	loser, err := g.Acquire(context.Background(), Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-x", Seq: 1})
 	if err == nil {
 		t.Fatal("同名分支的第二个终态占用必须被拒")
 	}
@@ -51,15 +52,15 @@ func TestLeaseLoserLateReleaseDoesNotStealWinner(t *testing.T) {
 	}
 
 	// 输家的迟到释放：凭的是「零凭证」（拿不到有效凭证）。
-	g.ReleaseLease(loser)
+	g.ReleaseLease(context.Background(), loser)
 
 	// 赢家的闸必须还在。
-	if _, err := g.Acquire(Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err == nil {
+	if _, err := g.Acquire(context.Background(), Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err == nil {
 		t.Fatal("独占权仍在：第三个终态占用必须被拒（实际被放掉了）")
 	}
 	// 且赢家的凭证仍能精确放掉它。
-	g.ReleaseLease(winner)
-	if _, err := g.Acquire(Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err != nil {
+	g.ReleaseLease(context.Background(), winner)
+	if _, err := g.Acquire(context.Background(), Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err != nil {
 		t.Fatalf("赢家释放后应可重新占用: %v", err)
 	}
 }
@@ -72,13 +73,13 @@ func TestLeaseStaleReleaseDoesNotStealReacquired(t *testing.T) {
 	g := NewGuard(leaseIsTerminal)
 	c := Commit{Ref: leaseRef(), Status: "succeeded", Branch: "agent-x", Seq: 1}
 
-	first, err := g.Acquire(c)
+	first, err := g.Acquire(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.ReleaseLease(first) // 落库失败 → 回滚
+	g.ReleaseLease(context.Background(), first) // 落库失败 → 回滚
 
-	second, err := g.Acquire(c) // 重试：同分支、同序号
+	second, err := g.Acquire(context.Background(), c) // 重试：同分支、同序号
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,10 +88,10 @@ func TestLeaseStaleReleaseDoesNotStealReacquired(t *testing.T) {
 	}
 
 	// 上一轮迟到的释放（拿着旧令牌）。
-	g.ReleaseLease(first)
+	g.ReleaseLease(context.Background(), first)
 
 	// 新持有者的闸必须还在。
-	if _, err := g.Acquire(Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err == nil {
+	if _, err := g.Acquire(context.Background(), Commit{Ref: leaseRef(), Status: "failed", Branch: "agent-y", Seq: 2}); err == nil {
 		t.Fatal("重试者的独占权不得被上一轮的迟到释放放掉（实际被放掉了）")
 	}
 }
@@ -110,10 +111,10 @@ func TestLeaseConcurrentAcquireHasExactlyOneWinner(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				c := Commit{Ref: leaseRef(), Status: "succeeded", Branch: "agent-x", Seq: 7}
-				lease, err := g.Acquire(c)
+				lease, err := g.Acquire(context.Background(), c)
 				if err != nil {
 					// 输家：错误处理里的迟到释放（拿着零凭证）。
-					g.ReleaseLease(lease)
+					g.ReleaseLease(context.Background(), lease)
 					return
 				}
 				mu.Lock()
@@ -131,20 +132,20 @@ func TestLeaseConcurrentAcquireHasExactlyOneWinner(t *testing.T) {
 // TestLeaseReleaseDoesNotTouchOtherRef 释放不得波及别的环节。
 func TestLeaseReleaseDoesNotTouchOtherRef(t *testing.T) {
 	g := NewGuard(leaseIsTerminal)
-	l1, err := g.Acquire(Commit{Ref: Ref{RunID: "run-1", Step: "s1"}, Status: "succeeded", Branch: "a", Seq: 1})
+	l1, err := g.Acquire(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: "s1"}, Status: "succeeded", Branch: "a", Seq: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	l2, err := g.Acquire(Commit{Ref: Ref{RunID: "run-1", Step: "s2"}, Status: "succeeded", Branch: "a", Seq: 2})
+	l2, err := g.Acquire(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: "s2"}, Status: "succeeded", Branch: "a", Seq: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.ReleaseLease(l1)
-	if _, _, ok := g.Status(Ref{RunID: "run-1", Step: "s2"}); !ok {
+	g.ReleaseLease(context.Background(), l1)
+	if _, _, ok := g.Status(context.Background(), Ref{RunID: "run-1", Step: "s2"}); !ok {
 		t.Fatal("释放 s1 不得影响 s2 的占用")
 	}
-	g.ReleaseLease(l2)
-	if _, _, ok := g.Status(Ref{RunID: "run-1", Step: "s2"}); ok {
+	g.ReleaseLease(context.Background(), l2)
+	if _, _, ok := g.Status(context.Background(), Ref{RunID: "run-1", Step: "s2"}); ok {
 		t.Fatal("s2 应已被自己的凭证释放")
 	}
 }
