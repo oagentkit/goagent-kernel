@@ -19,6 +19,27 @@
 //     随机，碰撞不在现实里）。
 //   - GC / Len 是清理与观测面，一致性要求弱于 Take。
 //
+// # 时间的真相只有存储一个（issue #186）
+//
+// **节点时钟不得参与过期判定。** 多副本部署下各节点时钟必然有偏移：
+// 快 30s 的副本会把未过期票据判成过期（旧实现先删后判——这次误判同时
+// 删掉了票，真正持有者随后消费失败且不可恢复）；慢的副本则让过期票据
+// 仍可重放。这不是「略有偏差」，是把「票据是否过期」的语义交给了一台
+// 随时会漂的机器。
+//
+// 故时间权威在 **Backend**：
+//
+//   - `Put(id, binding, ttl)` 按**存储时钟**落 expires_at，并返回该时刻
+//     （Issue 原样返回给宿主，库里记的与宿主看到的是同一个时刻）；
+//   - `Take(id)` / `GC()` 不带任何时间参数，过期比较**只能**用存储时钟。
+//     接口层面根本没有接收节点时钟的入口——不是靠实现自觉忽略它。
+//
+// 实现形态：PostgreSQL → 事务内 `clock_timestamp()`（或 `now() + ttl`
+// 在同一语句里落库并 RETURNING）；Redis → Lua 脚本内 `TIME`；
+// 进程内参考实现 → 构造时注入的时钟（`NewMemoryBackendWithClock`，
+// 它就是单进程的「存储时钟」，也是过期语义可确定性测试的接缝）。
+// `examples/pgstore` 的「到期由存储时钟算」（#140/#194）是同一口径。
+//
 // # 进程内参考实现
 //
 // NewMemoryBackend：单进程成立，**不得上生产**（跨进程原子性它给不了）。
@@ -35,22 +56,28 @@ import (
 // Backend 票据状态存储（并发安全；原子性契约见文件头）。
 //
 // 实现可以是进程内的（MemoryBackend）、SQL 的、Redis 的——本包只依赖
-// 这四个操作的语义，不依赖它们怎么达成。
+// 这四个操作的语义，不依赖它们怎么达成。**过期判定的时间权威在实现侧**
+// （存储时钟，见文件头「时间的真相只有存储一个」）：接口不接收调用方时间，
+// 节点时钟因此没有进入判定面的路径。
 type Backend interface {
-	// Put 写入一张未消费票据。容量策略由实现自判（内存参考实现满了报错，
-	// 与旧实现「票据空间已满」同一拒发口径）。
+	// Put 写入一张未消费票据，expires_at 由**存储时钟** + ttl 落下，
+	// 并返回该时刻（Issue 原样返回给宿主）。
+	//
+	// 容量策略由实现自判（内存参考实现满了报错，与旧实现「票据空间已满」
+	// 同一拒发口径）。
 	//
 	// 签发路径（Store.Issue）在 Put 前先经 GC 回收过期票据（issue #208）：
-	// 实现看到的容量压力以未过期票据为主——实现自身的容量判据不必（也无法，
-	// Put 没有时钟）分辨过期与否。
-	Put(id string, binding Binding, expiresAt time.Time) error
-	// Take 原子取出并删除：不存在或已过期 ⇒ ok=false。
+	// 实现看到的容量压力以未过期票据为主——实现自身的容量判据不必分辨
+	// 过期与否（它拿到的 ttl 与存储时钟足以在落库时判，但容量口径归实现）。
+	Put(id string, binding Binding, ttl time.Duration) (expiresAt time.Time, err error)
+	// Take 原子取出并删除：不存在或已过期（**存储时钟**）⇒ ok=false。
 	//
 	// ⚠️ 过期票据**也已被删除**——与进程内旧实现「消费尝试顺手清过期」
-	// 逐字一致（先删后判的顺序是语义的一部分，不是实现巧合）。
-	Take(id string, now time.Time) (Binding, bool, error)
-	// GC 删除已过期票据，返回清理张数。
-	GC(now time.Time) (int, error)
+	// 逐字一致（先删后判的顺序是语义的一部分，不是实现巧合）。时钟权威
+	// 归存储之后，这一条不再有「误删尚未过期的票」的窗口。
+	Take(id string) (Binding, bool, error)
+	// GC 删除已过期票据（**存储时钟**），返回清理张数。
+	GC() (int, error)
 	// Len 返回现存票据数（含过期未清理的——它们只是不可消费，仍占空间）。
 	Len() (int, error)
 }
@@ -60,32 +87,58 @@ type memoryBackend struct {
 	mu      sync.Mutex
 	m       map[string]entry
 	maxSize int
+	// now 存储时钟：本实现就是「单进程的存储」，注入的时钟是过期判定的
+	// 唯一时间真相（issue #186）。生产宿主接 DB 时，这个角色由数据库
+	// 的 clock_timestamp / Lua TIME 承担。
+	now func() time.Time
 }
 
 // NewMemoryBackend 构造进程内参考实现（maxSize <= 0 ⇒ DefaultMaxEntries）。
 //
-// 这是 Store 缺省构造（New / NewWithClock）背后的实现；宿主的跨进程
-// Backend 由宿主自己实现并经 NewWithBackend 注入。
+// 存储时钟取 time.Now；需要确定性过期语义（测试）用
+// NewMemoryBackendWithClock 注入时钟。
+//
+// 这是 Store 缺省构造（New）背后的实现；宿主的跨进程 Backend 由宿主
+// 自己实现并经 NewWithBackend 注入。
 func NewMemoryBackend(maxSize int) Backend {
+	return NewMemoryBackendWithClock(maxSize, time.Now)
+}
+
+// NewMemoryBackendWithClock 构造进程内参考实现并注入**存储时钟**。
+//
+// ⭐ 为什么时钟在 Backend 而不是 Store：过期判定必须只有一个时间真相。
+// 旧实现让调用方把 now 传进 Take/GC，多副本下「谁的时钟说了算」取决于
+// 这次调用是谁发的——快时钟误杀、慢时钟放行重放。时钟注入到存储侧之后，
+// 进程内参考实现与跨进程 DB 遵守同一条语义（DB 用存储时钟），测试也能
+// 确定性地推进过期（不靠 sleep）。
+//
+// maxSize <= 0 ⇒ DefaultMaxEntries；now 为 nil ⇒ time.Now。
+func NewMemoryBackendWithClock(maxSize int, now func() time.Time) Backend {
 	if maxSize <= 0 {
 		maxSize = DefaultMaxEntries
 	}
-	return &memoryBackend{m: map[string]entry{}, maxSize: maxSize}
+	if now == nil {
+		now = time.Now
+	}
+	return &memoryBackend{m: map[string]entry{}, maxSize: maxSize, now: now}
 }
 
 // Put 写入；容量已满 ⇒ 显式报错（与旧实现同一口径：满了就说满，不默默淘汰）。
-func (b *memoryBackend) Put(id string, binding Binding, expiresAt time.Time) error {
+// expires_at 按**存储时钟** + ttl 计算，返回同一个时刻。
+func (b *memoryBackend) Put(id string, binding Binding, ttl time.Duration) (time.Time, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.m) >= b.maxSize {
-		return fmt.Errorf("票据空间已满（上限 %d 张）", b.maxSize)
+		return time.Time{}, fmt.Errorf("票据空间已满（上限 %d 张）", b.maxSize)
 	}
-	b.m[id] = entry{binding: binding, expiresAt: expiresAt}
-	return nil
+	exp := b.now().Add(ttl)
+	b.m[id] = entry{binding: binding, expiresAt: exp}
+	return exp, nil
 }
 
 // Take 原子取出并删除（单锁内完成取/删/判过期，顺序与旧 Consume 逐字一致）。
-func (b *memoryBackend) Take(id string, now time.Time) (Binding, bool, error) {
+// 过期比较只读**存储时钟**——节点时钟在接口层面就无法传进来（issue #186）。
+func (b *memoryBackend) Take(id string) (Binding, bool, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	tk, ok := b.m[id]
@@ -93,16 +146,17 @@ func (b *memoryBackend) Take(id string, now time.Time) (Binding, bool, error) {
 		return Binding{}, false, nil
 	}
 	delete(b.m, id)
-	if now.After(tk.expiresAt) {
+	if b.now().After(tk.expiresAt) {
 		return Binding{}, false, nil
 	}
 	return tk.binding, true, nil
 }
 
-// GC 清掉过期票据。
-func (b *memoryBackend) GC(now time.Time) (int, error) {
+// GC 清掉过期票据（按**存储时钟**判）。
+func (b *memoryBackend) GC() (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	now := b.now()
 	n := 0
 	for id, tk := range b.m {
 		if now.After(tk.expiresAt) {

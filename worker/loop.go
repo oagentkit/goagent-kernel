@@ -73,6 +73,16 @@ type Config struct {
 	// HeartbeatInterval 心跳/续期周期（0 = TTL/3）。必须短于 TTL，
 	// 否则注册周期性过期（装配期拦下，不静默运行）。
 	HeartbeatInterval time.Duration
+	// Concurrency 同时在途执行的任务上限（0/1 = 串行，既有行为逐字不变；
+	// 负值非法，装配期拦下）。>1 时领取与执行解耦：领取环只做认领并投递，
+	// 执行体在有界池里并行——单个慢任务不再占住整个副本的领取能力。
+	//
+	// 租约契约与串行路径相同，只是**按任务独立**：每个在途任务有自己的
+	// token / cancel / 连续续期失败计数；ErrLeaseLost 只取消它自己；
+	// 连续续期失败跨过阈值（ErrLeaseUnconfirmed）仍按既有契约停止领取
+	// 并收刀。停机时停止领取、等待全部在途收场（handler 无视 ctx 取消
+	// 时排水同样无上界——既有语义）。
+	Concurrency int
 	// Pick 可选的挑选钩子：从候选任务里挑一个认领。缺省按 ID 序取第一个
 	// 可认领的（确定性——不依赖任务板返回顺序）。优先级/公平性等挑选策略
 	// 由宿主在此接线（判据面见 scheduling 包；本驱动不内嵌第二份）。
@@ -120,6 +130,12 @@ func NewLoop(board taskboard.RenewingBoard, registry Registry, handler Handler, 
 			"worker: 心跳间隔必须短于 TTL——否则注册必然周期性过期",
 			"interval", cfg.HeartbeatInterval, "ttl", cfg.TTL)
 	}
+	if cfg.Concurrency < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 并发度必须非负", "concurrency", cfg.Concurrency)
+	}
+	if cfg.Concurrency == 0 {
+		cfg.Concurrency = 1 // 缺省串行：既有宿主升级后行为逐字不变
+	}
 	if cfg.RenewFailMax < 0 {
 		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期失败阈值必须非负", "renewFailMax", cfg.RenewFailMax)
 	}
@@ -141,11 +157,84 @@ type Loop struct {
 	cfg      Config
 }
 
-// claimed 一次在途认领（主循环与心跳协程的共享面，由 mu 护住）。
+// claimed 一次在途认领（领取环、执行协程与心跳协程的共享面）。
 type claimed struct {
 	id     taskboard.TaskID
 	token  string
 	cancel context.CancelFunc // 租约易主时取消在途执行
+
+	// mu 串行化「本任务的续期」与「收场开始」：收场（Complete/Release）
+	// 一旦开始，心跳不得再对本任务 Renew——否则会出现「Complete 已成功、
+	// 随后的 Renew 却报 ErrLeaseLost」的假事件（续期读到的已是终态）。
+	// 这是并发池新增的共享面（issue #196 的「事件串行化」）。
+	mu         sync.Mutex
+	finalizing bool // 收场已开始（含 panic 兜底路径）
+	renewFails int  // 连续续期失败计数（心跳协程在 mu 下读写）
+}
+
+// renewLocked 在「本任务尚未进入收场」时执行一次续期判定。
+// 返回 false = 已进入收场，心跳应跳过本任务。
+//
+// 回调在 mu 内执行：续期与本任务的收场互斥，跨任务互不阻塞。
+func (c *claimed) renewLocked(renew func()) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.finalizing {
+		return false
+	}
+	renew()
+	return true
+}
+
+// beginFinalize 标记本任务进入收场（幂等）。与 renewLocked 互斥：
+// 返回时不会再有本任务的 Renew 在途。
+func (c *claimed) beginFinalize() {
+	c.mu.Lock()
+	c.finalizing = true
+	c.mu.Unlock()
+}
+
+// inflight 一次 Run 的在途认领集合（并发池与心跳协程的共享面）。
+//
+// 串行路径（Concurrency=1）里集合最多一条，语义与旧的 `current *claimed`
+// 单槽逐字一致；并发路径里每个任务一条，心跳按快照逐条续期。
+type inflight struct {
+	mu    sync.Mutex
+	tasks map[taskboard.TaskID]*claimed
+}
+
+func newInflight() *inflight {
+	return &inflight{tasks: map[taskboard.TaskID]*claimed{}}
+}
+
+func (s *inflight) add(c *claimed) {
+	s.mu.Lock()
+	s.tasks[c.id] = c
+	s.mu.Unlock()
+}
+
+// remove 只删仍是这条认领的条目：任务释放后可能被再次认领，旧执行体的
+// 收场延迟不得把新认领从集合里删掉。
+func (s *inflight) remove(id taskboard.TaskID, c *claimed) {
+	s.mu.Lock()
+	if s.tasks[id] == c {
+		delete(s.tasks, id)
+	}
+	s.mu.Unlock()
+}
+
+// snapshot 取当前全部在途（按 ID 排序：续期顺序确定，不依赖 map 迭代序）。
+func (s *inflight) snapshot() []*claimed {
+	s.mu.Lock()
+	out := make([]*claimed, 0, len(s.tasks))
+	for _, c := range s.tasks {
+		out = append(out, c)
+	}
+	s.mu.Unlock()
+	slices.SortFunc(out, func(x, y *claimed) int {
+		return strings.Compare(string(x.id), string(y.id))
+	})
+	return out
 }
 
 // Run 跑完整生命周期（阻塞到外层 ctx 取消或身份丢失）。
@@ -164,9 +253,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	claimCtx, claimCancel := context.WithCancel(ctx)
 	defer claimCancel()
 
+	set := newInflight()
 	var (
-		mu          sync.Mutex
-		current     *claimed
 		lost        bool // 心跳协程写、Run 在心跳退出后读（close(done) 建立先行发生）
 		unconfirmed bool // 续期连续失败跨过阈值：资格无法确认（停止领取，收刀）
 	)
@@ -178,63 +266,15 @@ func (l *Loop) Run(ctx context.Context) error {
 	// 正确性的前置条件，注册表抖动不得吞掉同一拍的租约续期。
 	// 走 async.GoSafe 而非裸 go func（本仓门禁：panic 无法被外层 recover）。
 	async.GoSafe(func() {
-		defer close(done)
-		ticker := time.NewTicker(l.cfg.HeartbeatInterval)
-		defer ticker.Stop()
-		renewFails := 0 // 连续续期失败计数（成功一次即清零）
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-stopping:
-				return
-			case <-ticker.C:
-			}
-			// 任务租约续期（taskboard.Renew = 资格检查 + 推后到期时刻）。
-			mu.Lock()
-			cur := current
-			mu.Unlock()
-			if cur != nil {
-				_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
-				switch {
-				case rErr == nil:
-					renewFails = 0
-				case errors.Is(rErr, taskboard.ErrLeaseLost):
-					// 资格没了：取消在途执行（施加之前封口），并留痕。
-					renewFails = 0
-					l.notifyLeaseLost(cur.id, LeaseLostTakenOver)
-					cur.cancel()
-				default:
-					// 其它续期错误：下一拍重试（阈值内租约尚未到期，
-					// 仍有出路）；连续失败跨过阈值 = 无法确认持有资格
-					//——与新持有者重复施加的是同一种危险，封口并收刀。
-					renewFails++
-					if renewFails >= l.cfg.RenewFailMax && ctx.Err() == nil {
-						unconfirmed = true
-						l.notifyLeaseLost(cur.id, LeaseLostUnconfirmed)
-						claimCancel() // 停止领取：答不出「谁在持」就不发起新的副作用
-						cur.cancel()  // 在途封口
-					}
-				}
-			}
-			// 注册心跳：身份的资格检查。非身份类失败（含 ctx 取消的抖动）
-			// 不判丢失——把存储抖动当成身份丢失，驱动会在任务板正常时自杀。
-			// 失败也不回退上面已做过的续期（两个故障域互不阻断，issue #179）。
-			if _, hbErr := l.registry.Heartbeat(ctx, reg.ID, reg.Token, l.cfg.TTL); hbErr != nil {
-				if errors.Is(hbErr, ErrNotRegistered) {
-					lost = true
-					claimCancel()
-					return
-				}
-				if ctx.Err() != nil {
-					return
-				}
-				// 存储抖动：下一拍重试（只影响身份，不影响上面的续期）。
-			}
-		}
+		l.heartbeat(ctx, claimCancel, reg, set, stopping, &lost, &unconfirmed, done)
 	})
 
-	runErr := l.runClaims(claimCtx, &mu, &current)
+	var runErr error
+	if l.cfg.Concurrency <= 1 {
+		runErr = l.runClaims(claimCtx, set) // 缺省路径：逐字保持既有串行语义
+	} else {
+		runErr = l.runClaimsPool(claimCtx, set)
+	}
 	close(stopping) // 在途已收敛：心跳可以收刀（排水期不再保活）
 	<-done
 
@@ -254,14 +294,17 @@ func (l *Loop) Run(ctx context.Context) error {
 }
 
 // runClaims 领取-执行主循环（claimCtx 取消即停止领取）。
-func (l *Loop) runClaims(ctx context.Context, mu *sync.Mutex, current **claimed) error {
+//
+// Concurrency=1 的缺省路径：领一个、跑完、再领下一个——与并发池落地前
+// 逐字同义（慢任务占住领取环是这个模式的既有语义，不是缺陷）。
+func (l *Loop) runClaims(ctx context.Context, set *inflight) error {
 	for ctx.Err() == nil {
 		task, ok, err := l.claimNext(ctx)
 		if err != nil {
 			return err
 		}
 		if ok {
-			if err := l.executeOne(ctx, mu, current, task); err != nil {
+			if err := l.executeOne(ctx, set, task); err != nil {
 				return err
 			}
 		}
@@ -304,46 +347,6 @@ func (l *Loop) claimNext(ctx context.Context) (taskboard.Task, bool, error) {
 		return taskboard.Task{}, false, errors.Wrap(err, "worker: 认领失败", "task", string(pick))
 	}
 	return t, true, nil
-}
-
-// executeOne 执行一个在途任务：登记给心跳协程 → 跑 handler → 收场。
-//
-// 收场动作走 WithoutCancel：外层停机时在途任务的 Complete/Release 仍要落地
-// （任务板的状态不能因为停机而悬在 claimed）。收场被 ErrLeaseLost 拒
-// = 闸已易主——任务归新持有者，如实接受（不重试、不吞），但经
-// OnLeaseLost 留痕：本次结果作废是宿主必须知道的事实，不是成功路径
-// （issue #179：静默吞掉它，下游非幂等副作用就可能双份）。
-func (l *Loop) executeOne(ctx context.Context, mu *sync.Mutex, current **claimed, task taskboard.Task) error {
-	execCtx, cancel := context.WithCancel(ctx)
-	c := &claimed{id: task.ID, token: task.Lease.Token, cancel: cancel}
-	mu.Lock()
-	*current = c
-	mu.Unlock()
-
-	execErr := l.handler.Execute(execCtx, task)
-
-	mu.Lock()
-	*current = nil
-	mu.Unlock()
-	cancel()
-
-	finalCtx := context.WithoutCancel(ctx)
-	if execErr == nil {
-		if err := l.board.Complete(finalCtx, task.ID, c.token); err != nil {
-			if !errors.Is(err, taskboard.ErrLeaseLost) {
-				return errors.Wrap(err, "worker: 完成任务失败", "task", string(task.ID))
-			}
-			l.notifyLeaseLost(task.ID, LeaseLostOnFinalize)
-		}
-	} else {
-		if err := l.board.Release(finalCtx, task.ID, c.token); err != nil {
-			if !errors.Is(err, taskboard.ErrLeaseLost) {
-				return errors.Wrap(err, "worker: 释放任务失败", "task", string(task.ID))
-			}
-			l.notifyLeaseLost(task.ID, LeaseLostOnFinalize)
-		}
-	}
-	return nil
 }
 
 // candidates 从快照里挑可认领的任务（open 与 failed 都可重做；

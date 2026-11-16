@@ -629,6 +629,26 @@ modules:
       （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
       同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
 
+  # Standalone 单机持久化参考实现（2026-11-16 新增，issue #188）：
+  # SQLite(WAL) 的**契约级设计** + 零依赖文件后端（flock + JSONL + fsync）。
+  #
+  # 为什么没有 sqlite 驱动：本仓是单一 module（examples 不是独立 module），
+  # 主干不为参考实现新增第三方依赖——pgx 是既有唯一破例，且它只进
+  # pgrefstore 的依赖图。引入 modernc.org/sqlite 会把一棵数 MB 的传递依赖
+  # 树带进主 module。替代方案与 SQLite DDL/WAL 的逐条映射写在包文档里，
+  # 宿主在自己 module 加驱动后照抄即可。
+  - id: sqlitestore
+    roots: [examples/sqlitestore]
+    requires: [taskboard, "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      taskboard.Board（含 RenewingBoard）的单机持久化参考实现：进程内 mutex +
+      跨进程 flock 单写者，JSONL 追加 + fsync 为提交点，打开/写入前重放并
+      截断残尾。WAL/SQLite 的落库形态（PRAGMA / BEGIN IMMEDIATE / 单连接写
+      串行化 / 存储时钟）写在 doc.go，是宿主生产实现的契约级依据。
+      boardtest 全套契约判据在本实现上真跑（与 pgstore 同一段判据）。
+
   # 容器执行后端参考实现（2026-11-13 新增，issue #109）：backend.Backend 的
   # 容器形态落点。
   #
@@ -792,7 +812,7 @@ modules:
 
   - id: worker
     roots: [worker]
-    requires: [taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [taskboard, sideeffect, checkpoint, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -800,6 +820,13 @@ modules:
       心跳与续期接 taskboard 的租约续期（Renew = 资格检查不是心跳摆设）；
       恢复（Recover）判资格不判时钟——过期判定归任务板侧，不建第二套时钟判据。
       注册表的参考实现放 examples/worker-runtime（issue #106 边界）。
+
+      受管执行器（managed.go，issue #191）只做编排：Claim → sideeffect.Runner
+      （Acquire/执行意图/栅栏/结果未知）→ checkpoint.Committer（单调提交）→
+      Complete（凭令牌）。不发明第二套状态机：四步各自的判据仍在
+      taskboard / sideeffect / checkpoint 里，本包只决定既有结论触发哪个既有动作。
+      UNCERTAIN 不落到任务板状态上（任务板没有也不该有该状态）：不 Complete、
+      释放租约，由副作用闸继续挡住重试。
 
   - id: scheduling
     roots: [scheduling]
@@ -1536,7 +1563,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
