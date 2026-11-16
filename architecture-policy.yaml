@@ -657,8 +657,9 @@ modules:
   # 镜像仓库策略）是宿主资产。宿主抄它、不 import 它。
   #
   # 为什么零第三方依赖：Docker 走 Engine HTTP API（stdlib net/http，
-  # unix socket 直连），**不引 Docker 客户端库**；Kubernetes 侧是接入点占位
-  # （client-go 归宿主侧——引它会让示例的依赖图追着 K8s 版本跑）。
+  # unix socket 直连），**不引 Docker 客户端库**；Kubernetes 走
+  # kube-apiserver HTTP API（stdlib net/http + in-cluster token/CA），
+  # **不引 client-go**——引它会让示例的依赖图追着 K8s 版本跑。
   - id: containerbackend
     roots: [examples/containerbackend]
     requires: [backend, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
@@ -666,10 +667,12 @@ modules:
     managed: true
     notes: |
       Docker Engine 参考实现（IsolationContainer + EgressDenied 以 network=none
-      兑现 + 内存经容器上限兑现，日志多路复用流 demux）+ Kubernetes Job 接入
-      占位（未接入前按最弱档自报，Exec 一律 ErrNotWired 响亮失败——半成品
-      会把「没接上」伪装成「跑过了」）。测试以 httptest 假引擎对拍，不需要
-      真实守护进程。
+      兑现 + 内存经容器上限兑现，日志多路复用流 demux）+ Kubernetes Job 参考
+      实现（issue #192：Namespace/ServiceAccount 可配、Egress=denied 以逐作业
+      NetworkPolicy 兑现且建不出来即拒绝创建作业、ttlSecondsAfterFinished 兜底
+      清理、conditions/succeeded/failed/active 状态对账——Pod 被强删/节点失联/
+      Job 消失一律 unknown 失败，不谎报成功）。测试以 httptest 假引擎 /
+      假 apiserver 对拍，不需要真实守护进程或集群。
 
   - id: archcheck
     roots: [archcheck]
@@ -745,7 +748,7 @@ modules:
       能力自报（EgressEnforcer / Capable 与 sandbox 同构同词表——沉默按最弱）、
       要求对照判据（SatisfiedBy，fail-closed）与登记簿（无满足者即拒绝不降级，
       满足者取最弱、同档按 ID 字典序）+ 进程内兜底实现（Inline，显式声明
-      IsolationNone）。Docker Engine 参考实现与 K8s Job 接入占位在
+      IsolationNone）。Docker Engine 与 Kubernetes Job 两份参考实现在
       examples/containerbackend。隔离轴在本包重立而出口词表复用 sandbox：
       上游 Level 枚举值即强弱序，往中间插容器档 = 跨仓破坏性变更；
       对应关系只写在 Isolation 注释里，不做代码级映射（第二真相）。
