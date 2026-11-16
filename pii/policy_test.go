@@ -259,12 +259,12 @@ func TestApplySpansOneStrategyPerCall(t *testing.T) {
 			if len(out) != len(txt) {
 				t.Fatalf("mask 应保长，实得 %d vs %d", len(out), len(txt))
 			}
-			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101************32") {
+			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101**************") {
 				t.Fatalf("mask 下两个 span 都该保长打码（一次调用内形态一致），实得 %q", out)
 			}
 		}},
 		{"block 形态同 mask 但必须报阻断", StrategyBlock, true, func(t *testing.T, out string) {
-			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101************32") || len(out) != len(txt) {
+			if !strings.Contains(out, "138****1234") || !strings.Contains(out, "1101**************") || len(out) != len(txt) {
 				t.Fatalf("block 处置形态应同 mask（内核不代为阻断），实得 %q", out)
 			}
 		}},

@@ -35,6 +35,17 @@ func (r *rec) first() eventbus.Event {
 	return r.got[0]
 }
 
+func (r *rec) reasons() map[string]int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := map[string]int{}
+	for _, ev := range r.got {
+		reason, _ := ev.Payload["reason"].(string)
+		out[reason]++
+	}
+	return out
+}
+
 func callEvent(callID string) eventbus.Event {
 	return eventbus.Event{SessionID: "s1", CaseID: "c1", StepID: stepPtr(7),
 		Type: eventbus.EventToolCall, Payload: map[string]any{"call_id": callID, "tool": "use_skill"}}
@@ -45,17 +56,29 @@ func resultEvent(callID string) eventbus.Event {
 		Type: eventbus.EventToolResult, Payload: map[string]any{"call_id": callID, "tool": "use_skill"}}
 }
 
+// resultNoStep 不带 StepID 的结果（宿主发布路径的常见形态）。
+func resultNoStep(callID string) eventbus.Event {
+	e := resultEvent(callID)
+	e.StepID = nil
+	return e
+}
+
 func finishEvent() eventbus.Event {
 	return eventbus.Event{SessionID: "s1", CaseID: "c1", StepID: stepPtr(7),
 		Type: eventbus.EventStepFinished, Payload: map[string]any{"agent": "x", "status": "succeeded"}}
 }
 
+// sessionEnd 会话收口（INV1 的判定时刻）。
+func sessionEnd() eventbus.Event {
+	return eventbus.Event{SessionID: "s1", CaseID: "c1", Type: eventbus.EventSessionFinished}
+}
+
 func TestWatchdogLeakDetected(t *testing.T) {
-	// INV1：声明后无结果、环节收口 → declared_not_executed 提示
+	// INV1：声明后无结果、会话收口 → declared_not_executed 提示
 	r := &rec{}
 	w := New(r.pub)
 	w.observe(callEvent("t1"))
-	w.observe(finishEvent())
+	w.observe(sessionEnd())
 
 	if r.count() != 1 {
 		t.Fatalf("应有一条泄漏提示: %d", r.count())
@@ -64,13 +87,14 @@ func TestWatchdogLeakDetected(t *testing.T) {
 	if got.Type != eventbus.EventToolPairingLeak || got.Level != "warn" {
 		t.Fatalf("事件类型/级别不符: %+v", got)
 	}
-	if got.Payload["reason"] != "declared_not_executed" || got.Payload["call_id"] != "t1" {
+	// 告警载荷里的 call_id 经同一个读取点取（本包不得直接索引载荷键，#336）。
+	if got.Payload["reason"] != ReasonDeclaredNotExecuted || eventbus.ToolCallID(got) != "t1" {
 		t.Fatalf("payload 不符: %v", got.Payload)
 	}
 }
 
 func TestWatchdogDuplicateResult(t *testing.T) {
-	// INV2：同一 call_id 结果回灌两次 → unpaired_result 提示
+	// INV2：同一 call_id 结果回灌两次 → 第二次是 duplicate_result（与 trajectory 同词）
 	r := &rec{}
 	w := New(r.pub)
 	w.observe(callEvent("t1"))
@@ -78,24 +102,105 @@ func TestWatchdogDuplicateResult(t *testing.T) {
 	w.observe(resultEvent("t1"))
 
 	if r.count() != 1 {
-		t.Fatalf("应有一条 unpaired 提示: %d", r.count())
+		t.Fatalf("应有一条重复结果提示: %d", r.count())
 	}
-	if r.first().Payload["reason"] != "unpaired_result" {
-		t.Fatalf("reason 应为 unpaired_result: %v", r.first().Payload)
+	if got := r.first().Payload["reason"]; got != ReasonDuplicateResult {
+		t.Fatalf("reason 应为 %s，实得 %v", ReasonDuplicateResult, got)
+	}
+}
+
+func TestWatchdogUnpairedResult(t *testing.T) {
+	// INV2：从未声明过的结果（幽灵结果）→ unpaired_result
+	r := &rec{}
+	w := New(r.pub)
+	w.observe(resultEvent("ghost"))
+
+	if r.count() != 1 || r.first().Payload["reason"] != ReasonUnpairedResult {
+		t.Fatalf("应有一条 unpaired_result: %+v", r.got)
 	}
 }
 
 func TestWatchdogCleanPairing(t *testing.T) {
-	// 正常配对：声明→结果→收口，零提示；收口后状态清理，同号复跑仍零提示
+	// 正常配对：声明→结果→收口，零提示；每次复跑用新的 call_id。
 	r := &rec{}
 	w := New(r.pub)
 	for i := 0; i < 2; i++ {
-		w.observe(callEvent("t1"))
-		w.observe(resultEvent("t1"))
+		callID := "t" + string(rune('1'+i))
+		w.observe(callEvent(callID))
+		w.observe(resultEvent(callID))
 		w.observe(finishEvent())
 	}
+	w.observe(sessionEnd())
 	if r.count() != 0 {
 		t.Fatalf("正常配对不应提示: %+v", r.got)
+	}
+}
+
+// TestWatchdogResultWithoutStepIDPairs 配对身份不含 step：结果不带 StepID
+// 仍按全局 call_id 配上，不得报 unpaired_result（issue #336 触发路径①）。
+func TestWatchdogResultWithoutStepIDPairs(t *testing.T) {
+	r := &rec{}
+	w := New(r.pub)
+	w.observe(callEvent("t1"))
+	w.observe(resultNoStep("t1"))
+	w.observe(sessionEnd())
+	if r.count() != 0 {
+		t.Fatalf("结果不带 StepID 不得判成配对失败: %+v", r.got)
+	}
+}
+
+// TestWatchdogDeclarationSurvivesStepFinish 声明跨 step 等到结果是正常形态：
+// step_finished 不是配对截止时刻（结果可以在后续环节到达）。
+func TestWatchdogDeclarationSurvivesStepFinish(t *testing.T) {
+	r := &rec{}
+	w := New(r.pub)
+	w.observe(callEvent("t1"))
+	w.observe(finishEvent())
+	w.observe(resultNoStep("t1"))
+	w.observe(sessionEnd())
+	if r.count() != 0 {
+		t.Fatalf("结果晚于环节收口到达不得报 declared_not_executed: %+v", r.got)
+	}
+}
+
+// TestWatchdogCrossStepDuplicateDeclaration 同一 call_id 跨 step 重复声明
+// （重试/改派）：报 duplicate_call（与 trajectory 同判据），且会话收口时
+// 已配对，不得再报 declared_not_executed（issue #336 触发路径②）。
+func TestWatchdogCrossStepDuplicateDeclaration(t *testing.T) {
+	r := &rec{}
+	w := New(r.pub)
+	w.observe(callEvent("t1"))
+	second := callEvent("t1")
+	second.StepID = stepPtr(8)
+	w.observe(second)
+	res := resultNoStep("t1")
+	res.StepID = stepPtr(8)
+	w.observe(res)
+	w.observe(sessionEnd())
+
+	got := r.reasons()
+	if got[ReasonDeclaredNotExecuted] != 0 {
+		t.Fatalf("不得报 declared_not_executed（结果已到）: %v", got)
+	}
+	if got[ReasonDuplicateCall] != 1 || r.count() != 1 {
+		t.Fatalf("跨 step 重复声明应只报一条 duplicate_call: %v", got)
+	}
+}
+
+// TestWatchdogTTLSweepAlerts 未配对声明超 TTL：删除前必须告警，不能静默吞掉。
+func TestWatchdogTTLSweepAlerts(t *testing.T) {
+	r := &rec{}
+	w := New(r.pub)
+	w.observe(callEvent("t1"))
+	w.lastActive["s1"] = time.Now().Add(-3 * time.Hour)
+	w.lastSweep = time.Time{}
+	w.maybeSweep()
+
+	if r.count() != 1 || r.first().Payload["reason"] != ReasonDeclaredNotExecuted {
+		t.Fatalf("TTL 过期的未配对声明必须显形: %+v", r.got)
+	}
+	if len(w.pairs) != 0 {
+		t.Fatalf("清扫后会话表应清空: %+v", w.pairs)
 	}
 }
 
@@ -104,7 +209,8 @@ func TestWatchdogNoPub(t *testing.T) {
 	w := New(nil)
 	w.observe(callEvent("t1"))
 	w.observe(finishEvent())
-	w.observe(resultEvent("t1"))
+	w.observe(resultNoStep("t1"))
+	w.observe(sessionEnd())
 }
 
 func TestWatchdogRunSmoke(t *testing.T) {
@@ -121,8 +227,7 @@ func TestWatchdogRunSmoke(t *testing.T) {
 	for time.Now().Before(deadline) {
 		bus.Publish("s1", "c1", stepPtr(7), eventbus.EventToolCall, "info",
 			map[string]any{"call_id": "t9", "tool": "use_skill"})
-		bus.Publish("s1", "c1", stepPtr(7), eventbus.EventStepFinished, "info",
-			map[string]any{"agent": "x", "status": "succeeded"})
+		bus.Publish("s1", "c1", nil, eventbus.EventSessionFinished, "info", nil)
 		if r.count() > 0 {
 			return
 		}

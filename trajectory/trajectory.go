@@ -18,7 +18,8 @@
 //
 //  2. **配对不完整要显形**。工具调用与结果按 call_id 配对；只有调用没有结果、
 //     结果重复、结果没有对应调用、同号重复声明——四种缺口都进 Issues()，
-//     不静默丢弃。
+//     不静默丢弃。不带 call_id 的事件走无 id 路径（按到达顺序归并，配对状态
+//     写 no_call_id），**不记缺口**——没有标识不等于配对失败（issue #306）。
 //
 //  3. **未完成不是完成**。只有开始没有结束的行，状态是 open（未收口），
 //     不是「时长 0 的已完成行」。Finalize() 把「不会再有新事件」落成显式事实，
@@ -35,8 +36,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Kind 轨迹行的类目。
@@ -93,6 +92,10 @@ const (
 	PairingUnpairedResult Pairing = "unpaired_result"
 	// PairingDuplicateCall 同一 call_id 收到第二个调用声明。
 	PairingDuplicateCall Pairing = "duplicate_call"
+	// PairingNoCallID 事件未携带配对键（call_id 为空）：调用方未提供标识，
+	// 无从配对——**不是缺口**。「没有 call_id」与「call_id 找不到对应调用」
+	// 是两件事（issue #306）。
+	PairingNoCallID Pairing = "no_call_id"
 )
 
 // Row 轨迹行：一轮 turn 里的一段有起止的过程。
@@ -106,13 +109,17 @@ type Row struct {
 	// Kind 行类目。
 	Kind Kind
 	// ID 行标识：轮次行 "turn#1"；带环节号的步骤行 "step#7"；
-	// 工具行 "tool#<call_id>"；副作用行 "sideeffect#<key>"（同 Key 的多段
-	// ——授予段、对账段——共用一个标识：它们是同一个动作的先后两段）；
-	// 快照行 "checkpoint#<run_id>#<seq>"；无自然键的行用 "step#-<seq>" 形式兜底
+	// 工具行 "tool#<call_id>"；副作用行 "sideeffect#<key>"；快照行
+	// "checkpoint#<run_id>#<seq>"；无自然键的行用 "<kind>#-<seq>" 形式兜底
 	// （"-" 前缀表示「这个标识是投影生成的，不是业务自然键」）。
+	//
+	// 唯一性范围是**轮内**。自然键在轮内重复时（同一幂等键的授予段/对账段、同一
+	// (run_id, seq) 的重复提交、同轮重试的同号环节），第二段起追加 "#-<段序>"
+	// 后缀（如 sideeffect#k1#-2）——行标识仍轮内唯一，跨段聚合改用属性
+	// （sideeffect.key / checkpoint run_id+seq），见 otel.go 头注。
 	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / sideeffectRowID /
-	// checkpointRowID / seqID——otel 的父子关系复用同一组函数，另写一份格式
-	// 父子就会连不上。
+	// checkpointRowID / seqID 与统一收口的 claimID——otel 的父子关系复用同一组
+	// 函数，另写一份格式父子就会连不上。
 	ID string
 	// Turn 所属轮次序号（1 起）；轮次之外的事件为 0。
 	Turn int
@@ -166,6 +173,9 @@ type Row struct {
 //
 // 结束早于开始（事件时刻本身不自洽，例如结果先于调用到达）时同样返回
 // ok=false：负时长不是实测值。
+//
+// 投影器保证步骤行只与**同轮**事件配对（见 matchOpenStep）：跨轮遗留的步骤行
+// 保持 open、没有 EndAt，故本方法的实测值不会跨过它声称所属的轮（issue #300）。
 func (r Row) Duration() (time.Duration, bool) {
 	if r.StartAt.IsZero() || r.EndAt.IsZero() {
 		return 0, false
@@ -201,27 +211,40 @@ type Options struct {
 	// Summarize 摘要注入点：宿主自定义行标签（展示文案归宿主，内核不认识
 	// 任何领域词）。返回空串时沿用本包的通用标签；nil 时全程用通用标签。
 	//
-	// 只在行创建时调用一次——行的可读字段（类目、标识、工具名、时刻）在创建
-	// 后不再变化，故摘要不需要跟着配对状态刷新。
+	// 行创建时调用一次；**「结果先到、调用后到」的就地归并会改写类目与归属
+	// 字段**，此时按归并后的行再调用一次——钩子最后一次看到的类目与最终
+	// Row.Kind 一致（issue #299）。归并完成后行的可读字段不再变化。
+	//
+	// 钩子在投影器内部锁**外**执行（issue #302）：入参是行值拷贝（纯数据
+	// 快照），可以回查 Rows()/Len()、可做 I/O；慢钩子只阻塞当前 Apply 的
+	// 返回，不阻塞其他生产者。钩子 panic 的归属是宿主：被 recover，该行退回
+	// 默认摘要，投影路径继续可用。
 	Summarize func(Row) string
 }
 
 // Projector 增量投影器：事件流 → 轨迹行。
 //
-// 并发安全：事件流可能由多个生产者投递，故 Apply 内部加锁。
+// 并发安全：事件流可能由多个生产者投递，故 Apply 内部加锁。宿主回调
+// （Options.Summarize）一律在**锁外**执行——锁内只登记待算行，锁外调钩子
+// 再回填（issue #302）；钩子因此可以回查 Rows()/Len()。
 type Projector struct {
 	mu   sync.Mutex
 	opts Options
 
-	rows       []Row          // 按创建顺序追加；下标 + 1 即行序号
-	tools      map[string]int // call_id → 行下标（一个 call_id 最多一行）
-	opens      []int          // 仍打开的步骤行下标（按创建顺序）
-	grants     map[string]int // 幂等键 → 打开中的副作用授予段行下标
-	reconciles map[string]int // 幂等键 → 打开中的副作用对账段行下标
-	turn       int            // 当前轮次行下标（-1 = 尚未开轮）
-	turnNo     int            // 已开轮次计数
-	seq        int            // 行序号计数
-	issues     []Issue
+	rows          []Row                   // 按创建顺序追加；下标 + 1 即行序号
+	tools         map[string]int          // call_id → 行下标（一个 call_id 最多一行）
+	opens         []int                   // 仍打开的步骤行下标（按创建顺序）
+	grants        map[string]int          // 幂等键 → 打开中的副作用授予段行下标
+	reconciles    map[string]int          // 幂等键 → 打开中的副作用对账段行下标
+	anonCalls     []int                   // 仍等待结果的无 call_id 调用行（FIFO）
+	anonResults   []int                   // 未配对的无 call_id 结果行（FIFO）
+	usedIDs       map[turnRowKey]struct{} // (轮, 标识) → 已占用（行标识轮内唯一）
+	pending       []int                   // 待算摘要的行下标（锁外执行宿主钩子）
+	payloadErrors []PayloadError          // 载荷数值字段的显式拒绝记录（issue #305）
+	turn          int                     // 当前轮次行下标（-1 = 尚未开轮）
+	turnNo        int                     // 已开轮次计数
+	seq           int                     // 行序号计数
+	issues        []Issue
 }
 
 // NewProjector 构造投影器。
@@ -231,26 +254,8 @@ func NewProjector(opts Options) *Projector {
 		tools:      map[string]int{},
 		grants:     map[string]int{},
 		reconciles: map[string]int{},
+		usedIDs:    map[turnRowKey]struct{}{},
 		turn:       -1,
-	}
-}
-
-// Apply 投一条事件（增量投影）。
-//
-// 已经被投过的事件不会被重复计入：后续事件只会**更新**既有行（补结束时刻、
-// 把配对状态从「未配对」改成「已配对」），不会追加出第二条行。
-func (p *Projector) Apply(ev eventbus.Event) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.apply(ev)
-}
-
-// ApplyAll 依次投多条事件（增量投影；与逐条 Apply 等价）。
-func (p *Projector) ApplyAll(evs []eventbus.Event) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, ev := range evs {
-		p.apply(ev)
 	}
 }
 
@@ -305,24 +310,20 @@ func (p *Projector) Finalize() []Row {
 	return open
 }
 
-// append 追加一行（分配序号、填默认摘要）。
-func (p *Projector) append(r Row) int {
-	p.seq++
-	r.Seq = p.seq
-	r.Summary = defaultSummary(r)
-	if p.opts.Summarize != nil {
-		if s := p.opts.Summarize(r); s != "" {
-			r.Summary = s
-		}
-	}
-	p.rows = append(p.rows, r)
-	return len(p.rows) - 1
-}
-
-// issue 记一条配对缺口（同一类目 + call_id 只记一条）。
+// issue 记一条配对缺口（有 call_id 时同一类目 + call_id 只记一条；
+// 无 call_id 时按行（Seq）区分——否则多条无标识行的缺口会折叠成一条）。
 func (p *Projector) issue(kind Pairing, callID string, seq int) {
 	for _, is := range p.issues {
-		if is.Pairing == kind && is.CallID == callID {
+		if is.Pairing != kind {
+			continue
+		}
+		if callID == "" {
+			if is.CallID == "" && is.Seq == seq {
+				return
+			}
+			continue
+		}
+		if is.CallID == callID {
 			return
 		}
 	}
@@ -339,51 +340,4 @@ func (p *Projector) clearIssue(kind Pairing, callID string) {
 		kept = append(kept, is)
 	}
 	p.issues = kept
-}
-
-// currentTurn 当前轮次序号（尚未开轮时为 0）。
-func (p *Projector) currentTurn() int {
-	if p.turn < 0 {
-		return 0
-	}
-	return p.rows[p.turn].Turn
-}
-
-// defaultSummary 默认行摘要：通用标签，不含任何领域词。
-func defaultSummary(r Row) string {
-	switch r.Kind {
-	case KindTurn, KindStep:
-		return r.ID
-	case KindToolCall, KindToolResult:
-		if r.Tool == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.Tool
-	case KindSideEffect:
-		if r.SideEffectKey == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.SideEffectKey
-	case KindCheckpoint:
-		return r.ID
-	default:
-		return string(r.Kind)
-	}
-}
-
-// payloadString 取事件载荷里的字符串键（缺失或类型不符时为空串）。
-func payloadString(ev eventbus.Event, key string) string {
-	if ev.Payload == nil {
-		return ""
-	}
-	s, _ := ev.Payload[key].(string)
-	return s
-}
-
-// stepIDOf 取事件的环节号。
-func stepIDOf(ev eventbus.Event) (uint64, bool) {
-	if ev.StepID == nil {
-		return 0, false
-	}
-	return *ev.StepID, true
 }

@@ -87,7 +87,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrRowID,
 		Source: "Row.ID",
-		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / <kind>#-<seq>），唯一范围是轮内"},
+		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / sideeffect#<key> / checkpoint#<run>#<seq> / <kind>#-<seq>）。唯一范围是**轮内**：自然键在轮内重复时（副作用多段、重复快照、同轮重试的同号环节）追加 #-<段序> 后缀。跨 span 聚合一个逻辑动作不要按 row_id join——副作用用 harness.sideeffect.key，快照用 harness.checkpoint.run_id + seq"},
 		Card:   Cardinality{Why: "取值随行数增长（行数由事件流长度决定），本仓定不出上界"},
 	},
 	{
@@ -138,9 +138,9 @@ var AttrSpecs = []AttrSpec{
 		Source: "Row.Pairing（仅工具行，且不为 PairingNone）",
 		Domain: Domain{Kind: "string", Values: []string{
 			string(PairingPaired), string(PairingMissingResult), string(PairingDuplicateResult),
-			string(PairingUnpairedResult), string(PairingDuplicateCall),
+			string(PairingUnpairedResult), string(PairingDuplicateCall), string(PairingNoCallID),
 		}},
-		Card:      Cardinality{Max: 5, Why: "Pairing 词表五值（PairingNone 是「不适用」，不写进属性）"},
+		Card:      Cardinality{Max: 6, Why: "Pairing 词表六值（PairingNone 是「不适用」，不写进属性；no_call_id = 调用方未提供标识，不是缺口）"},
 		LabelSafe: true,
 	},
 	{
@@ -165,7 +165,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrSideEffectKey,
 		Source: "Row.SideEffectKey（仅副作用行）",
-		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察共用一个行标识，宿主跨 span join 用"},
+		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察**不共用行标识**（行标识轮内唯一，多段带 #-<段序> 后缀），宿主跨 span join 用本属性"},
 		Card:   Cardinality{Why: "动作数无上界（随运行规模增长）"},
 	},
 	{
@@ -188,7 +188,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrSideEffectFence,
 		Source: "Row.SideEffectFence（仅副作用行，且 >0；授予段与点行为才携带）",
-		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配"},
+		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配；超出 int64 的取值不写（不以溢出的 -1 冒充合法值）"},
 		Card:   Cardinality{Why: "随接管次数增长，本仓定不出上界"},
 	},
 	{
@@ -208,7 +208,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrCheckpointSeq,
 		Source: "Row.CheckpointSeq（仅快照行，且 >0——seq=0 的快照不是一次真实提交）",
-		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）"},
+		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）；超出 int64 的取值不写（不以溢出的 -1 冒充合法值）"},
 		Card:   Cardinality{Why: "随步骤推进次数增长，本仓定不出上界"},
 	},
 	{

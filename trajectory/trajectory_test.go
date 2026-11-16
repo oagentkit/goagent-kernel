@@ -214,7 +214,95 @@ func TestUnrelatedEventsProduceNoRows(t *testing.T) {
 	}
 }
 
-// TestRowIDsAreUnique 行标识在一次投影内唯一。
+// TestStepPairingScopedToTurn 步骤行的配对作用域与「行标识唯一性范围」（轮）
+// 一致：上一轮遗留的步骤行不得被下一轮的 step_finished 收口（issue #300）。
+//
+// 旧实现按创建顺序跨轮配对：下一轮的第一个无环节号 step_finished 会把上一轮
+// 那行收掉，导出的子 span 于是比父 span 活得久。
+func TestStepPairingScopedToTurn(t *testing.T) {
+	t.Run("无环节号", func(t *testing.T) {
+		p := NewProjector(Options{})
+		p.ApplyAll([]eventbus.Event{
+			ev(eventbus.EventTurnStarted, 0, nil),
+			ev(eventbus.EventStepStarted, 100, nil),
+			ev(eventbus.EventTurnEnded, 200, nil),
+			ev(eventbus.EventTurnStarted, 300, nil),
+			ev(eventbus.EventStepFinished, 400, nil),
+			ev(eventbus.EventTurnEnded, 500, nil),
+		})
+		rows := p.Rows()
+		if len(rows) != 4 {
+			t.Fatalf("应投影出 4 行（turn1/step1/turn2/orphan），得到 %d：%+v", len(rows), rows)
+		}
+		left := rows[1]
+		if left.Turn != 1 || left.Status != StatusOpen || !left.EndAt.IsZero() {
+			t.Fatalf("第 1 轮遗留的步骤行必须保持 open（不得被下一轮收口）：%+v", left)
+		}
+		late := rows[3]
+		if late.Kind != KindStep || late.Turn != 2 || late.Status != StatusOrphan {
+			t.Fatalf("第 2 轮无对应开始的结束事件应落成显式孤儿行：%+v", late)
+		}
+		if late.ID == left.ID {
+			t.Fatalf("跨轮行不得搬用上一轮的标识：%q", late.ID)
+		}
+		open := p.Finalize()
+		if len(open) != 1 || open[0].Seq != left.Seq {
+			t.Fatalf("遗留行应以未收口形态在 Finalize 显形，实得 %+v", open)
+		}
+		assertNoChildOutlivesParent(t, rows)
+	})
+
+	t.Run("带环节号", func(t *testing.T) {
+		p := NewProjector(Options{})
+		p.ApplyAll([]eventbus.Event{
+			ev(eventbus.EventTurnStarted, 0, nil),
+			stepEv(eventbus.EventStepStarted, 100, 7),
+			ev(eventbus.EventTurnEnded, 200, nil),
+			ev(eventbus.EventTurnStarted, 300, nil),
+			stepEv(eventbus.EventStepFinished, 400, 7),
+			ev(eventbus.EventTurnEnded, 500, nil),
+		})
+		rows := p.Rows()
+		if len(rows) != 4 {
+			t.Fatalf("应投影出 4 行，得到 %d：%+v", len(rows), rows)
+		}
+		if left := rows[1]; left.Status != StatusOpen || !left.EndAt.IsZero() || left.Turn != 1 {
+			t.Fatalf("同号环节跨轮也不得配对：第 1 轮的行必须保持 open，实得 %+v", left)
+		}
+		if late := rows[3]; late.Status != StatusOrphan || late.Turn != 2 || !late.HasStep || late.StepID != 7 {
+			t.Fatalf("第 2 轮的同号结束事件应落成孤儿行并保留环节号：%+v", late)
+		}
+		assertNoChildOutlivesParent(t, rows)
+	})
+}
+
+// assertNoChildOutlivesParent 导出的父子 span 不得出现「子比父活得久」。
+func assertNoChildOutlivesParent(t *testing.T, rows []Row) {
+	t.Helper()
+	byID := map[string]Span{}
+	for _, s := range SpansOf(rows) {
+		if id, ok := s.Attributes[AttrRowID].(string); ok {
+			byID[id] = s
+		}
+	}
+	for _, s := range SpansOf(rows) {
+		if s.ParentID == "" {
+			continue
+		}
+		parent, ok := byID[s.ParentID]
+		if !ok {
+			continue
+		}
+		if !parent.EndAt.IsZero() && !s.EndAt.IsZero() && s.EndAt.After(parent.EndAt) {
+			t.Fatalf("子 span 结束晚于父 span：child %v end=%v parent %v end=%v",
+				s.Attributes[AttrRowID], s.EndAt, s.ParentID, parent.EndAt)
+		}
+	}
+}
+
+// TestRowIDsAreUnique 行标识在同一轮内唯一（跨轮同名环节号合法，见
+// TestRowIDsAreUniqueWithinTurnOnly；副作用多段/重复快照的轮内唯一性见
+// TestRowIDsUniqueWithinTurnIncludingMultiSegment）。
 func TestRowIDsAreUnique(t *testing.T) {
 	p := NewProjector(Options{})
 	p.ApplyAll([]eventbus.Event{

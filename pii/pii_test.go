@@ -64,6 +64,37 @@ func TestRedactMobile(t *testing.T) {
 	}
 }
 
+// TestResidentIDMaskHidesOrderAndCheck 身份证掩码必须与注释承诺一致：留前 4
+// （省市级可见），生日、顺序码（s[14:17]）与 MOD 11-2 校验位（s[17]）全掩。
+//
+// issue #298：旧实现留 v[16:]（顺序码第 3 位 + 校验位），校验位成了对
+// 「生日 × 顺序码 × 区县」候选的免费验算器，而注释却写着「顺序码全掩」。
+func TestResidentIDMaskHidesOrderAndCheck(t *testing.T) {
+	restore(t)
+	valid := withCheck("11010519491231002") // 11010519491231002X
+	if len(valid) != 18 {
+		t.Fatalf("构造基准失败: %s", valid)
+	}
+	got := redactIn(t, valid)
+	if len(got) != len(valid) {
+		t.Fatalf("掩码应保长度：%d != %d（%q）", len(got), len(valid), got)
+	}
+	if got[:4] != valid[:4] {
+		t.Fatalf("前 4 位（省市级定位）应保留：%q", got)
+	}
+	for i := 4; i < len(valid); i++ {
+		if got[i] != '*' {
+			t.Fatalf("第 %d 位未掩码（生日/顺序码/校验位必须全掩）：%q", i, got)
+		}
+	}
+	// 顺序码与校验位不得以任何形态残留。
+	for _, frag := range []string{valid[14:17], valid[17:]} {
+		if strings.Contains(got, frag) {
+			t.Fatalf("掩码结果残留原文片段 %q：%q", frag, got)
+		}
+	}
+}
+
 func TestRedactResidentID(t *testing.T) {
 	restore(t)
 	valid := withCheck("11010519491231002") // = 11010519491231002X（经典测试号）
@@ -75,8 +106,8 @@ func TestRedactResidentID(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"有效证号", "身份证 " + valid, "身份证 1101************2X"},
-		{"小写x", strings.ToLower(valid), "1101************2x"},
+		{"有效证号", "身份证 " + valid, "身份证 1101**************"},
+		{"小写x", strings.ToLower(valid), "1101**************"},
 		{"校验码错", "110105194912310021", "110105194912310021"},
 		{"省码非白名单", withCheck("99010519491231002"), withCheck("99010519491231002")},
 		{"生日非法0230", withCheck("11010519900230002"), withCheck("11010519900230002")},
@@ -131,7 +162,7 @@ func TestRedactValueStructures(t *testing.T) {
 		t.Errorf("map[string]string 盲区未收口: %v", out["tags"])
 	}
 	list, _ := out["list"].([]any)
-	if list[0] != "id 1101************2X" {
+	if list[0] != "id 1101**************" {
 		t.Errorf("[]any: %v", out["list"])
 	}
 	strs, _ := out["strs"].([]string)

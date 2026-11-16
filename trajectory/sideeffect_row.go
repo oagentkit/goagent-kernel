@@ -42,11 +42,14 @@ const (
 )
 
 // sideeffectRowID 副作用行的标识：幂等键是它的自然键。同一个 Key 的授予段、
-// 对账段、点观察共用一个标识——它们是**同一个逻辑动作**的先后两段/侧面，
-// 跨 span 按标识 join 时应聚到一起。
+// 对账段、点观察是**同一个逻辑动作**的先后两段/侧面，但行标识仍必须轮内唯一
+// （OTel 前提）：第二段起由 append 的 claimID 追加 "#-<段序>" 后缀。
+// 跨 span 聚合用 harness.sideeffect.key 属性，**不要**按行标识 join（issue #301）。
 func sideeffectRowID(key string) string { return "sideeffect#" + key }
 
-// checkpointRowID 快照行的标识：run + 序号唯一定位一次提交。
+// checkpointRowID 快照行的标识：run + 序号唯一定位一次提交；同一
+// (run_id, seq) 重复投递时第二行起由 claimID 追加 "#-<段序>" 后缀（每次投递
+// 都是一次观测，不丢行；聚合口径仍是 run_id + seq 属性）。
 func checkpointRowID(runID string, seq uint64) string {
 	return fmt.Sprintf("checkpoint#%s#%d", runID, seq)
 }
@@ -63,7 +66,43 @@ func seqID(kind Kind, seq int) string {
 // 故格式只在这里写一次，投影与映射都调这几个函数。
 //
 // 唯一性的范围是**轮内**：环节号由调用方给定，同一环节号在两轮里各出现一次是合法的
-// （故 step#7 会出现在两个轮次里）。trace 边界因此定在轮，见 otel.go 头注。
+// （故 step#7 会出现在两个轮次里）。trace 边界因此定在轮，见 otel.go 头注。自然键在
+// 轮内重复（同 Key 的副作用多段、重复快照、同轮重试的同号环节）时，由 claimID 追加
+// "#-<段序>" 后缀——「段」而不是「另一个业务对象」，跨段聚合用属性（issue #301）。
 func turnRowID(turn int) string      { return fmt.Sprintf("turn#%d", turn) }
 func stepRowID(id uint64) string     { return fmt.Sprintf("step#%d", id) }
 func toolRowID(callID string) string { return "tool#" + callID }
+
+// turnRowKey 行标识的占用键：唯一性范围是轮（跨轮同名环节号合法）。
+type turnRowKey struct {
+	turn int
+	id   string
+}
+
+// claimID 领取一个**轮内唯一**的行标识。
+//
+// 自然键首次使用原样返回；轮内再次出现（同一逻辑动作的第二段、重复提交、
+// 同轮重试）时追加 "#-<n>" 段序后缀，n 从 2 起。后缀里的 "-" 与 seqID 同义：
+// 这一段标识是投影生成的，不是业务自然键。跨段聚合不靠行标识，靠属性
+// （sideeffect.key / checkpoint run_id+seq），见 otelmap.go。
+func claimID(p *Projector, turn int, base string) string {
+	if base == "" {
+		return ""
+	}
+	if p.usedIDs == nil {
+		p.usedIDs = map[turnRowKey]struct{}{}
+	}
+	key := turnRowKey{turn: turn, id: base}
+	if _, used := p.usedIDs[key]; !used {
+		p.usedIDs[key] = struct{}{}
+		return base
+	}
+	for n := 2; ; n++ {
+		id := fmt.Sprintf("%s#-%d", base, n)
+		key := turnRowKey{turn: turn, id: id}
+		if _, used := p.usedIDs[key]; !used {
+			p.usedIDs[key] = struct{}{}
+			return id
+		}
+	}
+}

@@ -1297,6 +1297,11 @@ func runWatchdog(ctx context.Context, bus *eventbus.Bus) {
 - **`Hub` 的 cancel 幂等安全**；宿主仍应在 SSE 断开时调用。
 - **`watchdog` 只告警不裁决**：热路径裁决在守卫侧（`IdentityGuard`），不在本包。
   **别让宿主误以为它能兜底。**
+- **配对键是全局 `call_id`**（`eventbus.ToolCallID`，与 `trajectory` 同源，**不含
+  step**）：结果可以在后续环节到达，同一 `call_id` 跨环节重复声明（重试/改派）
+  只报 `duplicate_call`。INV1 的判定时刻是 `session_finished` 或 2h TTL 清扫——
+  不是每个 `step_finished`（按环节判会把「结果晚到」误报成泄漏）。无 `call_id`
+  不记缺口（与 `trajectory` 的 `no_call_id` 同口径）。
 - **INV3 是轮级括号**（issue #171）：`turn_started` 按 sessionID 开括号，
   `turn_ended` 闭合必须带 `closed_by`（缺省 `loop|recovery|boot-reconcile|panic`，
   宿主经 `watchdog.NewWithConfig(pub, watchdog.Config{ClosedBy: ...})` 扩充）且

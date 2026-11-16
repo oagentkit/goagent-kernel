@@ -93,8 +93,12 @@ func TestSideEffectLifecycleProjection(t *testing.T) {
 	if recon.SideEffectPhase != SideEffectResolvedApplied || recon.Status != StatusClosed {
 		t.Fatalf("act-b 对账段应收口为 resolved_applied：%+v", recon)
 	}
-	if recon.ID != uncGrant.ID {
-		t.Fatalf("同 Key 的授予段与对账段应共用一个行标识：%q vs %q", recon.ID, uncGrant.ID)
+	if recon.ID == uncGrant.ID {
+		t.Fatalf("同 Key 的两段不得共用行标识（轮内唯一；跨 span 聚合用 %s）：%q", AttrSideEffectKey, recon.ID)
+	}
+	if recon.SideEffectKey != uncGrant.SideEffectKey {
+		t.Fatalf("同 Key 的授予段与对账段必须可按 sideeffect.key 聚合：%q vs %q",
+			recon.SideEffectKey, uncGrant.SideEffectKey)
 	}
 	if d, ok := recon.Duration(); !ok || d != 150*time.Millisecond {
 		t.Fatalf("对账段时长应为实测 150ms（等了多久才裁决），实得 %v ok=%v", d, ok)
