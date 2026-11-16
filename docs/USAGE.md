@@ -1605,7 +1605,9 @@ func main() {
 
 	// 策略热重载订阅（注册即收到一次当前快照）
 	h, err := pii.Subscribe(func(p pii.Policy) {
-		metrics.Gauge("pii.strategy", string(pii.Strategy()))
+		// 读回调参数 p（收到的那一代），不要读全局 pii.Strategy()——
+		// 那是此刻的当前代，与回调拿到的那份快照可能不是同一代。
+		metrics.Gauge("pii.strategy", string(p.Strategy()))
 	})
 	if err != nil {
 		return
@@ -1645,10 +1647,19 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 - **策略是单原子指针，不可撕裂读**。旧的三个独立原子变量在热重载下会产出从未被任何
   写侧设置过的组合。**处置路径必须经 `CurrentPolicy()` 拿快照**，
   不得分字段调访问器再拼。
-- **`Policy` 结构体是不透明值**：字段全部非导出且**没有任何方法**，
-  回调里只能调包级访问器读取。
-- **订阅者 panic 被逐个 recover**。回调里**可以**再调 `SetStrategy`（无锁不自死锁），
-  但会再触发一轮通知，**递归深度由订阅者自己收敛**。
+- **`Policy` 快照可读（收到即所见）**：字段全部非导出，可读面是一组**只读访问
+  方法**——`Enabled` / `Surfaces` / `SurfaceEnabled` / `Strategy` / `Gen` /
+  `DigestKeyed`。回调里读参数 `p.Strategy()` 读到的是**收到的那一刻**的策略；
+  包级 `pii.Strategy()` 读的是**此刻的当前代**，两者在换代后取值不同——回调
+  断言「读到的是收到的那一代」用 `p.Gen()` 对照。无 setter、无导出字段：
+  `CurrentPolicy()` 的返回值不可能被就地改出全局。密钥不进只读面
+  （`DigestKeyed` 只暴露有/无）。
+- **并发换策略下订阅者观察到的代次单调不回退**：同一订阅者的回调**永不并发**
+  （投递闸串行化），按代次升序投出；并发写侧的帧在闸前排队、由在途投递按序
+  清空；乱序迟到的旧帧直接丢弃（内容已被更新快照覆盖），单帧慢回调不拖住写侧。
+  副作用：剧烈并发下订阅者可能只见到部分中间代（最终必见到最新一代）。
+- **订阅者 panic 被逐个 recover**。回调里**可以**再调 `SetStrategy`（无锁不自死锁，
+  递归产生的帧挂队即回、由在途投递按序补投），**递归深度由订阅者自己收敛**。
 - **15 位旧身份证不检**（已停用 20 年）；**裸 `86` 前缀不认**，只认 `+86` / `0086`。
 - **不下探标量**：数字/布尔原样返回——JSON number 形态的手机号不在覆盖面。
 - **未登记容器形状 fail-closed**：`[]map[string]string`、`map[string][]string`、

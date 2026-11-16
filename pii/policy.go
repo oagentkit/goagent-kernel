@@ -232,6 +232,13 @@ func validStrategy(s StrategyKind) error {
 // 于是回报 blocked=true——**面已关闭却要求阻断**，宿主可能据此中断整条编排链。
 //
 // 与 netguard 的改造同形（那边是把主机名与后缀两个指针并成一份 Policy）。
+//
+// # 快照可读（#296）
+//
+// 字段全部非导出，可读面收敛在下方一组**只读访问方法**（Enabled / Surfaces /
+// SurfaceEnabled / Strategy / Gen / DigestKeyed）：订阅回调与 CurrentPolicy()
+// 拿到的快照直接读实例，「收到即所见」无需再借全局访问器（那读的是此刻的
+// 当前代，不是收到的那一代）。无 setter、无导出字段——快照不可被外部就地改写。
 type Policy struct {
 	gen       uint64       // 代次，每次替换 +1，供可观测性与调试
 	enabled   bool         // 全局开关（缺省开 = secure by default）
@@ -239,6 +246,36 @@ type Policy struct {
 	strategy  StrategyKind // 处置策略（缺省 mask，见不变量 2）
 	digestKey string       // StrategyHash 的 HMAC 密钥（缺省空 = hash 档 fail-closed）
 }
+
+// Policy 的**只读访问方法**（#296）：快照真正可读，「收到即所见」才有兑现的
+// 载体。订阅回调（subscribe.go）拿到的参数与 CurrentPolicy() 的返回值都走这组
+// 方法——读到的是**绑定在快照实例上的那一代**，不是此刻的全局：写侧事后换策略，
+// 已到手快照的视图停在收到那一刻（对照用例 policy_read_test.go）。
+//
+// 与包级访问器（Enabled / Surfaces / Strategy…）的分工：包级读 curPolicy 的
+// **当前代**，方法读快照自身。同名是有意设计——调用点写 `p.Strategy()` 与
+// `pii.Strategy()` 时语义各自成立，不必记两套名字。字段保持非导出：外部
+// 调用方**无处可改**，CurrentPolicy() 的返回值不可能被就地改出全局；方法面
+// 只有读（TestPolicyHasNoExportedFields 把 setter 挡在门外）。
+//
+// 密钥不进只读面：digestKey 是机密，快照只暴露 DigestKeyed()（有没有），
+// 不暴露内容。
+func (p Policy) Enabled() bool { return p.enabled }
+
+// Surfaces 快照的面集合。
+func (p Policy) Surfaces() SurfaceSet { return p.surfaces }
+
+// SurfaceEnabled 快照里指定面是否启用。
+func (p Policy) SurfaceEnabled(s Surface) bool { return p.surfaces.Has(s) }
+
+// Strategy 快照的处置策略。
+func (p Policy) Strategy() StrategyKind { return p.strategy }
+
+// Gen 快照的代次（与写侧每次 CAS +1 同源，供订阅者断言「读到的是收到的那一代」）。
+func (p Policy) Gen() uint64 { return p.gen }
+
+// DigestKeyed 快照是否已注入摘要密钥（hash 档在**这份快照**下会不会 fail-closed）。
+func (p Policy) DigestKeyed() bool { return p.digestKey != "" }
 
 // curPolicy 当前生效的策略。**整份策略只有一个原子指针**——这是「不可撕裂读」
 // 的全部机制，也是与旧版三个独立变量的根本差别。
