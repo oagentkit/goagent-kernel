@@ -87,7 +87,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrRowID,
 		Source: "Row.ID",
-		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / <kind>#-<seq>），唯一范围是轮内"},
+		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / sideeffect#<key> / checkpoint#<run>#<seq> / <kind>#-<seq>）。唯一范围是**轮内**：自然键在轮内重复时（副作用多段、重复快照、同轮重试的同号环节）追加 #-<段序> 后缀。跨 span 聚合一个逻辑动作不要按 row_id join——副作用用 harness.sideeffect.key，快照用 harness.checkpoint.run_id + seq"},
 		Card:   Cardinality{Why: "取值随行数增长（行数由事件流长度决定），本仓定不出上界"},
 	},
 	{
@@ -165,7 +165,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrSideEffectKey,
 		Source: "Row.SideEffectKey（仅副作用行）",
-		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察共用一个行标识，宿主跨 span join 用"},
+		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察**不共用行标识**（行标识轮内唯一，多段带 #-<段序> 后缀），宿主跨 span join 用本属性"},
 		Card:   Cardinality{Why: "动作数无上界（随运行规模增长）"},
 	},
 	{

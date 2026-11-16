@@ -300,7 +300,9 @@ func assertNoChildOutlivesParent(t *testing.T, rows []Row) {
 	}
 }
 
-// TestRowIDsAreUnique 行标识在一次投影内唯一。
+// TestRowIDsAreUnique 行标识在同一轮内唯一（跨轮同名环节号合法，见
+// TestRowIDsAreUniqueWithinTurnOnly；副作用多段/重复快照的轮内唯一性见
+// TestRowIDsUniqueWithinTurnIncludingMultiSegment）。
 func TestRowIDsAreUnique(t *testing.T) {
 	p := NewProjector(Options{})
 	p.ApplyAll([]eventbus.Event{

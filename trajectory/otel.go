@@ -42,6 +42,11 @@
 // 标识，而工具行同时引用环节与轮次——按 OTel 语义，父 span 不在本 trace 内即断链。
 // 以轮为边界时，「行 ID 唯一」与「trace 内标识唯一」是同一个范围，两条约束不打架。
 //
+// 轮内唯一是**投影器保证的事实**，不是前提假设：自然键在轮内重复时（副作用多段、
+// 重复快照、同轮重试的同号环节）标识会带 "#-<段序>" 后缀（issue #301）。故跨 span
+// 聚合一个逻辑动作**不要按 @row_id@ join**——副作用段用 @harness.sideeffect.key@，
+// 快照用 @harness.checkpoint.run_id@ + @harness.checkpoint.seq@。
+//
 // # 父子是**声明的**，悬空父要清成根
 //
 // 单行映射只能按行上的字段推父（工具行有环节号就挂环节，否则挂轮次），推出来的父
@@ -91,8 +96,9 @@ const (
 	// ── 副作用行（v0.33.0，issue #99）─────────────────────────────
 	// 排障第一问「这个副作用到底施加了吗」的属性面。属性命名与既有三类同构：
 	// 领域段（harness.sideeffect.*）+ 语义后缀。
-	// AttrSideEffectKey 幂等键（配对键：同 Key 的授予段 / 对账段 / 点观察聚合到
-	// 同一行标识下；宿主跨 span join 用）。无界标识——禁止作 metric label。
+	// AttrSideEffectKey 幂等键（配对键：同 Key 的授予段 / 对账段 / 点观察按**本属性**
+	// 聚合；行标识轮内唯一，多段带 "#-<段序>" 后缀，宿主跨 span join 用本属性）。
+	// 无界标识——禁止作 metric label。
 	AttrSideEffectKey = "harness.sideeffect.key"
 	// AttrSideEffectPhase 副作用阶段（granted / completed / abandoned / uncertain /
 	// resolved_applied / resolved_cleared / replayed / contended）。

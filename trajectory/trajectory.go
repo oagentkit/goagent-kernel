@@ -106,13 +106,17 @@ type Row struct {
 	// Kind 行类目。
 	Kind Kind
 	// ID 行标识：轮次行 "turn#1"；带环节号的步骤行 "step#7"；
-	// 工具行 "tool#<call_id>"；副作用行 "sideeffect#<key>"（同 Key 的多段
-	// ——授予段、对账段——共用一个标识：它们是同一个动作的先后两段）；
-	// 快照行 "checkpoint#<run_id>#<seq>"；无自然键的行用 "step#-<seq>" 形式兜底
+	// 工具行 "tool#<call_id>"；副作用行 "sideeffect#<key>"；快照行
+	// "checkpoint#<run_id>#<seq>"；无自然键的行用 "<kind>#-<seq>" 形式兜底
 	// （"-" 前缀表示「这个标识是投影生成的，不是业务自然键」）。
+	//
+	// 唯一性范围是**轮内**。自然键在轮内重复时（同一幂等键的授予段/对账段、同一
+	// (run_id, seq) 的重复提交、同轮重试的同号环节），第二段起追加 "#-<段序>"
+	// 后缀（如 sideeffect#k1#-2）——行标识仍轮内唯一，跨段聚合改用属性
+	// （sideeffect.key / checkpoint run_id+seq），见 otel.go 头注。
 	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / sideeffectRowID /
-	// checkpointRowID / seqID——otel 的父子关系复用同一组函数，另写一份格式
-	// 父子就会连不上。
+	// checkpointRowID / seqID 与统一收口的 claimID——otel 的父子关系复用同一组
+	// 函数，另写一份格式父子就会连不上。
 	ID string
 	// Turn 所属轮次序号（1 起）；轮次之外的事件为 0。
 	Turn int
@@ -217,14 +221,15 @@ type Projector struct {
 	mu   sync.Mutex
 	opts Options
 
-	rows       []Row          // 按创建顺序追加；下标 + 1 即行序号
-	tools      map[string]int // call_id → 行下标（一个 call_id 最多一行）
-	opens      []int          // 仍打开的步骤行下标（按创建顺序）
-	grants     map[string]int // 幂等键 → 打开中的副作用授予段行下标
-	reconciles map[string]int // 幂等键 → 打开中的副作用对账段行下标
-	turn       int            // 当前轮次行下标（-1 = 尚未开轮）
-	turnNo     int            // 已开轮次计数
-	seq        int            // 行序号计数
+	rows       []Row                   // 按创建顺序追加；下标 + 1 即行序号
+	tools      map[string]int          // call_id → 行下标（一个 call_id 最多一行）
+	opens      []int                   // 仍打开的步骤行下标（按创建顺序）
+	grants     map[string]int          // 幂等键 → 打开中的副作用授予段行下标
+	reconciles map[string]int          // 幂等键 → 打开中的副作用对账段行下标
+	usedIDs    map[turnRowKey]struct{} // (轮, 标识) → 已占用（行标识轮内唯一）
+	turn       int                     // 当前轮次行下标（-1 = 尚未开轮）
+	turnNo     int                     // 已开轮次计数
+	seq        int                     // 行序号计数
 	issues     []Issue
 }
 
@@ -235,6 +240,7 @@ func NewProjector(opts Options) *Projector {
 		tools:      map[string]int{},
 		grants:     map[string]int{},
 		reconciles: map[string]int{},
+		usedIDs:    map[turnRowKey]struct{}{},
 		turn:       -1,
 	}
 }
@@ -309,10 +315,11 @@ func (p *Projector) Finalize() []Row {
 	return open
 }
 
-// append 追加一行（分配序号、填默认摘要）。
+// append 追加一行（分配序号与轮内唯一标识、填默认摘要）。
 func (p *Projector) append(r Row) int {
 	p.seq++
 	r.Seq = p.seq
+	r.ID = p.claimID(r.Turn, r.ID)
 	p.rows = append(p.rows, r)
 	idx := len(p.rows) - 1
 	p.refreshSummary(idx)
