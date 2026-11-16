@@ -74,9 +74,9 @@ func TestRouteDeadlineArmBeatsShutdownArm(t *testing.T) {
 		FirstClaimAt: time.Now().Add(-time.Minute),
 		DeadlineAt:   time.Now().Add(3 * time.Millisecond),
 	}
-	rctx, release, expired := cfg.Begin(context.Background(), anchor, time.Now())
+	rctx, release, constraint := cfg.Begin(context.Background(), anchor, time.Now())
 	defer release()
-	if expired {
+	if constraint.Expired() {
 		t.Fatal("锚点此刻仍有效，不该判过期")
 	}
 

@@ -20,7 +20,9 @@
 //     策略建不出来 / 策略面对账不了 / 叠加语义可能放行 ⇒ 拒绝创建作业
 //     （ErrNetworkPolicy，fail-closed）——兑现不了的禁网不许静默降级。
 //   - TTL：spec.ttlSecondsAfterFinished（缺省 300s）在进程崩溃/对账中断时由
-//     控制面兜底清理；正常路径 Exec 结束还会显式删 Job（与 Docker remove 对齐）。
+//     控制面兜底清理；正常路径 Exec 结束还会显式删 Job（与 Docker remove 对齐），
+//     删除带 `metadata.uid` 前置条件——同名对象若已被后来者重建，API 拒绝删除
+//     （issue #276）；UID 读不出时不做显式删除，交给 TTL。
 //   - 状态对账：轮询 Job 的 conditions / succeeded / failed / active，映射
 //     backend.Result；Job 消失、Pod 被强删（active>0 但无 Pod）、Pod phase
 //     Unknown、有 Job 无 Pod 超过宽限，一律给「未知」失败结论，不谎报成功。
@@ -184,14 +186,15 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 	ns := k.execNS()
 	name := newK8sJobName()
 	reconciled := false
+	jobUID := "" // 本次作业对象的 metadata.uid（清理的删除前置条件，issue #276）
 	if j.ExecutionID != "" {
 		// 稳定执行标识：名与标签都由它派生，创建因此具备幂等键。
 		name = k8sStableJobName(j.ExecutionID)
-		found, err := k.k8sReconcileJob(ctx, ns, name, j.ExecutionID)
+		found, uid, err := k.k8sReconcileJob(ctx, ns, name, j.ExecutionID)
 		if err != nil {
 			return backend.Result{}, err
 		}
-		reconciled = found
+		reconciled, jobUID = found, uid
 	}
 
 	jobCreated, policyCreated, uncertain := false, false, false
@@ -202,7 +205,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			return
 		}
 		if jobCreated || reconciled {
-			k.cleanup(ctx, ns, k.deleteJob, name)
+			cleanupJobWithUID(k, ctx, ns, name, jobUID)
 		}
 		if policyCreated {
 			k.cleanup(ctx, ns, k.deleteNetworkPolicy, name)
@@ -236,13 +239,18 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 	}
 
 	if !reconciled {
-		outcome, err := k.createJob(ctx, ns, name, j)
+		outcome, uid, err := k.createJob(ctx, ns, name, j)
 		switch {
 		case err == nil:
-			jobCreated = true
+			jobCreated, jobUID = true, uid
 		case outcome == k8sCreateConflict && j.ExecutionID != "":
 			// 对账（404）与创建之间的竞态窗口：同标识的并发创建者先到了。
+			// 补读一次对象 UID 供清理用；读不到不阻塞等待（作业已在跑），
+			// 只是显式清理退化到 TTL（不按名字误删后来者，issue #276）。
 			reconciled = true
+			if existing, found, gerr := k.getJob(ctx, ns, name); gerr == nil && found {
+				jobUID = existing.Metadata.UID
+			}
 		default:
 			uncertain = outcome == k8sCreateUncertain
 			return backend.Result{}, err
@@ -276,7 +284,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			defer t.Stop()
 			select {
 			case <-t.C:
-				k.cleanup(ctx, ns, k.deleteJob, name)
+				cleanupJobWithUID(k, ctx, ns, name, jobUID)
 				cancel(errWallClock)
 			case <-runCtx.Done():
 			}
@@ -329,6 +337,26 @@ func (k *K8sJob) cleanup(ctx context.Context, ns string, del func(context.Contex
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	_ = del(cctx, ns, name)
+}
+
+// cleanupJobWithUID 按 **UID 前置条件**清理本次创建的 Job（issue #276）。
+//
+// 只按名字删是不安全的：Job 被删后同名可被重建（稳定 ExecutionID 命名下
+// 名字可预测、可重复），一次延迟清理会删掉后来者。UID 是对象身份的凭据；
+// DELETE 带 metadata.preconditions.uid，API 侧在 UID 不符时拒绝删除。
+//
+// UID 未知（创建应答读不出、409 后补读失败）时**不发出删除**：宁可按名字
+// 不删、交给 TTL 兜底，也不冒误删他人作业的风险。清理失败不掩盖主结果。
+//
+// 自由函数而不是 K8sJob 方法：archcheck 对 K8sJob 的实质方法数有阈值
+// （god object 25），这条清理策略不需要扩类型面。
+func cleanupJobWithUID(k *K8sJob, ctx context.Context, ns, name, uid string) {
+	if uid == "" {
+		return
+	}
+	k.cleanup(ctx, ns, func(ctx context.Context, ns, name string) error {
+		return k.deleteJobWithUID(ctx, ns, name, uid)
+	}, name)
 }
 
 // k8sWaitError 把等待被取消转成基础设施错误（墙钟路径由 Exec 先行分流）。

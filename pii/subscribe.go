@@ -38,10 +38,25 @@
 // netguard 的句柄传给本包 Unsubscribe 将编译通过，然后静默什么也不注销。句柄各自
 // 定义成独立命名类型（底层仍是 uint64），跨包误用仍是编译错误——这正是句柄存在
 // 的意义（「这次注销是不是我登记的那一次」），别名把它抹掉了。
+//
+// # 通知顺序：并发写侧下代次必须单调不回退（issue #296）
+//
+// CAS 决定了「哪一代成为当前」，但不决定**通知到达订阅者的顺序**：写侧 A 在
+// CAS 成功后、notify 之前被抢占，写侧 B 完成下一代 CAS 并先通知，随后 A 才把
+// 旧一代推出来——订阅者会先看到 gen N+1 再看到 gen N，「收到即所见」当场失效。
+// 每个订阅者因此有一个**单调投递门**（policySubscriber.deliver）：
+//
+//   - 比已投递代次更旧的通知直接丢弃（它已经被更新的一代取代）；
+//   - 投递进行中到达的通知记为 pending，只保留代次最大的那一份，由当前投递者
+//     在回调返回后补投——并发变更因此可能**合并**为最新一代，但绝不会回退；
+//   - 回调在锁外执行（投递门只保护自己的状态），回调里再 SetStrategy 仍安全：
+//     重入的通知进 pending，不会自锁。
 
 package pii
 
 import (
+	"sync"
+
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/internal/subhub"
@@ -62,6 +77,74 @@ var ErrNilSubscriber = errors.New("处置策略订阅回调为空")
 // subs 处置策略变更订阅表。零值可用。
 var subs subhub.Registry[Policy]
 
+// policySubscriber 单个订阅者的**单调投递门**（机制说明见文件头）。
+//
+// 零值不可用之外的部分都由 Subscribe 构造；fn 非 nil 由 ErrNilSubscriber 保证。
+type policySubscriber struct {
+	fn    func(Policy)
+	floor uint64 // 登记时看到的代次；更旧的通知是历史，丢弃
+
+	mu         sync.Mutex
+	busy       bool   // 本订阅者的回调正在执行
+	seen       bool   // 是否已投递过至少一份
+	last       uint64 // 已投递的最大代次
+	pending    Policy // 投递期间到达的最新快照
+	hasPending bool
+}
+
+// deliver 单调投递一份快照：旧代丢弃，并发到达者合并为最新一份。
+//
+// 回调在 mu 之外执行——回调里再 SetStrategy 会重入本函数，此时 busy=true，
+// 新快照进 pending 并立即返回，由外层投递循环在回调返回后补投；不会自锁。
+func (s *policySubscriber) deliver(p Policy) {
+	s.mu.Lock()
+	if s.busy {
+		s.queueLocked(p)
+		s.mu.Unlock()
+		return
+	}
+	s.busy = true
+	for {
+		if !s.acceptLocked(p) {
+			if !s.hasPending {
+				s.busy = false
+				s.mu.Unlock()
+				return
+			}
+			p = s.pending
+			s.hasPending = false
+			continue
+		}
+		s.last, s.seen = p.Gen(), true
+		s.mu.Unlock()
+		subhub.Invoke(s.fn, p)
+		s.mu.Lock()
+		if !s.hasPending {
+			s.busy = false
+			s.mu.Unlock()
+			return
+		}
+		p = s.pending
+		s.hasPending = false
+	}
+}
+
+// acceptLocked 判这份快照是否值得投递（调用方持 mu）。
+func (s *policySubscriber) acceptLocked(p Policy) bool {
+	if p.Gen() < s.floor {
+		return false
+	}
+	return !s.seen || p.Gen() > s.last
+}
+
+// queueLocked 记下投递期间到达的最新快照（只保留代次最大者）。
+func (s *policySubscriber) queueLocked(p Policy) {
+	if s.hasPending && p.Gen() <= s.pending.Gen() {
+		return
+	}
+	s.pending, s.hasPending = p, true
+}
+
 // Subscribe 登记一个处置策略变更订阅者，返回句柄与是否成功。
 //
 // # 为什么注册完立刻回调一次当前快照
@@ -70,16 +153,26 @@ var subs subhub.Registry[Policy]
 // 的典型形态恰恰是「注册完之后很久没有下一次变更」，于是订阅者带着一个从没填过的
 // 视图上线——比没有订阅更危险，因为它以为自己已经跟上了。
 //
-// 注册先于立即回调：宁可让订阅者多收一次（立即回调给旧快照、紧接着的变更通知给新
-// 快照，顺序仍单调向前），也不能在两者之间漏掉一次变更。
+// # 立即回调与登记的次序：可合并，但绝不漏掉一代
+//
+// 立即回调先于登记执行（此时本订阅者还不在通知名单里，绝不会与并发通知交错），
+// 登记后再读一次当前快照：若这段时间里发生过变更，再补投一次最新的那一代。
+// 登记之后发生的变更由 notifyPolicy 正常送达。于是「取快照 → 登记」窗口内的
+// 变更不会漏，而并发变更可能**合并**为最新一代（单调投递门的选择，见文件头）。
 //
 // 立即回调同样在锁外调用、panic 同样被 recover，与变更通知完全一致。
 func Subscribe(fn func(Policy)) (Subscription, error) {
 	if fn == nil {
 		return 0, ErrNilSubscriber
 	}
-	h := Subscription(subs.Add(fn))
-	subhub.Invoke(fn, CurrentPolicy())
+	// floor 是登记时看到的代次：比它更旧的通知是登记前的历史，投递门直接丢弃。
+	sub := &policySubscriber{fn: fn, floor: Gen()}
+	p := CurrentPolicy()
+	sub.deliver(p) // 立即回调（尚未登记，不会与并发通知交错）
+	h := Subscription(subs.Add(sub.deliver))
+	if cur := CurrentPolicy(); cur.Gen() > p.Gen() {
+		sub.deliver(cur) // 补上「取快照 → 登记」窗口内的变更
+	}
 	return h, nil
 }
 

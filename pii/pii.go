@@ -15,8 +15,10 @@
 // 省级码白名单 + 出生日期合法（含未来拒绝）+ 顺序码非全零 + MOD 11-2 校验码——
 // 订单号/流水号/银行卡号等长数字串几乎不可能同时通过；手机号要求两侧不邻接
 // 字母数字（Go RE2 无环视断言，边界在代码判定），13 位毫秒时间戳因尾邻数字不
-// 会误命中。缺省策略 mask 保长度（前段+星号+尾段），日志对齐与残留定位友好；其余
-// 策略的处置形态由宿主注入的 StrategyKind 决定（见 policy.go）。
+// 会误命中。匹配前先做数字形态归一化（全角 → 半角、去零宽、折叠数字间的分组
+// 分隔符；口径与已知边界见 normalize.go），归一化与处置共用一条路径。缺省策略
+// mask 保长度（前段+星号+尾段），日志对齐与残留定位友好；其余策略的处置形态由
+// 宿主注入的 StrategyKind 决定（见 policy.go）。
 //
 // 结构面：ApplyValue（按敏感面）递归下探 map[string]any /
 // map[string]string / []any / []string——其中 map[string]string 是 agentkit
@@ -82,26 +84,42 @@ var idWeights = [17]int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
 const idCheckChars = "10X98765432"
 
 // Detect 找出 s 中全部 PII span（已完成语义校验与边界判定，重叠时保留更长者）。
-// 返回按 Start 升序、互不重叠。
+// 返回按 Start 升序、互不重叠，偏移是**原串字节偏移**。
+//
+// 匹配前先做数字形态归一化（全角 → 半角、去零宽、折叠数字间的分组分隔符，
+// 口径见 normalize.go），再把命中映射回原串。归一化与处置共用同一条路径：
+// Apply 打码、StrategyHash 摘要都按归一化后的值计算，同一值的不同书写形态
+// 因此得到同一处置形态与同一摘要。
 func Detect(s string) []Span {
-	if len(s) < 11 || !strings.ContainsFunc(s, func(r rune) bool { return r >= '0' && r <= '9' }) {
+	if len(s) < 11 {
 		return nil
 	}
-	var out []Span
-	for _, m := range mobileRe.FindAllStringIndex(s, -1) {
-		if !boundaryOK(s, m[0], m[1]) {
-			continue
-		}
-		out = append(out, Span{Kind: KindMobile, Start: m[0], End: m[1]})
+	norm, origIdx := normalizeForDetect(s)
+	if len(norm) < 11 || !strings.ContainsFunc(norm, func(r rune) bool { return r >= '0' && r <= '9' }) {
+		return nil
 	}
-	for _, m := range residentIDRe.FindAllStringIndex(s, -1) {
-		if !boundaryOK(s, m[0], m[1]) {
+	// 归一化文本偏移 → 原串偏移（恒等映射时直接返回下标）。
+	at := func(i int) int {
+		if origIdx == nil {
+			return i
+		}
+		return origIdx[i]
+	}
+	var out []Span
+	for _, m := range mobileRe.FindAllStringIndex(norm, -1) {
+		if !boundaryOK(norm, m[0], m[1]) {
 			continue
 		}
-		if !validResidentID(s[m[0]:m[1]]) {
+		out = append(out, Span{Kind: KindMobile, Start: at(m[0]), End: at(m[1])})
+	}
+	for _, m := range residentIDRe.FindAllStringIndex(norm, -1) {
+		if !boundaryOK(norm, m[0], m[1]) {
 			continue
 		}
-		out = append(out, Span{Kind: KindResidentID, Start: m[0], End: m[1]})
+		if !validResidentID(norm[m[0]:m[1]]) {
+			continue
+		}
+		out = append(out, Span{Kind: KindResidentID, Start: at(m[0]), End: at(m[1])})
 	}
 	return dedupeSpans(out)
 }
@@ -170,13 +188,19 @@ func dedupeSpans(in []Span) []Span {
 	return out
 }
 
-// maskSpan 保长度打码：手机号留前 3 尾 4（+86/0086 前缀保留——归属信息不敏感），
+// maskSpan 保长打码：手机号留前 3 尾 4（+86/0086 前缀保留——归属信息不敏感），
 // 身份证留前 4（省市级可见；生日、顺序码、MOD 11-2 校验位全掩）。
+//
+// 入参先归一化（全角 → 半角、折叠分组分隔符），故同一号码的 `138 1234 5678` /
+// `１３８…` / 零宽插入写法都产出同一个 `138****5678`。ASCII 连续形态逐字节保长；
+// 带分隔符/全角的形态收敛到归一化后的长度——保留原分隔符只会把已脱敏的
+// 号码重新拼回可读形态，没有收益。
 //
 // 校验位**不保留**（issue #298）：MOD 11-2 校验位原样留下，就成了对
 // 「生日 × 顺序码 × 区县」候选的免费验算器——原本候选还需自洽才算命中。
 // 留前 4 已够宿主做省市级定位，尾 2 没有等价的定位价值。
 func maskSpan(v string, kind Kind) string {
+	v = normalizeDigits(v)
 	switch kind {
 	case KindMobile:
 		digits := v

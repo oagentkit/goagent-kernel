@@ -39,7 +39,7 @@ func applySpan(v string, kind Kind, s StrategyKind, digestKey string) string {
 		if digestKey == "" {
 			return redactedPlaceholder
 		}
-		return keyedDigest(v, kind, digestKey)
+		return keyedDigest(normalizeDigits(v), kind, digestKey)
 	default:
 		return maskSpan(v, kind) // mask 与 block 都走保长打码；block 的处置在 Apply 层
 	}

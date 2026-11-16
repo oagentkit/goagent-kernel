@@ -94,8 +94,17 @@ func (s *effectStore) UseClock(now func() time.Time) {
 	}
 }
 
-// clock 当前时刻。**只在持锁时调用**。
-func (s *effectStore) clock() time.Time { return s.now() }
+// clock 当前时刻。**先取回调、解锁后再调**（issue #317）：注入的时钟可能
+// 重入本包，持锁调用即死锁。调用方也不得在持有 s.mu 时调本函数。
+func (s *effectStore) clock() time.Time {
+	s.mu.Lock()
+	now := s.now
+	s.mu.Unlock()
+	if now == nil {
+		return time.Now()
+	}
+	return now()
+}
 
 // actLocked 取（或创建）Key 的状态记录，**取到后立刻登记/比对动作身份**
 // ——所有入口共用这一处，身份判定天然先于任何状态判定（Store.Acquire
@@ -141,6 +150,7 @@ func (s *effectStore) resLocked(resource string) *resRecord {
 // 顺序写反的代价是重复施加：把「结果未知」排到「资源被占」之后，调用方会拿到
 // contended（以为「晚点重试就行」），重试于是发生。
 func (s *effectStore) Acquire(_ context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -155,7 +165,6 @@ func (s *effectStore) Acquire(_ context.Context, act sideeffect.Action, ttl time
 		return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
 	}
 
-	now := s.clock()
 	// 对账占用未过期 ⇒ 对账中：该 Key 仍处于未知态，不得授予执行权。
 	// 过期的占用在这里清掉（可重入：对账者死亡不永久占住这个 Key）。
 	if rec.recon != nil {
@@ -340,6 +349,7 @@ func (s *effectStore) Abandon(_ context.Context, act sideeffect.Action, lease si
 // Renew 续期并**同时确认持有资格**：闸已易主、尝试已失效**或租约已过期**
 // 则拒绝续期（假续期是重复施加的入口）。
 func (s *effectStore) Renew(_ context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -349,7 +359,6 @@ func (s *effectStore) Renew(_ context.Context, act sideeffect.Action, lease side
 	if err := s.intentOwnerErr(act, lease); err != nil {
 		return sideeffect.Lease{}, err
 	}
-	now := s.clock()
 	rr := s.resLocked(act.Resource)
 	// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时，
 	// 旧持有者不得复活它——否则过期那次尝试绕开「先对账」直接继续推进。

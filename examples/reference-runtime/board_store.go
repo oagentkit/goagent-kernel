@@ -62,8 +62,17 @@ func (s *boardStore) UseClock(now func() time.Time) {
 	}
 }
 
-// clock 当前时刻。**只在持锁时调用**。
-func (s *boardStore) clock() time.Time { return s.now() }
+// clock 当前时刻。**先取回调、解锁后再调**（issue #317）：注入的时钟可能
+// 重入本包，持锁调用即死锁。调用方也不得在持有 s.mu 时调本函数。
+func (s *boardStore) clock() time.Time {
+	s.mu.Lock()
+	now := s.now
+	s.mu.Unlock()
+	if now == nil {
+		return time.Now()
+	}
+	return now()
+}
 
 // Seed 摆初始任务（契约里没有「创建」入口：任务拓扑是宿主的资产）。
 func (s *boardStore) Seed(tasks ...taskboard.Task) {
@@ -97,6 +106,7 @@ func (s *boardStore) List(_ context.Context) ([]taskboard.Task, error) {
 //
 // 令牌由本存储铸造（见文件头注释）；到期时刻按存储自己的时钟算。
 func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -114,7 +124,7 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 				"依赖未完成", "task", string(id), "dep", string(dep))
 		}
 	}
-	if taskboard.LeaseHeld(t, s.clock()) {
+	if taskboard.LeaseHeld(t, now) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人认领", "task", string(id))
 	}
 
@@ -126,7 +136,7 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 		Fence: taskboard.Fence(s.seq),
 	}
 	if req.TTL > 0 {
-		lease.Until = s.clock().Add(req.TTL)
+		lease.Until = now.Add(req.TTL)
 	}
 	t.State = taskboard.StateClaimed
 	t.Owner = agent
@@ -181,6 +191,7 @@ func (s *boardStore) Complete(_ context.Context, id taskboard.TaskID, token stri
 // 校验（令牌是当前租约的 + 租约未过期）与延长在同一把锁内完成——原子；
 // TTL 语义与 Claim 一致；续期不换令牌、不递增代次（续期不是接管）。
 func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -191,11 +202,11 @@ func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string,
 	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配", "task", string(id))
 	}
-	if !taskboard.LeaseHeld(t, s.clock()) {
+	if !taskboard.LeaseHeld(t, now) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约已过期，资格终止（请重新认领）", "task", string(id))
 	}
 	if req.TTL > 0 {
-		t.Lease.Until = s.clock().Add(req.TTL)
+		t.Lease.Until = now.Add(req.TTL)
 	} else {
 		t.Lease.Until = time.Time{}
 	}

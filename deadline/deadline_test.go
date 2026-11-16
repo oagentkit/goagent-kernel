@@ -48,12 +48,12 @@ func runRound(ctx context.Context, store *memStore, cfg Config, claimed bool) (s
 	if err != nil {
 		return "error", false
 	}
-	rctx, release, expired := cfg.Begin(ctx, anchor, time.Now())
+	rctx, release, constraint := cfg.Begin(ctx, anchor, time.Now())
 	defer release()
 	if !claimed {
 		return "", false // 认领零行：不产出任何东西、不写锚点
 	}
-	if expired {
+	if constraint.Expired() {
 		return OutcomeTimedOut.Status(), false // 认领迁移后立即收敛，不进编排
 	}
 	if _, err := Persist(ctx, store, cfg, anchor, time.Now()); err != nil {
@@ -69,10 +69,10 @@ func TestZeroTimeoutPassesThrough(t *testing.T) {
 	store := &memStore{}
 	cfg := Config{} // Timeout=0
 
-	rctx, release, expired := cfg.Begin(ctx, &Anchor{DeadlineAt: time.Now().Add(-time.Hour)}, time.Now())
+	rctx, release, constraint := cfg.Begin(ctx, &Anchor{DeadlineAt: time.Now().Add(-time.Hour)}, time.Now())
 	defer release()
-	if expired {
-		t.Fatal("0=关闭时不得判过期（压根不看锚点）")
+	if constraint != ConstraintOff {
+		t.Fatalf("Timeout=0 应为 ConstraintOff（本轮不受约束），实得 %s", constraint)
 	}
 	if _, ok := rctx.Deadline(); ok {
 		t.Fatal("0=关闭的轮 ctx 不得带 deadline（直通）")
@@ -124,9 +124,9 @@ func TestSharedAnchorNotRefreshedAcrossRounds(t *testing.T) {
 
 	// 续跑轮 Begin：沿用锚点的**剩余**时长，不是新开整段 30 分钟。
 	aged := &Anchor{FirstClaimAt: t0.Add(-20 * time.Minute), DeadlineAt: t0.Add(10 * time.Minute)}
-	rctx, release, expired := cfg.Begin(ctx, aged, time.Now())
+	rctx, release, constraint := cfg.Begin(ctx, aged, time.Now())
 	defer release()
-	if expired {
+	if constraint.Expired() {
 		t.Fatal("还有 10 分钟余量，不该判过期")
 	}
 	dl, ok := rctx.Deadline()
@@ -139,9 +139,9 @@ func TestSharedAnchorNotRefreshedAcrossRounds(t *testing.T) {
 
 	// 对照：非 shared 每轮各自新开整段（锚点不参与）。
 	perRound := Config{Timeout: 30 * time.Minute}
-	rctx2, release2, expired2 := perRound.Begin(ctx, aged, time.Now())
+	rctx2, release2, constraint2 := perRound.Begin(ctx, aged, time.Now())
 	defer release2()
-	if expired2 {
+	if constraint2.Expired() {
 		t.Fatal("非 shared 不判锚点过期")
 	}
 	if dl2, ok := rctx2.Deadline(); !ok || time.Until(dl2) <= 15*time.Minute {
@@ -230,9 +230,9 @@ func TestAnchorStateThreeStates(t *testing.T) {
 	}
 	// 零值锚点 Begin：按未写处理，新开一段 Timeout（不是立刻过期）。
 	cfg := Config{Timeout: time.Minute, Shared: true}
-	rctx, release, expired := cfg.Begin(context.Background(), &Anchor{}, now)
+	rctx, release, constraint := cfg.Begin(context.Background(), &Anchor{}, now)
 	defer release()
-	if expired {
+	if constraint.Expired() {
 		t.Fatal("零值锚点不得判过期")
 	}
 	if _, ok := rctx.Deadline(); !ok {

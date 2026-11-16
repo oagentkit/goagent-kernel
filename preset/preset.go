@@ -27,8 +27,9 @@
 //
 // 沿用 `netguard` / `guardset.Assembly` 的纪律：**换整份，不改其中一项**。
 // 改其中一项会让「当前生效的是哪套权限」出现两个真相——装配期读到的与
-// 执行期用到的可能是两份。`Set` 构造后只读，`Preset` 是值类型，
-// 于是「这一份」在传递过程中不会被人偷偷换掉其中一维。
+// 执行期用到的可能是两份。`Set` 构造后只读，`Preset` 是值类型且出口名单在
+// 每个边界深拷贝（见 clonePreset），于是「这一份」在传递过程中既不会被换掉
+// 其中一维，也不会被改穿名单元素。
 //
 // # 自检项：加载期就把配歪的预设拒掉
 //
@@ -53,6 +54,7 @@ package preset
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/oagentkit/guardx/sandbox"
@@ -88,6 +90,10 @@ type Preset struct {
 }
 
 // Set 一组已自检通过的预设（构造后只读，可并发共享）。
+//
+// 「只读」覆盖到**切片**：`New` 与 `Resolve` / `All` 都在边界做深拷贝
+// （`Egress.Allow` / `Bypass` 不与集合共享底层数组，issue #303）。值类型只挡住
+// 字段替换，挡不住 `p.Egress.Allow[0] = ...` 原地改写——所以复制必须落到元素层。
 type Set struct {
 	presets []Preset
 	index   map[string]int
@@ -121,9 +127,22 @@ func New(presets []Preset) (*Set, error) {
 		keys[k] = p.Name
 		seen[p.Name] = struct{}{}
 		index[p.Name] = len(out)
-		out = append(out, p)
+		out = append(out, clonePreset(p))
 	}
 	return &Set{presets: out, index: index}, nil
+}
+
+// clonePreset 深拷贝一份预设（只到切片元素层：Egress.Allow / Bypass）。
+//
+// 为什么必须在**每个边界**做：Preset 是值类型只保证字段替换不穿透，切片头
+// 仍指向同一底层数组——宿主改一次 `Resolve()` 返回值的 Allow[0]，集合内那份
+// 登记的名单就一起变了（issue #303）。构造时、Resolve 返回时、All 快照时
+// 各拷一次，三条改穿路径都没了入口。
+func clonePreset(p Preset) Preset {
+	out := p
+	out.Egress.Allow = slices.Clone(p.Egress.Allow)
+	out.Egress.Bypass = slices.Clone(p.Egress.Bypass)
+	return out
 }
 
 // validate 单条预设的加载期自检。
@@ -158,23 +177,51 @@ func (p Preset) validate() error {
 	return nil
 }
 
-// Key 预设的语义键：由三维及出口细节组成，与名字无关。
+// Key 预设的语义键：只编码**在该出口档位下真正参与兑现**的维度，与名字无关。
 //
 // 它同时是「换整份」的判定依据——两份预设 `Key()` 相同即**就是同一份权限**，
-// 无论叫什么名字。出口细节（Proxy 与 Allow/Bypass 名单）编进键里（issue #156）：
-// GateRequest 实际带下去的是**完整** Egress，键只编 Mode 会把「同模式、不同
-// 代理 / 不同白名单」的两份合法预设判成同一份而拒收，报错文案还声称「完全
-// 相同」。Allow/Bypass 是集合语义（顺序不影响兑现），排序去重后进键——
-// 同一名单的两种书写顺序判同一份权限，仍是撞名错误。
+// 无论叫什么名字。口径（issue #304）：
+//
+//   - **代理模式**编 proxy / allow / bypass：代理地址与白名单都参与 Env 兑现；
+//   - **非代理模式不编这三个维度**：`egress.Spec.Validate` 在非代理模式直接
+//     返回 nil，`Env` 在 unrestricted 原样返回 base、在 denied 直接报错——
+//     Allow/Bypass/Proxy 不参与任何兑现。把它们编进键会让「有效约束完全相同、
+//     只是残留了一个惰性字段」的两份预设逃过撞名检查，正是本包要防的
+//     「两个名字指同一档」。
+//
+// 名单是集合语义（顺序不影响兑现），排序去重后进键；元素用 Go 字符串字面量
+// **可逆转义**，`["a,b"]` 与 `["a","b"]` 因此不会撞成同一个键（此前逗号直拼
+// 把两份真不同的白名单判成「语义完全相同」而拒收）。
 func (p Preset) Key() string {
-	norm := func(list []string) string {
-		s := append([]string(nil), list...)
-		slices.Sort(s)
-		return strings.Join(slices.Compact(s), ",")
+	var b strings.Builder
+	fmt.Fprintf(&b, "level=%s mode=%s egress=%s",
+		p.Level.String(), string(p.Mode), p.Egress.Mode.String())
+	if p.Egress.Mode != egress.ModeProxy {
+		return b.String()
 	}
-	return fmt.Sprintf("level=%s mode=%s egress=%s proxy=%s allow=[%s] bypass=[%s]",
-		p.Level.String(), string(p.Mode), p.Egress.Mode.String(),
-		p.Egress.Proxy, norm(p.Egress.Allow), norm(p.Egress.Bypass))
+	fmt.Fprintf(&b, " proxy=%q allow=%s bypass=%s",
+		p.Egress.Proxy, encodeList(p.Egress.Allow), encodeList(p.Egress.Bypass))
+	return b.String()
+}
+
+// encodeList 集合语义的名单编码：排序去重 + 逐元素引用转义。
+//
+// 可逆性由 `strconv.Quote` 保证：元素内的逗号/引号/方括号都落在引号内，
+// 拆分点只可能是元素之间的那个逗号——键相等当且仅当名单（作为集合）相等。
+func encodeList(list []string) string {
+	s := append([]string(nil), list...)
+	slices.Sort(s)
+	s = slices.Compact(s)
+	var b strings.Builder
+	b.WriteByte('[')
+	for i, v := range s {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Quote(v))
+	}
+	b.WriteByte(']')
+	return b.String()
 }
 
 // String 面向人的一句话（进报告与日志）。
@@ -195,7 +242,7 @@ func (s *Set) Resolve(name string) (Preset, error) {
 	if !ok {
 		return Preset{}, fmt.Errorf("preset: 未登记的预设名 %q（已登记：%s）", name, strings.Join(s.Names(), " / "))
 	}
-	return s.presets[i], nil
+	return clonePreset(s.presets[i]), nil
 }
 
 // Names 已登记的预设名（字典序，供报告与报错信息用）。
@@ -208,12 +255,15 @@ func (s *Set) Names() []string {
 	return out
 }
 
-// All 预设快照（按名字排序，改它不影响集合）。
+// All 预设快照（按名字排序，改它不影响集合——元素切片同样深拷贝）。
 func (s *Set) All() []Preset {
 	if s == nil {
 		return nil
 	}
-	out := slices.Clone(s.presets)
+	out := make([]Preset, len(s.presets))
+	for i, p := range s.presets {
+		out[i] = clonePreset(p)
+	}
 	slices.SortFunc(out, func(a, b Preset) int { return strings.Compare(a.Name, b.Name) })
 	return out
 }
