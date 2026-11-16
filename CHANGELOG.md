@@ -2,6 +2,83 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.42.0] — 2026-11-17
+
+### 修复(worker)：受管执行器租约会话与动作身份作用域（#265 / #261）
+
+- **租约会话（#265）**：受管执行器的四步编排（Claim → 施加 → Checkpoint →
+  Complete）此前全程无续期，长任务（LLM 推理 / 工具调用 / 远端阻塞超过
+  TTL）必然撞上「执行到一半租约过期 ⇒ 被接管 ⇒ 旧持有者还在写」的错位。
+  新增 `LeaseSession`（Context/Token/Fence/AssertOwned/Close）：执行期间
+  运行时续期（默认 TTL/3，`ManagedConfig.RenewInterval` 为 #266 的换装点）、
+  进度与收口前各一次所有权确认、`ErrLeaseLost` 即取消会话 ctx 封口在途施加段。
+  存储端条件提交新增 `checkpoint.FencedStoreCAS.SaveIfNewerFenced` /
+  `Committer.CommitFenced`（代次判定与写入同一原子操作，口径与
+  sideeffect.FencedSink 同构；不支持时显式失败不降级）——超 TTL 后旧持有者的
+  快照提交被存储侧拒绝，不再只靠调用前检查。
+- **动作身份作用域（#261）**：默认幂等键此前只有 `task:<id>`（零租户零运行），
+  两租户同名任务互相重放/冲突。新增 `sideeffect.ActionKeyBuilder`：只提供
+  作用域段拼装机制与单射保证（全段转义、纯函数稳定、Attempt 不进键），不引入
+  租户/运行领域词（词汇归宿主）；受管执行器默认键自动并入任务板租户段 +
+  `ManagedWork.Scope`，Resource 同口径——与 coord 租户板的作用域口径对齐。
+  零作用域逐字透传（旧键零迁移）。
+- 反向验证用例随行：键退回 TaskID 口径必红、进度提交不带代次必红。
+
+### 修复(containerbackend)：K8s Job 禁网实测与幂等创建（#262 / #263）
+
+- **禁网声明/实测分离（#262）**：`EgressDenied` 此前自报「已禁网」但兑现
+  （逐作业 NetworkPolicy）依赖 CNI，且原生允许规则叠加语义下「建了全拒策略」
+  ≠「出不去」。现在：声明面门禁（策略开启 + CNI 能力事实 + 出站探测装配
+  三者齐备才自报禁网档，缺一降级）；CNI 能力=注入接口（懒答+缓存，答不上来
+  不许选禁网档，fail-closed）；禁网作业落独立执行 Namespace，创建前 LIST
+  全部 NetworkPolicy，允许出站且可能选中本作业 Pod ⇒ 拒绝创建（叠加语义
+  被处理掉）；装配 init 容器出站探测（exit 0=被阻断放行，连上/不可判=拒作业）。
+  实测进 `Detail["egress_verified"]`，声明进 `Detail["egress_declared"]`。
+  真集群用例 `GAK_K8S_E2E_*` 显式 Skipf。
+- **稳定执行幂等标识（#263）**：Job 名此前每次随机，创建响应丢失后重试必然
+  二次创建。`backend.Job.ExecutionID`（内核/宿主给定）确定性派生 Job 名 +
+  `harness.io/execution-id` 标签；对账先于创建（按派生名 GET，已存在且标识
+  相符 ⇒ 不发创建请求、返回既有作业终态；对账失败/标识不符均 fail-closed）；
+  创建结果分级 created/conflict/rejected/uncertain——uncertain 不删 Job
+  不删策略（防「可能已建成却被清理」），重试返回既有结果。
+
+### 修复(eventbus)：可靠事件交付——已提交水位线读法 + Outbox 形态参考实现（#264）
+
+- TailStore「无空洞推进」契约此前只有测试替身满足；自增 ID 直读在真
+  PostgreSQL 上必丢帧（A 铸号未提交 → B 先提交 → 游标推过 A ⇒ A 永远读不到，
+  哨兵响了帧也丢了）。
+- 契约收口：新增 `WatermarkTailStore` 可选能力接口（`CommittedWatermark`
+  已提交水位线读法，实现即声明 Outbox 形态）；契约文字明确**被承诺支持的生产
+  形态只有 Outbox**，自增/序列直读显式声明不支持；水位线只在提交时推进、
+  回滚不烧号、ListAfter 以水位线为上界（fail-closed 扣住）三条可机判口径写死。
+- 参考实现（examples/pgstore）：`pgref_event_watermark` 单行水位表作分配
+  串行化点（UPDATE…RETURNING 拿号持行锁到提交 ⇒ 铸造序==提交序），`PublishInTx`
+  与业务状态同事务；真 PG 集成用例（并发铸造序恰 1..N 无洞、回滚空洞哨兵
+  静默）env-guard 实跑通过。sqlitestore 维持「TailStore 不在落库范围」声明。
+
+### 修复(pii)：脱敏面数据安全收口（#293 / #294 / #295）
+
+- **keyed digest（#293）**：hash 档此前是无盐截断 SHA-256（盐是公开常量
+  `"|"+kind`，手机号域可字典穷举还原）。改为域分离 HMAC-SHA256（kind 前段 +
+  NUL 定界，截 16 hex 保持形态），密钥经 `SetDigestKey` 注入、随整份策略快照
+  CAS 交换；**缺密钥显式 fail-closed**（不出摘要、整段替换 + blocked，不静默
+  降级）；<16 字节密钥在注入面拒绝（`ErrDigestKeyTooShort`）。policy/注释
+  的「不可逆摘要」措辞改为与实际强度一致。
+- **键位脱敏（#294）**：map 的键此前从不参与脱敏——以手机号为键的载荷整键
+  明文外泄且 `blocked=false`。键与值走同一条判定面（键命中同样产出 span 级
+  处置与 blocked 信号）；普通键（如 `order_id`）逐字不变；同键名两次处置
+  形态相同（可关联性，与迭代序无关）；同形冲突按原键字典序 `#n` 消解
+  （redact 下多 PII 键必然同形，不消解会静默合并丢条目）。
+- **未知形状 fail-closed（#295）**：未登记载荷形状（`[]map[string]string` /
+  `map[string][]string` / `[]byte` / struct）此前静默透传且 blocked=false
+  ——与「未登记面名 fail-closed」的自己批判相反。现在未登记形状整段替换
+  `"[redacted]"` + blocked（嵌套只换子树并上浮阻断）；标量/nil 留在放行面；
+  新增 `ValidateShape`（接线期自查，报错带 `$.items[0].blob` 路径）；
+  四种已登记容器行为不变（回归护栏）。
+- **升级注意**：配了 hash 档没注入密钥的宿主会 fail-closed；传未登记形状的
+  宿主会拿到 `("[redacted]", true)`——均为显式选择的缺省形态，接线期可用
+  `DigestKeyed()` / `ValidateShape` 自查。
+
 ## [v0.41.0] — 2026-11-16
 
 ### 新增(backend)：作业声明接上游执行硬约束判据——Job.ExecSpec / Job.JudgeExec
