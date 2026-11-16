@@ -167,6 +167,24 @@ type Budget struct {
 	MaxBytes int
 }
 
+// skillBytes 一条技能元数据**实际交付给模型**的字节数——预算计费口径的唯一实现（#289）。
+//
+// 披露交付的是整个 Skill（含 Tags 与 Resources）：计费若只算 name+description，
+// 「守住预算」与「交付内容」就对不上账——预算越紧、描述越短、标签与资源越多，
+// 偏差越大，恰恰是最该被预算兜住的场景偏差最大；且超支时 Truncated 与 Reason
+// 双双沉默，宿主连告警都发不出。裁剪循环只认这一个函数，计费与交付共用一份实现，
+// 不各写一遍。
+func skillBytes(s Skill) int {
+	n := len(s.Name) + len(s.Description)
+	for _, t := range s.Tags {
+		n += len(t)
+	}
+	for _, r := range s.Resources {
+		n += len(r)
+	}
+	return n
+}
+
 // Scored 一个候选及其分数（留着让宿主能解释「为什么是它」）。
 type Scored struct {
 	Skill Skill
@@ -251,7 +269,9 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		var kept []Scored
 		used := 0
 		for _, sc := range picked {
-			n := len(sc.Skill.Name) + len(sc.Skill.Description)
+			// 计费口径 = 交付口径（#289）：按 skillBytes 全量计量（含 Tags 与
+			// Resources），与塞进 res.Skills 的内容逐字节同源。
+			n := skillBytes(sc.Skill)
 			if used+n > b.MaxBytes {
 				res.Truncated = true
 				if res.Reason == "" {
