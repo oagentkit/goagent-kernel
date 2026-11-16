@@ -21,7 +21,7 @@
 // 渐进披露制造了一个此前不存在的失败模式：**模型凭占位猜出一个调用就发过来**。
 // 此时只有两种可能，处置方式相反：
 //
-//   - 工具在目录里、只是 schema 没取回 → 可恢复，顺手激活后重试即成；
+//   - 工具在目录里、只是 schema 没取回 → 可恢复：先取回 schema 再构造参数调用；
 //   - 工具压根不在目录里 → 不可恢复，再重试多少次也不会出现。
 //
 // 把两者混成一句「工具不可用」，后果很具体：上层的自动退避重试会把**策略否定**变成
@@ -35,9 +35,22 @@
 // # 内存边界
 //
 // 目录是本包唯一随工具数量线性增长的内存，故「单个工具最多占多少」必须是可核对的事实：
-// 描述在构造时截到 MaxDescriptionLen，故目录占用有上界，宿主不必逐条自查描述长度。
+//
+//   - 描述在构造时截到 MaxDescriptionLen（按 rune）；
+//   - 参数描述在构造时截到 MaxParamDescriptionLen（按 rune）；
+//   - schema 的内容字节（Type + 参数名/类型/描述 + Required）总量超 MaxSchemaBytes 时，
+//     按确定顺序丢弃参数项并同步过滤 Required，置 Schema.Truncated=true。
+//
+// 故单条目录记录的持有量上界 = len(Name) + MaxDescriptionLen + MaxSchemaBytes
+// （按内容字节计，不含 map/slice 容器开销）。**工具名不截断**——它是调用身份，
+// 截断会让「在目录内」与宿主实际能调的名字不一致；其长度归宿主自查（调用身份不应是
+// 无界自由文本，但本包不能替宿主改名）。
+//
 // 检索用的小写形态另存一份，但它只在描述**真含大写**时才单独占内存（strings.ToLower
-// 在无字符改变时原样返回入参），故上界是「每条至多两份截断描述」——仍是有界的。
+// 在无字符改变时原样返回入参），故上界还要加上「每条至多一份 MaxDescriptionLen 的小写描述」。
+//
+// 占位披露面的描述（原文 + 取回指令）也受 MaxDescriptionLen 约束：追加指令不得让
+// 模型实际收到的描述超过声明的单条上限（见 placeholder.go）。
 //
 // 反过来，**跨轮复用的缓存不归本包管**：本包没有隐式的请求作用域（参考实现靠 Python 的
 // contextvar 天然拿到 thread 级缓存，Go 没有等价物），凭空造一个就是替宿主决定生命周期。
@@ -63,35 +76,6 @@ import (
 // 为什么不是空串：空串是「忘了填」的默认值，拿它当占位标记，任何一处遗漏构造都会
 // 静默变成占位而没人发现。取一个**真实工具不会声明的类型名**，占位与真身因此不可能混淆。
 const DegenerateType = "none"
-
-// Schema 工具输入 schema 的最小载体。
-//
-// 为什么自定一个结构而不是收 map[string]any：占位的「退化」必须**可机械判定**，
-// 否则宿主无法保证「未加载的工具不泄露真 schema」。宿主把自己的 schema 投影进来即可，
-// 本包不要求与宿主的 JSON Schema 库同型。
-type Schema struct {
-	// Type JSON Schema 顶层类型；退化占位恒为 DegenerateType。
-	Type string
-	// Properties 参数定义；退化占位恒为 nil。
-	Properties map[string]Param
-	// Required 必填参数名；退化占位恒为 nil。
-	Required []string
-}
-
-// Param 单个入参的最小定义。
-type Param struct {
-	Type        string
-	Description string
-}
-
-// Degenerate 空 schema：声明不了任何参数，故任何调用都必然参数非法。
-//
-// 这一点是**故意**的：占位若碰巧还能被调用，模型就会把占位当契约继续瞎编参数，
-// 门禁也就没机会把它挡回来。
-func Degenerate() Schema { return Schema{Type: DegenerateType} }
-
-// IsDegenerate 是否为空 schema 占位。
-func (s Schema) IsDegenerate() bool { return s.Type == DegenerateType }
 
 // Tool 目录里的一条完整工具定义。
 type Tool struct {
@@ -146,6 +130,11 @@ func truncateDescription(s string) string {
 // 不变式：**目录成员在构造后不再变化**（没有删除/新增入口），只有已加载集可变。
 // 门禁正是靠这条不变式把「在目录内」判成一个稳定事实：并发加载不会让同一个名字
 // 在两次调用里一会儿在、一会儿不在。
+//
+// **副本口径（全覆盖）**：Schema.Properties（map）与 Schema.Required（slice）是
+// 引用类型。构造期从宿主入参深拷贝一次；Lookup / Load / Expose / ExposeAll /
+// Search 交出前再深拷贝一次。调用方拿到的都是自己的副本——原地改写返回值或构造后
+// 改写宿主原变量都改不动目录（Names 的副本承诺同此口径）。
 type Catalog struct {
 	mu sync.RWMutex
 	// tools 目录成员本体（构造后不变）；names 与它同键同量，构造期排好序。
@@ -218,6 +207,9 @@ func NewCatalogWithLimit(tools []Tool, limit int) *Catalog {
 		// 在**存进目录前**截断，而不是渲染时再截：检索打分读的就是这份存储值，
 		// 惰性截断会让打分面对全文、模型面对摘要，两边看到的不是同一件事。
 		t.Description = truncateDescription(t.Description)
+		// 深拷贝 + 设界：宿主在构造后改自己的原 map/slice 不得改穿目录；参数描述与
+		// schema 总量同在这一步收口（issue #290/#316）。
+		t.Schema = sanitizeSchema(t.Schema)
 		// 小写形态按**截断后**的描述算：检索打分读的是存储值，两者必须是同一串，
 		// 否则模型看到摘要、打分看到全文（这条纪律原本就写在截断处）。
 		c.tools[t.Name] = entry{
@@ -258,16 +250,22 @@ func (c *Catalog) Has(name string) bool {
 }
 
 // Lookup 取完整定义；不在目录内返回 (零值, false)。
+//
+// 返回深拷贝：调用方可以原地改写 Schema.Properties/Required，改不动目录。
 func (c *Catalog) Lookup(name string) (Tool, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	e, ok := c.tools[name]
-	return e.tool, ok
+	if !ok {
+		return Tool{}, false
+	}
+	return cloneTool(e.tool), true
 }
 
 // Load 取回完整 schema 并标记为已加载，幂等（重复取回不改变任何状态）。
 //
 // 这是「披露」的唯一写入口：谁把工具变成完整面，在这里留痕，而不是各调用点各记一份。
+// 返回深拷贝（同 Lookup 口径）。
 func (c *Catalog) Load(name string) (Tool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -276,7 +274,7 @@ func (c *Catalog) Load(name string) (Tool, bool) {
 		return Tool{}, false
 	}
 	c.loaded[name] = true
-	return e.tool, true
+	return cloneTool(e.tool), true
 }
 
 // IsLoaded 该工具的 schema 是否已取回。
@@ -295,6 +293,8 @@ func (c *Catalog) Loaded() []string {
 
 // Expose 按名取披露面：已加载给完整 schema，未加载给占位。
 // 不在目录内返回 (零值, false)——不存在的东西没有占位面，占位只对「已存在但未取回」有意义。
+//
+// 返回的 Schema 是深拷贝（占位面的退化 schema 本就不含引用了，仍走同一出口）。
 func (c *Catalog) Expose(name string) (Exposure, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -308,6 +308,7 @@ func (c *Catalog) Expose(name string) (Exposure, bool) {
 // ExposeAll 全目录披露面，按名升序。
 //
 // 每轮装配工具面走这一个出口，避免调用方自己拼「哪些给全、哪些给占位」而出现分叉。
+// 每条的 Schema 都是深拷贝（同 Expose 口径）。
 func (c *Catalog) ExposeAll() []Exposure {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -323,7 +324,7 @@ func exposureOf(t Tool, loaded bool) Exposure {
 	if !loaded {
 		return Placeholder(t.Name, t.Description)
 	}
-	return Exposure{Name: t.Name, Description: t.Description, Schema: t.Schema, Loaded: true}
+	return Exposure{Name: t.Name, Description: t.Description, Schema: cloneSchema(t.Schema), Loaded: true}
 }
 
 // namesOf 收集集合成员并升序排列。map 序是随机化的，所有出口一律走这里排序，

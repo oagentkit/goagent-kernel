@@ -23,6 +23,23 @@ type Match struct {
 	Score int
 }
 
+// SearchResult 带截断信息的检索结果。
+//
+// 为什么要有它：Search 的返回值只有命中项，调用方拿不到「还有更多候选」的信号。
+// 模型看到三条就会认定「就这三个工具相关」，宿主也无法据此决定要不要再检索一次。
+// 字段名与 skilldisclose.Result 对齐：Truncated 同义（裁剪发生了），Omitted 给出
+// 「还有多少条未披露」。
+type SearchResult struct {
+	// Matches 与 Search 返回值相同：按 (分值降序, 名字升序) 排好并已截断的命中。
+	Matches []Match
+	// Total 截断前的命中总数（不是目录总数）。
+	Total int
+	// Omitted 被截断掉的命中数：Total - len(Matches)。
+	Omitted int
+	// Truncated Omitted > 0，即「有候选因上限未披露」。
+	Truncated bool
+}
+
 // Search 按关键词检索目录，返回按 (分值降序, 名字升序) 排好并已截断的命中。
 //
 // # 无命中返回空，不兜底给「随便几个」
@@ -33,10 +50,37 @@ type Match struct {
 //
 // 检索只排序、**不激活**：激活是宿主（或门禁）的显式决定。若检索顺手把命中项全部标成已加载，
 // 一次宽泛的查询就能把刚省下来的上下文又吐回去，本包也就退化成了「带搜索框的全量披露」。
+//
+// 需要知道「有没有被截断」时用 SearchWithMeta；本方法保留既有签名（Stable 包只允许
+// additive 变更），两者共用同一份检索实现。
 func (c *Catalog) Search(query string) []Match {
+	matches, _ := c.search(query)
+	return matches
+}
+
+// SearchWithMeta 与 Search 同一次检索，额外返回截断统计（Total / Omitted / Truncated）。
+//
+// Truncated 的语义与 skilldisclose.Result.Truncated 对齐：**预算/上限裁掉了候选**
+// 就必须标出来，静默截断会让调用方以为「就这几个」。
+func (c *Catalog) SearchWithMeta(query string) SearchResult {
+	matches, total := c.search(query)
+	omitted := total - len(matches)
+	return SearchResult{
+		Matches:   matches,
+		Total:     total,
+		Omitted:   omitted,
+		Truncated: omitted > 0,
+	}
+}
+
+// search 检索的唯一实现：命中集与截断前总数一起返回。
+//
+// 返回值刻意保留 Search 的既有空值语义：无检索词 → nil；有检索词但无命中 →
+// 非 nil 空切片。两个出口（Search / SearchWithMeta）共用，免得统计与实际命中分叉。
+func (c *Catalog) search(query string) ([]Match, int) {
 	terms := tokenize(query)
 	if len(terms) == 0 {
-		return nil // 没有检索词就没有检索意图，不猜
+		return nil, 0 // 没有检索词就没有检索意图，不猜
 	}
 	normalized := normalizeQuery(terms)
 
@@ -44,18 +88,21 @@ func (c *Catalog) Search(query string) []Match {
 	defer c.mu.RUnlock()
 
 	r := ranker{limit: c.limit}
+	total := 0
 	for _, name := range c.names {
 		e := c.tools[name]
 		if score := scoreLowered(normalized, terms, e.lowerName, e.lowerDesc); score > 0 {
-			r.add(Match{Tool: e.tool, Score: score})
+			total++
+			// Match 内嵌完整 Tool：交出前深拷贝，避免宿主改命中项改穿目录（#316）。
+			r.add(Match{Tool: cloneTool(e.tool), Score: score})
 		}
 	}
 	// 有检索词但无命中：返回**空切片而非 nil**（旧行为）。调用方拿 nil 与空切片做
 	// 分支的写法在本包之外不该出现，但这条是既有契约，改它就是改语义。
 	if r.top == nil {
-		return []Match{}
+		return []Match{}, total
 	}
-	return r.top
+	return r.top, total
 }
 
 // ranker 实时维护分值前 limit 名命中。

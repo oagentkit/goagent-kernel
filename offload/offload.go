@@ -49,7 +49,6 @@
 package offload
 
 import (
-	"strings"
 	"sync"
 
 	"github.com/oekit/pkg/encoding"
@@ -70,7 +69,8 @@ var (
 	// 未经净化的扩展名可以让同一份内容落进不同键，使去重与占位复用同时失效。
 	ErrBadExt = errors.New("外置扩展名非法（只允许字母数字与短横线/下划线）")
 
-	// ErrBadHash 摘要长度不足，无法推导分片目录。
+	// ErrBadHash 摘要非法：长度不足 2 或含非十六进制字符。
+	// 文案是契约的一部分，判据与文案必须同时覆盖「长度」与「字符集」两件事。
 	ErrBadHash = errors.New("内容摘要非法（至少 2 位十六进制）")
 )
 
@@ -307,47 +307,6 @@ func applyOne(it *Item, b Blob, req Request, fresh map[string]struct{}) (storedN
 	it.Offloaded = true
 	// Replaced 恒为 false：首次见到必须让模型看到本体。
 	return true
-}
-
-// sanitizeExt 扩展名净化：补前导点、限字符集、拒分隔符与纯点串。
-// 返回带点形态（如 ".png"），便于直接拼键。
-func sanitizeExt(ext string) (string, error) {
-	e := strings.TrimSpace(ext)
-	e = strings.TrimPrefix(e, ".")
-	if e == "" || strings.Trim(e, ".") == "" {
-		return "", ErrBadExt
-	}
-	if strings.ContainsAny(e, `/\`) {
-		return "", ErrBadExt
-	}
-	for _, r := range e {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r == '.', r == '_', r == '-':
-		default:
-			return "", ErrBadExt
-		}
-	}
-	return "." + e, nil
-}
-
-// StorePath 由内容摘要与扩展名推导逻辑落盘键：blobs/<前两位>/<摘要><扩展名>。
-//
-// 纯函数，且**同一 (hash, ext) 恒得同一键**——这是去重的全部机制：键一致，
-// 占位文本才可能逐字节一致，历史前缀才能命中提示缓存。按摘要前两位分片只是
-// 避免单目录堆积，宿主可忽略目录层级自行映射。
-//
-// 返回的键以 path 分隔（与宿主无关的逻辑键，不是本机文件路径）。
-func StorePath(hash, ext string) (string, error) {
-	h := strings.TrimSpace(hash)
-	if len(h) < 2 {
-		return "", ErrBadHash
-	}
-	e, err := sanitizeExt(ext)
-	if err != nil {
-		return "", err
-	}
-	return "blobs/" + h[:2] + "/" + h + e, nil
 }
 
 // TruncatedHash 取占位文本里暴露的摘要前缀。

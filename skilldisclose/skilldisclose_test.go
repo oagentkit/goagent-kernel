@@ -125,13 +125,14 @@ func TestExcludeAndResourceMatch(t *testing.T) {
 	}
 }
 
-// rawResourceHit / scoreOfRaw 是**改造前**的实现，逐字保留下来做对照。
+// rawResourceHit / scoreOfRaw 是**独立实现**，用来对照生产路径的预计算形态。
 //
 // 为什么需要它们：改造把小写化从内层循环提到构造期与查询级（entry.lower*），
 // 顺带把「声明资源要 trim、标签与查询路径不 trim」这条既有口径拆成两个助手。
 // 这条差异**不报错**：trim 加错了只会让带空格的标签从不命中变成命中，披露结果
 // 悄悄变了而没有任何门禁会响。故两边各算一遍分数逐项比对——参考实现刻意
 // 不复用生产的 resourceHitLower / lowerDeclared，否则同一个判据写错时两边一起错。
+// 资源裸声明的匹配规则在 #291 收紧为段级时两侧同步更新（语义变更不是漂移）。
 func rawResourceHit(declared []string, path string) bool {
 	p := strings.ToLower(path)
 	for _, d := range declared {
@@ -148,9 +149,29 @@ func rawResourceHit(declared []string, path string) bool {
 				return true
 			}
 		default:
-			if p == d || strings.Contains(p, d) {
+			if rawPathHasSegmentRun(p, d) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// rawPathHasSegmentRun 「改造前」对照实现的段级匹配：与生产实现各写一份，
+// 避免同一个判据写错时两边一起错。
+func rawPathHasSegmentRun(path, declared string) bool {
+	ds := strings.Split(declared, "/")
+	ps := strings.Split(path, "/")
+	for i := 0; i+len(ds) <= len(ps); i++ {
+		match := true
+		for j := range ds {
+			if ps[i+j] != ds[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
 		}
 	}
 	return false

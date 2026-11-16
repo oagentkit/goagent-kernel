@@ -79,35 +79,6 @@ type entry struct {
 	lowerResources []string
 }
 
-// lowerEach 逐项小写化（nil 入参原样返回 nil，避免把 nil 变成空切片）。
-//
-// 供**标签**与**查询侧资源路径**用：原实现对这两者只做 ToLower，不 TrimSpace。
-// 「顺手 trim 一下更稳」在这里不是改进而是改语义——带首尾空格的标签因此会从不命中
-// 变成命中，而这类改动不会报错，只会悄悄改变披露结果。
-func lowerEach(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = strings.ToLower(s)
-	}
-	return out
-}
-
-// lowerDeclared 逐项「TrimSpace + 小写化」。供**技能声明的资源项**用：
-// 原实现正是这么规范化的（声明是宿主手写的，允许留空格；查询路径不是）。
-func lowerDeclared(in []string) []string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make([]string, len(in))
-	for i, s := range in {
-		out[i] = strings.ToLower(strings.TrimSpace(s))
-	}
-	return out
-}
-
 // New 建目录并做**加载期自检**。
 //
 // 自检项（任一不满足即报错，不静默去重/取第一个）：
@@ -164,7 +135,27 @@ type Budget struct {
 	// Max 最多披露几个（<=0 表示不限制数量）。
 	Max int
 	// MaxBytes 元数据字节上限（<=0 表示不限制）。
+	//
+	// 计量口径是**实际交付的元数据**（MetadataBytes：Name + Description +
+	// Tags + Resources），不是只算 name+description：宿主拿到的就是整个 Skill，
+	// 计费口径与交付口径必须是同一份（issue #289）。
 	MaxBytes int
+}
+
+// MetadataBytes 一条技能作为披露元数据实际占用的字节数：Name + Description +
+// 全部 Tags + 全部 Resources（按 UTF-8 字节计）。
+//
+// 为什么不含分隔符/容器开销：这是一个**可对账的口径**——预算是宿主给的，
+// 宿主需要能自己算一遍并与披露结果对上。计费与交付共用这一份实现，不另写一套。
+func MetadataBytes(s Skill) int {
+	n := len(s.Name) + len(s.Description)
+	for _, r := range s.Resources {
+		n += len(r)
+	}
+	for _, t := range s.Tags {
+		n += len(t)
+	}
+	return n
 }
 
 // Scored 一个候选及其分数（留着让宿主能解释「为什么是它」）。
@@ -199,7 +190,7 @@ const (
 func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 	excluded := make(map[string]bool, len(q.Exclude))
 	for _, e := range q.Exclude {
-		excluded[e] = true
+		excluded[normalizeSkillName(e)] = true
 	}
 	words := tokenize(q.Text)
 	mention := strings.TrimSpace(q.Mention)
@@ -209,7 +200,8 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	var scored []Scored
 	for _, e := range c.skills {
-		if excluded[e.skill.Name] {
+		// lowerName 与 name 同源（New 里都已 TrimSpace），故与 Exclude 归一化后可直比。
+		if excluded[e.lowerName] {
 			continue
 		}
 		score := scoreOf(e, mention, mentionLower, words, pathsLower)
@@ -227,8 +219,19 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	res := Result{Scored: scored}
 	if len(scored) == 0 {
-		res.Reason = "没有技能命中本次查询（点名/描述/资源三项都没匹配）——" +
-			"宿主应据此判断要不要回退到全量披露，而不是当成「没有这个能力」"
+		switch {
+		case len(c.skills) == 0:
+			res.Reason = "目录为空（没有已登记的技能）——空结果不代表「模型不知道有这个能力」"
+		case allExcluded(c, excluded):
+			res.Reason = "目录内技能都已被 Exclude 排除（此前已披露过）——不是「没有这个能力」"
+		case len(words) == 0 && mentionLower == "" && len(pathsLower) == 0:
+			// 「无相关度信号」与「确无此技能」必须分开：前者是查询没给可检索的输入
+			// （或只给了标点），宿主不能据此判断目录里缺能力。
+			res.Reason = "查询无相关度信号（点名/描述词/资源路径均为空）——空结果只说明没有可打分的输入，不代表目录里没有该技能"
+		default:
+			res.Reason = "没有技能命中本次查询（点名/描述/资源三项都没匹配）——" +
+				"宿主应据此判断要不要回退到全量披露，而不是当成「没有这个能力」"
+		}
 		return res, nil
 	}
 
@@ -239,23 +242,39 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		res.Reason = "候选数超过 Max"
 	}
 	if b.MaxBytes > 0 {
-		var kept []Scored
+		kept := make([]Scored, 0, len(picked))
 		used := 0
+		omitted := 0
+		minCost := -1
 		for _, sc := range picked {
-			n := len(sc.Skill.Name) + len(sc.Skill.Description)
+			n := MetadataBytes(sc.Skill)
+			if minCost < 0 || n < minCost {
+				minCost = n
+			}
 			if used+n > b.MaxBytes {
-				res.Truncated = true
-				if res.Reason == "" {
-					res.Reason = "元数据字节数超过 MaxBytes"
-				}
-				break
+				// 跳过这条，继续看后面的候选：first-fit + break 会让「排序靠前的一条太大」
+				// 连带丢掉后面明明放得下的小候选，预算越紧浪费越大（issue #292）。
+				omitted++
+				continue
 			}
 			used += n
 			kept = append(kept, sc)
 		}
 		picked = kept
-		if len(picked) == 0 {
-			res.Reason = "预算连一条元数据都放不下（MaxBytes 太小）"
+		if omitted > 0 {
+			res.Truncated = true
+			var reason string
+			if len(kept) == 0 {
+				// 与「候选过大被跳过」区分：这次是预算相对最小候选仍太小。
+				reason = fmt.Sprintf("预算太小：MaxBytes=%d 小于最小候选的元数据 %d 字节，一条都放不下", b.MaxBytes, minCost)
+			} else {
+				reason = fmt.Sprintf("候选过大：跳过 %d 条超出 MaxBytes 的元数据（已用 %d/%d 字节）", omitted, used, b.MaxBytes)
+			}
+			if res.Reason == "" {
+				res.Reason = reason
+			} else {
+				res.Reason += "；" + reason
+			}
 		}
 	}
 	for _, sc := range picked {
@@ -264,103 +283,15 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 	return res, nil
 }
 
-// scoreOf 单个技能的打分（0 = 不命中）。
-//
-// 入参全是**已经小写化**的形态：它们要么来自目录构造期（entry 上的 lower* 字段），
-// 要么来自查询级预计算（mentionLower / pathsLower）。这条口径必须写在签名上而不是
-// 靠注释约定——一旦有人在循环里传回原样，结果不会报错，只会**静默漏命中**：
-// 查询「Alpha」再也匹配不到描述里的「ALPHA」。
-func scoreOf(e entry, mention, mentionLower string, words map[string]bool, pathsLower []string) int {
-	s := e.skill
-	if mention != "" && mention == s.Name {
-		return scoreMention
+// allExcluded 目录内技能是否全部被 Exclude 排除（用于区分空结果的两种原因）。
+func allExcluded(c *Catalog, excluded map[string]bool) bool {
+	if len(c.skills) == 0 {
+		return false
 	}
-	score := 0
-	if mentionLower != "" && strings.Contains(e.lowerName, mentionLower) {
-		score += scoreNameInText
-	}
-	if words[e.lowerName] {
-		score += scoreNameInText
-	}
-	for _, p := range pathsLower {
-		if resourceHitLower(e.lowerResources, p) {
-			score += scoreResource
-			break
+	for _, e := range c.skills {
+		if !excluded[e.lowerName] {
+			return false
 		}
 	}
-	for _, tag := range e.lowerTags {
-		if words[tag] {
-			score += scoreTag
-			break
-		}
-	}
-	descHits := 0
-	for w := range words {
-		// len(w) 按字节判即可：tokenize 只产出 ASCII 字母数字，字节数即字符数。
-		if w == "" || len(w) < 2 {
-			continue
-		}
-		if strings.Contains(e.lowerDesc, w) {
-			descHits++
-			if descHits >= scoreDescWordMax {
-				break
-			}
-		}
-	}
-	return score + descHits
-}
-
-// resourceHit 判当前资源路径是否落在技能的声明里。
-//
-// 支持两种声明形态：**目录前缀**（以 / 结尾）与**后缀**（以 . 开头）。
-// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而「按目录/按后缀」
-// 这两种已经能表达全部实际用法，且判据无歧义。
-// resourceHitLower 资源匹配的**唯一**判定实现；两侧入参须已是小写形态。
-//
-// 为什么不提供「入参原样、内部小写化」的包装版本：包装层一旦存在，它和主路径就
-// 成了两套实现（一套在循环里、一套在循环外），而两边漂移不会报错，只会让某些声明
-// 悄悄不再命中。主路径的小写化位置是明确的——声明在构造期（lowerDeclared）、
-// 查询路径在查询级（lowerEach）——规则就只剩这一份。
-func resourceHitLower(declaredLower []string, pathLower string) bool {
-	for _, d := range declaredLower {
-		switch {
-		case d == "":
-			continue
-		case strings.HasSuffix(d, "/"):
-			if strings.HasPrefix(pathLower, d) {
-				return true
-			}
-		case strings.HasPrefix(d, "."):
-			if strings.HasSuffix(pathLower, d) {
-				return true
-			}
-		default:
-			if pathLower == d || strings.Contains(pathLower, d) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// tokenize 把一段文本切成小写词集（按非字母数字切分）。
-func tokenize(s string) map[string]bool {
-	out := map[string]bool{}
-	cur := strings.Builder{}
-	flush := func() {
-		if cur.Len() > 0 {
-			out[strings.ToLower(cur.String())] = true
-			cur.Reset()
-		}
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			cur.WriteRune(r)
-		default:
-			flush()
-		}
-	}
-	flush()
-	return out
+	return true
 }
