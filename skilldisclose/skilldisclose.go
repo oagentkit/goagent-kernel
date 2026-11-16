@@ -165,7 +165,27 @@ type Budget struct {
 	// Max 最多披露几个（<=0 表示不限制数量）。
 	Max int
 	// MaxBytes 元数据字节上限（<=0 表示不限制）。
+	//
+	// 计量口径是**实际交付的元数据**（MetadataBytes：Name + Description +
+	// Tags + Resources），不是只算 name+description：宿主拿到的就是整个 Skill，
+	// 计费口径与交付口径必须是同一份（issue #289）。
 	MaxBytes int
+}
+
+// MetadataBytes 一条技能作为披露元数据实际占用的字节数：Name + Description +
+// 全部 Tags + 全部 Resources（按 UTF-8 字节计）。
+//
+// 为什么不含分隔符/容器开销：这是一个**可对账的口径**——预算是宿主给的，
+// 宿主需要能自己算一遍并与披露结果对上。计费与交付共用这一份实现，不另写一套。
+func MetadataBytes(s Skill) int {
+	n := len(s.Name) + len(s.Description)
+	for _, r := range s.Resources {
+		n += len(r)
+	}
+	for _, t := range s.Tags {
+		n += len(t)
+	}
+	return n
 }
 
 // Scored 一个候选及其分数（留着让宿主能解释「为什么是它」）。
@@ -251,23 +271,39 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		res.Reason = "候选数超过 Max"
 	}
 	if b.MaxBytes > 0 {
-		var kept []Scored
+		kept := make([]Scored, 0, len(picked))
 		used := 0
+		omitted := 0
+		minCost := -1
 		for _, sc := range picked {
-			n := len(sc.Skill.Name) + len(sc.Skill.Description)
+			n := MetadataBytes(sc.Skill)
+			if minCost < 0 || n < minCost {
+				minCost = n
+			}
 			if used+n > b.MaxBytes {
-				res.Truncated = true
-				if res.Reason == "" {
-					res.Reason = "元数据字节数超过 MaxBytes"
-				}
-				break
+				// 跳过这条，继续看后面的候选：first-fit + break 会让「排序靠前的一条太大」
+				// 连带丢掉后面明明放得下的小候选，预算越紧浪费越大（issue #292）。
+				omitted++
+				continue
 			}
 			used += n
 			kept = append(kept, sc)
 		}
 		picked = kept
-		if len(picked) == 0 {
-			res.Reason = "预算连一条元数据都放不下（MaxBytes 太小）"
+		if omitted > 0 {
+			res.Truncated = true
+			var reason string
+			if len(kept) == 0 {
+				// 与「候选过大被跳过」区分：这次是预算相对最小候选仍太小。
+				reason = fmt.Sprintf("预算太小：MaxBytes=%d 小于最小候选的元数据 %d 字节，一条都放不下", b.MaxBytes, minCost)
+			} else {
+				reason = fmt.Sprintf("候选过大：跳过 %d 条超出 MaxBytes 的元数据（已用 %d/%d 字节）", omitted, used, b.MaxBytes)
+			}
+			if res.Reason == "" {
+				res.Reason = reason
+			} else {
+				res.Reason += "；" + reason
+			}
 		}
 	}
 	for _, sc := range picked {
