@@ -125,12 +125,14 @@ func TestExcludeAndResourceMatch(t *testing.T) {
 	}
 }
 
-// rawResourceHit / scoreOfRaw 是**改造前**的实现，逐字保留下来做对照。
+// rawResourceHit / scoreOfRaw 是独立参照实现，逐字对照生产路径（scoreOf /
+// resourceHitLower）。随 #291 同步：裸名声明的匹配面已从「任意子串」收紧为
+// 「路径段逐字相等」，参照实现按**当前规则**独立重写。
 //
-// 为什么需要它们：改造把小写化从内层循环提到构造期与查询级（entry.lower*），
+// 为什么需要它们：预计算改造把小写化从内层循环提到构造期与查询级（entry.lower*），
 // 顺带把「声明资源要 trim、标签与查询路径不 trim」这条既有口径拆成两个助手。
 // 这条差异**不报错**：trim 加错了只会让带空格的标签从不命中变成命中，披露结果
-// 悄悄变了而没有任何门禁会响。故两边各算一遍分数逐项比对——参考实现刻意
+// 悄悄变了而没有任何门禁会响。故两边各算一遍分数逐项比对——参照实现刻意
 // 不复用生产的 resourceHitLower / lowerDeclared，否则同一个判据写错时两边一起错。
 func rawResourceHit(declared []string, path string) bool {
 	p := strings.ToLower(path)
@@ -148,8 +150,21 @@ func rawResourceHit(declared []string, path string) bool {
 				return true
 			}
 		default:
-			if p == d || strings.Contains(p, d) {
-				return true
+			// 路径段级：与任一斜杠段逐字相等（含整条路径本身）。
+			// seg 是本条声明的独立游标：改动不得泄漏给后续声明。
+			seg := p
+			for {
+				if i := strings.IndexByte(seg, '/'); i >= 0 {
+					if seg[:i] == d {
+						return true
+					}
+					seg = seg[i+1:]
+					continue
+				}
+				if seg == d {
+					return true
+				}
+				break
 			}
 		}
 	}

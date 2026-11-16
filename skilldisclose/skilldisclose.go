@@ -215,9 +215,14 @@ const (
 
 // Disclose 按查询挑技能。
 func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
+	// Exclude 与技能名走**同一条归一化**（trim + 小写）后再比（#291）：
+	// 声明侧的名字先 TrimSpace 再入库，包内其余匹配全部小写化——Exclude 若拿
+	// 原值精确比，「Vue」「 vue」「VUE」三种写法全部漏排，重复注入挤占窗口且
+	// 没有新信息，而这类失效不报错、只会悄悄多披露。归一化键统一取 e.lowerName
+	//（入库名的小写形态），排除与注册共用同一份事实。
 	excluded := make(map[string]bool, len(q.Exclude))
 	for _, e := range q.Exclude {
-		excluded[e] = true
+		excluded[strings.ToLower(strings.TrimSpace(e))] = true
 	}
 	words := tokenize(q.Text)
 	mention := strings.TrimSpace(q.Mention)
@@ -227,7 +232,7 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	var scored []Scored
 	for _, e := range c.skills {
-		if excluded[e.skill.Name] {
+		if excluded[e.lowerName] {
 			continue
 		}
 		score := scoreOf(e, mention, mentionLower, words, pathsLower)

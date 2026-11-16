@@ -61,9 +61,17 @@ func scoreOf(e entry, mention, mentionLower string, words map[string]bool, paths
 
 // resourceHitLower 判当前资源路径是否落在技能的声明里（两侧入参须已是小写形态）。
 //
-// 支持两种声明形态：**目录前缀**（以 / 结尾）与**后缀**（以 . 开头）。
-// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而「按目录/按后缀」
-// 这两种已经能表达全部实际用法，且判据无歧义。
+// 支持三种声明形态（#291 把第三形态显式化——它此前是注释里不存在、实现里却有的
+// 裸子串匹配，"cata**log**" 会命中声明 "log"，把不相关技能当作相关披露）：
+//
+//   - **目录前缀**（以 / 结尾）：路径以声明开头（"deploy/" 命中 "deploy/x.yaml"）；
+//   - **后缀**（以 . 开头）：路径以声明结尾（".vue" 命中 "src/App.vue"）；
+//   - **路径段**（其余）：声明与路径的**任一斜杠段逐字相等**（"log" 命中
+//     "src/log/app.ts"、"log"、"src/log"，不命中 "src/catalog.ts"——按段匹配
+//     而不是任意子串）。多段目录声明请带尾斜杠走目录前缀形态。
+//
+// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而「按目录/按后缀/按段」
+// 这三种已经能表达全部实际用法，且判据无歧义。
 //
 // 为什么不提供「入参原样、内部小写化」的包装版本：包装层一旦存在，它和主路径就
 // 成了两套实现（一套在循环里、一套在循环外），而两边漂移不会报错，只会让某些声明
@@ -83,12 +91,29 @@ func resourceHitLower(declaredLower []string, pathLower string) bool {
 				return true
 			}
 		default:
-			if pathLower == d || strings.Contains(pathLower, d) {
+			if hasSegment(pathLower, d) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// hasSegment 判 seg 是否与 path 的**任一斜杠段**逐字相等（零分配：只切前缀不建切片）。
+func hasSegment(path, seg string) bool {
+	if seg == "" {
+		return false
+	}
+	for {
+		if i := strings.IndexByte(path, '/'); i >= 0 {
+			if path[:i] == seg {
+				return true
+			}
+			path = path[i+1:]
+			continue
+		}
+		return path == seg
+	}
 }
 
 // tokenize 把一段文本切成小写词集。
