@@ -38,6 +38,9 @@ func (l *Loop) invokeHandler(ctx context.Context, task taskboard.Task) (err erro
 func (l *Loop) executeOne(ctx context.Context, set *inflight, task taskboard.Task) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	c := &claimed{id: task.ID, token: task.Lease.Token, cancel: cancel}
+	// 首次续期按「TTL − 安全余量」调度（issue #266）：拿到租约后不必每个
+	// 心跳拍都续，提前 margin 续一次即可；之后每次成功续期再重排。
+	c.scheduleRenew(l.renewAfter())
 	set.add(c)
 	// 兜底：handler 经 invokeHandler 已收编 panic，但收场路径上的意外
 	// panic 也不得让心跳永远续一条已经没人执行的租约。

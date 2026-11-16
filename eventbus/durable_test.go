@@ -36,8 +36,9 @@ type boomStore struct{ err error }
 
 func (s boomStore) Insert(_ context.Context, _ Event) (uint64, error) { return 0, s.err }
 
-// dropLog onDrop 留痕收集（onDrop 在发布锁内同步调用，写侧天然串行；
-// 读侧在 Publish 返回之后，靠 mu 把 happens-before 写明白而非靠推导）。
+// dropLog onDrop 留痕收集（onDrop 在发布临界区外同步调用——并发失败的
+// Publish 可以并发回调，收口靠 mu；读侧在 Publish 返回之后，靠 mu 建立
+// happens-before）。
 type dropLog struct {
 	mu    sync.Mutex
 	evs   []Event

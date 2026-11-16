@@ -4,6 +4,10 @@
 // Reply / Cancel 全部走「Load → 判 → Save（条件写）」，并发冲突靠 Revision
 // 重试而不是进程内互斥。LocalDesk 是 Desk + MemoryLedger 的薄包装，行为与
 // 旧版逐条一致（默认路径零回归）。
+//
+// 构造器按部署形态分流（issue #270）：NewDesk 是单机/测试语义（允许进程
+// 本地时钟回退）；NewDistributedDesk 要求 Ledger 实现 ClockedLedger，缺
+// 存储时钟即装配期失败——跨副本判定不得用「本进程以为的现在」。
 package handoff
 
 import (
@@ -48,13 +52,41 @@ func WithClock(clock func() time.Time) DeskOption {
 	}
 }
 
-// NewDesk 构造持久化交接台。ledger 为 nil 时各方法显式报错，不静默成功。
+// NewDesk 构造持久化交接台，语义是**单机/本地**：Ledger 未实现
+// ClockedLedger 时回退到进程本地时钟（time.Now 或 WithClock）。
+//
+// 这个回退只在单进程内成立。跨进程/跨副本部署必须用 NewDistributedDesk：
+// 它要求存储时钟（ClockedLedger），缺失即装配期失败——两个副本的时钟偏差
+// 会直接变成「谁以为交接过期了」的差异（issue #270）。ledger 为 nil 时
+// 各方法显式报错，不静默成功。
 func NewDesk(ledger Ledger, opts ...DeskOption) *Desk {
 	d := &Desk{ledger: ledger, now: time.Now}
 	for _, o := range opts {
 		o(d)
 	}
 	return d
+}
+
+// ErrNoStoreClock 分布式交接台缺存储时钟（Ledger 未实现 ClockedLedger）。
+//
+// 装配期错误而不是运行期失真：缺存储时钟时 Desk 只能退回进程本地时间，
+// 多副本的截止/过期判定各按各的钟走——先过期的一方回收、后过期的一方
+// 还在执行。fail-closed 在构造点（issue #270）。
+var ErrNoStoreClock = errors.New("handoff: 分布式交接台需要存储时钟（Ledger 必须实现 ClockedLedger）")
+
+// NewDistributedDesk 构造跨进程/跨副本交接台：**强制要求** Ledger 实现
+// ClockedLedger（存储侧时钟）。缺失 ⇒ 构造失败，不留到运行期用进程本地
+// 时钟静默失真。WithClock 仍可用于确定性测试（同时转写 MemoryLedger 的
+// 存储时钟），但它不能替代 ClockedLedger 这条装配判据。
+func NewDistributedDesk(ledger Ledger, opts ...DeskOption) (*Desk, error) {
+	if ledger == nil {
+		return nil, errors.Wrap(ErrNoStoreClock, "handoff: 分布式交接台缺 Ledger")
+	}
+	if _, ok := ledger.(ClockedLedger); !ok {
+		return nil, errors.Wrap(ErrNoStoreClock,
+			"handoff: Ledger 未实现 ClockedLedger——跨进程截止/过期判定必须用存储时钟，不得回退进程本地时钟")
+	}
+	return NewDesk(ledger, opts...), nil
 }
 
 // nowAt 判定用当前时刻：优先存储时钟（ClockedLedger），否则用注入时钟。

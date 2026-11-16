@@ -150,6 +150,26 @@ type Lease struct {
 	Until time.Time
 }
 
+// LeaseHeld 报告任务当前是否仍被**活持有**（issue #335 的单点判据）。
+//
+// 判定 = 认领态 **且** 租约未过期（Until 零值 = 不限期，按在持判——当成
+// 已过期会让「两个执行者同时认领」变成「两个赢家」）。
+//
+// 为什么收敛成导出函数：此前 coord / examples 的两个参考实现 / controlplane
+// 各写一份等价判据，而 controlplane.MemStore.Claim **压根没判过期**——
+// 持有者进程崩掉后任务被永久占用，与 Board.Claim 的「被别人**活着**持有」
+// 契约方向相反。存储实现的 Claim 必须调用本函数，不得各写一份（第二份
+// 判据必然漂移）。
+func LeaseHeld(t Task, now time.Time) bool {
+	if t.State != StateClaimed {
+		return false
+	}
+	if t.Lease.Until.IsZero() {
+		return true
+	}
+	return t.Lease.Until.After(now)
+}
+
 // IsZero 报告租约是否为全零值（没有残留任何一列）。
 //
 // 判定收敛在此处而不是散落各处（issue #220）：快照体检要判「非认领态是否

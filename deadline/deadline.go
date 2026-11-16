@@ -54,13 +54,19 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // ErrSessionDeadline 会话级墙钟超时的原因值（轮内 ctx 经 WithTimeoutCause 携带）。
 //
 // 识别一律走 errors.Is（可被宿主的包装链包裹）；与 drain.ErrDeadline
 // （停机排水超时）是**两个** Cause、两根轴，不要互相代入。
-var ErrSessionDeadline = errors.New("会话超过会话级时限")
+//
+// 身份来自 contract.ErrSessionDeadline（issue #333）：本变量是**别名**而不是
+// 第二份 errors.New——收尾侧 finalize.Route 用同一个值做判定，errors.Is
+// 一条链打通；各写一份同名同文案的哨兵会让墙钟超时被判成停机。
+var ErrSessionDeadline = contract.ErrSessionDeadline
 
 // ErrNoStore 未注入锚点持久化接缝就要读/写锚点。
 //

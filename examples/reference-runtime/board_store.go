@@ -114,7 +114,7 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 				"依赖未完成", "task", string(id), "dep", string(dep))
 		}
 	}
-	if leaseHeld(t, s.clock()) {
+	if taskboard.LeaseHeld(t, s.clock()) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人认领", "task", string(id))
 	}
 
@@ -191,7 +191,7 @@ func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string,
 	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配", "task", string(id))
 	}
-	if !leaseHeld(t, s.clock()) {
+	if !taskboard.LeaseHeld(t, s.clock()) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约已过期，资格终止（请重新认领）", "task", string(id))
 	}
 	if req.TTL > 0 {
@@ -202,16 +202,4 @@ func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string,
 	t.Seq++
 	s.tasks[id] = t
 	return t, nil
-}
-
-// leaseHeld 该任务当前是否仍被持有。
-// 零值到期时刻表示「不定期」——当成已过期会让「两个执行者同时认领」变成「两个赢家」。
-func leaseHeld(t taskboard.Task, now time.Time) bool {
-	if t.State != taskboard.StateClaimed {
-		return false
-	}
-	if t.Lease.Until.IsZero() {
-		return true
-	}
-	return t.Lease.Until.After(now)
 }

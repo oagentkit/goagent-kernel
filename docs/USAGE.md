@@ -125,7 +125,7 @@ go get github.com/yi-nology/goagent-kernel@latest
 本地需要同时改上游仓时用 `make devlink` 走 `go.work`，见 [§5](#5-本地多仓并行开发)。
 
 依赖全部为 public 模块：`github.com/oagentkit/*` 与 `github.com/oekit/*`。
-**按包引入**即可——`contract` / `statemachine` 是零外部依赖的叶子包，
+**按包引入**即可——`contract` 只依赖 `oekit/pkg`（哨兵），`statemachine` 是零外部依赖的叶子包；
 只想拿状态机不需要拖进 goja、jsonschema 这些。
 
 ```go

@@ -34,7 +34,22 @@
 // 以免宿主适配层跟着内核升级频繁返工。
 package contract
 
-import "context"
+import (
+	"context"
+
+	"github.com/oekit/pkg/errors"
+)
+
+// ErrSessionDeadline 会话级墙钟超时的 Cause（issue #170 / #333）。
+//
+// **全仓唯一身份**：deadline 用它装饰轮 ctx（context.WithTimeoutCause），
+// finalize 用同一个值做收尾路由。两侧各写一份 errors.New 时字面量相同但
+// error 值不同，errors.Is 互不认领——墙钟超时会被收尾侧判成进程停机、
+// 不落终态，会话永久滞留 running（#333 的实测失效形态）。
+//
+// 判定一律走 errors.Is（可被包装链包裹）；与 drain.ErrDeadline（停机排水
+// 超时）是两根轴、两个 Cause。
+var ErrSessionDeadline = errors.New("会话超过会话级时限")
 
 // 会话状态（编排语义；与宿主存储列名无关）。
 // 取值由宿主定义，但编排引擎只按「可流转」使用，不解释具体语义。

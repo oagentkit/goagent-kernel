@@ -65,7 +65,7 @@ func TestLoopHeartbeatOutageDoesNotSkipRenewal(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: 5 * time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -146,8 +146,8 @@ func TestLoopRenewOutageUnconfirmedStopsDriver(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: 5 * time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
-		RenewFailMax:      3, // 显式阈值：三拍 = 15ms，远在 TTL=1min 之内
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
+		RenewFailMax: 3, // 显式阈值：三拍 = 15ms，远在 TTL=1min 之内
 		OnLeaseLost: func(_ taskboard.TaskID, cause LeaseLostCause) {
 			mu.Lock()
 			causes = append(causes, cause)
@@ -233,7 +233,7 @@ func TestLoopLeaseTakenOverNotifiesHook(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: 5 * time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
 		OnLeaseLost: func(_ taskboard.TaskID, cause LeaseLostCause) {
 			mu.Lock()
 			causes = append(causes, cause)
@@ -306,7 +306,7 @@ func TestLoopFinalizeLeaseLostNotifiesHook(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: 5 * time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
 		OnLeaseLost: func(_ taskboard.TaskID, cause LeaseLostCause) {
 			mu.Lock()
 			causes = append(causes, cause)

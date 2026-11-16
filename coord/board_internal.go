@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/oekit/pkg/errors"
 
@@ -166,18 +165,6 @@ func requireClaimed(e Entry, scope string, id taskboard.TaskID, token string) (t
 			"租约令牌不匹配（租约已易主或被释放过）", "task", string(id))
 	}
 	return cur, nil
-}
-
-// leaseHeld 该任务当前是否仍被持有（零值 Until = 不限期，按在持判——
-// 当成已过期会让「两个执行者同时认领」变成「两个赢家」）。
-func leaseHeld(t taskboard.Task, now time.Time) bool {
-	if t.State != taskboard.StateClaimed {
-		return false
-	}
-	if t.Lease.Until.IsZero() {
-		return true
-	}
-	return t.Lease.Until.After(now)
 }
 
 // mintToken 铸一枚认领令牌（crypto/rand，128 位，授予之间不重合）。

@@ -248,7 +248,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 					"依赖未完成", "task", string(id), "dep", string(dep))
 			}
 		}
-		if leaseHeld(cur, now) {
+		if taskboard.LeaseHeld(cur, now) {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人认领", "task", string(id))
 		}
 		token, terr := mintToken()
@@ -369,7 +369,7 @@ func (a *BoardAdapter) Renew(ctx context.Context, id taskboard.TaskID, token str
 			if nerr != nil {
 				return taskboard.Task{}, nil, nil, errors.Wrap(nerr, "coord: Renew 取存储时钟失败")
 			}
-			if !leaseHeld(cur, now) {
+			if !taskboard.LeaseHeld(cur, now) {
 				return taskboard.Task{}, nil, nil, errors.Wrap(taskboard.ErrLeaseLost,
 					"租约已过期，资格终止（请重新认领）", "task", string(id))
 			}

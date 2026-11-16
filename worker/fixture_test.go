@@ -24,3 +24,10 @@ func (c *testClock) Advance(d time.Duration) { c.mu.Lock(); defer c.mu.Unlock();
 func newMemRegistry(now func() time.Time) *MemRegistry {
 	return NewMemRegistry(WithRegistryClock(now))
 }
+
+// renewEveryTickMargin 让续期在每个心跳拍都到点（TTL=1min 的测试夹具）。
+//
+// 新调度（issue #266）按「上次成功续期 + TTL − RenewMargin」排期；margin
+// 设成 TTL−1ms 即每个心跳拍续一次——只影响调度频率，判据仍是续期语义。
+// 不设它的用例按缺省 margin（TTL/3）走，续期会在 2/3 TTL 处发生。
+const renewEveryTickMargin = time.Minute - time.Millisecond

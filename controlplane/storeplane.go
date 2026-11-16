@@ -41,13 +41,26 @@ const storePlaneCASMaxAttempts = 32
 
 // StorePlane 基于 Store 的 Plane 实现：查询 + 三类介入。
 //
+// 两个构造器对应两种装配形态：
+//
+//   - NewStorePlane：任务/运行/效果键全部走 Store（单进程参考实现或与
+//     运行时同源的持久化 Store；同源与否由宿主保证）；
+//   - NewAuthoritativeStorePlane：强制释放走运行时的 taskboard.Board、
+//     裁决走副作用闸（sideeffect.Store）的同一份状态——结构上不构造第二份
+//     可写任务/效果状态（issue #268）。
+//
 // 多个 StorePlane 实例共享同一个 Store 即多副本部署的替身（跨实例可见、
-// 代次单调、冲突串行化）。经 NewStorePlane 构造；并发安全与否取决于
-// Store 实现的并发契约。
+// 代次单调、冲突串行化）；并发安全与否取决于 Store 实现的并发契约。
 type StorePlane struct {
 	store Store
 	aud   Auditor
 	cfg   memConfig
+
+	// tasks/effects 非 nil = 权威控制面（issue #268，NewAuthoritativeStorePlane）：
+	// 任务快照与强制释放走 tasks（与运行时同一份任务板），裁决走 effects
+	// （与副作用闸同一份状态）；不再调用 store 的任务/效果提交面。
+	tasks   TaskAuthority
+	effects EffectAuthority
 }
 
 // NewStorePlane 构造持久化控制面。
@@ -90,7 +103,9 @@ func (p *StorePlane) audit(ctx context.Context, operator string, action Action, 
 	if p.aud == nil {
 		return ErrNoAuditor
 	}
-	return p.aud.Append(ctx, AuditEntry{
+	// 与 MemStore 的成功路径共用同一个接缝包装：锁外调用 + panic 隔离，
+	// 两个实现对同一宿主方法的暴露面口径一致（issue #327）。
+	return appendAudit(ctx, p.aud, AuditEntry{
 		Operator: operator,
 		Action:   action,
 		Target:   target,
@@ -103,6 +118,9 @@ func (p *StorePlane) audit(ctx context.Context, operator string, action Action, 
 
 // TaskView 实现 Plane：任务视图 + run 级不变量在该任务上的投影。
 func (p *StorePlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error) {
+	if p.tasks != nil {
+		return p.taskViewAuthoritative(ctx, id)
+	}
 	if err := p.requireTenant(ctx); err != nil {
 		return TaskView{}, err
 	}
@@ -151,6 +169,10 @@ func (p *StorePlane) ForceRelease(ctx context.Context, req ForceRelease) error {
 	}
 	if _, err := tenant.Require(ctx); err != nil {
 		return err
+	}
+	if p.tasks != nil {
+		// 权威模式：直接复用运行时任务板的原子状态迁移（issue #268）。
+		return p.forceReleaseAuthoritative(ctx, req)
 	}
 	target := string(req.TaskID)
 	for range storePlaneCASMaxAttempts {
@@ -205,6 +227,10 @@ func (p *StorePlane) Adjudicate(ctx context.Context, req Adjudication) error {
 	}
 	if _, err := tenant.Require(ctx); err != nil {
 		return err
+	}
+	if p.tasks != nil || p.effects != nil {
+		// 权威模式：裁决落到副作用闸的同一份状态（issue #268）。
+		return p.adjudicateAuthoritative(ctx, req)
 	}
 	for range storePlaneCASMaxAttempts {
 		snap, err := p.store.SnapshotEffect(ctx, req.EffectKey)
@@ -278,11 +304,21 @@ func (p *StorePlane) Terminate(ctx context.Context, req Termination) error {
 			}
 			return ErrStaleRun
 		}
-		if terminalRun(snap.Status) {
+		switch classifyRunStatus(snap.Status) {
+		case runStatusTerminal:
 			if aerr := p.audit(ctx, req.Operator, ActionTerminate, target, req.Basis, "运行已是终态"); aerr != nil {
 				return aerr
 			}
 			return errors.Wrap(ErrTerminalRun, "当前状态: "+snap.Status)
+		case runStatusUnknown:
+			// 词表外取值不得按「非终态」放行（issue #334）：它可能是宿主
+			// 自定义终态，改写它就是覆盖历史事实。与 checkpoint 的
+			// statusUnknown 同方向——判不了就阻塞，交宿主显式决定。
+			if aerr := p.audit(ctx, req.Operator, ActionTerminate, target, req.Basis,
+				"状态不在已知词表内，无法判定是否终态，拒绝终止"); aerr != nil {
+				return aerr
+			}
+			return errors.Wrap(ErrUnknownRunStatus, "当前状态: "+snap.Status)
 		}
 		// 候选变更先行：留痕失败 ⇒ 状态与代次一字不动（Store.CommitRun
 		// 的原子性；issue #180）。留痕成功后才提交变更。
@@ -317,11 +353,29 @@ func taskIDsOf(tasks []taskboard.Task) []taskboard.TaskID {
 	return out
 }
 
-// terminalRun 报告运行状态是否终态（与 contract 的终态词表一致）。
-func terminalRun(status string) bool {
+// runStatusClass 运行状态的三态归类（与 checkpoint.classifyStatus 同构，
+// issue #334）。两态不够用：「不在终态词表内」把**词表外**取值也吞进
+// 「非终态」，宿主自定义终态（如 "aborted"）会被当成可终止并静默改写。
+type runStatusClass int
+
+const (
+	// runStatusOpen 已知过程态（含空状态——崩溃快照的常态，是过程态）。
+	runStatusOpen runStatusClass = iota
+	// runStatusTerminal 已知终态（contract 的词表）。
+	runStatusTerminal
+	// runStatusUnknown 词表外：语义判不了，按保守侧处置（拒绝终止）。
+	runStatusUnknown
+)
+
+// classifyRunStatus 把运行状态归入三态。终态词表取自 contract——不在本包
+// 另立一份（第二套词表必然漂移）。
+func classifyRunStatus(status string) runStatusClass {
 	switch status {
-	case contract.StatusSucceeded, contract.StatusFailed, contract.StatusCancelled, contract.StatusTimedOut:
-		return true
+	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
+		return runStatusOpen
 	}
-	return false
+	if contract.IsTerminalStatus(status) {
+		return runStatusTerminal
+	}
+	return runStatusUnknown
 }

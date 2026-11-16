@@ -125,16 +125,11 @@ func (p *Plan) addAnomaly(kind AnomalyKind, step, detail string) {
 	p.Anomalies = append(p.Anomalies, Anomaly{Kind: kind, Step: step, Detail: detail})
 }
 
-// isTerminal 该状态是否为运行终态。取自 contract 的状态常量集——
-// 不在本包另立一份，否则两个包会各自漂移出不同的终态定义。
+// isTerminal 该状态是否为运行终态。判定单源在 contract.IsTerminalStatus——
+// 不在本包另立一份终态清单，否则三个包（contract / checkpoint / controlplane）
+// 会各自漂移出不同的终态定义（issue #334 的收敛方向）。
 func isTerminal(status string) bool {
-	switch status {
-	case contract.StatusSucceeded, contract.StatusFailed,
-		contract.StatusCancelled, contract.StatusTimedOut:
-		return true
-	default:
-		return false
-	}
+	return contract.IsTerminalStatus(status)
 }
 
 // statusClass 快照状态的三态归类。

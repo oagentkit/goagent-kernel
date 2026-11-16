@@ -34,7 +34,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/oekit/concurrency/async"
@@ -45,6 +44,15 @@ import (
 
 // DefaultPollInterval 领取轮询的缺省间隔。
 const DefaultPollInterval = 200 * time.Millisecond
+
+// DefaultRenewConcurrency 续期并发的缺省上限（issue #266）。
+//
+// 200 个在途任务、单次续期 100ms 时：8 并发一轮约 2.5s，远小于常见 TTL；
+// 串行实现是 20s（TTL 15s 时后段任务在轮到它之前就已过期）。
+const DefaultRenewConcurrency = 8
+
+// renewBatchLimit 批量续期单次请求的条数上限（防止单次往返过大）。
+const renewBatchLimit = 100
 
 // Handler 一个任务的执行体（宿主实现；本包不认识任务内容）。
 //
@@ -93,6 +101,18 @@ type Config struct {
 	// ceil(TTL/HeartbeatInterval)——连续失败跨过一个 TTL 还没续上，租约
 	// 按已到期对待（期间接管者随时可能就位）；负值非法（装配期拦下）。
 	RenewFailMax int
+	// RenewMargin 提前续期的安全余量（issue #266）：租约到期前 margin 就发起
+	// 下一次续期，而不是等到最后一拍。0 = TTL/3；必须 >0 且 < TTL。
+	//
+	// 续期调度按**本进程时钟**推算「距上次成功续期已过去多久」，不与存储的
+	// 绝对 Until 比较——调用方与存储的时钟可能对不上（TTL 才是共同刻度）。
+	RenewMargin time.Duration
+	// RenewConcurrency 同一拍内逐条续期的并发上限（issue #266）。0 = 8；
+	// 负值非法。批量续期接口存在时本值不参与（一次往返续一批）。
+	RenewConcurrency int
+	// RenewTimeout 单条/单批续期的超时（issue #266）。超时只算该任务一次
+	// 续期失败（与其它错误分开计数），不阻断同拍其它任务。0 = TTL/4。
+	RenewTimeout time.Duration
 	// OnLeaseLost 在途租约失去资格时的可观测钩子（nil = 不回调）。
 	//
 	// 三个触发点（见 @@LeaseLostCause@@）：续期报 @@taskboard.ErrLeaseLost@@
@@ -100,8 +120,13 @@ type Config struct {
 	// （Complete/Release）被 @@taskboard.ErrLeaseLost@@ 拒（结果作废）。
 	// 三个都是「本次执行的结果已作废」的事实，不是成功路径——宿主据此
 	// 计数/留痕/告警，静默吞掉它们下游的非幂等副作用就可能双份（issue
-	// #179 的触发序列）。回调在心跳协程/收场路径上同步调用：快返回，
-	// 别在里面做重活。
+	// #179 的触发序列）。
+	//
+	// 回调在心跳协程/收场路径上同步调用，但**不在 claimed.mu 内**（issue
+	// #326）：续期判定与收场互斥，通知一律在锁外——宿主回调回查本包的
+	// 任务板/注册表不会二次抢锁死锁。回调 panic 被隔离（与 invokeHandler
+	// 同款）：留痕钩子的异常不得掀翻心跳面，否则全部在途租约停止续期。
+	// 仍然要求快返回，别在里面做重活。
 	OnLeaseLost func(task taskboard.TaskID, cause LeaseLostCause)
 }
 
@@ -145,6 +170,32 @@ func NewLoop(board taskboard.RenewingBoard, registry Registry, handler Handler, 
 		// 所以这里除数恒为正、结果恒 >= 2）。
 		cfg.RenewFailMax = int((cfg.TTL + cfg.HeartbeatInterval - 1) / cfg.HeartbeatInterval)
 	}
+	if cfg.RenewMargin < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期安全余量不能为负", "margin", cfg.RenewMargin)
+	}
+	if cfg.RenewMargin == 0 {
+		cfg.RenewMargin = cfg.TTL / 3 // 至少留两次重试机会（TTL 已 >0）
+	}
+	if cfg.RenewMargin >= cfg.TTL {
+		return nil, errors.Wrap(ErrInvalidConfig,
+			"worker: 续期安全余量必须短于 TTL——余量 ≥ TTL 等于永不提前续期",
+			"margin", cfg.RenewMargin, "ttl", cfg.TTL)
+	}
+	if cfg.RenewConcurrency < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期并发上限必须非负", "concurrency", cfg.RenewConcurrency)
+	}
+	if cfg.RenewConcurrency == 0 {
+		cfg.RenewConcurrency = DefaultRenewConcurrency
+	}
+	if cfg.RenewTimeout < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期超时不能为负", "timeout", cfg.RenewTimeout)
+	}
+	if cfg.RenewTimeout == 0 {
+		cfg.RenewTimeout = cfg.TTL / 4
+		if cfg.RenewTimeout <= 0 {
+			cfg.RenewTimeout = cfg.TTL / 2
+		}
+	}
 	return &Loop{board: board, registry: registry, handler: handler, cfg: cfg}, nil
 }
 
@@ -155,86 +206,6 @@ type Loop struct {
 	registry Registry
 	handler  Handler
 	cfg      Config
-}
-
-// claimed 一次在途认领（领取环、执行协程与心跳协程的共享面）。
-type claimed struct {
-	id     taskboard.TaskID
-	token  string
-	cancel context.CancelFunc // 租约易主时取消在途执行
-
-	// mu 串行化「本任务的续期」与「收场开始」：收场（Complete/Release）
-	// 一旦开始，心跳不得再对本任务 Renew——否则会出现「Complete 已成功、
-	// 随后的 Renew 却报 ErrLeaseLost」的假事件（续期读到的已是终态）。
-	// 这是并发池新增的共享面（issue #196 的「事件串行化」）。
-	mu         sync.Mutex
-	finalizing bool // 收场已开始（含 panic 兜底路径）
-	renewFails int  // 连续续期失败计数（心跳协程在 mu 下读写）
-}
-
-// renewLocked 在「本任务尚未进入收场」时执行一次续期判定。
-// 返回 false = 已进入收场，心跳应跳过本任务。
-//
-// 回调在 mu 内执行：续期与本任务的收场互斥，跨任务互不阻塞。
-func (c *claimed) renewLocked(renew func()) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.finalizing {
-		return false
-	}
-	renew()
-	return true
-}
-
-// beginFinalize 标记本任务进入收场（幂等）。与 renewLocked 互斥：
-// 返回时不会再有本任务的 Renew 在途。
-func (c *claimed) beginFinalize() {
-	c.mu.Lock()
-	c.finalizing = true
-	c.mu.Unlock()
-}
-
-// inflight 一次 Run 的在途认领集合（并发池与心跳协程的共享面）。
-//
-// 串行路径（Concurrency=1）里集合最多一条，语义与旧的 `current *claimed`
-// 单槽逐字一致；并发路径里每个任务一条，心跳按快照逐条续期。
-type inflight struct {
-	mu    sync.Mutex
-	tasks map[taskboard.TaskID]*claimed
-}
-
-func newInflight() *inflight {
-	return &inflight{tasks: map[taskboard.TaskID]*claimed{}}
-}
-
-func (s *inflight) add(c *claimed) {
-	s.mu.Lock()
-	s.tasks[c.id] = c
-	s.mu.Unlock()
-}
-
-// remove 只删仍是这条认领的条目：任务释放后可能被再次认领，旧执行体的
-// 收场延迟不得把新认领从集合里删掉。
-func (s *inflight) remove(id taskboard.TaskID, c *claimed) {
-	s.mu.Lock()
-	if s.tasks[id] == c {
-		delete(s.tasks, id)
-	}
-	s.mu.Unlock()
-}
-
-// snapshot 取当前全部在途（按 ID 排序：续期顺序确定，不依赖 map 迭代序）。
-func (s *inflight) snapshot() []*claimed {
-	s.mu.Lock()
-	out := make([]*claimed, 0, len(s.tasks))
-	for _, c := range s.tasks {
-		out = append(out, c)
-	}
-	s.mu.Unlock()
-	slices.SortFunc(out, func(x, y *claimed) int {
-		return strings.Compare(string(x.id), string(y.id))
-	})
-	return out
 }
 
 // Run 跑完整生命周期（阻塞到外层 ctx 取消或身份丢失）。

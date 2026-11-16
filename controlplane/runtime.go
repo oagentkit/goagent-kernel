@@ -13,6 +13,8 @@ package controlplane
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/oekit/pkg/errors"
@@ -32,6 +34,8 @@ func (m *MemStore) SeedRun(id RunID, status string, tasks []taskboard.Task) erro
 	if status == "" {
 		status = contract.StatusCreated
 	}
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -67,6 +71,8 @@ func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 	if key == "" {
 		return errors.Wrap(ErrInvalidRequest, "SeedEffect: 效果键为空")
 	}
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -78,9 +84,54 @@ func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 	return nil
 }
 
+// UseClock 注入存储时钟（租约到期与 Until 推算都按它；nil 忽略）。
+//
+// 与 taskboard 的「TTL 由存储自己的时钟推算」同口径：跨进程时调用方的
+// 时钟不可信，参考实现也必须能演示「到期由存储判定」。
+func (m *MemStore) UseClock(clock func() time.Time) {
+	if clock == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clock = clock
+}
+
+// nowLocked 存储侧当前时刻（持锁调用）。
+func (m *MemStore) nowLocked() time.Time {
+	if m.clock != nil {
+		return m.clock()
+	}
+	return time.Now()
+}
+
+// List 运行时侧：全部任务的一致快照（按 ID 排序，确定性输出）。
+//
+// 它是 taskboard.Board 的读面：参考实现也要能被共享契约套件（boardtest）
+// 直接跑，判据才不是「为参考实现单独写一套」。
+func (m *MemStore) List(_ context.Context) ([]taskboard.Task, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureLocked()
+	out := make([]taskboard.Task, 0, len(m.tasks))
+	for _, mt := range m.tasks {
+		out = append(out, cloneTask(mt.task))
+	}
+	slices.SortFunc(out, func(a, b taskboard.Task) int {
+		return strings.Compare(string(a.ID), string(b.ID))
+	})
+	return out, nil
+}
+
 // Claim 运行时侧：认领（铸造令牌与接管代次，语义对齐 taskboard.Board.Claim
-// ——被占用 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked）。
+// ——被**活着**持有 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked）。
+//
+// 「仍被持有」必须同时看状态与租约存活（taskboard.LeaseHeld，issue #335）：
+// 只看 State == claimed 会让持有者崩溃后的任务永久不可接管——与 Board.Claim
+// 的「被别人活着持有」契约及三个参考实现方向相反。
 func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -88,10 +139,11 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-	switch mt.task.State {
-	case taskboard.StateClaimed:
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人认领")
-	case taskboard.StateDone:
+	now := m.nowLocked()
+	switch {
+	case taskboard.LeaseHeld(mt.task, now):
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人活着持有")
+	case mt.task.State == taskboard.StateDone:
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态")
 	}
 	for _, d := range mt.task.Deps {
@@ -109,7 +161,39 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 		Fence: mt.gen,
 	}
 	if ttl > 0 {
-		mt.task.Lease.Until = time.Now().Add(ttl)
+		mt.task.Lease.Until = now.Add(ttl)
+	}
+	mt.task.Seq++
+	m.ver++
+	return cloneTask(mt.task), nil
+}
+
+// Renew 运行时侧：续期并确认持有资格（taskboard.RenewingBoard 的参考实现）。
+//
+// 契约与 taskboard.Renew 一致：令牌不匹配 / 租约已过期 ⇒ ErrLeaseLost，
+// **不做任何修改**；续期不递增代次、不换令牌。
+func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ensureLocked()
+	mt, ok := m.tasks[id]
+	if !ok {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
+	}
+	now := m.nowLocked()
+	if mt.task.State != taskboard.StateClaimed || token == "" || token != mt.task.Lease.Token {
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配（租约已易主或被释放过）")
+	}
+	if !taskboard.LeaseHeld(mt.task, now) {
+		// 过期即资格终止：存储不能既承诺「过期随时可接管」又给死者续命。
+		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约已过期，资格终止（请重新认领）")
+	}
+	if req.TTL > 0 {
+		mt.task.Lease.Until = now.Add(req.TTL)
+	} else {
+		mt.task.Lease.Until = time.Time{}
 	}
 	mt.task.Seq++
 	m.ver++
@@ -128,6 +212,8 @@ func (m *MemStore) Release(_ context.Context, id taskboard.TaskID, token string)
 
 // finish 凭令牌的租约变更（Complete / Release 共用判据）。
 func (m *MemStore) finish(id taskboard.TaskID, token string, to taskboard.State) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mt, ok := m.tasks[id]

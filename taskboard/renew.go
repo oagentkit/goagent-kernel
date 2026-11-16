@@ -33,7 +33,10 @@
 // 接管必然铸造新令牌，故迟到提交**必然**被拒，且不波及新持有者。
 package taskboard
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Fence 接管代次（栅栏令牌）：同一任务上**每次认领成功**都严格递增。
 //
@@ -84,4 +87,41 @@ type RenewingBoard interface {
 	Board
 	// Renew 续期并确认持有资格（契约见类型级说明）。
 	Renew(ctx context.Context, id TaskID, token string, req ClaimRequest) (Task, error)
+}
+
+// RenewRequest 一条批量续期请求（id + 令牌 + TTL）。
+type RenewRequest struct {
+	// ID 任务标识。
+	ID TaskID
+	// Token 当前租约令牌（存储校验持有资格）。
+	Token string
+	// TTL 续期后的有效期（语义同 ClaimRequest.TTL，按存储时钟推算）。
+	TTL time.Duration
+}
+
+// Renewal 一条批量续期结果（与 RenewRequest 同序一一对应）。
+type Renewal struct {
+	// ID 对应请求的任务标识。
+	ID TaskID
+	// Task 续期成功后的任务快照（失败时零值）。
+	Task Task
+	// Err 该条续期的判据结果（ErrLeaseLost 等；成功为 nil）。
+	Err error
+}
+
+// BatchRenewingBoard 可选的**批量续期面**（issue #266）。
+//
+// 为什么单独成接口：不是每份存储都能一次原子地续多条；判定方按类型断言
+// 认人，缺失时退回逐条 + 有界并发。实现方必须保证：
+//
+//   - **逐条独立判定**：单条令牌错误/过期只让该条 ErrLeaseLost，不影响
+//     其它条目的续期（返回顶层的 error 只表示**整批**基础设施失败——
+//     此时逐条结果不可信，调用方按整批失败处理）；
+//   - 返回切片与请求**同序、等长**，每条结果的 ID 回显请求 ID；
+//   - 批量不改变 Renew 的语义：续期不递增 Fence、不换 Token；每条仍按
+//     存储自己的时钟校验与推算到期时刻。
+type BatchRenewingBoard interface {
+	RenewingBoard
+	// RenewBatch 一次存储往返续期多条（契约见类型级说明）。
+	RenewBatch(ctx context.Context, reqs []RenewRequest) ([]Renewal, error)
 }

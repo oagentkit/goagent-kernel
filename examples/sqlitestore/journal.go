@@ -136,8 +136,7 @@ func cloneTask(t taskboard.Task) taskboard.Task {
 	return out
 }
 
-// held 该记录是否仍被活持有（零值 Until = 不限期）。
+// held 该记录是否仍被活持有（判据单源：taskboard.LeaseHeld）。
 func held(rec journalRecord, now time.Time) bool {
-	return rec.Task.State == taskboard.StateClaimed &&
-		(rec.Task.Lease.Until.IsZero() || rec.Task.Lease.Until.After(now))
+	return taskboard.LeaseHeld(rec.Task, now)
 }
