@@ -9,11 +9,15 @@
 //
 // 本执行器把「执行意图与对账」强制接进任务生命周期，四步不能重排、不能漏：
 //
-//  1. **Claim**：拿租约与令牌（令牌由任务板铸造——任务归属的唯一凭据）；
+//  1. **Claim**：拿租约与令牌（令牌由任务板铸造——任务归属的唯一凭据），
+//     认领即开**租约会话**（@@LeaseSession@@：执行期间续期、关键步之前
+//     确认所有权、易主封口在途执行）；
 //  2. **SideEffect.Execute**：走 @@sideeffect.Runner@@ 的既有契约——
 //     Acquire 原子登记执行意图 + 栅栏令牌，施加前做持有资格检查，
 //     失败按 @@RetrySafety@@ 分流出「可重试」与「结果未知」；
 //  3. **Checkpoint**：副作用记账成功后单调提交进度快照（不覆盖更高版本）；
+//     进度面支持栅栏判据时带接管代次条件提交（存储侧拒绝陈旧代次的
+//     迟到写入，见 @@LeasedProgress@@ / checkpoint.FencedStoreCAS）；
 //  4. **Complete**：凭第 1 步的令牌收口。
 //
 // # 不发明第二套状态机
@@ -94,16 +98,55 @@ type Progress interface {
 	Commit(ctx context.Context, s checkpoint.Snapshot) error
 }
 
+// LeasedProgress 带**持有凭据**的进度提交面（*checkpoint.Committer 满足，
+// 经 CommitFenced）。
+//
+// 进度实现了它时，执行器把本次认领的接管代次（@@LeaseSession.Fence@@）
+// 一并交给存储：陈旧代次的迟到提交由**存储侧**拒绝（check-then-act 的
+// 窗口靠这个关，调用前的资格确认关不住它，见 checkpoint.FencedStoreCAS）。
+// 未实现时退回普通 Commit——资格确认仍在（提交前 AssertOwned），但
+// 「确认通过之后、写入落地之前」的窗口只剩 TTL 量级的兜底，宿主要严格
+// 一致的状态提交必须装配支持栅栏判据的存储。
+type LeasedProgress interface {
+	// CommitFenced 带接管代次的条件提交（语义见 checkpoint.FencedStoreCAS）。
+	CommitFenced(ctx context.Context, s checkpoint.Snapshot, fence uint64) error
+}
+
 // ManagedConfig 执行器配置（零值不可用；NewManagedExecutor 做装配期校验）。
 type ManagedConfig struct {
 	// Agent 任务认领者标识（必填）。
 	Agent taskboard.AgentID
 	// ClaimTTL 认领租约有效期（必填，>0）。
 	//
-	// 必须覆盖「一次副作用 + 一次快照提交」的时长：本执行器不替宿主续期
-	// （长动作的续期责任在副作用执行体，见 sideeffect.Runner 的注释）。
+	// # ClaimTTL 覆盖什么、不覆盖什么（issue #265）
+	//
+	// **覆盖**：两次续期之间的资格容忍窗。本执行器为每次 Execute 开
+	// 租约会话（见 @@LeaseSession@@），执行期间按 RenewInterval 节拍续期
+	// ——TTL 不再是「整个任务必须做完」的截止线，长任务不会只因超时
+	// 就被接管。
+	//
+	// **不覆盖**：
+	//   - **续期断档**：节拍短于 TTL 是资格的前提（节拍 ≥ TTL 会被装配
+	//     期拒绝）。存储抖动或进程暂停跨满 TTL ⇒ 任务可被接管；接管后
+	//     旧持有者的迟到提交由存储端条件提交（@@LeasedProgress@@）与
+	//     Complete 的令牌校验拒绝——TTL 是资格的容忍窗，不是免死金牌；
+	//   - **副作用闸的租约**（sideeffect.Runner 的 TTL 另配）与**下游
+	//     栅栏**（sideeffect.FencedSink）——两份独立判据面，本执行器的
+	//     续期不替它们续；
+	//   - **进度归属**：租约只答「任务归谁」。谁有权写这个 run 的恢复点，
+	//     由进度存储的代次判定答（checkpoint.FencedStoreCAS）。
 	ClaimTTL time.Duration
+	// RenewInterval 租约续期节拍（可选；零值 = ClaimTTL/3）。
+	//
+	// 必须短于 ClaimTTL（装配期拒绝）。调度策略的正式化（按到期时刻动态
+	// 安排、抖动、退避）是 #266 的车道；本字段是换装点。
+	RenewInterval time.Duration
 	// Progress 进度提交面（可选；nil = 本执行器不提交进度）。
+	//
+	// 实现 @@LeasedProgress@@（如 *checkpoint.Committer，其存储实现
+	// checkpoint.FencedStoreCAS 时）即获得存储端的迟到提交拒绝；
+	// 只有 Commit 时提交前仍有资格确认，但 check-then-act 窗口没有
+	// 存储侧判据兜底。
 	Progress Progress
 }
 
@@ -125,11 +168,12 @@ type ManagedWork struct {
 
 // ManagedExecutor 受管任务执行器（可组合组件；无共享可变状态）。
 type ManagedExecutor struct {
-	board    taskboard.RenewingBoard
-	effects  EffectRunner
-	progress Progress
-	agent    taskboard.AgentID
-	claimTTL time.Duration
+	board      taskboard.RenewingBoard
+	effects    EffectRunner
+	progress   Progress
+	agent      taskboard.AgentID
+	claimTTL   time.Duration
+	renewEvery time.Duration
 }
 
 // NewManagedExecutor 装配执行器。
@@ -143,30 +187,40 @@ func NewManagedExecutor(board taskboard.RenewingBoard, effects EffectRunner, cfg
 		return nil, errors.Wrap(ErrInvalidConfig, "worker: 受管执行器缺 Agent 标识")
 	case cfg.ClaimTTL <= 0:
 		return nil, errors.Wrap(ErrInvalidConfig, "worker: 受管执行器的认领 TTL 必须为正")
+	case cfg.RenewInterval < 0 || (cfg.RenewInterval > 0 && cfg.RenewInterval >= cfg.ClaimTTL):
+		return nil, errors.Wrap(ErrInvalidConfig,
+			"worker: 受管执行器的续期节拍必须短于认领 TTL（节拍是资格容忍窗里的巡逻频率，不是补票）",
+			"ttl", cfg.ClaimTTL.String(), "renewInterval", cfg.RenewInterval.String())
 	}
 	return &ManagedExecutor{
-		board:    board,
-		effects:  effects,
-		progress: cfg.Progress,
-		agent:    cfg.Agent,
-		claimTTL: cfg.ClaimTTL,
+		board:      board,
+		effects:    effects,
+		progress:   cfg.Progress,
+		agent:      cfg.Agent,
+		claimTTL:   cfg.ClaimTTL,
+		renewEvery: cfg.RenewInterval,
 	}, nil
 }
 
 // Execute 受管执行一个任务（阻塞到本次收场）。
 //
+// 认领成功即开租约会话（@@LeaseSession@@）：执行期间按节拍续期，施加段
+// 跑在会话 ctx 上（租约易主 ⇒ 在途取消），进度与收口前各做一次资格确认。
+//
 // 返回的 Outcome 是**副作用闸的结论**（Applied / Replayed / Contended /
 // Uncertain）——调用方据此区分「我做完了」「别人做过了」「没轮上我」
 // 「上次结果未知」。error 只表示本次调用没能完整走完编排（认领失败、
-// 副作用失败、进度失败、收口被拒）；Contended 不带 error（正常判据）。
+// 副作用失败、进度失败、资格被拒、收口被拒）；Contended 不带 error
+// （正常判据）。
 //
 // 各结论的处置：
 //
-//   - Applied / Replayed → 快照提交（若装配）→ Complete；
+//   - Applied / Replayed → 资格确认 → 快照提交（若装配）→ 资格确认 → Complete；
 //   - Contended → 释放任务板租约（让别的 worker 试），不 Complete；
 //   - Uncertain → **不 Complete**、释放租约；副作用闸继续挡着重试；
-//   - Complete 被 ErrLeaseLost 拒 → 如实返回（任务已归新持有者），
-//     **不重试、不覆盖**——本次副作用已记账，重试会与真正持有者重复。
+//   - 资格确认或 Complete 被 ErrLeaseLost 拒 → 如实返回（任务已归新
+//     持有者），**不重试、不覆盖**——本次副作用已记账，重试会与真正
+//     持有者重复；进度提交被 ErrStaleFence 拒同理（本 run 已归新代）。
 func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work ManagedWork) (sideeffect.Outcome, error) {
 	if e == nil || e.board == nil || e.effects == nil {
 		return sideeffect.OutcomeContended, errors.Wrap(ErrInvalidConfig, "worker: 受管执行器未装配")
@@ -185,6 +239,14 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 	}
 	token := task.Lease.Token
 
+	// 租约会话：执行期间的持有资格有人管（续期 + 确认 + 易主封口）。
+	// Close 只停续期协程，不归还租约——归还/收口按下面的处置分流。
+	session, serr := NewLeaseSession(ctx, e.board, task, LeaseSessionConfig{TTL: e.claimTTL, RenewInterval: e.renewEvery})
+	if serr != nil {
+		return sideeffect.OutcomeContended, e.withRelease(ctx, id, token, serr)
+	}
+	defer session.Close(context.WithoutCancel(ctx))
+
 	act := work.Action
 	if act.Key == "" {
 		act.Key = sideeffect.Key("task:" + string(id))
@@ -193,7 +255,9 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 		act.Resource = string(id)
 	}
 
-	outcome, res, effErr := e.effects.ExecuteWith(ctx, act, work.Effect)
+	// 施加段跑在会话 ctx 上：租约易主时在途执行被取消（施加之前封口，
+	// 与 worker.Loop 的在途取消同一纪律）。
+	outcome, res, effErr := e.effects.ExecuteWith(session.Context(), act, work.Effect)
 	switch outcome {
 	case sideeffect.OutcomeContended:
 		// 没轮上我：归还任务板租约，让别的 worker 去试。副作用闸没有
@@ -222,6 +286,17 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 	}
 
 	if work.Snapshot != nil {
+		// 提交前确认所有权：不是心跳，是资格判据。确认失败就不提交——
+		// 存储端条件提交（LeasedProgress）也会拒，但调用前的确认把迟到
+		// 写入挡在更早的地方（不惊动存储）。
+		if aerr := session.AssertOwned(ctx); aerr != nil {
+			if errors.Is(aerr, taskboard.ErrLeaseLost) {
+				return outcome, e.withRelease(ctx, id, token,
+					errors.Wrap(aerr, "worker: 进度提交前确认所有权被拒（任务已归新持有者，本次结果作废）", "task", string(id)))
+			}
+			return outcome, e.withRelease(ctx, id, token,
+				errors.Wrap(aerr, "worker: 进度提交前确认所有权失败（资格答不出来，不写状态）", "task", string(id)))
+		}
 		snap, ok, serr := work.Snapshot(task, res)
 		if serr != nil {
 			// 副作用已记账，但进度没落：不 Complete（恢复点会缺这一步），
@@ -231,17 +306,43 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 				errors.Wrap(serr, "worker: 构造进度快照失败", "task", string(id)))
 		}
 		if ok {
-			if cerr := e.progress.Commit(ctx, snap); cerr != nil {
-				if errors.Is(cerr, checkpoint.ErrStaleSeq) {
+			var cerr error
+			if lp, oklp := e.progress.(LeasedProgress); oklp {
+				// 存储端条件提交：出示本次认领的接管代次。check-then-act
+				// 的窗口（确认通过之后、写入落地之前租约易主）只有存储侧
+				// 的代次判定关得住（checkpoint.FencedStoreCAS）。
+				cerr = lp.CommitFenced(ctx, snap, session.Fence())
+			} else {
+				cerr = e.progress.Commit(ctx, snap)
+			}
+			if cerr != nil {
+				switch {
+				case errors.Is(cerr, checkpoint.ErrStaleSeq):
 					// 已有更高序号的快照：本次进度是旧的，Committer 已拒绝
 					// 覆盖（不覆盖更高版本）。副作用与本任务仍然完成，
 					// 继续收口；把「旧进度」当失败会让任务永远停在 claimed。
-				} else {
+				case errors.Is(cerr, checkpoint.ErrStaleFence):
+					// 本 run 已归新持有者的代次：本次进度不落库，本次收场
+					// 也必然被拒（令牌已易主）——按失格处置如实返回。
+					return outcome, e.withRelease(ctx, id, token,
+						errors.Wrap(cerr, "worker: 进度提交被拒（本 run 已归新持有者的代次，本次结果作废）", "task", string(id)))
+				default:
 					return outcome, e.withRelease(ctx, id, token,
 						errors.Wrap(cerr, "worker: 提交进度快照失败", "task", string(id)))
 				}
 			}
 		}
+	}
+
+	// 收口前确认所有权（收口与其资格确认同走 WithoutCancel：外层停机时
+	// 已完成的动作仍要如实记成完成——cancelled ctx 上的 Renew 会立即失败，
+	// 把「能收口」误判成「失格」；与 worker.Loop 的终态写入同一条纪律）。
+	// 非失格的确认失败（存储抖动）不拦收口：Complete 本身凭令牌由存储侧
+	// 判定，是最安全的收口形态——确认不到也轮不到进程内猜。
+	if aerr := session.AssertOwned(context.WithoutCancel(ctx)); aerr != nil && errors.Is(aerr, taskboard.ErrLeaseLost) {
+		return outcome, errors.Wrap(aerr,
+			"worker: 受管执行器收口前确认所有权被拒（任务已归新持有者，本次结果作废）",
+			"task", string(id))
 	}
 
 	// 收口走 WithoutCancel：外层停机时已完成的动作仍要如实记成完成
