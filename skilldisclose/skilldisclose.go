@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/oekit/pkg/errors"
 )
@@ -227,8 +228,19 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	res := Result{Scored: scored}
 	if len(scored) == 0 {
-		res.Reason = "没有技能命中本次查询（点名/描述/资源三项都没匹配）——" +
-			"宿主应据此判断要不要回退到全量披露，而不是当成「没有这个能力」"
+		switch {
+		case len(c.skills) == 0:
+			res.Reason = "目录为空（没有已登记的技能）——空结果不代表「模型不知道有这个能力」"
+		case allExcluded(c, excluded):
+			res.Reason = "目录内技能都已被 Exclude 排除（此前已披露过）——不是「没有这个能力」"
+		case len(words) == 0 && mentionLower == "" && len(pathsLower) == 0:
+			// 「无相关度信号」与「确无此技能」必须分开：前者是查询没给可检索的输入
+			// （或只给了标点），宿主不能据此判断目录里缺能力。
+			res.Reason = "查询无相关度信号（点名/描述词/资源路径均为空）——空结果只说明没有可打分的输入，不代表目录里没有该技能"
+		default:
+			res.Reason = "没有技能命中本次查询（点名/描述/资源三项都没匹配）——" +
+				"宿主应据此判断要不要回退到全量披露，而不是当成「没有这个能力」"
+		}
 		return res, nil
 	}
 
@@ -264,6 +276,19 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 	return res, nil
 }
 
+// allExcluded 目录内技能是否全部被 Exclude 排除（用于区分空结果的两种原因）。
+func allExcluded(c *Catalog, excluded map[string]bool) bool {
+	if len(c.skills) == 0 {
+		return false
+	}
+	for _, e := range c.skills {
+		if !excluded[e.skill.Name] {
+			return false
+		}
+	}
+	return true
+}
+
 // scoreOf 单个技能的打分（0 = 不命中）。
 //
 // 入参全是**已经小写化**的形态：它们要么来自目录构造期（entry 上的 lower* 字段），
@@ -296,7 +321,8 @@ func scoreOf(e entry, mention, mentionLower string, words map[string]bool, paths
 	}
 	descHits := 0
 	for w := range words {
-		// len(w) 按字节判即可：tokenize 只产出 ASCII 字母数字，字节数即字符数。
+		// len(w) 按字节判：ASCII 单字母因此被跳过；非 ASCII 单字符（如一个汉字）
+		// 的 UTF-8 字节数 >= 2，不会被这条门槛误伤。
 		if w == "" || len(w) < 2 {
 			continue
 		}
@@ -343,7 +369,11 @@ func resourceHitLower(declaredLower []string, pathLower string) bool {
 	return false
 }
 
-// tokenize 把一段文本切成小写词集（按非字母数字切分）。
+// tokenize 把一段文本切成小写词集（按非字母/数字切分）。
+//
+// 口径与「披露面以中文为主」对齐：unicode.IsLetter/IsDigit 认所有文字系统的
+// 字母与数字，连续的汉字因此成为一个可匹配词元；旧实现只认 ASCII，全部汉字被当
+// 分隔符冲掉，中文查询整条相关度通道失效（issue #288）。
 func tokenize(s string) map[string]bool {
 	out := map[string]bool{}
 	cur := strings.Builder{}
@@ -354,10 +384,9 @@ func tokenize(s string) map[string]bool {
 		}
 	}
 	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			cur.WriteRune(r)
-		default:
+		} else {
 			flush()
 		}
 	}
