@@ -74,7 +74,10 @@ func Open(dir string, opts ...Option) (*Store, error) {
 		return nil, oerrors.Wrap(err, "sqlitestore: 建数据目录失败", "dir", dir)
 	}
 	path := filepath.Join(dir, journalName)
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	// 不用 O_APPEND：Windows 上 O_APPEND 打开的文件句柄没有 FILE_WRITE_DATA，
+	// f.Truncate 会报 Access is denied（残尾恢复必用）。写者由 flock 串行化，
+	// 每次追加前显式 Seek 到末尾即可，语义与 O_APPEND 相同。
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, oerrors.Wrap(err, "sqlitestore: 打开日志失败", "path", path)
 	}

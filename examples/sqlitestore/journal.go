@@ -8,6 +8,7 @@ package sqlitestore
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"time"
 
@@ -107,6 +108,11 @@ func repairTornTailLocked(f *os.File, path string) error {
 func appendLocked(f *os.File, path string, rec journalRecord) error {
 	if err := repairTornTailLocked(f, path); err != nil {
 		return err
+	}
+	// 显式定位到末尾（文件不是 O_APPEND 打开的：Windows 上 O_APPEND 句柄
+	// 不能 Truncate）。写者已被 flock 串行化，这里不会与别的写者交错。
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return oerrors.Wrap(err, "sqlitestore: 定位日志末尾失败", "path", path)
 	}
 	rec.Version = journalVersion
 	line, err := json.Marshal(rec)
