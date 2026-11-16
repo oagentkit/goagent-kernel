@@ -146,6 +146,11 @@ func truncateDescription(s string) string {
 // 不变式：**目录成员在构造后不再变化**（没有删除/新增入口），只有已加载集可变。
 // 门禁正是靠这条不变式把「在目录内」判成一个稳定事实：并发加载不会让同一个名字
 // 在两次调用里一会儿在、一会儿不在。
+//
+// **副本口径（全覆盖）**：Schema.Properties（map）与 Schema.Required（slice）是
+// 引用类型。构造期从宿主入参深拷贝一次；Lookup / Load / Expose / ExposeAll /
+// Search 交出前再深拷贝一次。调用方拿到的都是自己的副本——原地改写返回值或构造后
+// 改写宿主原变量都改不动目录（Names 的副本承诺同此口径）。
 type Catalog struct {
 	mu sync.RWMutex
 	// tools 目录成员本体（构造后不变）；names 与它同键同量，构造期排好序。
@@ -218,6 +223,9 @@ func NewCatalogWithLimit(tools []Tool, limit int) *Catalog {
 		// 在**存进目录前**截断，而不是渲染时再截：检索打分读的就是这份存储值，
 		// 惰性截断会让打分面对全文、模型面对摘要，两边看到的不是同一件事。
 		t.Description = truncateDescription(t.Description)
+		// 深拷贝 schema：宿主在构造后改自己的原 map/slice 不得改穿目录。
+		// 值拷贝只复制了 map/slice 头，引用仍与宿主同一份（issue #316）。
+		t.Schema = cloneSchema(t.Schema)
 		// 小写形态按**截断后**的描述算：检索打分读的是存储值，两者必须是同一串，
 		// 否则模型看到摘要、打分看到全文（这条纪律原本就写在截断处）。
 		c.tools[t.Name] = entry{
@@ -258,16 +266,22 @@ func (c *Catalog) Has(name string) bool {
 }
 
 // Lookup 取完整定义；不在目录内返回 (零值, false)。
+//
+// 返回深拷贝：调用方可以原地改写 Schema.Properties/Required，改不动目录。
 func (c *Catalog) Lookup(name string) (Tool, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	e, ok := c.tools[name]
-	return e.tool, ok
+	if !ok {
+		return Tool{}, false
+	}
+	return cloneTool(e.tool), true
 }
 
 // Load 取回完整 schema 并标记为已加载，幂等（重复取回不改变任何状态）。
 //
 // 这是「披露」的唯一写入口：谁把工具变成完整面，在这里留痕，而不是各调用点各记一份。
+// 返回深拷贝（同 Lookup 口径）。
 func (c *Catalog) Load(name string) (Tool, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -276,7 +290,7 @@ func (c *Catalog) Load(name string) (Tool, bool) {
 		return Tool{}, false
 	}
 	c.loaded[name] = true
-	return e.tool, true
+	return cloneTool(e.tool), true
 }
 
 // IsLoaded 该工具的 schema 是否已取回。
@@ -295,6 +309,8 @@ func (c *Catalog) Loaded() []string {
 
 // Expose 按名取披露面：已加载给完整 schema，未加载给占位。
 // 不在目录内返回 (零值, false)——不存在的东西没有占位面，占位只对「已存在但未取回」有意义。
+//
+// 返回的 Schema 是深拷贝（占位面的退化 schema 本就不含引用了，仍走同一出口）。
 func (c *Catalog) Expose(name string) (Exposure, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -308,6 +324,7 @@ func (c *Catalog) Expose(name string) (Exposure, bool) {
 // ExposeAll 全目录披露面，按名升序。
 //
 // 每轮装配工具面走这一个出口，避免调用方自己拼「哪些给全、哪些给占位」而出现分叉。
+// 每条的 Schema 都是深拷贝（同 Expose 口径）。
 func (c *Catalog) ExposeAll() []Exposure {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -323,7 +340,20 @@ func exposureOf(t Tool, loaded bool) Exposure {
 	if !loaded {
 		return Placeholder(t.Name, t.Description)
 	}
-	return Exposure{Name: t.Name, Description: t.Description, Schema: t.Schema, Loaded: true}
+	return Exposure{Name: t.Name, Description: t.Description, Schema: cloneSchema(t.Schema), Loaded: true}
+}
+
+// cloneSchema 深拷贝 schema 的引用字段；nil 保持 nil（退化 schema 的可判性依赖它）。
+func cloneSchema(s Schema) Schema {
+	s.Properties = maps.Clone(s.Properties)
+	s.Required = slices.Clone(s.Required)
+	return s
+}
+
+// cloneTool 深拷贝目录成员的出口形态。所有导出出口都必须经过它。
+func cloneTool(t Tool) Tool {
+	t.Schema = cloneSchema(t.Schema)
+	return t
 }
 
 // namesOf 收集集合成员并升序排列。map 序是随机化的，所有出口一律走这里排序，

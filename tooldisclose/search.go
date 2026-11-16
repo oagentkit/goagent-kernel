@@ -93,7 +93,8 @@ func (c *Catalog) search(query string) ([]Match, int) {
 		e := c.tools[name]
 		if score := scoreLowered(normalized, terms, e.lowerName, e.lowerDesc); score > 0 {
 			total++
-			r.add(Match{Tool: e.tool, Score: score})
+			// Match 内嵌完整 Tool：交出前深拷贝，避免宿主改命中项改穿目录（#316）。
+			r.add(Match{Tool: cloneTool(e.tool), Score: score})
 		}
 	}
 	// 有检索词但无命中：返回**空切片而非 nil**（旧行为）。调用方拿 nil 与空切片做
