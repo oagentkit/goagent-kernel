@@ -134,10 +134,10 @@ func TestRecordReplayReproduce(t *testing.T) {
 		}
 	})
 
-	t.Run("同 ID 多行：授予段差异必须显形（issue #221）", func(t *testing.T) {
-		// 同一个副作用 Key 的授予段与对账段共用一个行标识（trajectory 的设计
-		// 事实）。按 ID 建一对一 map 会只留数组里最后一条（对账段），授予段被
-		// 整条丢弃——含副作用事件的回归比对由此给出「差异假零」。
+	t.Run("多段独立标识：授予段差异必须显形（issue #221/#301）", func(t *testing.T) {
+		// 同一个副作用 Key 的授予段与对账段各有独立行标识（对账段带 #-2
+		// 段序后缀，issue #301）。按 ID 建一对一 map 会丢掉先出现的那条——
+		// 含副作用事件的回归比对由此给出「差异假零」。
 		evs := sideEffectEvents()
 		want := Replay(evs, trajectory.Options{})
 		evs[0].Payload["resource"] = "res-2" // 重放侧只改授予段的资源
@@ -158,7 +158,7 @@ func TestRecordReplayReproduce(t *testing.T) {
 		}
 	})
 
-	t.Run("同 ID 多行：两侧全同则差异为零", func(t *testing.T) {
+	t.Run("多段独立标识：两侧全同则差异为零", func(t *testing.T) {
 		evs := sideEffectEvents()
 		div := Diff(Replay(evs, trajectory.Options{}), Replay(evs, trajectory.Options{}))
 		if len(div) != 0 {
@@ -166,9 +166,9 @@ func TestRecordReplayReproduce(t *testing.T) {
 		}
 	})
 
-	t.Run("同 ID 少一段：缺行显形且记出现序（issue #221）", func(t *testing.T) {
-		// 录制侧多一次点观察（contended，同 ID 第三行），重放侧没有——
-		// 缺段按出现序报 row 缺行，段数差异不得静默。
+	t.Run("少一段：缺行显形（issue #221/#301）", func(t *testing.T) {
+		// 录制侧多一次点观察（contended，同 Key 第三段，标识带 #-3 后缀），
+		// 重放侧没有——缺段必须报 row 缺行，段数差异不得静默。
 		t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 		extra := append(sideEffectEvents(), eventbus.Event{
 			ID: 1, SessionID: "sess-se", Type: eventbus.EventSideEffectContended, Level: "info",
@@ -182,15 +182,16 @@ func TestRecordReplayReproduce(t *testing.T) {
 			t.Fatalf("应恰有一条缺行差异：%+v", div)
 		}
 		d := div[0]
-		if d.ID != "sideeffect#se-1" || d.Index != 2 || d.Field != "row" || d.Want != "present" || d.Got != "absent" {
-			t.Fatalf("缺段应报 Index=2 的 row present→absent：%+v", d)
+		if d.ID != "sideeffect#se-1#-3" || d.Index != 0 || d.Field != "row" || d.Want != "present" || d.Got != "absent" {
+			t.Fatalf("缺段应报 sideeffect#se-1#-3 的 row present→absent：%+v", d)
 		}
 	})
 }
 
 // sideEffectEvents 一段含副作用事件的最小流：授予 → 转未知（授予段收口 +
-// 开同 Key 对账段）→ 裁决未生效（对账段收口）。同一个 Key 的两段共用一个
-// 行标识（sideeffect#se-1）——「轨迹行 ID 不唯一」的现成形态。
+// 开同 Key 对账段）→ 裁决未生效（对账段收口）。两段各有独立行标识
+// （sideeffect#se-1 / sideeffect#se-1#-2，issue #301），跨段聚合看
+// sideeffect.key。
 func sideEffectEvents() []eventbus.Event {
 	t0 := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	ev := func(at time.Time, typ string, payload map[string]any) eventbus.Event {
