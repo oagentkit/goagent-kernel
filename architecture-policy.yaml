@@ -1269,8 +1269,11 @@ dependency_direction:
   #                                            判 api-lifecycle.yaml ↔ 包注释 ↔
   #                                            覆盖 ↔ 错误登记表；解析各包语法树
   #                                            是工具职责，同上。
+  #   cmd/releasecheck                        发版纪律门禁（2026-11-17）：判 annotated tag /
+  #                                            CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装
+  #                                            提交；读 git 历史与 CHANGELOG 是工具职责，同上。
   #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1528,6 +1531,19 @@ egress_paths:
         之前，故这里保证的是「只要宿主声明了代理，env 一定按声明生成，生成不出就不起
         子进程」——SubprocessOptions.Egress 的零值（不限制）逐字返回原 env，旧调用点行为
         不变。真正的强制（代理本体、deny 列表）归上游与宿主：本仓不造第二套网络栈。
+    - path: cmd/releasecheck/main.go
+      fn: gitOut
+      mode: unrestricted
+      notes: |
+        发版纪律门禁的 git 读取点：只跑 describe / log / cat-file 三类**本地**子命令
+        （不接触远端；命令串写死在本文件里，不含外部输入）。登记成 unrestricted 是
+        **事实**而不是放行——这些子命令没有网络面，给不出「被代理强制」的证据，登记成
+        proxy 只会让门禁以为「这条路径的出口有人管过」。
+        子进程环境走唯一事实源 procx.ChildEnv（PATH/HOME 等基础白名单 +
+        GIT_TERMINAL_PROMPT=0），**不继承全量 environ**：本工具在 CI 里跑，父进程
+        环境可能带凭据，而 git 的本地子命令用不到它们。
+        将来若有人在这里加 fetch / push，本条目必须同步改成 proxy 并补上兑现的两半
+        （env 生成 + 后端能力问询），否则门禁会在那个提交上直接红。
 
 # ── 全局阈值 ──
 thresholds:
