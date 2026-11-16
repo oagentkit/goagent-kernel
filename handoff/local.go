@@ -1,180 +1,61 @@
-// local.go —— 进程内参考实现：契约**可满足性的证明件**。
+// local.go —— 进程内交接台：Desk + MemoryLedger 的薄包装。
 //
-// 边界与 taskboard「不给存储实现」的口径不冲突：taskboard 拒的是**跨进程
-// 存储**（给了参考实现，宿主就会照着改落库形态，两份真相并存）；本件的
-// 存在价值是把「同一进程内的编排」也接进同一套契约（判据跑在它身上），
-// 它对跨进程**不做任何承诺**——原子性由进程内互斥给出，崩溃语义没有
-// 落库背书。跨进程落库形态参考 examples/pgstore 对 taskboard.Board 的
-// 分工（宿主抄它，不 import 它）。
+// 边界与 desk.go 的注释同源：LocalDesk 只证契约可满足，对跨进程不做承诺。
+// 需要跨实例/持久化形态时用 NewDesk(ledger)：两个 Desk 共用一个 Ledger
+// 就是两个客户端的形状；真实落库由宿主实现 Ledger（接口见 ledger.go）。
 //
-// 时钟可注入（Clock）：过期语义要能被确定性测，不靠 sleep。
+// 默认行为与旧版逐条一致（现有用例是判据）：重放、终态开新代、懒式过期、
+// 回执凭令牌、收回只归源方、快照按 Key 升序。
 package handoff
 
 import (
-	"cmp"
 	"context"
-	"maps"
-	"slices"
-	"strconv"
-	"sync"
-	"time"
-
-	"github.com/oekit/pkg/errors"
 )
 
 // LocalDesk 进程内交接台（Store 的进程内参考实现）。
 type LocalDesk struct {
-	mu    sync.Mutex
-	clock func() time.Time
-
-	tickets map[Key]Ticket // 当前代（每个 Key 一条）
-	tokens  map[Key]string // 领取令牌（accepted 单的回执凭据）
-	seq     uint64         // 令牌序号（单进程内单调）
+	desk *Desk
 }
 
-// DeskOption 交接台的装配项。
-type DeskOption func(*LocalDesk)
-
-// WithClock 注入时钟（缺省 time.Now）。
-func WithClock(clock func() time.Time) DeskOption {
-	return func(d *LocalDesk) { d.clock = clock }
-}
-
-// NewLocalDesk 构造进程内交接台。
+// NewLocalDesk 构造进程内交接台（缺省行为：进程内互斥 + time.Now）。
 func NewLocalDesk(opts ...DeskOption) *LocalDesk {
-	d := &LocalDesk{
-		clock:   time.Now,
-		tickets: map[Key]Ticket{},
-		tokens:  map[Key]string{},
-	}
-	for _, o := range opts {
-		o(d)
-	}
-	return d
+	return &LocalDesk{desk: NewDesk(NewMemoryLedger(), opts...)}
 }
 
 // Offer 挂出交接单（原子 + 幂等）。
-//
-// 同一 Key 未终态 ⇒ 原样返回（重放）；终态 ⇒ 新一代；否则首代。
-// Deadline 按本台自己的时钟推算。
-func (d *LocalDesk) Offer(_ context.Context, t Ticket) (Ticket, error) {
-	if err := t.Validate(); err != nil {
-		return Ticket{}, errors.New("handoff: " + err.Error())
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if have, ok := d.tickets[t.Key]; ok && !have.State.Terminal() {
-		return have, nil // 重放：同一 Key 的重复挂出不开新单
-	}
-	gen := t.Generation + 1
-	if have, ok := d.tickets[t.Key]; ok {
-		gen = have.Generation + 1 // 重新交接：在同 Key 上一代之上递增
-	}
-	now := d.clock()
-	fresh := t
-	fresh.Generation = gen
-	fresh.Deadline = now.Add(t.TTL)
-	fresh.State = StateOffered
-	fresh.Holder = ""
-	fresh.ReceiptAt = time.Time{}
-	delete(d.tokens, t.Key)
-	d.tickets[t.Key] = fresh
-	return fresh, nil
+func (d *LocalDesk) Offer(ctx context.Context, t Ticket) (Ticket, error) {
+	return d.desk.Offer(ctx, t)
 }
 
-// Take 领取交接单：负责人在这一次互斥段里完成转移。
-func (d *LocalDesk) Take(_ context.Context, key Key, to Agent) (Handle, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	t, ok := d.tickets[key]
-	if !ok {
-		return Handle{}, ErrUnknownKey
-	}
-	if t.State == StateAccepted {
-		return Handle{}, ErrTaken
-	}
-	if t.State.Terminal() {
-		return Handle{}, ErrAlreadySettled
-	}
-	if to != t.To {
-		return Handle{}, ErrNotAddressee
-	}
-	if d.clock().After(t.Deadline) {
-		t.State = StateExpired // 懒式过期：读到即落账
-		d.tickets[key] = t
-		return Handle{}, ErrExpired
-	}
-	d.seq++
-	handle := Handle{
-		Token: "take-" + strconv.FormatUint(t.Generation, 10) + "-" + strconv.FormatUint(d.seq, 10),
-		Fence: t.Generation,
-		Until: t.Deadline,
-	}
-	t.State = StateAccepted
-	t.Holder = to
-	d.tickets[key] = t
-	d.tokens[key] = handle.Token
-	return handle, nil
+// Take 领取交接单：负责人在一次条件写里完成转移。
+func (d *LocalDesk) Take(ctx context.Context, key Key, to Agent) (Handle, error) {
+	return d.desk.Take(ctx, key, to)
+}
+
+// TakeAt 领取并校验所有权代次（旧代 → ErrStaleEpoch）。
+func (d *LocalDesk) TakeAt(ctx context.Context, key Key, to Agent, expected Epoch) (Handle, error) {
+	return d.desk.TakeAt(ctx, key, to, expected)
 }
 
 // Reply 交回执（凭领取令牌；迟到与令牌不匹配都拒收）。
-func (d *LocalDesk) Reply(_ context.Context, key Key, token string, r Receipt) error {
-	if err := r.Validate(); err != nil {
-		return errors.New("handoff: " + err.Error())
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	t, ok := d.tickets[key]
-	if !ok {
-		return ErrUnknownKey
-	}
-	if t.State.Terminal() {
-		return ErrAlreadySettled
-	}
-	if t.State != StateAccepted || d.tokens[key] != token {
-		return ErrLeaseLost
-	}
-	if d.clock().After(t.Deadline) {
-		t.State = StateExpired // 责任期已过：回执迟到，单落 expired
-		d.tickets[key] = t
-		return ErrExpired
-	}
-	t.State = StateClosed
-	t.ReceiptAt = d.clock()
-	d.tickets[key] = t
-	return nil
+func (d *LocalDesk) Reply(ctx context.Context, key Key, token string, r Receipt) error {
+	return d.desk.Reply(ctx, key, token, r)
 }
 
 // Cancel 源方收回（仅 StateOffered；凭身份不凭内容）。
-func (d *LocalDesk) Cancel(_ context.Context, key Key, by Agent) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	t, ok := d.tickets[key]
-	if !ok {
-		return ErrUnknownKey
-	}
-	if t.State.Terminal() {
-		return ErrAlreadySettled
-	}
-	if t.State == StateAccepted {
-		return ErrTaken
-	}
-	if by != t.From {
-		return ErrNotSource
-	}
-	t.State = StateWithdrawn
-	t.Holder = ""
-	d.tickets[key] = t
-	return nil
+func (d *LocalDesk) Cancel(ctx context.Context, key Key, by Agent) error {
+	return d.desk.Cancel(ctx, key, by)
 }
 
 // Snapshot 当前代的全部交接单（按 Key 升序，确定性）。
-func (d *LocalDesk) Snapshot(_ context.Context) ([]Ticket, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	// slices.SortedFunc 直接吃 maps.Values 迭代器（range-over-func 面）：
-	// 值集合收齐即排序，不经过手工 append。
-	return slices.SortedFunc(maps.Values(d.tickets), func(a, b Ticket) int {
-		return cmp.Compare(a.Key, b.Key)
-	}), nil
+func (d *LocalDesk) Snapshot(ctx context.Context) ([]Ticket, error) {
+	return d.desk.Snapshot(ctx)
 }
+
+// Deliveries 取回发往 addr 的回执（回执寻址的取件半边）。
+func (d *LocalDesk) Deliveries(ctx context.Context, addr string) ([]AddressedReceipt, error) {
+	return d.desk.Deliveries(ctx, addr)
+}
+
+// 编译期断言：LocalDesk 仍然是 Store（默认路径零回归）。
+var _ Store = (*LocalDesk)(nil)
