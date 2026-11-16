@@ -81,7 +81,18 @@ type Result struct {
 	Summary Summary
 	// Locator 原文归档句柄（供后续取回）。
 	Locator Locator
-	// GrossRemovedTokens 本次逐字移除的估算量（取自计划），**未扣掉摘要**。
+	// GrossRemovedTokens 本次逐字移除的估算量，**未扣掉摘要**。
+	//
+	// 取值规则（唯一真相优先）：
+	//   - 被归档条目中至少一条带 Tokens > 0 时，取**逐条 Tokens 之和**——
+	//     这是实际被丢弃内容的唯一可核对量；
+	//   - 全部条目都没提供逐条量（Tokens <= 0）时，才回落到计划的
+	//     GrossRemovedTokens（宿主未提供逐条量时的兜底估算）。
+	//
+	// 计划里的 Plan.GrossRemovedTokens 因此只是兜底：宿主按官方示例只填
+	// PlanInput.ItemTokens 而条目不带 Tokens 时，账才会停在估算上。压实是
+	// 不可逆的逐字丢弃，账必须尽量按逐条真实量走，否则 Classify 会拿着
+	// 虚高的旧账对同一段会话反复压实。
 	//
 	// 与参考实现的 removed_tokens（净值）同名不同义，务必走 NetRemovedTokens 取净额。
 	GrossRemovedTokens int
@@ -135,6 +146,13 @@ func (r Result) SnapshotDelta() int {
 //
 // 三条都在任何归档之前判定：被拒的调用不得留下任何副作用。
 //
+// # 实际移除量从哪里来
+//
+// Result.GrossRemovedTokens **优先取 leading 逐条 Tokens 之和**；只有全部
+// 条目都没提供逐条量（Tokens <= 0）时才回落到 p.GrossRemovedTokens。
+// 计划里的单条均值估算不是主路径：条目大小不一时它必然失真，而按失真账
+// 减少会让账面停在旧值，触发对同一段会话的反复压实。
+//
 // # 内核做什么、不做什么
 //
 // 编排（校验 → 归档 → 摘要 → 拼接 → 给修正量）是代码，所以归内核；
@@ -175,6 +193,30 @@ func Apply(ctx context.Context, p Plan, leading, tail []Item, arc Archive, sum S
 		Segment:            seg,
 		Summary:            sm,
 		Locator:            loc,
-		GrossRemovedTokens: p.GrossRemovedTokens,
+		GrossRemovedTokens: grossRemovedTokens(leading, p.GrossRemovedTokens),
 	}, nil
+}
+
+// grossRemovedTokens 实际删除量的取值：逐条 Tokens 之和优先，计划估算兜底。
+//
+// 「至少一条提供」即采用求和：宿主若逐条都给了量，那才是可核对的真相；
+// 计划的单条均值估算在条与条大小不一时必然失真（实弹：计划按 25/条、
+// 实际 900/条 ⇒ 账上少减 5250）。
+//
+// 负数 Tokens 是宿主坏数据：不计入（也不反向抹账）。全部条目都 <=0 时才
+// 回落到计划估算——这样 ItemTokens=0 且逐条量缺失时仍是 0，与旧行为一致，
+// 不会凭空发明一个移除量。
+func grossRemovedTokens(leading []Item, fallback int) int {
+	total := 0
+	priced := false
+	for _, it := range leading {
+		if it.Tokens > 0 {
+			total += it.Tokens
+			priced = true
+		}
+	}
+	if priced {
+		return total
+	}
+	return fallback
 }

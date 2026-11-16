@@ -30,10 +30,15 @@
 // 三步走完整闭环，全部在本包内：
 //
 //	m := budget.Meter{}; m.Add(budget.SegmentConversation, 60000)
-//	p, _ := budget.BuildPlan(budget.PlanInput{Items: 10, KeepTail: 4, ItemTokens: 2500})
-//	res, _ := budget.Apply(ctx, p, leading, tail, arc, sum)
+//	p, _ := budget.BuildPlan(budget.PlanInput{Items: 10, KeepTail: 4})
+//	res, _ := budget.Apply(ctx, p, leading, tail, arc, sum) // leading/tail 逐条带 Tokens
 //	m.Shrink(budget.SegmentConversation,
 //	    budget.NetRemovedTokens(res.GrossRemovedTokens, res.Summary.Tokens))
+//
+// **实际移除量以入参条目的逐条 Tokens 之和为准**（Apply 出参携带），计划的
+// ItemTokens 估算只是宿主没提供逐条量时的兜底。只填计划估算而不填逐条量时，
+// 账会停在估算上；估算与逐条真实量不符时（计划按 25/条、实际 900/条），
+// 账上会少减——而压实是不可逆的逐字丢弃，少减会导致对同一段会话反复压实。
 //
 // 毛移除量与净移除量必须分开取（NetRemovedTokens 有专门注释）：按名字对齐参考实现的
 // 同名字段会静默错账，方向恰好是「看起来更省了」。
