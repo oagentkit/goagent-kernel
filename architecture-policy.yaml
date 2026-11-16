@@ -615,11 +615,11 @@ modules:
   #
   # 为什么它必须登记成模块：未登记的包目录对依赖方向门禁隐形。它的判据
   # 面来自共享契约套件（sidetest / boardtest / RunSinkContract，测试侧 import），
-  # 生产侧只允许依赖 checkpoint / sideeffect / taskboard 与 pgx、oekit/pkg
-  # ——多引一个机制包就红。
+  # 生产侧只允许依赖 checkpoint / eventbus / sideeffect / taskboard 与 pgx、
+  # oekit/pkg——多引一个机制包就红。
   - id: pgrefstore
     roots: [examples/pgstore, examples/pgstore/cmd/pgsmoke]
-    requires: [checkpoint, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [checkpoint, eventbus, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -628,6 +628,9 @@ modules:
       （cmd/pgsmoke）+ docker compose 集成环境。Acquire 三判合一在一个事务里
       （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
       同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
+      eventbus 可靠事件面（Outbox 形态，issue #264）：事件行与业务状态同事务
+      （PublishInTx），ID 由单行水位表串行化铸造（铸造序 == 提交序，回滚不
+      烧号），读侧已提交水位线读法（TailStore / WatermarkTailStore）。
 
   # Standalone 单机持久化参考实现（2026-11-16 新增，issue #188）：
   # SQLite(WAL) 的**契约级设计** + 零依赖文件后端（flock + JSONL + fsync）。
