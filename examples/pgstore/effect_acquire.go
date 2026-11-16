@@ -19,6 +19,20 @@ import (
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
+// intentCompleteErr 意图四列齐全性守卫（Acquire 判定路径的解引用前置）。
+//
+// lockAction 的 checkIntentColumns 已经在所有入口前拒掉半写行；这里再守一次
+// 是因为 Acquire 随后要解引用 intentExpires / intentResource / intentFence——
+// 守卫与解引用放在同一段里，防止将来新增入口绕过 lockAction 直接判。
+func (r *actionRow) intentCompleteErr(key sideeffect.Key) error {
+	if r.intentColumnsFilled() == 4 {
+		return nil
+	}
+	return errors.Wrap(ErrIntentIncomplete,
+		"pgstore: 动作行的执行意图残缺（四列应同时为 NULL 或同时有值）",
+		"key", string(key))
+}
+
 // Acquire 一次原子判定（契约语义逐条对照 sideeffect.Store 的文档）。
 //
 // 授予时在同一事务里做三件事：令牌 = 资源已见最大值 + 1；持有者身份由
