@@ -11,7 +11,7 @@
 //
 // 演示脚本（runDemo，端到端用例直接调它并断言输出）：
 //
-//  1. 建任务板（coord 适配器）与注册表（内存参考实现）；
+//  1. 建任务板（coord 适配器）与注册表（worker.MemRegistry 参考实现）；
 //  2. 播种一条 3 步依赖链；
 //  3. worker-a 认领 t1 后「崩溃」（认领记录留在板上，租约 1 分钟）——
 //     真实崩溃在存储侧留下的就是这一条过期认领；
@@ -50,7 +50,7 @@ func runDemo(ctx context.Context, out io.Writer) error {
 		return err
 	}
 	board.UseClock(boardClock.Now)
-	registry := newMemRegistry(boardClock.Now)
+	registry := worker.NewMemRegistry(worker.WithRegistryClock(boardClock.Now))
 
 	// 2) 播种依赖链 t1 ← t2 ← t3。
 	board.Seed(
