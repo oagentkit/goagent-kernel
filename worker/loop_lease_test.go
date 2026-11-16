@@ -21,9 +21,9 @@ import (
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
-// flakyRegistry 心跳可注入持续故障的注册表替身（其余方法走 memRegistry）。
+// flakyRegistry 心跳可注入持续故障的注册表替身（其余方法走 MemRegistry）。
 type flakyRegistry struct {
-	*memRegistry
+	*MemRegistry
 	failHB atomic.Bool
 }
 
@@ -33,7 +33,7 @@ func (r *flakyRegistry) Heartbeat(ctx context.Context, id, token string, ttl tim
 		// 同一拍的租约续期（issue #179 的触发序列）。
 		return time.Time{}, errors.New("worker: 注册表心跳存储抖动（替身）")
 	}
-	return r.memRegistry.Heartbeat(ctx, id, token, ttl)
+	return r.MemRegistry.Heartbeat(ctx, id, token, ttl)
 }
 
 // flakyBoard 续期可注入持续故障的任务板替身（其余方法走 BoardAdapter）。
@@ -56,7 +56,7 @@ func TestLoopHeartbeatOutageDoesNotSkipRenewal(t *testing.T) {
 	boardClock := newTestClock()
 	regClock := newTestClock() // 注册表时钟不动：身份保持有效
 	board := newTestBoard(boardClock)
-	reg := &flakyRegistry{memRegistry: newMemRegistry(regClock.Now)}
+	reg := &flakyRegistry{MemRegistry: newMemRegistry(regClock.Now)}
 	board.Seed(taskboard.Task{ID: "t1", State: taskboard.StateOpen})
 
 	handler := HandlerFunc(func(ctx context.Context, _ taskboard.Task) error {
@@ -125,7 +125,7 @@ func TestLoopRenewOutageUnconfirmedStopsDriver(t *testing.T) {
 	boardClock := newTestClock()
 	regClock := newTestClock()
 	board := &flakyBoard{BoardAdapter: newTestBoard(boardClock)}
-	reg := &flakyRegistry{memRegistry: newMemRegistry(regClock.Now)}
+	reg := &flakyRegistry{MemRegistry: newMemRegistry(regClock.Now)}
 	board.Seed(taskboard.Task{ID: "t1", State: taskboard.StateOpen})
 
 	var (
