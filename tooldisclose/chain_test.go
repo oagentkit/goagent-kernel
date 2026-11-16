@@ -52,11 +52,12 @@ func TestChainBothGatesPass(t *testing.T) {
 	}
 }
 
-// TestChainNotLoadedIsRetryable 未取回 schema → 披露门拒绝但**可重试**。
+// TestChainNotLoadedIsRecoverableAfterRetrieval 未取回 schema → 披露门拒绝且可恢复；
+// 但恢复路径是「先取回 schema」，不是原样重试。
 //
-// 这是本包二分里最容易被抹掉的一条：链路一「顺畅」，就有人把可重试也一并抹平，
-// 于是模型为取 schema 得多绕一圈，渐进披露的收益当场归零。
-func TestChainNotLoadedIsRetryable(t *testing.T) {
+// 这是本包二分里最容易被抹掉的一条：链路一「顺畅」，就有人把「可恢复」实现成
+// 「重试即放行」，于是模型不取 schema 也能调用，渐进披露的收益当场归零。
+func TestChainNotLoadedIsRecoverableAfterRetrieval(t *testing.T) {
 	cat := catalogOf("read_logs") // 未 Load
 	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
 
@@ -65,17 +66,25 @@ func TestChainNotLoadedIsRetryable(t *testing.T) {
 		t.Fatal("未取回 schema 应拒绝")
 	}
 	if !invoke.Retryable(err) {
-		t.Fatal("目录内未取回应判为可重试（Check 已激活，重试即可成）")
+		t.Fatal("目录内未取回应判为可恢复（取回 schema 后可成）")
 	}
 	if *hits != 0 {
 		t.Fatalf("被拒调用不得触达执行体，实得 %d 次", *hits)
 	}
-	// 重试即可成——这是「可重试」的实际含义，不是标签。
+	// 原样重试仍被拒：门禁不把被拒尝试当成加载事件。
+	if _, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"}); err == nil {
+		t.Fatal("schema 未交付前重试不得放行")
+	}
+	if *hits != 0 {
+		t.Fatalf("重试被拒仍不得触达执行体，实得 %d 次", *hits)
+	}
+	// schema 交付事件之后才放行。
+	cat.Load("read_logs")
 	if _, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"}); err != nil {
-		t.Fatalf("重试应成功（Check 已激活），实得 %v", err)
+		t.Fatalf("schema 交付后应放行，实得 %v", err)
 	}
 	if *hits != 1 {
-		t.Fatalf("重试成功后应触达执行体一次，实得 %d", *hits)
+		t.Fatalf("放行后应触达执行体一次，实得 %d", *hits)
 	}
 }
 
