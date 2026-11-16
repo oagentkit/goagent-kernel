@@ -219,8 +219,12 @@ type Options struct {
 	//
 	// 在行创建时调用；唯一的例外是**就地归并**（结果先到、调用后到）：该路径
 	// 会把行的类目与归属（轮次 / 环节 / 工具名）改写为调用事件的，摘要随之
-	// 同源重算——钩子会对同一行再被调用一次，且最后一次见到的类目与行的最终
-	// Kind 一致。除这一条路径外，行的可读字段在创建后不再变化。
+	// 同源重算。除这一条路径外，行的可读字段在创建后不再变化。
+	//
+	// 执行面（issue #302）：钩子在投影器内部锁**之外**执行，可以安全回查
+	// Len/Rows/Issues；但它仍运行在**投递方**的 goroutine 上——钩子的 panic
+	// 沿 Apply/ApplyAll 抛回宿主（抛出时投影已完成、锁已释放，投影器状态完好），
+	// 做慢 I/O 会拖延同一 goroutine 的后续投递，重活请自行转异步。
 	Summarize func(Row) string
 }
 
@@ -242,6 +246,7 @@ type Projector struct {
 	turnNo     int            // 已开轮次计数
 	seq        int            // 行序号计数
 	issues     []Issue
+	pending    []int // 待宿主钩子重算摘要的行下标（append/归并写入，锁外消费）
 }
 
 // segKey 段序计数键：（轮次序号, 行标识）。跨轮的同名标识不是多段。
@@ -266,19 +271,36 @@ func NewProjector(opts Options) *Projector {
 //
 // 已经被投过的事件不会被重复计入：后续事件只会**更新**既有行（补结束时刻、
 // 把配对状态从「未配对」改成「已配对」），不会追加出第二条行。
+//
+// 宿主 Summarize 钩子在内部锁**释放之后**执行（issue #302）：锁内只投影事件
+// 并收集待算摘要的行，锁外调钩子再回填——钩子里回查投影器（Len/Rows/…）不会
+// 自死锁，慢钩子也不会阻塞其他并发生产者的投递。
 func (p *Projector) Apply(ev eventbus.Event) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.apply(ev)
+	var pending []int
+	func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.apply(ev)
+		pending = p.takePending()
+	}()
+	p.flushSummaries(pending)
 }
 
 // ApplyAll 依次投多条事件（增量投影；与逐条 Apply 等价）。
+//
+// 与逐条 Apply 的唯一差别：整批共享一次摘要重算——批内追加又就地归并的行
+// 只调一次钩子，且钩子见到的是行的最终形态。
 func (p *Projector) ApplyAll(evs []eventbus.Event) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, ev := range evs {
-		p.apply(ev)
-	}
+	var pending []int
+	func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		for _, ev := range evs {
+			p.apply(ev)
+		}
+		pending = p.takePending()
+	}()
+	p.flushSummaries(pending)
 }
 
 // Rows 当前轨迹行快照（按行序号升序）。

@@ -254,7 +254,7 @@ func (p *Projector) openTool(ev eventbus.Event) {
 				row.StartAt = ev.OccurredAt
 				row.Status = StatusClosed
 				row.Pairing = PairingPaired
-				p.resummarize(row)
+				p.resummarize(idx)
 				p.clearIssue(PairingUnpairedResult, callID)
 				return
 			}
