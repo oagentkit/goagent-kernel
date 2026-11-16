@@ -227,6 +227,15 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	res := Result{Scored: scored}
 	if len(scored) == 0 {
+		if mention == "" && len(words) == 0 && len(pathsLower) == 0 {
+			// 两种空结局必须分开说（#288）：「没有携带任何相关度信号」是
+			// 「无从打分」——宿主该补全查询（点名或任务关键词）或直接回退
+			// 全量披露；「有信号但没命中」才可能解读成「目录里确无此技能」。
+			// 共用一句话时，宿主对无信号查询会误当成「确无此技能」。
+			res.Reason = "查询没有携带任何相关度信号（未点名、检索词切不出词元、也没给资源路径）——" +
+				"本包无从打分；宿主应补全查询（点名或任务关键词），或直接回退到全量披露"
+			return res, nil
+		}
 		res.Reason = "没有技能命中本次查询（点名/描述/资源三项都没匹配）——" +
 			"宿主应据此判断要不要回退到全量披露，而不是当成「没有这个能力」"
 		return res, nil
@@ -264,103 +273,5 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 	return res, nil
 }
 
-// scoreOf 单个技能的打分（0 = 不命中）。
-//
-// 入参全是**已经小写化**的形态：它们要么来自目录构造期（entry 上的 lower* 字段），
-// 要么来自查询级预计算（mentionLower / pathsLower）。这条口径必须写在签名上而不是
-// 靠注释约定——一旦有人在循环里传回原样，结果不会报错，只会**静默漏命中**：
-// 查询「Alpha」再也匹配不到描述里的「ALPHA」。
-func scoreOf(e entry, mention, mentionLower string, words map[string]bool, pathsLower []string) int {
-	s := e.skill
-	if mention != "" && mention == s.Name {
-		return scoreMention
-	}
-	score := 0
-	if mentionLower != "" && strings.Contains(e.lowerName, mentionLower) {
-		score += scoreNameInText
-	}
-	if words[e.lowerName] {
-		score += scoreNameInText
-	}
-	for _, p := range pathsLower {
-		if resourceHitLower(e.lowerResources, p) {
-			score += scoreResource
-			break
-		}
-	}
-	for _, tag := range e.lowerTags {
-		if words[tag] {
-			score += scoreTag
-			break
-		}
-	}
-	descHits := 0
-	for w := range words {
-		// len(w) 按字节判即可：tokenize 只产出 ASCII 字母数字，字节数即字符数。
-		if w == "" || len(w) < 2 {
-			continue
-		}
-		if strings.Contains(e.lowerDesc, w) {
-			descHits++
-			if descHits >= scoreDescWordMax {
-				break
-			}
-		}
-	}
-	return score + descHits
-}
-
-// resourceHit 判当前资源路径是否落在技能的声明里。
-//
-// 支持两种声明形态：**目录前缀**（以 / 结尾）与**后缀**（以 . 开头）。
-// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而「按目录/按后缀」
-// 这两种已经能表达全部实际用法，且判据无歧义。
-// resourceHitLower 资源匹配的**唯一**判定实现；两侧入参须已是小写形态。
-//
-// 为什么不提供「入参原样、内部小写化」的包装版本：包装层一旦存在，它和主路径就
-// 成了两套实现（一套在循环里、一套在循环外），而两边漂移不会报错，只会让某些声明
-// 悄悄不再命中。主路径的小写化位置是明确的——声明在构造期（lowerDeclared）、
-// 查询路径在查询级（lowerEach）——规则就只剩这一份。
-func resourceHitLower(declaredLower []string, pathLower string) bool {
-	for _, d := range declaredLower {
-		switch {
-		case d == "":
-			continue
-		case strings.HasSuffix(d, "/"):
-			if strings.HasPrefix(pathLower, d) {
-				return true
-			}
-		case strings.HasPrefix(d, "."):
-			if strings.HasSuffix(pathLower, d) {
-				return true
-			}
-		default:
-			if pathLower == d || strings.Contains(pathLower, d) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// tokenize 把一段文本切成小写词集（按非字母数字切分）。
-func tokenize(s string) map[string]bool {
-	out := map[string]bool{}
-	cur := strings.Builder{}
-	flush := func() {
-		if cur.Len() > 0 {
-			out[strings.ToLower(cur.String())] = true
-			cur.Reset()
-		}
-	}
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			cur.WriteRune(r)
-		default:
-			flush()
-		}
-	}
-	flush()
-	return out
-}
+// scoreOf / resourceHitLower / tokenize 见 match.go：匹配与打分的唯一实现面
+// 集中在那边（本文件只留目录、查询与披露判定）。
