@@ -35,6 +35,7 @@
 > | [docs/GAP-ANALYSIS-20261021.md](docs/GAP-ANALYSIS-20261021.md) | 与 Codex / DSH / Octop / Coze 的**逐项实测对齐**：差距在哪个维度、哪些该补、哪些不该补 | 活文档 |
 > | [docs/GAP-ANALYSIS-20261106.md](docs/GAP-ANALYSIS-20261106.md) | 同一对标的**刷新**（2026-11-06 重拉五家）：Coze 已停更、DSH 219→400 叶子包、缺口从「可撤销性」移到「判定面的宽度」| 活文档 |
 > | [docs/GAP-ANALYSIS-20261107.md](docs/GAP-ANALYSIS-20261107.md) | 第三次刷新（2026-11-07 重拉五家）：**参照系这轮没长出新机制面**；唯一开着的 P0 是出口强制件的**两端都空**（无代理 + 无 `Enforcer` 实现）| 活文档 |
+> | [docs/DISTRIBUTED-EVOLUTION-20261117.md](docs/DISTRIBUTED-EVOLUTION-20261117.md) | **分布式演进方向**：外部评审逐条核验台账 + L1/L2/L3 三阶段路线 + 场景化部署配方的当前缺口 | 活文档（评审核验，2026-11-17）|
 > | [docs/CROSS-ENV-VERIFY-20261021.md](docs/CROSS-ENV-VERIFY-20261021.md) | 跨环境验证：平台相关的机制怎么在「CI 绿但其实跳过」的情况下真验（实测环境矩阵 + 交叉编译流程）| 活文档 |
 > | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
 > | [docs/ENGINEERING-HISTORY.md](docs/ENGINEERING-HISTORY.md) | 「工程底座」表**九轮校准**的过程与账：为什么它漂过、后来怎么接进门禁 | **历史快照**（从 README 下沉，2026-11-11）|
