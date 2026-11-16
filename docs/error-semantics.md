@@ -287,6 +287,12 @@
 | `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
+### examples/pgstore
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrIntentIncomplete` | 动作行的执行意图四列（`intent_resource` / `intent_fence` / `intent_holder` / `intent_expires`）部分为 NULL——半写行（人工订正 / schema 迁移 / 仓外写入），本包写入路径只产生「四列全有」或「四列全空」 | 修数据：把该行补齐成完整意图或整体清空；**不得绕过**——半写行既解引用不了（panic）也不能当「无意图」放行（会重新授予执行权 ⇒ 重复施加） |
+
 ### tooldisclose
 
 | 哨兵 | 触发条件 | 调用方处置 |
