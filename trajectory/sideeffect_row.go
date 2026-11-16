@@ -85,7 +85,7 @@ type turnRowKey struct {
 // 同轮重试）时追加 "#-<n>" 段序后缀，n 从 2 起。后缀里的 "-" 与 seqID 同义：
 // 这一段标识是投影生成的，不是业务自然键。跨段聚合不靠行标识，靠属性
 // （sideeffect.key / checkpoint run_id+seq），见 otelmap.go。
-func (p *Projector) claimID(turn int, base string) string {
+func claimID(p *Projector, turn int, base string) string {
 	if base == "" {
 		return ""
 	}

@@ -36,8 +36,6 @@ import (
 	"slices"
 	"sync"
 	"time"
-
-	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Kind 轨迹行的类目。
@@ -261,39 +259,6 @@ func NewProjector(opts Options) *Projector {
 	}
 }
 
-// Apply 投一条事件（增量投影）。
-//
-// 已经被投过的事件不会被重复计入：后续事件只会**更新**既有行（补结束时刻、
-// 把配对状态从「未配对」改成「已配对」），不会追加出第二条行。
-//
-// 宿主 Summarize 钩子在投影器锁释放之后执行（issue #302）。
-func (p *Projector) Apply(ev eventbus.Event) {
-	p.applyOneLocked(ev)
-	p.runSummarize()
-}
-
-// ApplyAll 依次投多条事件（增量投影；与逐条 Apply 等价）。
-//
-// 钩子在本批事件全部落地、锁释放之后统一执行一次（每行一次，行状态是该批
-// 事件后的最终状态）。
-func (p *Projector) ApplyAll(evs []eventbus.Event) {
-	func() {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		for _, ev := range evs {
-			p.apply(ev)
-		}
-	}()
-	p.runSummarize()
-}
-
-// applyOneLocked 持锁投一条事件；defer 解锁保证内部 panic 不把锁留下。
-func (p *Projector) applyOneLocked(ev eventbus.Event) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.apply(ev)
-}
-
 // Rows 当前轨迹行快照（按行序号升序）。
 //
 // 返回拷贝：调用方改动拿到的切片不影响投影器内部状态。
@@ -345,85 +310,6 @@ func (p *Projector) Finalize() []Row {
 	return open
 }
 
-// append 追加一行（分配序号与轮内唯一标识、填默认摘要）。
-func (p *Projector) append(r Row) int {
-	p.seq++
-	r.Seq = p.seq
-	r.ID = p.claimID(r.Turn, r.ID)
-	p.rows = append(p.rows, r)
-	idx := len(p.rows) - 1
-	p.refreshSummary(idx)
-	return idx
-}
-
-// refreshSummary 按行**当前**字段重算默认摘要，并登记宿主钩子待算。
-//
-// 两个调用点：行创建时；「结果先到、调用后到」的就地归并时——归并会改写类目与
-// 归属字段，旧摘要（例如 tool_result）不能留到归并后（issue #299）。
-//
-// 调用方必须已持投影器锁：本函数只做纯数据计算，**不调用宿主回调**——钩子
-// 统一由 runSummarize 在锁外执行（issue #302）。
-func (p *Projector) refreshSummary(idx int) {
-	r := &p.rows[idx]
-	r.Summary = defaultSummary(*r)
-	if p.opts.Summarize != nil {
-		p.pending = append(p.pending, idx)
-	}
-}
-
-// runSummarize 在**锁外**执行宿主摘要钩子并回填（issue #302）。
-//
-// 锁内只登记「哪几行需要重算摘要」，并取一份行的值拷贝作为钩子输入（纯数据
-// 快照）。钩子因此可以回查 Rows()/Len()、做 I/O；慢钩子只阻塞当前 Apply 的
-// 返回，不阻塞其他生产者。钩子 panic 的归属是宿主：该行退回默认摘要，投影
-// 路径继续可用。
-func (p *Projector) runSummarize() {
-	if p.opts.Summarize == nil {
-		return
-	}
-	type item struct {
-		idx int
-		row Row
-	}
-	p.mu.Lock()
-	pending := p.pending
-	p.pending = nil
-	items := make([]item, 0, len(pending))
-	for _, idx := range pending {
-		if idx >= 0 && idx < len(p.rows) {
-			items = append(items, item{idx: idx, row: p.rows[idx]})
-		}
-	}
-	p.mu.Unlock()
-
-	for _, it := range items {
-		summary, ok := p.callSummarize(it.row)
-		if !ok || summary == "" {
-			// panic 或返回空串：沿用默认摘要。
-			continue
-		}
-		p.mu.Lock()
-		// 行可能被后来的事件就地改写（类目变化会重新登记摘要）：只在仍是
-		// 同一观测时回填，否则以更晚那次钩子的结果为准。
-		if it.idx < len(p.rows) &&
-			p.rows[it.idx].Seq == it.row.Seq && p.rows[it.idx].Kind == it.row.Kind {
-			p.rows[it.idx].Summary = summary
-		}
-		p.mu.Unlock()
-	}
-}
-
-// callSummarize 调一次宿主钩子；panic 被 recover 并把归属写清楚（宿主钩子，
-// 不杀投影路径）。
-func (p *Projector) callSummarize(r Row) (summary string, ok bool) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			summary, ok = "", false
-		}
-	}()
-	return p.opts.Summarize(r), true
-}
-
 // issue 记一条配对缺口（有 call_id 时同一类目 + call_id 只记一条；
 // 无 call_id 时按行（Seq）区分——否则多条无标识行的缺口会折叠成一条）。
 func (p *Projector) issue(kind Pairing, callID string, seq int) {
@@ -454,51 +340,4 @@ func (p *Projector) clearIssue(kind Pairing, callID string) {
 		kept = append(kept, is)
 	}
 	p.issues = kept
-}
-
-// currentTurn 当前轮次序号（尚未开轮时为 0）。
-func (p *Projector) currentTurn() int {
-	if p.turn < 0 {
-		return 0
-	}
-	return p.rows[p.turn].Turn
-}
-
-// defaultSummary 默认行摘要：通用标签，不含任何领域词。
-func defaultSummary(r Row) string {
-	switch r.Kind {
-	case KindTurn, KindStep:
-		return r.ID
-	case KindToolCall, KindToolResult:
-		if r.Tool == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.Tool
-	case KindSideEffect:
-		if r.SideEffectKey == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.SideEffectKey
-	case KindCheckpoint:
-		return r.ID
-	default:
-		return string(r.Kind)
-	}
-}
-
-// payloadString 取事件载荷里的字符串键（缺失或类型不符时为空串）。
-func payloadString(ev eventbus.Event, key string) string {
-	if ev.Payload == nil {
-		return ""
-	}
-	s, _ := ev.Payload[key].(string)
-	return s
-}
-
-// stepIDOf 取事件的环节号。
-func stepIDOf(ev eventbus.Event) (uint64, bool) {
-	if ev.StepID == nil {
-		return 0, false
-	}
-	return *ev.StepID, true
 }

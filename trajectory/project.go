@@ -55,7 +55,7 @@ func (p *Projector) openTurn(ev eventbus.Event) {
 	// 事件的候选，但行本身保持 open——Finalize 仍会报出，不替它们补结束时刻
 	// （补了就是伪造实测时长，issue #300）。
 	p.opens = p.opens[:0]
-	idx := p.append(Row{
+	idx := appendRow(p, Row{
 		Kind:    KindTurn,
 		ID:      turnRowID(p.turnNo),
 		Turn:    p.turnNo,
@@ -73,7 +73,7 @@ func (p *Projector) closeTurn(ev eventbus.Event) {
 		p.rows[p.turn].Status = StatusClosed
 		return
 	}
-	p.append(Row{
+	appendRow(p, Row{
 		Kind:   KindTurn,
 		ID:     seqID(KindTurn, p.seq+1),
 		Turn:   p.currentTurn(),
@@ -99,7 +99,7 @@ func (p *Projector) openStep(ev eventbus.Event) {
 	} else {
 		r.ID = seqID(KindStep, p.seq+1)
 	}
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	p.opens = append(p.opens, idx)
 }
 
@@ -118,7 +118,7 @@ func (p *Projector) closeStep(ev eventbus.Event) {
 			r.StepID = id
 		}
 		r.ID = seqID(KindStep, p.seq+1)
-		p.append(r)
+		appendRow(p, r)
 		return
 	}
 	p.rows[idx].EndAt = ev.OccurredAt
@@ -171,10 +171,10 @@ func (p *Projector) dropOpen(idx int) {
 // 配对键是 call_id。同一 call_id 的第二次声明**不新建行**：第一次观测是真相，
 // 改写起点等于伪造实测时长——只记一条 duplicate_call 缺口。
 func (p *Projector) openTool(ev eventbus.Event) {
-	callID := payloadString(ev, "call_id")
+	callID := eventbus.ToolCallID(ev)
 	tool := payloadString(ev, "tool")
 	if callID == "" {
-		p.openAnonymousTool(ev, tool)
+		openAnonymousTool(p, ev, tool)
 		return
 	}
 	if idx, ok := p.tools[callID]; ok {
@@ -184,7 +184,7 @@ func (p *Projector) openTool(ev eventbus.Event) {
 			// 创建时按「当时的当前轮」记归属，而调用可能落在另一轮；只补
 			// 时刻会让第 2 轮真实发生的调用导出成第 1 轮的子 span，工具名
 			// 整段消失（issue #299）。
-			p.mergeCallIntoResult(idx, ev, tool)
+			mergeCallIntoResult(p, idx, ev, tool)
 			p.clearIssue(PairingUnpairedResult, callID)
 			return
 		}
@@ -205,7 +205,7 @@ func (p *Projector) openTool(ev eventbus.Event) {
 		r.StepID = id
 	}
 	r.ID = toolRowID(callID)
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	p.tools[callID] = idx
 }
 
@@ -213,7 +213,7 @@ func (p *Projector) openTool(ev eventbus.Event) {
 //
 // 归属字段以调用事件为准；类目从 tool_result 改成 tool_call 后，摘要按最终
 // 类目同源重算。调用方负责清掉结果先到时留下的 unpaired_result 缺口。
-func (p *Projector) mergeCallIntoResult(idx int, ev eventbus.Event, tool string) {
+func mergeCallIntoResult(p *Projector, idx int, ev eventbus.Event, tool string) {
 	row := &p.rows[idx]
 	row.Kind = KindToolCall
 	row.Turn = p.currentTurn()
@@ -228,16 +228,16 @@ func (p *Projector) mergeCallIntoResult(idx int, ev eventbus.Event, tool string)
 	row.StartAt = ev.OccurredAt
 	row.Status = StatusClosed
 	row.Pairing = PairingPaired
-	p.refreshSummary(idx)
+	refreshSummary(p, idx)
 }
 
 // openAnonymousTool 无 call_id 的调用声明：没有标识时到达顺序是唯一可用的
 // 配对信息，故按先进先出与更早到达的无 id 结果归并；否则开一条待结果行。
 //
 // 这条路径**不记配对缺口**：调用方未提供标识不等于配对失败（issue #306）。
-func (p *Projector) openAnonymousTool(ev eventbus.Event, tool string) {
-	if idx, ok := p.takeAnonymousResult(); ok {
-		p.mergeCallIntoResult(idx, ev, tool)
+func openAnonymousTool(p *Projector, ev eventbus.Event, tool string) {
+	if idx, ok := takeAnonymousResult(p); ok {
+		mergeCallIntoResult(p, idx, ev, tool)
 		return
 	}
 	r := Row{
@@ -253,12 +253,12 @@ func (p *Projector) openAnonymousTool(ev eventbus.Event, tool string) {
 		r.StepID = id
 	}
 	r.ID = seqID(KindToolCall, p.seq+1)
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	p.anonCalls = append(p.anonCalls, idx)
 }
 
 // takeAnonymousResult 取最早一条仍未配对的无 id 结果行（先进先出）。
-func (p *Projector) takeAnonymousResult() (int, bool) {
+func takeAnonymousResult(p *Projector) (int, bool) {
 	for len(p.anonResults) > 0 {
 		idx := p.anonResults[0]
 		p.anonResults = p.anonResults[1:]
@@ -278,10 +278,10 @@ func (p *Projector) takeAnonymousResult() (int, bool) {
 // 不带 call_id 的结果走无 id 路径（closeAnonymousTool）：按到达顺序归并，
 // **不记缺口**——「没有标识」与「标识找不到对应调用」是两件事（issue #306）。
 func (p *Projector) closeTool(ev eventbus.Event) {
-	callID := payloadString(ev, "call_id")
+	callID := eventbus.ToolCallID(ev)
 	tool := payloadString(ev, "tool")
 	if callID == "" {
-		p.closeAnonymousTool(ev, tool)
+		closeAnonymousTool(p, ev, tool)
 		return
 	}
 	idx, ok := p.tools[callID]
@@ -305,7 +305,7 @@ func (p *Projector) closeTool(ev eventbus.Event) {
 			r.StepID = id
 		}
 		r.ID = toolRowID(callID)
-		pi := p.append(r)
+		pi := appendRow(p, r)
 		p.tools[callID] = pi
 		p.issue(PairingUnpairedResult, callID, p.rows[pi].Seq)
 		return
@@ -334,7 +334,7 @@ func (p *Projector) closeTool(ev eventbus.Event) {
 // 配不上时落成 PairingNoCallID 孤儿行——**不记 unpaired_result**：调用方未
 // 提供标识不等于「结果没有对应调用」（issue #306）。该行留在 anonResults 里，
 // 迟到的无 id 调用声明可以就地归并。
-func (p *Projector) closeAnonymousTool(ev eventbus.Event, tool string) {
+func closeAnonymousTool(p *Projector, ev eventbus.Event, tool string) {
 	for i, idx := range p.anonCalls {
 		if p.rows[idx].Status != StatusOpen {
 			continue
@@ -347,7 +347,7 @@ func (p *Projector) closeAnonymousTool(ev eventbus.Event, tool string) {
 		if row.Tool == "" && tool != "" {
 			// 调用事件没带工具名时用结果的补上（调用事件带了就以调用为准）。
 			row.Tool = tool
-			p.refreshSummary(idx)
+			refreshSummary(p, idx)
 		}
 		return
 	}
@@ -364,6 +364,6 @@ func (p *Projector) closeAnonymousTool(ev eventbus.Event, tool string) {
 		r.StepID = id
 	}
 	r.ID = seqID(KindToolResult, p.seq+1)
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	p.anonResults = append(p.anonResults, idx)
 }

@@ -326,6 +326,45 @@ func TestAnonymousResultBeforeCallMerges(t *testing.T) {
 	}
 }
 
+// TestPairingKeyIsGlobalCallID 配对身份是**全局 call_id**，不含 step（issue #336）：
+// 结果在另一个环节到达仍是同一次调用，不得判成 unpaired_result。
+func TestPairingKeyIsGlobalCallID(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		toolEv(eventbus.EventToolCall, 100, 7, "c1", "alpha_fn"),
+		toolEv(eventbus.EventToolResult, 300, 9, "c1", "alpha_fn"), // 不同环节
+	})
+	row := findTool(t, p.Rows(), "c1")
+	if row.Pairing != PairingPaired {
+		t.Fatalf("跨环节到达的结果应按同一 call_id 配对，实得 %q", row.Pairing)
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("跨环节不是缺口：%+v", p.Issues())
+	}
+}
+
+// TestDuplicateCallAcrossSteps 跨 step 重复声明（重试/改派）：一行 + duplicate_call
+// 缺口（第一次观测是真相）。watchdog 侧对同一事件流的结论见 watchdog 包用例
+// （TestWatchdogCrossStepDuplicateDeclaration）——两侧同词同判据（issue #336）。
+func TestDuplicateCallAcrossSteps(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		toolEv(eventbus.EventToolCall, 100, 7, "c1", "alpha_fn"),
+		toolEv(eventbus.EventToolCall, 150, 8, "c1", "alpha_fn"),
+		toolEv(eventbus.EventToolResult, 300, 8, "c1", "alpha_fn"),
+	})
+	rows := p.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("同一 call_id 只应有一行，得到 %d：%+v", len(rows), rows)
+	}
+	if rows[0].Pairing != PairingPaired {
+		t.Fatalf("重复声明不改变配对结论，实得 %q", rows[0].Pairing)
+	}
+	if !hasIssue(p.Issues(), PairingDuplicateCall, "c1") {
+		t.Fatalf("应有 duplicate_call 缺口：%+v", p.Issues())
+	}
+}
+
 // TestResultBeforeCallPairsInPlace 结果先到、调用后到：就地配对，不另起一行。
 func TestResultBeforeCallPairsInPlace(t *testing.T) {
 	p := NewProjector(Options{})

@@ -25,11 +25,11 @@ import (
 // 同一个逻辑动作的先后两段/侧面），跨 span join 时应聚到一起。
 
 // sideEffectPayload 从事件载荷取副作用行的公共字段（病态 fence 进 PayloadErrors）。
-func (p *Projector) sideEffectPayload(ev eventbus.Event) (key, resource, safety string, fence uint64) {
+func sideEffectPayload(p *Projector, ev eventbus.Event) (key, resource, safety string, fence uint64) {
 	key = payloadString(ev, "key")
 	resource = payloadString(ev, "resource")
 	safety = payloadString(ev, "retry_safety")
-	fence = p.payloadUint(ev, "fence")
+	fence = payloadUint(p, ev, "fence")
 	return
 }
 
@@ -39,7 +39,7 @@ func (p *Projector) sideEffectPayload(ev eventbus.Event) (key, resource, safety 
 // 事实（可能是缺口，也可能宿主没发布收口事件），改写或补收口都是伪造——
 // 旧行保持打开，Finalize 时作为未完成行显形。
 func openSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := p.sideEffectPayload(ev)
+	key, resource, safety, fence := sideEffectPayload(p, ev)
 	r := Row{
 		Kind:               KindSideEffect,
 		Turn:               p.currentTurn(),
@@ -60,7 +60,7 @@ func openSideEffect(p *Projector, ev eventbus.Event) {
 		r.HasStep = true
 		r.StepID = id
 	}
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	if key != "" {
 		p.grants[key] = idx
 	}
@@ -71,7 +71,7 @@ func openSideEffect(p *Projector, ev eventbus.Event) {
 // 没有打开中的授予段（授予发生在别的进程 / 宿主没发布授予事件）时落成孤儿行
 // （只有终点的行）——结论要显形，不能因为没有可收口的行就丢掉。
 func settleSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
-	key, resource, safety, fence := p.sideEffectPayload(ev)
+	key, resource, safety, fence := sideEffectPayload(p, ev)
 	if idx, ok := p.grants[key]; ok && key != "" {
 		delete(p.grants, key)
 		row := &p.rows[idx]
@@ -95,7 +95,7 @@ func settleSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
 // 两个动作出自同一事件：转未知既是「上次尝试的结论」也是「对账的开始理由」。
 // 没有可收口的授予段时只开对账段（授予段从未被观测到，不伪造它）。
 func uncertainSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := p.sideEffectPayload(ev)
+	key, resource, safety, fence := sideEffectPayload(p, ev)
 	if idx, ok := p.grants[key]; ok && key != "" {
 		delete(p.grants, key)
 		row := &p.rows[idx]
@@ -141,7 +141,7 @@ func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string
 		r.HasStep = true
 		r.StepID = id
 	}
-	idx := p.append(r)
+	idx := appendRow(p, r)
 	p.reconciles[key] = idx
 }
 
@@ -149,7 +149,7 @@ func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string
 //
 // 没有打开中的对账段时落成孤儿行（对账发生在别的进程 / 事件流只有尾部）。
 func resolveSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := p.sideEffectPayload(ev)
+	key, resource, safety, fence := sideEffectPayload(p, ev)
 	phase := SideEffectResolvedCleared
 	if payloadBool(ev, "applied") {
 		phase = SideEffectResolvedApplied
@@ -173,7 +173,7 @@ func resolveSideEffect(p *Projector, ev eventbus.Event) {
 // 「动作早已完成」「正被别人持有」都是**观测到的结论**，时刻记在 EndAt、
 // 起点留空：没有实测时长，Duration() 返回 ok=false——不拿 0 冒充。
 func pointSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
-	key, resource, safety, fence := p.sideEffectPayload(ev)
+	key, resource, safety, fence := sideEffectPayload(p, ev)
 	appendSideEffectOrphan(p, ev, key, resource, safety, fence, phase)
 }
 
@@ -199,14 +199,14 @@ func appendSideEffectOrphan(p *Projector, ev eventbus.Event, key, resource, safe
 		r.HasStep = true
 		r.StepID = id
 	}
-	p.append(r)
+	appendRow(p, r)
 }
 
 // checkpointCommitted 快照提交（点事件）：落成孤儿行——一次提交没有括号段，
 // 「提交耗时多久」从未被观测，不拿 0 冒充实测。
 func checkpointCommitted(p *Projector, ev eventbus.Event) {
 	runID := payloadString(ev, "run_id")
-	seq := p.payloadUint(ev, "seq")
+	seq := payloadUint(p, ev, "seq")
 	r := Row{
 		Kind:             KindCheckpoint,
 		Turn:             p.currentTurn(),
@@ -225,5 +225,5 @@ func checkpointCommitted(p *Projector, ev eventbus.Event) {
 		r.HasStep = true
 		r.StepID = id
 	}
-	p.append(r)
+	appendRow(p, r)
 }

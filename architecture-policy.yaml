@@ -181,7 +181,11 @@ modules:
       配对不变量监视，只告警不裁决。依赖 eventbus 是为了在检测到
       「声明未执行 / 执行未声明」时把异常广播出去——配对不变量违反了却无人知晓，
       等于没有监视。
-      INV1/INV2 是工具调用级配对（声明↔结果）；INV3（issue #171）是它的外层——
+      INV1/INV2 是工具调用级配对（声明↔结果）；配对键与 trajectory 同源
+      （eventbus.ToolCallID：全局 call_id，不含 step）——step 是归属信息而不是
+      配对键，结果可跨环节到达、同号声明可跨环节重试，按 step 分段会产出假红
+      （issue #336）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
+      不是每个 step_finished。INV3（issue #171）是它的外层——
       轮级括号配对：turn_started 开括号、turn_ended 闭合，闭合必须带归因
       （closed_by ∈ 宿主注册词表，缺省 loop|recovery|boot-reconcile|panic）与
       contract 终态词表内的 status；停机留开放=合法态（Run 退出不扫尾告警）、
@@ -1183,6 +1187,30 @@ rules:
       - text: 'os/exec'
         want: hit
       - text: 'os'
+        want: miss
+
+  # 规则：工具配对键只允许经 eventbus.ToolCallID 读取（issue #336）。
+  #
+  # 失效形态是**两处各自构造配对键**：watchdog 用 session|step|call_id、
+  # trajectory 用全局 call_id，同一份事件流于是得出相反结论（一侧报「结果
+  # 无对应声明」、另一侧判「已配对」），而两边都不会报错。判据面只认唯一的
+  # 构造函数——配对键是事件载荷契约的一部分，契约的读取点必须单源。
+  #
+  # 判定面是源码文本里的**载荷索引**（`Payload["call_id"]`），不是 map 字面量
+  # （测试夹具构造事件载荷用 `"call_id": x`，不受影响）。eventbus 是构造函数
+  # 的宿主，豁免；其余包（含生产与测试代码）一律不得直接索引。
+  - id: tool-pairing-key-single-source
+    desc: 工具配对键（call_id）只允许经 eventbus.ToolCallID 读取（两处各写一份 ⇒ 同一事件流两个相反结论）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    scope_exclude: [eventbus]
+    forbid_regex: 'Payload\s*\[\s*"call_id"\s*\]'
+    examples:
+      - text: 'callID, _ := ev.Payload["call_id"].(string)'
+        want: hit
+      - text: 'callID := eventbus.ToolCallID(ev)'
         want: miss
 
 

@@ -44,7 +44,7 @@ func (p *Projector) PayloadErrors() []PayloadError {
 //
 // 病态值（负值 / 非整数 / NaN / ±Inf / 超出 uint64）在调用方已持锁的投影
 // 路径上执行，故登记错误面无需再加锁（issue #305）。
-func (p *Projector) payloadUint(ev eventbus.Event, key string) uint64 {
+func payloadUint(p *Projector, ev eventbus.Event, key string) uint64 {
 	v, reason := uintFromPayload(ev.Payload, key)
 	if reason != "" {
 		p.payloadErrors = append(p.payloadErrors, PayloadError{Key: key, Reason: reason})
