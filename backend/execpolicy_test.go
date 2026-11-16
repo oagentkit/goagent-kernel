@@ -1,7 +1,6 @@
 package backend
 
 import (
-	"runtime"
 	"testing"
 	"time"
 
@@ -60,31 +59,35 @@ func TestJudgeExecRejectsFloatingTag(t *testing.T) {
 	}
 }
 
-// TestJudgeExecRejectsControlSocketMount 控制面 socket 即使写进白名单也拒。
+// TestJudgeExecRejectsControlSurface 控制面 socket / 命名管道即使写进白名单也拒。
 //
-// # 平台语义（实测踩到，写下来免得下次当 flake 重跑）
+// # 为什么这条不再按平台分支
 //
-// 上游 Judge 先用 filepath.Clean 规范化挂载源、再与 controlSockets 清单比对，
-// 而那份清单是 unix 路径族。Windows 上 Clean 会把这类路径改成反斜杠形态，
-// 于是不命中清单——而该路径族在 Windows 上本就不存在（Docker Desktop 走
-// 命名管道），所以这是判据的适用域，不是漏判。
+// 上游 v0.27.0 的判定用 filepath.Clean + unix 字面量清单：Windows 上 Clean
+// 把 unix 路径转成反斜杠形态 ⇒ 清单一条都不命中，判据在该平台**整体空转**
+// （本仓 CI 的 windows job 先红过，报「控制面 socket 必须被拒…实得 nil」）。
+// 该缺陷已报 oagentkit/guardx#198，上游以「两侧 foldSlash 归一 + 清单补
+// Windows 命名管道族」修复（#199）：归一后清单匹配与平台无关。
 //
-// 故本条在 unix 断言「控制面 socket 被拒」；Windows 侧改断言「白名单外的
-// 挂载同样被拒」——保证这条判据在两个平台上都真的在判，而不是各自空转。
-func TestJudgeExecRejectsControlSocketMount(t *testing.T) {
-	source, allowed := "/var/run/docker.sock", "/var/run/docker.sock"
-	if runtime.GOOS == "windows" {
-		// 用同一路径族（两侧都过同一个 Clean），判据仍必须拒绝。
-		source, allowed = "/data/in", "/data/other"
+// 用 runtime.GOOS 分支会让「判据在该平台没生效」重新变成不可见——那正是这个
+// 缺陷藏过一整版的原因（上游 execpolicy_test 当时也没有平台形态用例）。
+// 故三种形态（unix / Windows Clean 形态 / 命名管道）在两个平台上都必须被拒。
+func TestJudgeExecRejectsControlSurface(t *testing.T) {
+	cases := []struct{ why, source string }{
+		{"unix socket", "/var/run/docker.sock"},
+		{"Windows Clean 形态（反斜杠）", `\var\run\docker.sock`},
+		{"Windows 命名管道", `\\.\pipe\docker_engine`},
 	}
-	j := Job{
-		Image:  digestImage,
-		Mounts: []Mount{{Source: source, Target: "/sock", ReadOnly: true}},
-	}
-	// 白名单**故意包含**控制面 socket：判定面必须比配置更严（上游取向）。
-	policy := sandbox.ExecPolicy{MountSourceAllow: []string{allowed}}
-	if err := j.JudgeExec(policy); !errors.Is(err, sandbox.ErrMountSourceNotAllowed) {
-		t.Fatalf("控制面 socket / 白名单外挂载必须被拒（挂上控制面等于把容器控制面交出去），实得 %v", err)
+	for _, c := range cases {
+		j := Job{
+			Image:  digestImage,
+			Mounts: []Mount{{Source: c.source, Target: "/sock", ReadOnly: true}},
+		}
+		// 白名单**故意包含**它：判定面必须比配置更严（上游 controlSockets 取向）。
+		policy := sandbox.ExecPolicy{MountSourceAllow: []string{c.source}}
+		if err := j.JudgeExec(policy); !errors.Is(err, sandbox.ErrMountSourceNotAllowed) {
+			t.Fatalf("%s：控制面挂载必须被拒（挂上它等于把容器控制面交出去），实得 %v", c.why, err)
+		}
 	}
 }
 
