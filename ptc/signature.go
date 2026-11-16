@@ -24,8 +24,10 @@ package ptc
 
 import (
 	"strings"
+	"time"
 
 	"github.com/dop251/goja"
+	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
 	"github.com/yi-nology/goagent-kernel/toolname"
@@ -178,11 +180,27 @@ const discoverGlobalName = "discover"
 
 // mountDiscover 挂程序内工具发现入口。未装配 Discoverer 时**不挂**：
 // 挂一个永远返回空数组的空壳，会让模型以为「没有别的工具了」而放弃检索。
-func mountDiscover(vm *goja.Runtime, d Discoverer) error {
+//
+// # 三预算闸必须盖住发现入口（issue #200）
+//
+// 发现结果同样是**宿主数据进入程序**：signature / description 字符串会被
+// 物化进 VM，循环调 discover 就能把任意量宿主数据搬进沙箱。此前本入口是
+// 唯一不经记账的路径——既不触发 MaxCalls 也不触发 MaxBytes，只有墙钟能停，
+// 于是 binding.go 声明的「三预算闸在包装层」在这条路径上是假的。
+//
+// 口径与 host.<tool> 逐条同款：调用前检查调用数（超限即中断，不记账这次），
+// 调用后按**物化载荷**的字节数记账（含错误路径都没有错误分支可言——发现器
+// 没有 error 返回），超字节即中断收口。
+func mountDiscover(vm *goja.Runtime, d Discoverer, res *Result, maxCalls, maxBytes int) error {
 	if d == nil {
 		return nil
 	}
 	return vm.Set(discoverGlobalName, func(call goja.FunctionCall) goja.Value {
+		if res.Calls >= maxCalls {
+			vm.Interrupt(errBudgetCall)
+			return goja.Undefined()
+		}
+		start := time.Now()
 		q, _ := argString(call.Argument(0))
 		found := d(q)
 		// 转成 map 再交出去：goja 未配置 FieldNameMapper 时按**字段原名**暴露
@@ -198,6 +216,33 @@ func mountDiscover(vm *goja.Runtime, d Discoverer) error {
 			}
 			return m
 		})
-		return vm.ToValue(out)
+		payload := vm.ToValue(out)
+		// 记账口径取**物化载荷**（JSON 文本字节数）：这是程序实际能拿到的
+		// 宿主数据量，与 host.<tool> 记 len(out) 同量纲。
+		size := discoverPayloadBytes(out)
+		res.Calls++
+		res.Bytes += size
+		res.CallLog = append(res.CallLog, CallRecord{
+			Name: discoverGlobalName, Status: StatusOK,
+			Bytes: size, MS: time.Since(start).Milliseconds(),
+		})
+		// 字节闸盖住返回路径：超大发现结果不得先交给程序再中断。
+		if res.Bytes > maxBytes {
+			vm.Interrupt(errBudgetByte)
+			return goja.Undefined()
+		}
+		return payload
 	})
+}
+
+// discoverPayloadBytes 发现结果物化进 VM 的字节量。
+//
+// JSON 文本是本包对「宿主数据量」的既有量纲（host.<tool> 记的就是输出原文
+// 长度），map 键序由 encoding/json 排序，故同一结果量出的值稳定可断言。
+func discoverPayloadBytes(out []map[string]any) int {
+	s, err := encoding.MarshalToString(out)
+	if err != nil {
+		return 0 // map[string]any 只含字符串与切片，理论不可达
+	}
+	return len(s)
 }

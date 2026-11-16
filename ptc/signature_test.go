@@ -216,18 +216,26 @@ func TestDiscoverReceivesQueryUnified(t *testing.T) {
 	}
 }
 
-// TestDiscoverNotCountedAsToolCall 发现不计入工具调用预算。
+// TestDiscoverCountedAsToolCall 发现**计入**调用预算（issue #200 口径反转）。
 //
-// 它是本地目录检索，不触达宿主工具；计入预算等于让模型「查一次工具表」也要交税，
-// 那会让它在预算紧张时不敢检索——而检索正是它省调用的手段。
-func TestDiscoverNotCountedAsToolCall(t *testing.T) {
+// 旧注释曾把 discover 当成「本地目录检索、不触达宿主工具」，故不计量。但发现
+// 结果同样是宿主数据进入程序：signature / description 会被物化进 VM，循环
+// discover 就能把任意量宿主数据搬进沙箱。不计账时它是三预算闸的唯一缺口
+// （既不吃 MaxCalls 也不吃 MaxBytes，只有墙钟能停），见 discover_budget_test.go。
+func TestDiscoverCountedAsToolCall(t *testing.T) {
 	opts := Options{
 		MaxCalls: 1,
 		Discover: func(string) []Discovered { return nil },
 	}
 	const prog = `for (let i=0;i<50;i++) discover("x"); return 1`
 	r := Run(context.Background(), prog, nil, opts)
-	if !r.OK {
-		t.Fatalf("发现不应消耗调用预算，实得 %q / %q", r.ErrorKind, r.Error)
+	if r.OK {
+		t.Fatalf("发现必须消耗调用预算（MaxCalls=1 时第二次应中断），实得 OK=true value=%s", r.Value)
+	}
+	if r.ErrorKind != "budget_calls" {
+		t.Fatalf("应以 budget_calls 收口，实得 %q / %q", r.ErrorKind, r.Error)
+	}
+	if r.Calls != 1 {
+		t.Fatalf("首次 discover 应计 1 次，实得 %d", r.Calls)
 	}
 }
