@@ -2510,6 +2510,51 @@ tenant_gate:
 
 ---
 
+### 4.8 多租户隔离的落点（issue #195）
+
+内核不实现租户体系，但也不再把「数据面」整个推给宿主——任务板这一面已有
+**可判定的落点**，其余面仍归宿主。边界写死在这里，不留实现自由。
+
+**已进存储键与领取条件（内核）**
+
+- `taskboard.Task.Tenant`：任务身份是 `(Tenant, ID)`；空租户 = 默认/单租户
+  命名空间（旧布局逐字不变）。
+- `coord.NewTenantBoardAdapter`：键由 **ctx 里的租户作用域**生成
+  （`coord/t/<escaped-tenant>/task/<id>`），`List/Claim/Release/Complete/Renew`
+  全部按租户过滤；他租户任务在 List 不可见、在写路径一律
+  `taskboard.ErrNotFound`（不可见 = 不存在）；缺租户/空租户一律
+  `tenant.ErrNoContext`（fail-closed，与写路径现有判据同口径）。
+- `taskboard.Check`：混合租户快照按 `(Tenant, ID)` 判重，依赖只在同租户内
+  解析（跨租户依赖按不存在处理）。
+- `boardtest.RunTenant`：租户契约套件——跨租户不可见/不可领（含并发）、
+  同 id 不同租户互不覆盖、跨租户令牌不能收场、缺租户 fail-closed。
+
+**接线（宿主）**
+
+```go
+board, err := coord.NewTenantBoardAdapter(backend) // 不是 NewBoardAdapter
+if !board.TenantScoped() { /* 启动自检：多租户部署拿错适配器 */ }
+// 请求入口把租户注入 ctx；worker/Board 调用原样透传（WithoutCancel 保留值）：
+ctx = tenant.WithContext(ctx, tenant.Context{Tenant: tenantID})
+```
+
+单租户部署保持 `NewBoardAdapter`：键布局、任务记录 JSON、行为逐字不变。
+**隔离必须显式装配**——单租户适配器不解释 ctx 里的租户上下文，注入租户
+不会静默变成隔离，也不会报错；多租户部署用 `TenantScoped()` 做启动断言。
+
+**仍归宿主（内核不提供、也不假装提供）**
+
+- 副作用幂等键（`sideeffect` 的 Key 由宿主组装：必须把租户纳入身份，
+  否则 A 租户的副作用会让 B 租户被判「已施加」）；
+- 事件流（`eventbus.Event` 没有租户字段，Hub 不按租户过滤：共享 Hub 时
+  由宿主在载荷/订阅侧自筛，或每租户一个 Hub）；
+- 运行留痕/审计/轨迹（`trajectory`、`controlplane.AuditEntry`）的租户归属；
+- 数据库行级隔离（RLS / 唯一约束 / 连接级租户变量）；
+- 自定义 `taskboard.Board` 实现：不接 `boardtest.RunTenant` 不算声明支持
+  租户隔离。
+
+---
+
 ## 5. 本地多仓并行开发
 
 本仓处在 `oagentkit` / `oekit` 矩阵里，改本仓时经常要同时改上游仓。
