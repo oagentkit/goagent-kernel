@@ -2,10 +2,11 @@ package commitgate
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // 本文件是 CtxStore 接缝（issue #185）的判据：
@@ -104,7 +105,9 @@ func TestCtx逐层透传到存储(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AcquireContext: %v", err)
 	}
-	g.SeedContext(mark, Commit{Ref: Ref{RunID: "r1", Step: "s0"}, Status: "done", Branch: "a"})
+	if err := g.SeedContext(mark, Commit{Ref: Ref{RunID: "r1", Step: "s0"}, Status: "done", Branch: "a"}); err != nil {
+		t.Fatalf("SeedContext: %v", err)
+	}
 	_, _, _ = g.StatusContext(mark, Ref{RunID: "r1", Step: "s1"})
 	_, _ = g.CommittedContext(mark)
 	g.ReleaseLeaseContext(mark, lease)

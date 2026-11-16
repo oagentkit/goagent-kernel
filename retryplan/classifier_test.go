@@ -1,11 +1,11 @@
 package retryplan
 
 import (
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/oagentkit/guardx/toolfail"
+	"github.com/oekit/pkg/errors"
 )
 
 // 本文件是 Classifier 注入接缝（issue #240）的判据：
