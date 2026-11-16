@@ -9,23 +9,83 @@ package protocol
 //（历史存量报告已落库不可再生，展示面仍需兜底）；纯渲染修饰（专家分段/标题降级/
 // Setext 中和）属展示语义，不在本函数重复。
 //
-// 骨架标记词表与组装侧（scheduler/dialogue.go、dispatch.go、intent.go）及前端
-// web/src/utils/reportSanitize.ts 同源——新增骨架标记时三处同步。
+// 骨架标记词表**单一来源**是同目录的 scaffold_markers.json（机器可读，宿主组装侧
+// 与前端净化器直接消费）；本文件嵌入该清单并用 ScaffoldMarkers() 导出副本，
+// 不再维持三处手抄——新增标记只改清单，净化判据与导出自动跟随（issue #285）。
 
 import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-// scaffoldMarkers 跨轮/调度脚手架段标识（与前端 SCAFFOLD_MARKERS 同表）。
-var scaffoldMarkers = []string{
-	"【历史对话】",
-	"【上一轮系统结论】",
-	"【本轮用户输入】",
-	"【症状标准化】",
-	"【调度上下文】",
-	"【此前诊断摘要】",
-	"【更早结论】",
+// scaffoldMarkersJSON 机器可读的脚手架标记清单：**词表的唯一来源**。
+//
+// 宿主组装侧与前端无法 import 本包的 Go 变量，故词表不能只活成包内私有 var——
+// 那样三处手抄，新增标记时没有任何判据会红（issue #285）。清单文件同时被本包
+// 嵌入（净化面直接消费）与导出（ScaffoldMarkers）⇒ 「新增标记只改一处」。
+//
+//go:embed scaffold_markers.json
+var scaffoldMarkersJSON []byte
+
+// ScaffoldMarkers 返回脚手架标记词表的副本（升序不保证：沿用清单顺序）。
+//
+// 宿主（组装 prompt 的调度侧）与前端净化器应从这里/清单文件取词表，不要手抄：
+// 词表与净化判据是同一份，新增标记只改 scaffold_markers.json。
+func ScaffoldMarkers() []string { return slices.Clone(scaffoldMarkers) }
+
+// scaffoldMarkers 净化面使用的词表，由嵌入清单解析而来。
+var scaffoldMarkers = mustScaffoldMarkers(scaffoldMarkersJSON)
+
+// mustScaffoldMarkers 解析并校验嵌入清单。清单是编译期常量：坏清单属于构建缺陷，
+// 在包初始化时大声失败，而不是让净化面静默退化成空词表。
+func mustScaffoldMarkers(raw []byte) []string {
+	var markers []string
+	if err := json.Unmarshal(raw, &markers); err != nil {
+		panic(fmt.Sprintf("protocol: 脚手架标记清单非法: %v", err))
+	}
+	if len(markers) == 0 {
+		panic("protocol: 脚手架标记清单为空")
+	}
+	seen := make(map[string]struct{}, len(markers))
+	for _, m := range markers {
+		if strings.TrimSpace(m) == "" {
+			panic("protocol: 脚手架标记清单含空串")
+		}
+		if _, dup := seen[m]; dup {
+			panic(fmt.Sprintf("protocol: 脚手架标记 %q 重复", m))
+		}
+		seen[m] = struct{}{}
+	}
+	return markers
+}
+
+// scaffoldFastRunes 标记首字符去重集合：净化入口的快路径判据由词表派生，
+// 不再手写 "【"（新增一个不以 【 开头的标记时，快路径也要自动覆盖到）。
+var scaffoldFastRunes = func() []rune {
+	seen := map[rune]struct{}{}
+	var out []rune
+	for _, m := range scaffoldMarkers {
+		r := []rune(m)[0]
+		if _, ok := seen[r]; !ok {
+			seen[r] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	return out
+}()
+
+// mayContainScaffold 文本是否可能含任一骨架标记（快路径，宁多勿漏）。
+func mayContainScaffold(s string) bool {
+	for _, r := range scaffoldFastRunes {
+		if strings.ContainsRune(s, r) {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -69,7 +129,7 @@ func firstScaffoldMarker(s string) (int, int) {
 // sanitizeScaffoldText 单字段净化：reminder 块剔除 → 骨架段按空行分段剔除 →
 // 同段混排标记截断 → 残留空行收敛。无脚手架快路径零开销。
 func sanitizeScaffoldText(s string) string {
-	if s == "" || (!strings.Contains(s, "<system-reminder") && !strings.Contains(s, "【")) {
+	if s == "" || (!strings.Contains(s, "<system-reminder") && !mayContainScaffold(s)) {
 		return s
 	}
 	out := reminderBlockRe.ReplaceAllString(s, "")
