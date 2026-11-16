@@ -12,6 +12,7 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // memBoard 一份最小的内存实现（仅供套件自证；生产实现归宿主）。
@@ -236,5 +237,141 @@ func TestJudgeCatchesNonAtomicBoard(t *testing.T) {
 	}
 	if winners == 1 {
 		t.Fatalf("不原子的实现也判成 1 个赢家：判据没有测到争用（winners=%d）", winners)
+	}
+}
+
+// tenantMemBoard 租户作用域的内存正例：每个租户一份独立 memBoard。
+// 它就是「键空间按租户分区」的最小实现——用来证明租户套件可被正确实现跑绿。
+type tenantMemBoard struct {
+	mu     sync.Mutex
+	boards map[string]*memBoard
+	now    func() time.Time
+}
+
+func newTenantMemBoard(_ *testing.T, _ *FakeClock) ClockedBoard {
+	return &tenantMemBoard{boards: map[string]*memBoard{}}
+}
+
+// UseClock 注入时钟（新租户子板沿用当前注入值）。
+func (b *tenantMemBoard) UseClock(now func() time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.now = now
+	for _, mb := range b.boards {
+		mb.UseClock(now)
+	}
+}
+
+// boardLocked 取（或建）租户子板。持 b.mu 调用。
+func (b *tenantMemBoard) boardLocked(tenantID string) *memBoard {
+	mb, ok := b.boards[tenantID]
+	if !ok {
+		mb = rawMemBoard()
+		if b.now != nil {
+			mb.UseClock(b.now)
+		}
+		b.boards[tenantID] = mb
+	}
+	return mb
+}
+
+// scoped 从 ctx 取租户（缺租户 fail-closed）。
+func (b *tenantMemBoard) scoped(ctx context.Context) (*memBoard, error) {
+	c, err := tenant.Require(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.boardLocked(c.Tenant), nil
+}
+
+// Seed 按任务自带的租户落键（套件接缝）。
+func (b *tenantMemBoard) Seed(tasks ...taskboard.Task) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, tk := range tasks {
+		if tk.Tenant == "" {
+			panic("boardtest: 租户实现不得摆入空租户任务")
+		}
+		b.boardLocked(tk.Tenant).Seed(tk)
+	}
+}
+
+func (b *tenantMemBoard) List(ctx context.Context) ([]taskboard.Task, error) {
+	mb, err := b.scoped(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return mb.List(ctx)
+}
+
+func (b *tenantMemBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	mb, err := b.scoped(ctx)
+	if err != nil {
+		return taskboard.Task{}, err
+	}
+	return mb.Claim(ctx, id, agent, req)
+}
+
+func (b *tenantMemBoard) Release(ctx context.Context, id taskboard.TaskID, token string) error {
+	mb, err := b.scoped(ctx)
+	if err != nil {
+		return err
+	}
+	return mb.Release(ctx, id, token)
+}
+
+func (b *tenantMemBoard) Complete(ctx context.Context, id taskboard.TaskID, token string) error {
+	mb, err := b.scoped(ctx)
+	if err != nil {
+		return err
+	}
+	return mb.Complete(ctx, id, token)
+}
+
+func (b *tenantMemBoard) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	mb, err := b.scoped(ctx)
+	if err != nil {
+		return taskboard.Task{}, err
+	}
+	return mb.Renew(ctx, id, token, req)
+}
+
+// tenantLeakBoard 忽略租户的**变异实现**：所有租户共用一份按 id 索引的板。
+// 这正是「租户没进键与领取条件」的形态——套件必须抓住它。
+type tenantLeakBoard struct {
+	*memBoard
+}
+
+func newTenantLeakBoard(_ *testing.T, _ *FakeClock) ClockedBoard {
+	return &tenantLeakBoard{memBoard: rawMemBoard()}
+}
+
+// TestTenantConformanceOnMemoryBoard 租户套件在正确实现上必须全绿。
+func TestTenantConformanceOnMemoryBoard(t *testing.T) {
+	RunTenant(t, newTenantMemBoard)
+}
+
+// TestTenantSuiteCatchesLeak 租户套件的牙齿：忽略租户的实现必红。
+func TestTenantSuiteCatchesLeak(t *testing.T) {
+	ctxA, ctxB := tenantCtx("tenant-a"), tenantCtx("tenant-b")
+	cases := []struct {
+		name string
+		run  func(b taskboard.Board) error
+	}{
+		{"跨租户不可见", func(b taskboard.Board) error { return checkTenantInvisible(ctxA, ctxB, b) }},
+		{"同 id 互不覆盖", func(b taskboard.Board) error { return checkTenantSameIDCoexists(ctxA, ctxB, b) }},
+		{"跨租户并发认领", func(b taskboard.Board) error { return checkTenantConcurrentClaims(ctxA, ctxB, b) }},
+		{"跨租户令牌", func(b taskboard.Board) error { return checkTenantTokenConfined(ctxA, ctxB, b) }},
+		{"缺租户 fail-closed", func(b taskboard.Board) error { return checkTenantMissingFailClosed(ctxA, b) }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, _ := newTenantBoard(t, newTenantLeakBoard)
+			if err := c.run(b); err == nil {
+				t.Fatalf("忽略租户的实现也通过了「%s」：判据没有牙齿", c.name)
+			}
+		})
 	}
 }

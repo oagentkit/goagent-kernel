@@ -51,9 +51,9 @@ type Check string
 const (
 	// CheckClosure 收口完整：不存在「开了没收口」的行（open）。
 	//
-	// 孤儿行（只有终点、没有起点）单独看：checkpoint 点行**本来就是孤儿
-	// （设计事实——点事件没有括号段）**，不在此判项内；其余类目的孤儿行
-	// 意味着起点缺失，照判。
+	// 孤儿行（只有终点、没有起点）单独看：点行**本来就是孤儿（设计事实——
+	// 点事件没有括号段）**，不在此判项内——checkpoint 提交与副作用点观察
+	// （replayed / contended）同属这一类；其余类目的孤儿行意味着起点缺失，照判。
 	CheckClosure Check = "closure"
 	// CheckPairing 配对完整：工具调用行全部配对（无 missing_result /
 	// unpaired_result / duplicate_result / duplicate_call）。
@@ -111,9 +111,9 @@ type Verdict struct {
 //
 // 判据口径：
 //
-//   - closure：Status=open 的行即违规；非 checkpoint 类目的 orphan 行
-//     （起点缺失）同样违规——checkpoint 点行的孤儿形态是投影的设计事实，
-//     不判；
+//   - closure：Status=open 的行即违规；非点行的 orphan 行（起点缺失）同样
+//     违规——checkpoint 提交与副作用点观察（replayed / contended）的孤儿
+//     形态是投影的设计事实，不判（把后者判违规就是「健康轨迹假红」）；
 //   - pairing：工具行（tool_call / tool_result）的 Pairing 不为
 //     paired / none 即违规；
 //   - no_duplicates：DupResults > 0 或 Pairing 为 duplicate_* 即违规；
@@ -157,7 +157,7 @@ func Assess(spec Spec, rows []trajectory.Row) (Verdict, error) {
 			switch {
 			case r.Status == trajectory.StatusOpen:
 				add(CheckClosure, r.ID, "行开了没收口（缺结束事件）")
-			case r.Status == trajectory.StatusOrphan && r.Kind != trajectory.KindCheckpoint:
+			case r.Status == trajectory.StatusOrphan && !pointRow(r):
 				add(CheckClosure, r.ID, "行只有终点没有起点（起点缺失）")
 			}
 		}
@@ -194,4 +194,18 @@ func Assess(spec Spec, rows []trajectory.Row) (Verdict, error) {
 		return cmp.Or(cmp.Compare(a.Check, b.Check), cmp.Compare(a.RowID, b.RowID))
 	})
 	return Verdict{Pass: len(findings) == 0, Judged: len(spec.Checks), Findings: findings}, nil
+}
+
+// pointRow 点行：点事件**没有括号段**，落成孤儿行是投影的设计事实，
+// 不是「起点缺失」。豁免白名单只含这一类——turn / step / tool 的孤儿行
+// 是真缺口，不在此列。
+func pointRow(r trajectory.Row) bool {
+	switch r.Kind {
+	case trajectory.KindCheckpoint:
+		return true
+	case trajectory.KindSideEffect:
+		return r.SideEffectPhase == trajectory.SideEffectReplayed ||
+			r.SideEffectPhase == trajectory.SideEffectContended
+	}
+	return false
 }

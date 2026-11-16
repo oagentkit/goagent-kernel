@@ -45,6 +45,32 @@
 //     这是适配器的通用收尾：判（快照）与写（事务）之间有窗口，冲突就重来。
 //     Redis 有 Lua 时整个判定可推进脚本里、免循环；etcd/PG 保留循环即可。
 //
+// # 租户键布局与领取条件（issue #195）
+//
+// 键只由适配器按作用域生成，调用方不拼租户：
+//
+//   - **单租户**（NewBoardAdapter，旧布局，逐字不变）：
+//     coord/task/<id>、coord/taskfence/<id>；
+//   - **租户作用域**（NewTenantBoardAdapter）：
+//     coord/t/<escaped-tenant>/task/<id>、coord/t/<escaped-tenant>/taskfence/<id>。
+//
+// 为什么租户布局另起 coord/t/ 根，而不是 coord/task/<tenant>/<id>：旧布局
+// 的任务 id 是任意字符串（可以含 '/'），后者会与「旧布局里 id 恰好是
+// <tenant>/<id> 的任务」撞键。键的唯一性与旧布局的逐字不变**只能同时成立**
+// 当租户段有自己的根。租户段做转义（非 [A-Za-z0-9_-] 的字节一律 %XX），
+// id 仍是该租户根下的不透明后缀——调用方把租户拼进 id 只会得到另一条 id，
+// 不会改变作用域。
+//
+// 租户作用域适配器从 tenant.Context（ctx 通道）取租户：缺租户/空租户一律
+// tenant.ErrNoContext（与写路径同一道 fail-closed 闸）；他租户任务在 List
+// 里不可见、在 Claim/Release/Complete/Renew 上一律 taskboard.ErrNotFound
+// （不可见 = 不存在，不泄露存在性）。Seed 按 Task.Tenant 落键（套件接缝；
+// 生产创建语义归宿主）。
+//
+// **边界**：本包只让任务板的键与领取条件可判定。副作用幂等键、事件流、
+// 运行留痕/审计、数据库 RLS 仍归宿主——多租户宿主必须自己在那些面把租户
+// 纳入身份/过滤条件（见 tenant 包「数据面落点」）。
+//
 // # 各后端的原子性边界（能保证什么、不能保证什么）
 //
 //   - **Redis**：单 Lua 脚本内的多键读写在脚本执行期间原子（单线程模型）；

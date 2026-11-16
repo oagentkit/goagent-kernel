@@ -54,17 +54,35 @@
 // 接管代次 @@Fence@@ 与令牌**同源**（同一次认领的同一原子操作铸造），
 // 同一任务上严格递增；旧持有者迟到的提交凭「令牌不匹配 ⇒ @@ErrLeaseLost@@」
 // 必然被拒，且不波及新持有者。
+//
+// # 多租户（issue #195）
+//
+// 任务身份是 @@(Tenant, ID)@@：同一 ID 在不同租户下是两条互不相干的任务。
+// @@Task.Tenant@@ 是开放键（内核不解释语义）；**空租户 = 默认/单租户命名
+// 空间**，此时身份退化为 ID，旧行为逐字不变。
+//
+// 支持租户的实现必须同时满足以下条款（单租户实现保持空租户即可，不受影响）：
+//
+//   - **键由实现按租户作用域生成**，调用方不把租户拼进 TaskID——调用方
+//     自由拼键时，租户段与 id 段的分界就成了第二个约定，撞键是必然；
+//   - 租户上下文经 ctx 传递（见 tenant 包的传递契约）——它仍是机制间的
+//     唯一通道：不另设全局变量、不把租户挂到 Board 结构体上；
+//   - 作用域内 @@List@@ 不含他租户任务；@@Claim@@ / @@Release@@ /
+//     @@Complete@@ / @@Renew@@ 对他租户任务一律 @@ErrNotFound@@（不可见 =
+//     不存在，不泄露存在性）——跨租户领取与收场必须被拒；
+//   - 实现声明「本板必须带租户上下文」时，缺租户 fail-closed
+//     （@@tenant.ErrNoContext@@），与写路径入口同一口径；空租户与缺租户
+//     不是一回事：前者是默认命名空间，后者是拒绝。
+//
+// @@Check@@ 接受混合租户快照：按 (Tenant, ID) 判重，依赖只在同租户内解析
+// （跨租户依赖按不存在处理——租户之间本来就不可见）。详见 check.go。
 package taskboard
 
 import (
-	"cmp"
 	"context"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/oekit/pkg/errors"
-	"github.com/oekit/pkg/slicex"
 )
 
 // TaskID 子任务标识。
@@ -155,7 +173,13 @@ type ClaimRequest struct {
 
 // Task 一个子任务（值类型，可安全复制与比较）。
 type Task struct {
-	// ID 任务标识（全局唯一）。
+	// Tenant 租户标识（开放键：内核不解释语义，只把非空值当作作用域）。
+	//
+	// 任务身份是 (Tenant, ID)：同一 ID 在不同租户下是两条互不相干的任务。
+	// 空值 = 默认/单租户命名空间（旧行为：身份退化为 ID，存储键布局不变）。
+	// 租户段的键由实现生成，调用方**不要**把租户拼进 ID（见包文档「多租户」）。
+	Tenant string `json:",omitempty"`
+	// ID 任务标识（在租户作用域内唯一）。
 	ID TaskID
 	// Title 展示用标题。
 	Title string
@@ -179,6 +203,11 @@ type Task struct {
 //   - @@Release@@ / @@Complete@@ **只认 token**，且 token 不匹配时报
 //     @@ErrLeaseLost@@（不许静默成功——静默成功会让输家以为自己的释放生效了）；
 //   - @@List@@ 返回**一致快照**（不是边改边读的流）。
+//
+// 支持多租户的实现还必须满足租户条款（见包文档「多租户」）：键按 ctx 的
+// 租户作用域生成；他租户任务不可见、不可领、不可收场（一律 ErrNotFound）；
+// 声明「必须带租户」时缺租户 fail-closed（tenant.ErrNoContext）。空租户与
+// 缺租户不是一回事：前者是默认命名空间（旧布局），后者是拒绝。
 type Board interface {
 	// List 返回当前全部任务的快照（顺序不要求，判据会排序）。
 	List(ctx context.Context) ([]Task, error)
@@ -216,165 +245,12 @@ var (
 
 // Problem 一条快照不变量违反。
 type Problem struct {
+	// Tenant 相关任务的租户（空 = 默认/单租户命名空间）。
+	Tenant string `json:",omitempty"`
 	// Task 相关任务 id。
 	Task TaskID
 	// Code 机器可判的类别（宿主按它分流与留痕）。
 	Code string
 	// Text 人读的说明。
 	Text string
-}
-
-// 不变量类别。
-const (
-	CodeEmptyID         = "empty_id"
-	CodeDuplicateID     = "duplicate_id"
-	CodeUnknownState    = "unknown_state"
-	CodeUnknownDep      = "unknown_dep"
-	CodeSelfDep         = "self_dep"
-	CodeCycle           = "dep_cycle"
-	CodeClaimedNoLease  = "claimed_without_lease"
-	CodeLeaseNoClaim    = "lease_without_claim"
-	CodeBlockedClaim    = "blocked_claim"
-	CodeTerminalClaimed = "terminal_claimed"
-)
-
-// Check 判一份快照的**不变量**，按 (Task, Code) 排序返回（确定性）。
-//
-// 这是宿主随时能跑的「体检」：不必等出问题，配置加载、每个调度周期都可以跑；
-// 它判的是**状态自身是否自相矛盾**，不判「策略对不对」。
-func Check(tasks []Task) []Problem {
-	var out []Problem
-	byID := make(map[TaskID]Task, len(tasks))
-	dup := map[TaskID]bool{}
-
-	for _, t := range tasks {
-		if t.ID == "" {
-			out = append(out, Problem{Code: CodeEmptyID, Text: "任务没有 id：既无法被依赖引用，也无法被认领定位"})
-			continue
-		}
-		if _, ok := byID[t.ID]; ok {
-			dup[t.ID] = true
-			continue
-		}
-		byID[t.ID] = t
-	}
-	for id := range dup {
-		out = append(out, Problem{Task: id, Code: CodeDuplicateID, Text: "任务 id 重复：依赖引用会指到「其中一个」，而判定方无从知道是哪个"})
-	}
-
-	for _, t := range byID {
-		if !t.State.valid() {
-			out = append(out, Problem{Task: t.ID, Code: CodeUnknownState,
-				Text: "状态不在词表内（open / claimed / done / failed）"})
-		}
-		// 认领态与租约必须**同时**成立：只有 owner 没有 token 时，
-		// 释放与完成都无从验证（凭内容认人的洞又回来了）。
-		if t.State == StateClaimed {
-			if t.Owner == "" || t.Lease.Token == "" {
-				out = append(out, Problem{Task: t.ID, Code: CodeClaimedNoLease,
-					Text: "已认领但没有 owner 或租约令牌：释放与完成都无从验证"})
-			}
-		} else if t.Owner != "" || !t.Lease.IsZero() {
-			// 非认领态残留 owner 或租约任何一列（token/代次/到期时刻）：
-			// 宿主会照着它以为「还有人负责」。Until 也要查（issue #220）——
-			// 只清 Token/Owner/Fence 而漏 Until 的部分清理，会让「还能不能
-			// 被接管」的读路径与「凭 token 认人」的写路径给出相反结论，
-			// 而体检这里看不见。
-			out = append(out, Problem{Task: t.ID, Code: CodeLeaseNoClaim,
-				Text: "非认领态残留 owner/租约（含到期时刻）：读起来像还有人负责，实际没人"})
-		}
-		if t.State.Terminal() && t.Owner != "" {
-			out = append(out, Problem{Task: t.ID, Code: CodeTerminalClaimed,
-				Text: "终态仍带 owner：终态不可重开，残留 owner 会让「谁做完的」与「谁还占着」混在一起"})
-		}
-		for _, d := range t.Deps {
-			if d == t.ID {
-				out = append(out, Problem{Task: t.ID, Code: CodeSelfDep, Text: "任务依赖自己：永远不会就绪"})
-				continue
-			}
-			if d == "" {
-				out = append(out, Problem{Task: t.ID, Code: CodeUnknownDep, Text: "依赖里出现空 id"})
-				continue
-			}
-			dep, ok := byID[d]
-			if !ok {
-				out = append(out, Problem{Task: t.ID, Code: CodeUnknownDep, Text: "依赖指向不存在的任务: " + string(d)})
-				continue
-			}
-			// 依赖未完成却被认领/完成：前置约束被跳过，两段工作会并行施加。
-			if t.State == StateClaimed || t.State == StateDone {
-				if !dep.State.Terminal() {
-					out = append(out, Problem{Task: t.ID, Code: CodeBlockedClaim,
-						Text: "依赖 " + string(d) + " 尚未完成，本任务却已认领或完成"})
-				}
-			}
-		}
-	}
-
-	// 环：Kahn 拓扑排序排不空即有环。自依赖已在上面单列，这里排除自环避免重复报。
-	if cycle := detectCycle(byID); len(cycle) > 0 {
-		out = append(out, Problem{Code: CodeCycle,
-			Text: "依赖成环（含 " + joinIDs(cycle) + "）：环上的任务永远不会就绪"})
-	}
-
-	slices.SortStableFunc(out, func(a, b Problem) int {
-		return cmp.Or(cmp.Compare(a.Task, b.Task), cmp.Compare(a.Code, b.Code))
-	})
-	return out
-}
-
-// detectCycle 用 Kahn 算法找出参与环的任务（只报前若干个，够定位就行）。
-func detectCycle(byID map[TaskID]Task) []TaskID {
-	indeg := make(map[TaskID]int, len(byID))
-	edges := make(map[TaskID][]TaskID, len(byID))
-	for id, t := range byID {
-		if _, ok := indeg[id]; !ok {
-			indeg[id] = 0
-		}
-		for _, d := range t.Deps {
-			if d == id || d == "" {
-				continue
-			}
-			if _, ok := byID[d]; !ok {
-				continue
-			}
-			edges[d] = append(edges[d], id)
-			indeg[id]++
-		}
-	}
-	var queue []TaskID
-	for id, n := range indeg {
-		if n == 0 {
-			queue = append(queue, id)
-		}
-	}
-	slices.Sort(queue)
-	done := 0
-	for len(queue) > 0 {
-		id := queue[0]
-		queue = queue[1:]
-		done++
-		for _, next := range edges[id] {
-			indeg[next]--
-			if indeg[next] == 0 {
-				queue = append(queue, next)
-			}
-		}
-	}
-	if done == len(indeg) {
-		return nil
-	}
-	var left []TaskID
-	for id, n := range indeg {
-		if n > 0 {
-			left = append(left, id)
-		}
-	}
-	slices.Sort(left)
-	return left[:min(len(left), 5)]
-}
-
-// joinIDs 把 id 列表拼成一段可读文本。
-func joinIDs(ids []TaskID) string {
-	return strings.Join(slicex.Map(ids, func(id TaskID) string { return string(id) }), ", ")
 }

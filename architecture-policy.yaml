@@ -334,7 +334,7 @@ modules:
 
   - id: taskboard
     roots: [taskboard, taskboard/boardtest]
-    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", tenant]
     owner: harness
     managed: true
     notes: |
@@ -801,7 +801,7 @@ modules:
   # 队列、不判可达性——与 dispatch 门面正交，不与上游并存第二份实现。
   - id: coord
     roots: [coord]
-    requires: [sideeffect, taskboard, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [sideeffect, taskboard, tenant, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |

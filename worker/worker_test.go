@@ -61,6 +61,7 @@ func TestNewLoopValidatesConfig(t *testing.T) {
 		{"缺 Agent", Config{TTL: time.Minute}},
 		{"零 TTL", Config{Agent: "w-1"}},
 		{"心跳不短于 TTL", Config{Agent: "w-1", TTL: time.Minute, HeartbeatInterval: 2 * time.Minute}},
+		{"负并发度", Config{Agent: "w-1", TTL: time.Minute, Concurrency: -1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -72,13 +73,17 @@ func TestNewLoopValidatesConfig(t *testing.T) {
 	if _, err := NewLoop(nil, reg, handler, Config{Agent: "w-1", TTL: time.Minute}); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("缺任务板必须报 ErrInvalidConfig（实得 %v）", err)
 	}
-	// 缺省值补齐：PollInterval 0 → 缺省；HeartbeatInterval 0 → TTL/3。
+	// 缺省值补齐：PollInterval 0 → 缺省；HeartbeatInterval 0 → TTL/3；
+	// Concurrency 0 → 1（既有串行行为逐字不变）。
 	loop, err := NewLoop(board, reg, handler, Config{Agent: "w-1", TTL: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if loop.cfg.PollInterval != DefaultPollInterval || loop.cfg.HeartbeatInterval != 20*time.Second {
 		t.Fatalf("缺省值未补齐：poll=%v heartbeat=%v", loop.cfg.PollInterval, loop.cfg.HeartbeatInterval)
+	}
+	if loop.cfg.Concurrency != 1 {
+		t.Fatalf("并发度零值必须归一为 1（实得 %d）——缺省串行是兼容承诺", loop.cfg.Concurrency)
 	}
 }
 

@@ -77,11 +77,17 @@ func checkResolveNotAppliedAllowsRetry(st sideeffect.Store) error {
 	if err := st.Release(ctx, a, lease); err != nil {
 		return fmt.Errorf("释放持有失败: %w", err)
 	}
-	if _, _, err := st.ResolveUncertain(ctx, a, sideeffect.Resolution{
+	out, _, err := st.ResolveUncertain(ctx, a, sideeffect.Resolution{
 		Applied: false,
 		Reason:  "查下游：未生效",
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("裁决「未生效」失败: %w", err)
+	}
+	// 返回值与后续 Acquire 必须同一口径：裁决成功且门已打开（OutcomeApplied），
+	// 不是 OutcomeContended（那会把「可执行了」误报成「没轮上」，见契约第 2 条）。
+	if out != sideeffect.OutcomeApplied {
+		return fmt.Errorf("裁决「未生效」应返回 OutcomeApplied（门已打开），实得 %v", out)
 	}
 
 	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
