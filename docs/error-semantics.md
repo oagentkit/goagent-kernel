@@ -169,6 +169,8 @@
 | `ErrNotSource` | 收回者不是交接发起方 | 修声明：收回权只在 From |
 | `ErrLeaseLost` | 领取令牌不匹配（凭令牌认人，不凭内容） | 对账：责任期已易主或已收口，迟到动作一律放弃 |
 | `ErrAlreadySettled` | 交接单已是终态 | 放弃本次动作；重新交接开新一代 |
+| `ErrConflict` | 持久化记录的 Revision 已被并发写者推进（条件写失败，`Ledger.Save`） | 对账：重新 `Load` 并按最新状态重新判定；不得盲目重放同一次写入（并发领取的输家要在最新状态下读到 accepted，才能返回 `ErrTaken`） |
+| `ErrStaleEpoch` | 出示的所有权代次不是当前代（旧代 `Save` / `TakeAt` / Delete 重建后用旧代） | 放弃本次动作，按最新代次重新挂出/领取；重试同一次旧代写入无意义（防 ABA 的判据） |
 
 ### netguard
 
@@ -284,6 +286,12 @@
 | `ErrMountDenied` | 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 / 形态不合法，创建阶段先于引擎调用拒绝） | 修作业声明：来源改到白名单内或按策略放开 `AllowWritable`；**不得降级执行**——策略拒绝是 fail-closed 的（#187） |
 | `ErrNotWired` | K8s Job 适配尚未接入（占位） | 修声明：按包注释四步接入后再登记进登记簿 |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
+
+### examples/pgstore
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrIntentIncomplete` | 动作行的执行意图四列（`intent_resource` / `intent_fence` / `intent_holder` / `intent_expires`）部分为 NULL——半写行（人工订正 / schema 迁移 / 仓外写入），本包写入路径只产生「四列全有」或「四列全空」 | 修数据：把该行补齐成完整意图或整体清空；**不得绕过**——半写行既解引用不了（panic）也不能当「无意图」放行（会重新授予执行权 ⇒ 重复施加） |
 
 ### tooldisclose
 

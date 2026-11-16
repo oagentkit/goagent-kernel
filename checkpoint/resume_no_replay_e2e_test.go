@@ -47,14 +47,14 @@ func (d *durable) persist(c commitgate.Commit) {
 }
 
 // seedGate 用持久化事实回灌一道**新**闸（宿主每次启动做一次）。
-func (d *durable) seedGate(g *commitgate.Guard) int {
+func (d *durable) seedGate(ctx context.Context, g *commitgate.Guard) int {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	n := 0
 	for _, c := range d.terminals {
 		// 测试桩里的终态行 Ref 全合法；SeedE 对脏数据响亮（ErrEmptyRef），
 		// 这里若有 bug 直接 panic fail-loud，不静默吞——与被测契约同向。
-		if err := g.SeedE(c); err != nil {
+		if err := g.SeedE(ctx, c); err != nil {
 			panic("seedGate: 回灌行引用不完整: " + err.Error())
 		}
 		n++
@@ -120,7 +120,7 @@ func TestE2EResumeAfterCrashDoesNotReplay(t *testing.T) {
 		Ref:    commitgate.Ref{RunID: "run-1", Step: "collect"},
 		Status: "succeeded", Branch: "worker-a", Seq: 1,
 	}
-	if _, err := gate.Acquire(terminal); err != nil {
+	if _, err := gate.Acquire(ctx, terminal); err != nil {
 		t.Fatalf("首次终态应当被接受: %v", err)
 	}
 	st.persist(terminal)
@@ -157,10 +157,10 @@ func TestE2EResumeAfterCrashDoesNotReplay(t *testing.T) {
 
 	// 终态独占：新进程的闸是空的，回灌之后才拦得住。
 	restartedGate := commitgate.NewGuard(isTerminal)
-	if n := st.seedGate(restartedGate); n != 1 {
+	if n := st.seedGate(ctx, restartedGate); n != 1 {
 		t.Fatalf("③ 回灌的终态条数 = %d, want 1", n)
 	}
-	if _, err := restartedGate.Acquire(terminal); !errors.Is(err, commitgate.ErrAlreadyCommitted) {
+	if _, err := restartedGate.Acquire(ctx, terminal); !errors.Is(err, commitgate.ErrAlreadyCommitted) {
 		t.Fatalf("③ 重启后重复提交同一终态必须被拒（ErrAlreadyCommitted），实得 %v", err)
 	}
 
@@ -213,7 +213,7 @@ func TestE2ERestartWithoutSeedingRepeatsTheEffect(t *testing.T) {
 		Ref:    commitgate.Ref{RunID: "run-2", Step: "collect"},
 		Status: "succeeded", Branch: "worker-a", Seq: 1,
 	}
-	if _, err := gate.Acquire(terminal); err != nil {
+	if _, err := gate.Acquire(ctx, terminal); err != nil {
 		t.Fatalf("空闸应当接受首次终态: %v", err)
 	}
 
@@ -227,7 +227,7 @@ func TestE2ERestartWithoutSeedingRepeatsTheEffect(t *testing.T) {
 	}
 
 	// 而终态闸没有回灌 ⇒ 同一个终态被接受第二次——本仓要防的正是这件事。
-	if _, err := commitgate.NewGuard(isTerminal).Acquire(terminal); err != nil {
+	if _, err := commitgate.NewGuard(isTerminal).Acquire(ctx, terminal); err != nil {
 		t.Fatalf("未回灌的闸会放行重复终态（这正是回灌必须存在的理由）: %v", err)
 	}
 }

@@ -20,8 +20,11 @@
 //  1. **单次消费**：票据消费即作废（用过即焚）。同一 id 第二次消费**必然失败**——
 //     不是「尽量不重复」，是结构上不可能重复。
 //
-//  2. **过期即失效**：消费时刻晚于过期时刻 ⇒ 失败。过期判定与消费判定**同一处**
-//     （不要两处各判一次，两处判就会有一处漂）。
+//  2. **过期即失效**：消费时刻晚于过期时刻 ⇒ 失败。过期判定与消费判定**同一次
+//     原子操作**（Backend.Take 内部；不要两处各判一次，两处判就会有一处漂）。
+//     **时间真相只有存储一个**（issue #186）：Put 按存储时钟落 expires_at，
+//     Take/GC 用存储时钟比较——节点时钟不得参与过期判定（多副本时钟偏移
+//     会把「票据是否过期」变成「这台机器几点了」）。
 //
 //  3. **机制与策略分离**：本包**不决定**谁能签、票据能干什么、过期多久——
 //     那是宿主的治理决策。本包只提供机制：宿主拿到 id 与过期时刻，自己决定
@@ -32,9 +35,10 @@
 // 状态在 Backend 接缝之后（issue #145）：缺省是进程内存储（重启即失效）——
 // 对「只活几十秒的票据」这是**正确**的默认，宁可让用户重取一次，也不要把
 // 凭据持久化到磁盘（落盘即多一份要擦的痕迹）。多副本宿主实现 Backend 经
-// NewWithBackend 注入：判定逻辑（TTL / 单次消费 / 容量调用时机）留在本包，
-// 跨进程原子性归存储——原子性契约见 backend.go 文件头。本包**不提供**
-// 分布式实现，也不做任何集群语义（复制、选主、租约一概不认识）。
+// NewWithBackend 注入：判定逻辑（TTL 语义 / 单次消费 / 容量调用时机）留在
+// 本包，跨进程原子性与**时间权威**归存储——原子性契约与「节点时钟不得参与
+// 过期判定」见 backend.go 文件头（issue #186）。本包**不提供**分布式实现，
+// 也不做任何集群语义（复制、选主、租约一概不认识）。
 package ticket
 
 import (
@@ -79,10 +83,11 @@ type entry struct {
 
 // Store 票据机制面：判定逻辑 + 状态接缝（Backend；进程内参考实现见 backend.go）。
 //
-// 零值不可用，用 New 构造。
+// 零值不可用，用 New 构造。Store **没有时钟**（issue #186）：过期判定的
+// 时间真相在 Backend（存储时钟），节点侧没有任何时钟参与语义——不是
+// 「传了但忽略」，是接口上没有这个入口。
 type Store struct {
 	backend Backend
-	now     func() time.Time
 }
 
 // New 构造票据存储（进程内参考实现，容量上限取 DefaultMaxEntries）。
@@ -90,35 +95,38 @@ func New() *Store {
 	return NewWithClock(DefaultMaxEntries, time.Now)
 }
 
-// NewWithClock 构造**进程内**票据存储并**注入时钟**。
+// NewWithClock 构造**进程内**票据存储并注入**存储时钟**（缺省后端的时钟）。
 //
 // ⭐ 为什么要注入时钟：过期判定是本包的核心语义之一，若测试只能靠 sleep 等过期，
 // 一则慢、二则把「等到了」当成了「判对了」——真把判定写反了，测试照样绿
 // （只是慢一点）。注入时钟 ⇒ 过期语义可以被**确定性**地测。
 //
-// maxSize <= 0 ⇒ 取 DefaultMaxEntries。
+// 注入点在**后端**而不是 Store（issue #186）：跨进程实现由宿主注入的
+// Backend 自带存储时钟，`now` 只影响本函数构造的进程内参考后端。
+// maxSize <= 0 ⇒ 取 DefaultMaxEntries；now 为 nil ⇒ time.Now。
 func NewWithClock(maxSize int, now func() time.Time) *Store {
-	return NewWithBackend(NewMemoryBackend(maxSize), now)
+	return NewWithBackend(NewMemoryBackendWithClock(maxSize, now))
 }
 
 // NewWithBackend 构造票据存储：判定逻辑在本包，状态在注入的 Backend。
 //
 // 多副本宿主用它接自己的跨进程存储（DB / 协调后端）；Backend 的原子性契约
-// 见 backend.go 文件头（Take 必须原子——多副本并发消费同一张票恰好一个赢）。
+// 与时间权威见 backend.go 文件头（Take 必须原子——多副本并发消费同一张票
+// 恰好一个赢；**过期判定只读存储时钟**）。
 // b 为 nil ⇒ 退化为进程内参考实现（DefaultMaxEntries）。
-func NewWithBackend(b Backend, now func() time.Time) *Store {
+func NewWithBackend(b Backend) *Store {
 	if b == nil {
 		b = NewMemoryBackend(DefaultMaxEntries)
 	}
-	if now == nil {
-		now = time.Now
-	}
-	return &Store{backend: b, now: now}
+	return &Store{backend: b}
 }
 
 // Issue 签发一张票据：返回**票据 id** 与**过期时刻**。
 //
-// ⭐ 过期时刻由**签发方给的 TTL** 决定（机制面不替宿主定策略）。
+// ⭐ 过期时刻由**签发方给的 TTL** 决定（机制面不替宿主定策略），具体时刻
+// 由**存储时钟**算（Backend.Put；issue #186）——返回值就是库里那个
+// expires_at，不是节点时钟算出的另一个版本。多副本下宿主拿到它做展示/
+// 传递时，与真正判定过期用的是同一个时刻。
 // 随机源失败 ⇒ 显式报错（不降级成「可预测的 id」——票据 id 一旦可预测，
 // 单次消费语义就没有意义了）。
 //
@@ -127,7 +135,7 @@ func NewWithBackend(b Backend, now func() time.Time) *Store {
 // 签发前**顺手回收过期票据**（issue #208）：被签发但从未被消费的票（链接
 // 没人点开）等不到 Consume/Take 来删它，若无人回收，累计满容量后 Put 恒报
 // 「票据空间已满」⇒ 此后所有签发永久失败。回收走 Backend.GC（多副本宿主
-// 注入的 Backend 同样生效）；判定与 Take 同一把尺（now 晚于过期时刻）。
+// 注入的 Backend 同样生效）；判定与 Take 同一把尺（存储时钟晚于过期时刻）。
 // 回收是**尽力面**：GC 故障不拦签发，容量判定仍归 Backend（满了照样显式
 // 拒发）——回收成功与否只决定「过期票还占不占地方」，不改变放行语义。
 //
@@ -148,8 +156,9 @@ func (s *Store) Issue(b Binding, ttl time.Duration) (string, time.Time, error) {
 	// 不回收的话过期票会永久占满容量，签发从此恒拒。回收后仍在场的都是
 	// 未过期票 ⇒ 「容量按未过期张数计」由此成立。
 	s.GC()
-	exp := s.now().Add(ttl)
-	if err := s.backend.Put(id, b, exp); err != nil {
+	// expires_at 由存储时钟 + ttl 落下（issue #186）；返回值即库里那个时刻。
+	exp, err := s.backend.Put(id, b, ttl)
+	if err != nil {
 		return "", time.Time{}, err
 	}
 	return id, exp, nil
@@ -189,6 +198,9 @@ func (s *Store) IssueStrict(b Binding, ttl time.Duration) (string, time.Time, er
 // 能区分「存在但过期」的窗，而票据 id 是 192 bit 随机，枚举本来就不可能——
 // 但没必要的差别就不留。
 //
+// 过期判定由 Backend.Take 用**存储时钟**在同一次原子取出里完成（issue #186）：
+// 调用方不提供时间，节点时钟无法改写「这张票是否过期」。
+//
 // Backend 故障 ⇒ 按消费失败处理（fail-closed：票没被取走，宿主侧表现为
 // 「这次没通过」，重试即可；绝不放行一张没验成的票）。本包入口没有 ctx
 // 可传，跨进程实现的超时/截止由实现内部管理。
@@ -196,21 +208,21 @@ func (s *Store) Consume(id string) (Binding, bool) {
 	if id == "" {
 		return Binding{}, false
 	}
-	binding, ok, err := s.backend.Take(id, s.now())
+	binding, ok, err := s.backend.Take(id)
 	if err != nil {
 		return Binding{}, false
 	}
 	return binding, ok
 }
 
-// GC 清掉过期票据，返回清理张数。
+// GC 清掉过期票据，返回清理张数（过期判定用 Backend 的存储时钟，issue #186）。
 //
 // 过期票据**已不可消费**（Consume 判过期即失败），但仍占着空间 ⇒ 需要有人
 // 定期收。宿主可挂定时器调它；签发路径（Issue）签发前也会顺手调一次
 // （issue #208）——即使宿主从不主动 GC，过期票也不再永久占容量。
 // Backend 故障 ⇒ 返回 0（本轮没清成，下轮再试；清理是尽力面不是判定面）。
 func (s *Store) GC() int {
-	n, err := s.backend.GC(s.now())
+	n, err := s.backend.GC()
 	if err != nil {
 		return 0
 	}
