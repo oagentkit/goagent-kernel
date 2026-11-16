@@ -256,7 +256,10 @@ func advance(from, to statemachine.StepStatus) error {
   大小写/空白变体（`"PLAN"` / `" plan "`）先归一，结论与规范形态一致；
   **词表外类别一律要求审批**（fail-closed），宿主可用 `StepType.Valid()`
   区分「本就免审」与「内核不认识」。
-- `statemachine` 零外部依赖，纯 stdlib。
+- **`MustTransition` 区分「状态不在词表」与「迁移非法」**：词表外 `from`/`to`
+  包装 `ErrUnknownStatus`（文案不含「非法状态转移」），词表内但不允许的迁移
+  包装 `ErrIllegalTransition`。宿主要按 `errors.Is` 分流排障方向。
+- `statemachine` 只依赖 `oekit/pkg/errors`（错误哨兵与判定），无编排/存储依赖。
 
 ---
 
