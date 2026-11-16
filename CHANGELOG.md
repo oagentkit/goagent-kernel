@@ -2,6 +2,35 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.40.0] — 2026-11-16
+
+### 修复(release)：v0.39.0 tag 快照编译缺陷勘误（#253）
+
+- **v0.39.0 的 tag 快照不编译**：`examples/pgstore` 引用 `actionRow.intentCompleteErr`
+  而该字段的生产实现未随 #244 的测试一起合入（合入遗漏）。v0.40.0 起包含修复
+  （#253：`examples/pgstore/effect_acquire.go` 补 `intentCompleteErr` 判定）。
+- 已发布的 tag **不可重打**（ruleset 保护）：消费过 v0.39.0 的宿主请直接改钉
+  **v0.40.0**；v0.39.0 的 CHANGELOG/Release 说明仅作历史记录保留。
+- 过程教训：tag 必须打在** CI 全绿**的 main 提交上——本次合入遗漏在同批 CI
+  未覆盖 `go build ./...` 全量包的窗口里溜过（#253 后 CI 恢复 9/9 绿）。
+
+### 新增(containerbackend)：Kubernetes Job 执行后端落地（#192）
+
+- `examples/containerbackend` 的 K8s 后端从占位（ErrNotWired）转为真实实现：
+  stdlib `net/http` 直连 kube-apiserver（**零新增第三方依赖**，不引 client-go），
+  支持 in-cluster service account / 可配 endpoint；
+- Namespace / ServiceAccount 可配；Pod 安全约束固定（non-root、只读 rootfs、
+  drop ALL caps、seccompProfile=RuntimeDefault、automountServiceAccountToken=false）；
+- **Egress=denied 用 NetworkPolicy 兑现**（`egress: []` + podSelector 选中本作业 Pod，
+  创建失败即 fail-closed 不建 Job）；Policy 依赖 CNI 强制执行——CNI 不支持时宿主
+  必须显式关闭该项，此时 `Egress()` 自报降级，要求禁网的 Spec 不会选中它；
+- TTL：`ttlSecondsAfterFinished`（默认 300s，可配）作控制面兜底 + 正常路径显式删 Job；
+  `Budget.WallClock` 同时映射 `activeDeadlineSeconds` 与客户端截止；
+- 状态对账 fail-closed：Job 404 / 删除中 / active>0 但无 Pod / Pod phase Unknown /
+  无 Pod 超宽限一律 `Result{OK:false, state=unknown}`，不谎报成功；
+- 假 kube-apiserver（httptest）覆盖创建载荷/成功失败/超时杀/条件缺失/NetworkPolicy
+  渲染与关闭路径。
+
 ## [v0.39.0] — 2026-11-16
 
 ### 新增：多副本装配四件——持久化 Registry/ClaimReady/原子配额/持久化 Plane（#189）
