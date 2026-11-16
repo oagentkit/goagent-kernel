@@ -1,4 +1,5 @@
-// Package pgstore 副作用闸 / 任务认领面 / 进度快照的 **PostgreSQL 参考实现**。
+// Package pgstore 副作用闸 / 任务认领面 / 进度快照 / 可靠事件面（Outbox 形态）
+// 的 **PostgreSQL 参考实现**。
 //
 // 生命周期: Experimental（v0.33.0 定级）——参考实现，随契约套件与参考部署
 // 演进，不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级
@@ -33,6 +34,12 @@
 //     在同一次操作里铸造；释放 / 完成 / 续期只认令牌。
 //   - checkpoint.StoreCAS：一条带条件的 upsert（WHERE 持久化序号 < 本次序号），
 //     影响行数为 0 即判陈旧。
+//   - eventbus 可靠事件面（Outbox 形态，issue #264）：事件行与业务状态同
+//     事务提交（PublishInTx——事件与业务写入同生共死），ID 由单行水位表
+//     串行化铸造（铸造序 == 提交序，回滚不烧号 ⇒ 序列空洞结构性地不存在），
+//     读侧以已提交水位线为上界（TailStore / WatermarkTailStore）。这是
+//     eventbus.TailStore 契约点名的唯一被承诺支持的生产形态；自增直读
+//     （BIGSERIAL + WHERE id > cursor）被该契约显式声明不支持。
 //
 // # 时钟
 //
@@ -63,15 +70,20 @@ package pgstore
 
 import (
 	"github.com/yi-nology/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
-// 编译期断言：本包的实现确实满足三套存储中立契约（+ 下游栅栏与续期扩展）。
+// 编译期断言：本包的实现确实满足三套存储中立契约（+ 下游栅栏与续期扩展
+// + 事件面的三张接缝，#264）。
 var (
-	_ sideeffect.Store        = (*EffectStore)(nil)
-	_ sideeffect.FencedSink   = (*Downstream)(nil)
-	_ taskboard.Board         = (*BoardStore)(nil)
-	_ taskboard.RenewingBoard = (*BoardStore)(nil)
-	_ checkpoint.StoreCAS     = (*SnapStore)(nil)
+	_ sideeffect.Store            = (*EffectStore)(nil)
+	_ sideeffect.FencedSink       = (*Downstream)(nil)
+	_ taskboard.Board             = (*BoardStore)(nil)
+	_ taskboard.RenewingBoard     = (*BoardStore)(nil)
+	_ checkpoint.StoreCAS         = (*SnapStore)(nil)
+	_ eventbus.Store              = (*EventStore)(nil)
+	_ eventbus.TailStore          = (*EventStore)(nil)
+	_ eventbus.WatermarkTailStore = (*EventStore)(nil)
 )

@@ -1,18 +1,25 @@
 package eventbus
 
-// issue #183 的判据：游标契约的「ID 序 == 提交可见序」前提 + 游标持久化接缝。
+// issue #183 的判据：游标契约的「ID 序 == 提交可见序」前提。
+// issue #264 的判据：可靠交付的形态互证——违约自增直读（丢帧实证 + 哨兵响）
+// 与被承诺的 Outbox 形态（回滚空洞不触发永久丢失判据）同文件对照。
 //
-//   - 乱序提交用例：id=11 先提交、id=10 后提交，消费者不得跳过 10
-//     （守约 TailStore 的水位线语义下端到端跑通）；
+//   - 乱序提交用例（#183 判据一，#264 判据一）：id=11 先提交、id=10 后提交，
+//     消费者不得跳过 10（读侧截断形态 lateCommitStore 下端到端跑通；被承诺
+//     的 Outbox 形态下乱序提交结构性地不存在——分配经水位线串行化，
+//     机制替身与水位线可判口径在 tail_outbox_test.go，同包互证）；
 //   - 空洞哨兵：违约 TailStore 返回跳号段时哨兵必须响（缺省 log 之外的
 //     可注入通道——注入即接管，宿主接告警/指标）；
-//   - 重启补灌：停机窗口内发布的事件，重启后从持久化游标续随仍被补灌
-//     （缺省 MaxID 初始化会把它整个跳过——正是 #183 的缺口二）；
-//   - Load 失败停摆：绝不静默回退 MaxID（宁可停摆不可跳读）；
-//   - Save 失败不停摆：游标落后只会重读（订阅侧幂等吸收），方向安全。
+//   - 回滚空洞用例（#264 判据二）：Outbox 形态回滚不烧号、水位线不动 ⇒
+//     不触发「永久丢失」判据（哨兵全程静默、无帧丢失）；
+//   - 违约形态实证（#264）：自增/序列直读（naiveStore）的丢帧序列——哨兵
+//     响但帧已永久丢失（告警不是兜底，该形态被契约显式声明不支持）；
+//   - 重启补灌 / Load 失败停摆 / Save 失败不停摆 / 首次部署回退：#183 的
+//     CursorStore 判据在 tail_cursorstore_test.go（拆分自本文件，判据不变）。
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -52,10 +59,20 @@ func (s *lateCommitStore) commit(id uint64) {
 func (s *lateCommitStore) MaxID(context.Context) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 无空洞边界（#264 收紧后的 MaxID 契约）：已提交的最高连续 ID——未提交
+	// 的小 ID 卡在中间时不得越过它（初始化游标越过在途小 ID = 初始化即丢帧，
+	// 与 ListAfter 的跳号违约同罪）。最低铸造号之下视为已消费基线。
 	if len(s.minted) == 0 {
 		return 0, nil
 	}
-	return s.minted[len(s.minted)-1].ID, nil
+	w := s.minted[0].ID - 1
+	for _, ev := range s.minted {
+		if ev.ID != w+1 || !s.commited[ev.ID] {
+			break
+		}
+		w = ev.ID
+	}
+	return w, nil
 }
 
 func (s *lateCommitStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]Event, error) {
@@ -102,36 +119,6 @@ func (s *holeStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]Ev
 		}
 	}
 	return out, nil
-}
-
-// memCursorStore 进程内 CursorStore 替身。
-type memCursorStore struct {
-	mu       sync.Mutex
-	cur      uint64
-	saved    bool
-	failLoad int
-	failSave int
-}
-
-func (c *memCursorStore) LoadCursor(context.Context) (uint64, bool, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.failLoad > 0 {
-		c.failLoad--
-		return 0, false, errFakeRead
-	}
-	return c.cur, c.saved, nil
-}
-
-func (c *memCursorStore) SaveCursor(_ context.Context, cursor uint64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.failSave > 0 {
-		c.failSave--
-		return errFakeRead
-	}
-	c.cur, c.saved = cursor, true
-	return nil
 }
 
 // TestTailerOutOfOrderCommitNotSkipped 乱序提交验收（#183 判据一）：
@@ -209,171 +196,189 @@ func TestTailerGapAlarmFiresOnHole(t *testing.T) {
 	}
 }
 
-// TestTailerCursorPersistsAcrossRestart 重启补灌（#183 判据二）：停机窗口内
-// 发布的事件，重启后从持久化游标续随仍被补灌。
+// ── issue #264：可靠事件交付的形态互证（违约自增直读 ↔ 被承诺的 Outbox）────
 //
-// 对照面（缺省形态）：重启走 MaxID 初始化 ⇒ 停机窗口内的事件被整个跳过。
-func TestTailerCursorPersistsAcrossRestart(t *testing.T) {
-	tail := &fakeTailStore{maxID: 5}
-	cursor := &memCursorStore{}
-	hub := NewHub()
+// naiveStore 与 holeStore 同为违约替身，违约面不同：holeStore 是「返回段里
+// 有跳号」（哨兵的直接触发面）；naiveStore 是「分配 + 裸读」的完整自增形态
+// ——它遵守「升序返回」的表象，丢帧发生在语义层（游标越过在途小 ID），
+// 哨兵响但帧补不回来。Outbox 机制替身（outboxStore）与水位线可判口径在
+// tail_outbox_test.go；真 PG 上的同判据在 examples/pgstore（pg_event_test.go）。
 
-	// 第一程：初始化（MaxID=5）并干净退出（等 Run 真返回，避免取消在途时
-	// 它再处理一拍——停机窗口的起点必须确定）。
-	ctx1, cancel1 := context.WithCancel(context.Background())
-	done1 := make(chan struct{})
-	go func() {
-		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx1)
-		close(done1)
-	}()
-	deadline := time.Now().Add(2 * time.Second)
-	for tail.maxIDs() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("第一程 2s 内未完成初始化")
+// naiveStore 违约 TailStore 替身之二：自增/序列 ID 直读形态（BIGSERIAL 分配
+// + READ COMMITTED 下 WHERE id > cursor 的裸读法）。
+//
+// 铸造走序列（回滚烧号，号不回收）；提交使行可见；ListAfter 不查空洞——
+// cursor 之后的已提交行全部直出。这是 TailStore 契约**显式声明不支持**的
+// 形态：本替身把它钉在测试里作丢帧实证，不是可用实现的样板。
+type naiveStore struct {
+	mu       sync.Mutex
+	seq      uint64           // 已铸造的最高 ID（含在途、含回滚烧掉的号）
+	commited map[uint64]Event // 已提交可见行
+}
+
+func newNaiveStoreFrom(base uint64) *naiveStore {
+	return &naiveStore{seq: base, commited: map[uint64]Event{}}
+}
+
+// naiveTx 在途事务（序列形态：回滚烧号）。
+type naiveTx struct {
+	s  *naiveStore
+	id uint64
+	ev Event
+}
+
+// mint 从序列铸造下一个 ID（在途；回滚则号烧掉——序列不回收）。
+func (s *naiveStore) mint(ev Event) *naiveTx {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.seq++
+	return &naiveTx{s: s, id: s.seq, ev: ev}
+}
+
+func (t *naiveTx) commit() {
+	s := t.s
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := t.ev
+	row.ID = t.id // 权威行携带存储铸造的 ID（同 INSERT ... RETURNING id）
+	s.commited[t.id] = row
+}
+
+func (t *naiveTx) rollback() {} // 序列号已烧：行不落，号也不回收
+
+func (s *naiveStore) MaxID(context.Context) (uint64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// 裸读法：已提交的最大 ID——更小的 ID 还在途也照推（违约点之一：
+	// 初始化游标越过在途小 ID = 初始化即丢帧）。
+	var max uint64
+	for id := range s.commited {
+		if id > max {
+			max = id
 		}
-		time.Sleep(5 * time.Millisecond)
 	}
-	cancel1()
+	return max, nil
+}
+
+func (s *naiveStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]uint64, 0, len(s.commited))
+	for id := range s.commited {
+		if id > cursor {
+			ids = append(ids, id)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var out []Event
+	for _, id := range ids {
+		out = append(out, s.commited[id])
+		if len(out) == limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// TestNaiveAutoIncrementFormLosesFrames 缺陷实证（#264）：自增直读形态的
+// 丢帧序列——A 铸 10 未提交、B 铸 11 先提交、游标被推到 11、A 提交 ⇒
+// 10 永远读不到。哨兵为 [10,10] 响了，帧也补不回来——告警不是兜底。
+// 该形态被 TailStore 契约显式声明不支持；本用例是排除它的实证钉子
+// （与 TestTailerGapAlarmFiresOnHole 同文件互证：哨兵响 = 实现已违约）。
+func TestNaiveAutoIncrementFormLosesFrames(t *testing.T) {
+	store := newNaiveStoreFrom(9)
+	late := store.mint(Event{SessionID: "s", Type: "late"})   // A：铸 10，未提交
+	store.mint(Event{SessionID: "s", Type: "early"}).commit() // B：铸 11，先提交
+
+	hub := NewHub()
+	ch, stop := hub.Subscribe("s")
+	defer stop()
+
+	gaps := make(chan [2]uint64, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go NewTailer(store, hub,
+		WithTailInterval(10*time.Millisecond),
+		WithTailStartCursor(9),
+		WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
+	).Run(ctx)
+
+	// 裸读法直出已提交的 11：哨兵为被跳过的 [10,10] 响，游标被推到 11。
 	select {
-	case <-done1:
+	case g := <-gaps:
+		if g[0] != 10 || g[1] != 10 {
+			t.Fatalf("哨兵应报被跳区间 [10,10], got [%d,%d]", g[0], g[1])
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("第一程 ctx 取消后未返回")
+		t.Fatal("2s 内哨兵未响（违约形态下哨兵必须响）")
+	}
+	if ev := waitTail(t, ch); ev.ID != 11 {
+		t.Fatalf("违约形态下 11 先送达（游标即将越过 10）, got %d", ev.ID)
 	}
 
-	// 停机窗口：他副本发布 6。
-	tail.append(Event{ID: 6, SessionID: "s", Type: "during-downtime"})
-
-	// 第二程（重启）：必须从持久化游标 5 续随——不得走 MaxID（那会跳过 6）。
-	maxIDBeforeRestart := tail.maxIDs()
-	ch, stop := hub.Subscribe("s")
-	defer stop()
-	ctx2, cancel2 := context.WithCancel(context.Background())
-	defer cancel2()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx2)
-
-	ev := waitTail(t, ch)
-	if ev.ID != 6 {
-		t.Fatalf("停机窗口内的事件必须被补灌（实得 %d——MaxID 初始化把它跳过了）", ev.ID)
-	}
-	if got := tail.maxIDs(); got != maxIDBeforeRestart {
-		t.Fatalf("第二程不得重走 MaxID 初始化（%d → %d）", maxIDBeforeRestart, got)
-	}
-	// 游标推进后已保存：重启场景下持久化值应为 6。
-	//
-	// 必须**等**它落盘：实现是「逐条 Publish（同步写入订阅者 channel）→ 整批
-	// 处理完再 SaveCursor」（见 tail.go 的 Publish 与 SaveCursor 两处）。订阅者
-	// 拿到事件的那一刻，Tailer 还没走到保存——直接读会读到上一批的值。CI 实测
-	// 偶发红（run 43896997349：实得 5），本地高频复跑不复现（窗口在微秒级）。
-	//
-	// 等的是「最终持久化」（与实现契约一致）；超时说明真的没存，那就是实现
-	// 缺陷，报错带实得值便于定位。
-	var saved uint64
-	persistDeadline := time.Now().Add(2 * time.Second)
-	for {
-		cursor.mu.Lock()
-		saved = cursor.cur
-		cursor.mu.Unlock()
-		if saved == 6 {
-			break
-		}
-		if time.Now().After(persistDeadline) {
-			t.Fatalf("游标推进后应持久化（2s 内仍实得 %d）", saved)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// TestTailerCursorLoadFailureStallsNeverSkips Load 失败停摆重试（#183）：
-// 绝不静默回退 MaxID——回退 = 把停机窗口整个跳过（宁可停摆不可跳读）。
-func TestTailerCursorLoadFailureStallsNeverSkips(t *testing.T) {
-	tail := &fakeTailStore{maxID: 5}
-	tail.append(Event{ID: 6, SessionID: "s", Type: "during-downtime"})
-	cursor := &memCursorStore{saved: true, cur: 5, failLoad: 1000} // 持续失败：先验证停摆语义
-	hub := NewHub()
-	ch, stop := hub.Subscribe("s")
-	defer stop()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
-
-	// 多拍之后：MaxID 不得被调（回退即跳读），事件不得送达（停摆中）。
-	time.Sleep(80 * time.Millisecond)
-	if got := tail.maxIDs(); got != 0 {
-		t.Fatalf("Load 失败不得回退 MaxID 初始化（调了 %d 次 = 跳读停机窗口）", got)
-	}
-	if len(tail.cursors()) != 0 {
-		t.Fatal("Load 失败期间不得读存量")
-	}
-	// 恢复后从持久化游标续随，补灌照常。
-	cursor.mu.Lock()
-	cursor.failLoad = 0
-	cursor.mu.Unlock()
-	if ev := waitTail(t, ch); ev.ID != 6 {
-		t.Fatalf("Load 恢复后应从游标 5 续随并补灌 6, got %d", ev.ID)
-	}
-}
-
-// TestTailerCursorSaveFailureKeepsTailing Save 失败不停摆：游标落后只会
-// 导致重启后重读（订阅侧幂等吸收），停摆反而拆了实时补灌桥。
-func TestTailerCursorSaveFailureKeepsTailing(t *testing.T) {
-	tail := &fakeTailStore{maxID: 5}
-	cursor := &memCursorStore{failSave: 1}
-	hub := NewHub()
-	ch, stop := hub.Subscribe("s")
-	defer stop()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
-
-	tail.append(Event{ID: 6, SessionID: "s", Type: "x1"})
-	if ev := waitTail(t, ch); ev.ID != 6 {
-		t.Fatalf("Save 失败不得停摆投递, got %d", ev.ID)
-	}
-	tail.append(Event{ID: 7, SessionID: "s", Type: "x2"})
-	if ev := waitTail(t, ch); ev.ID != 7 {
-		t.Fatalf("后续事件应照常补灌, got %d", ev.ID)
-	}
-	// 恢复后的推进仍会落盘：最终持久化值应跟上游标。
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		cursor.mu.Lock()
-		saved := cursor.cur
-		cursor.mu.Unlock()
-		if saved == 7 {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("Save 恢复后游标应落盘到 7, 实得 %d", saved)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// TestTailerCursorNotFoundFallsBackToMaxID 首次部署（从未存过游标）回退
-// MaxID 初始化——持久化面不改变「补灌不是回放」的缺省语义。
-func TestTailerCursorNotFoundFallsBackToMaxID(t *testing.T) {
-	tail := &fakeTailStore{maxID: 5}
-	cursor := &memCursorStore{} // saved=false
-	hub := NewHub()
-	ch, stop := hub.Subscribe("s")
-	defer stop()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for tail.maxIDs() == 0 {
-		if time.Now().After(deadline) {
-			t.Fatal("未存过游标应回退 MaxID 初始化（2s 内未发生）")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	// A 迟到提交：游标已越过 10 ⇒ 10 永远读不到（静默丢帧已成立）。
+	late.commit()
 	select {
 	case ev := <-ch:
-		t.Fatalf("回退 MaxID 后存量不得回放（补灌不是回放）: %+v", ev)
-	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("自增直读形态下迟到的 10 不可能再送达（游标已越过）——若送达说明形态判定有误: %+v", ev)
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	// 回滚烧号（与 Outbox 形态「回滚不烧号」的对照面，tail_outbox_test.go）：
+	// 序列不回收 ⇒ 被烧的号是永不回填的空洞——「自增直读 + 截断读法只会
+	// 永久停摆」的另一半实证。
+	store.mint(Event{SessionID: "s", Type: "burned"}).rollback() // 铸 12 即烧掉
+	next := store.mint(Event{SessionID: "s", Type: "after-burn"})
+	if next.id != 13 {
+		t.Fatalf("序列形态回滚烧号：下一次分配必须跳过被烧的 12, got %d", next.id)
+	}
+}
+
+// TestTailerOutboxFormSurvivesRollbackAndDeliversAll 承诺形态端到端（#264
+// 判据一 + 判据二）：中途回滚留下的不是空洞（不烧号、水位线不动），随后
+// 全部提交的事件按铸造序送达，空洞哨兵全程静默——不触发永久丢失判据。
+func TestTailerOutboxFormSurvivesRollbackAndDeliversAll(t *testing.T) {
+	store := newOutboxStore()
+	store.begin(Event{SessionID: "s", Type: "e1"}).commit()         // 1
+	store.begin(Event{SessionID: "s", Type: "e-rolled"}).rollback() // 回滚：不烧号
+	store.begin(Event{SessionID: "s", Type: "e2"}).commit()         // 2（复用回滚号）
+	store.begin(Event{SessionID: "s", Type: "e3"}).commit()         // 3
+
+	hub := NewHub()
+	ch, stop := hub.Subscribe("s")
+	defer stop()
+
+	gaps := make(chan [2]uint64, 8)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go NewTailer(store, hub,
+		WithTailInterval(10*time.Millisecond),
+		WithTailStartCursor(0),
+		WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
+	).Run(ctx)
+
+	for _, want := range []struct {
+		id  uint64
+		typ string
+	}{{1, "e1"}, {2, "e2"}, {3, "e3"}} {
+		ev := waitTail(t, ch)
+		if ev.ID != want.id || ev.Type != want.typ {
+			t.Fatalf("应按铸造序送达 %d(%s), got %d(%s)——回滚空洞不得永久跳过任何帧",
+				want.id, want.typ, ev.ID, ev.Type)
+		}
+	}
+
+	// 尾随进行中再回滚一铸、提交下一铸：号复用，帧照常送达。
+	store.begin(Event{SessionID: "s", Type: "e-rolled2"}).rollback()
+	store.begin(Event{SessionID: "s", Type: "e4"}).commit() // 4
+	if ev := waitTail(t, ch); ev.ID != 4 || ev.Type != "e4" {
+		t.Fatalf("回滚后的下一铸应复用号并送达, got %d(%s)", ev.ID, ev.Type)
+	}
+
+	// 哨兵全程静默：回滚空洞不是永久丢失（#264 判据二）。
+	select {
+	case g := <-gaps:
+		t.Fatalf("回滚空洞不得触发永久丢失判据（哨兵静默）: [%d,%d]", g[0], g[1])
+	case <-time.After(80 * time.Millisecond):
 	}
 }
