@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	k8sJobLabel         = "gak-job"
-	k8sJobContainerName = "job"
-	k8sManagedByLabel   = "app.kubernetes.io/managed-by"
-	k8sManagedByValue   = "goagent-kernel"
+	k8sJobLabel                 = "gak-job"
+	k8sJobContainerName         = "job"
+	k8sEgressProbeContainerName = "egress-probe"
+	k8sManagedByLabel           = "app.kubernetes.io/managed-by"
+	k8sManagedByValue           = "goagent-kernel"
 )
 
 // ── 请求/应答对象（只声明本实现用到的字段）──────────────────────────────
@@ -76,6 +77,7 @@ type k8sResources struct {
 type k8sContainer struct {
 	Name            string                      `json:"name"`
 	Image           string                      `json:"image"`
+	Command         []string                    `json:"command,omitempty"`
 	Args            []string                    `json:"args,omitempty"`
 	Env             []k8sEnvVar                 `json:"env,omitempty"`
 	WorkingDir      string                      `json:"workingDir,omitempty"`
@@ -89,6 +91,7 @@ type k8sPodSpec struct {
 	ServiceAccountName           string                `json:"serviceAccountName,omitempty"`
 	AutomountServiceAccountToken bool                  `json:"automountServiceAccountToken"`
 	SecurityContext              k8sPodSecurityContext `json:"securityContext"`
+	InitContainers               []k8sContainer        `json:"initContainers,omitempty"`
 	Containers                   []k8sContainer        `json:"containers"`
 	Volumes                      []k8sVolume           `json:"volumes,omitempty"`
 }
@@ -151,8 +154,9 @@ type k8sContainerStatus struct {
 }
 
 type k8sPodStatus struct {
-	Phase             string               `json:"phase,omitempty"`
-	ContainerStatuses []k8sContainerStatus `json:"containerStatuses,omitempty"`
+	Phase                 string               `json:"phase,omitempty"`
+	InitContainerStatuses []k8sContainerStatus `json:"initContainerStatuses,omitempty"`
+	ContainerStatuses     []k8sContainerStatus `json:"containerStatuses,omitempty"`
 }
 
 type k8sPod struct {
@@ -166,6 +170,10 @@ type k8sPodList struct {
 
 type k8sLabelSelector struct {
 	MatchLabels map[string]string `json:"matchLabels"`
+	// MatchExpressions 只为**读取**别人的策略而声明（严格策略装配要判叠加
+	// 语义）：本侧不求值表达式，遇到即按「可能选中本作业 Pod」处理
+	// （fail-closed）。构造本作业自己的策略时恒空（omitempty 不落载荷）。
+	MatchExpressions []any `json:"matchExpressions,omitempty"`
 }
 
 type k8sNetworkPolicySpec struct {
@@ -181,6 +189,11 @@ type k8sNetworkPolicy struct {
 	Spec       k8sNetworkPolicySpec `json:"spec"`
 }
 
+// k8sNetworkPolicyList LIST networkpolicies 的应答（严格策略装配的对账入口）。
+type k8sNetworkPolicyList struct {
+	Items []k8sNetworkPolicy `json:"items"`
+}
+
 // ── 载荷构造 ────────────────────────────────────────────────────────────
 
 // newK8sJobName 生成 DNS label 形态的作业名（base36 纳秒，天然小写字母数字）。
@@ -189,7 +202,8 @@ func newK8sJobName() string {
 }
 
 // buildK8sJob 把 backend.Job 映射成 batch/v1 Job（docker.go 的同一张表）。
-func buildK8sJob(name string, j backend.Job, k *K8sJob) k8sJobObject {
+// 禁网路径装配出站探测 init 容器：作业启动即尝试访问外部地址（issue #262）。
+func buildK8sJob(name, ns string, j backend.Job, k *K8sJob) k8sJobObject {
 	labels := map[string]string{k8sJobLabel: name, k8sManagedByLabel: k8sManagedByValue}
 	env := make([]k8sEnvVar, 0, len(j.Env))
 	for _, kv := range j.Env {
@@ -214,10 +228,14 @@ func buildK8sJob(name string, j backend.Job, k *K8sJob) k8sJobObject {
 			deadline = 1
 		}
 	}
+	var inits []k8sContainer
+	if k.k8sEgressProbeRequired() {
+		inits = append(inits, k8sEgressProbeContainer(k.probe))
+	}
 	return k8sJobObject{
 		APIVersion: "batch/v1",
 		Kind:       "Job",
-		Metadata:   k8sObjectMeta{Name: name, Namespace: k.namespace, Labels: labels},
+		Metadata:   k8sObjectMeta{Name: name, Namespace: ns, Labels: labels},
 		Spec: k8sJobSpec{
 			BackoffLimit:            0, // 作业只跑一次：重试不是本契约的字段
 			TTLSecondsAfterFinished: k.ttlSeconds,
@@ -232,6 +250,7 @@ func buildK8sJob(name string, j backend.Job, k *K8sJob) k8sJobObject {
 						RunAsNonRoot:   true,
 						SeccompProfile: &k8sSeccompProfile{Type: "RuntimeDefault"},
 					},
+					InitContainers: inits,
 					Containers: []k8sContainer{{
 						Name:       k8sJobContainerName,
 						Image:      j.Image, // 带 digest 的引用原样携带
@@ -253,12 +272,29 @@ func buildK8sJob(name string, j backend.Job, k *K8sJob) k8sJobObject {
 	}
 }
 
+// k8sEgressProbeContainer 出站探测 init 容器：与业务容器同等受 Pod 安全约束
+// （runAsNonRoot 由 Pod 级 SecurityContext 覆盖 init 容器，镜像同样必须能
+// 非 root 运行）。探测约定见 K8sEgressProbe。
+func k8sEgressProbeContainer(p K8sEgressProbe) k8sContainer {
+	return k8sContainer{
+		Name:      k8sEgressProbeContainerName,
+		Image:     p.Image,
+		Command:   p.Command,
+		Resources: k8sResources{},
+		SecurityContext: k8sContainerSecurityContext{
+			AllowPrivilegeEscalation: false,
+			ReadOnlyRootFilesystem:   true,
+			Capabilities:             &k8sCapabilities{Drop: []string{"ALL"}},
+		},
+	}
+}
+
 // buildK8sNetworkPolicy 逐作业 Egress 全拒策略：空 egress 列表 = 默认拒绝。
-func buildK8sNetworkPolicy(name string, k *K8sJob) k8sNetworkPolicy {
+func buildK8sNetworkPolicy(name, ns string) k8sNetworkPolicy {
 	return k8sNetworkPolicy{
 		APIVersion: "networking.k8s.io/v1",
 		Kind:       "NetworkPolicy",
-		Metadata:   k8sObjectMeta{Name: name, Namespace: k.namespace, Labels: map[string]string{k8sJobLabel: name}},
+		Metadata:   k8sObjectMeta{Name: name, Namespace: ns, Labels: map[string]string{k8sJobLabel: name}},
 		Spec: k8sNetworkPolicySpec{
 			PodSelector: k8sLabelSelector{MatchLabels: map[string]string{k8sJobLabel: name}},
 			PolicyTypes: []string{"Egress"},
