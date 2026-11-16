@@ -20,12 +20,14 @@ import (
 // 不为此给包引第二套依赖。）
 type errBackend struct{}
 
-func (errBackend) Put(string, Binding, time.Time) error { return fmt.Errorf("backend down") }
-func (errBackend) Take(string, time.Time) (Binding, bool, error) {
+func (errBackend) Put(string, Binding, time.Duration) (time.Time, error) {
+	return time.Time{}, fmt.Errorf("backend down")
+}
+func (errBackend) Take(string) (Binding, bool, error) {
 	return Binding{}, false, fmt.Errorf("backend down")
 }
-func (errBackend) GC(time.Time) (int, error) { return 0, fmt.Errorf("backend down") }
-func (errBackend) Len() (int, error)         { return 0, fmt.Errorf("backend down") }
+func (errBackend) GC() (int, error)  { return 0, fmt.Errorf("backend down") }
+func (errBackend) Len() (int, error) { return 0, fmt.Errorf("backend down") }
 
 // spyBackend 记录调用的替身（判定逻辑是否真的委托，逐调用可查）。
 type spyBackend struct {
@@ -35,19 +37,24 @@ type spyBackend struct {
 	gcs    int
 	lens   int
 	stored map[string]entry
+	// now 存储时钟（替身的「存储侧时间」；过期判定用它，调用方无法覆盖）。
+	now func() time.Time
 }
 
-func newSpyBackend() *spyBackend { return &spyBackend{stored: map[string]entry{}} }
+func newSpyBackend() *spyBackend {
+	return &spyBackend{stored: map[string]entry{}, now: time.Now}
+}
 
-func (s *spyBackend) Put(id string, b Binding, exp time.Time) error {
+func (s *spyBackend) Put(id string, b Binding, ttl time.Duration) (time.Time, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.puts++
+	exp := s.now().Add(ttl)
 	s.stored[id] = entry{binding: b, expiresAt: exp}
-	return nil
+	return exp, nil
 }
 
-func (s *spyBackend) Take(id string, _ time.Time) (Binding, bool, error) {
+func (s *spyBackend) Take(id string) (Binding, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.takes++
@@ -56,10 +63,13 @@ func (s *spyBackend) Take(id string, _ time.Time) (Binding, bool, error) {
 		return Binding{}, false, nil
 	}
 	delete(s.stored, id)
+	if s.now().After(e.expiresAt) {
+		return Binding{}, false, nil
+	}
 	return e.binding, true, nil
 }
 
-func (s *spyBackend) GC(time.Time) (int, error) {
+func (s *spyBackend) GC() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.gcs++
@@ -77,7 +87,7 @@ func (s *spyBackend) Len() (int, error) {
 // （旧实现把状态焊在 Store 里，替换不了——接缝的存在性判据）。
 func TestStore判定落在注入Backend上(t *testing.T) {
 	spy := newSpyBackend()
-	s := NewWithBackend(spy, time.Now)
+	s := NewWithBackend(spy)
 
 	id, _, err := s.Issue(Binding{Subject: "s", Purpose: "p", Target: "t"}, time.Minute)
 	if err != nil {
@@ -116,7 +126,7 @@ func TestStore判定落在注入Backend上(t *testing.T) {
 // TestBackend故障时failclosed 钉住：存储故障绝不放行——Consume 拿不准就
 // 当失败（票还在，重试即可），GC/Len 退 0，Issue 显式报错上抛。
 func TestBackend故障时failclosed(t *testing.T) {
-	s := NewWithBackend(errBackend{}, time.Now)
+	s := NewWithBackend(errBackend{})
 
 	if _, ok := s.Consume("any"); ok {
 		t.Fatal("Backend 故障时消费必须失败（fail-closed：绝不放行没验成的票）")
@@ -135,7 +145,7 @@ func TestBackend故障时failclosed(t *testing.T) {
 // TestNewWithBackendNil退化进程内 钉住：nil 后端不是 nil 解引用 panic，
 // 而是退化为缺省进程内实现（防御性契约，文档已写）。
 func TestNewWithBackendNil退化进程内(t *testing.T) {
-	s := NewWithBackend(nil, time.Now)
+	s := NewWithBackend(nil)
 	id, _, err := s.Issue(Binding{Subject: "s"}, time.Minute)
 	if err != nil {
 		t.Fatalf("nil 后端应退化为进程内实现，签发却失败: %v", err)
@@ -150,10 +160,10 @@ func TestNewWithBackendNil退化进程内(t *testing.T) {
 func TestTake原子性契约(t *testing.T) {
 	for _, consumers := range []int{8, 32} {
 		t.Run(strconv.Itoa(consumers), func(t *testing.T) {
-			b := NewMemoryBackend(0)
 			now := time.Unix(1700000000, 0)
+			b := NewMemoryBackendWithClock(0, func() time.Time { return now })
 			id := "same-ticket"
-			if err := b.Put(id, Binding{Subject: "s"}, now.Add(time.Minute)); err != nil {
+			if _, err := b.Put(id, Binding{Subject: "s"}, time.Minute); err != nil {
 				t.Fatalf("Put 失败: %v", err)
 			}
 			var wins atomic.Int64
@@ -162,7 +172,7 @@ func TestTake原子性契约(t *testing.T) {
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					if _, ok, err := b.Take(id, now); err == nil && ok {
+					if _, ok, err := b.Take(id); err == nil && ok {
 						wins.Add(1)
 					}
 				}()
