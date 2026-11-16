@@ -31,6 +31,7 @@ func restore(t *testing.T) {
 			defer close(done)
 			SetSurfaces(SurfaceAll)
 			_ = SetStrategy(StrategyMask)
+			_ = SetDigestKey("") // hash 档用例注入的密钥一并清掉，防用例间串扰
 			SetEnabled(true)
 		}()
 		select {
@@ -126,6 +127,10 @@ func TestApplyRedactAndHash(t *testing.T) {
 	}
 
 	if err := SetStrategy(StrategyHash); err != nil {
+		t.Fatal(err)
+	}
+	// hash 档需要密钥（缺密钥 fail-closed，见 digest_keyed_test.go）。
+	if err := SetDigestKey(testDigestKey); err != nil {
 		t.Fatal(err)
 	}
 	h1, _ := Apply(SurfaceOutput, synID)
@@ -280,9 +285,14 @@ func TestApplySpansOneStrategyPerCall(t *testing.T) {
 			}
 		}},
 	}
+	// hash 档缺密钥会 fail-closed，给两条路径注入同一密钥，保持「一次处置 =
+	// 一个策略」的可比性。
+	if err := SetDigestKey(testDigestKey); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range cases {
 		// 显式策略入口：策略是入参，一次调用内不可能被换。
-		out, blocked := applySpansAs(txt, c.s)
+		out, blocked := applySpansAs(txt, c.s, testDigestKey)
 		if blocked != c.blocked {
 			t.Fatalf("%s：blocked 应为 %v，实得 %v（处置形态与阻断信号对不上）", c.name, c.blocked, blocked)
 		}

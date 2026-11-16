@@ -83,7 +83,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `eventbus` | 1034 | oagentkit/runtime、oekit/logx | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）；可选 event-tail 补灌面 `Tailer` 收口「初始化 MaxID → 轮询 id>游标 → 回灌 Hub → 推进」（#166，读侧对偶，TailStore 契约含「ID 序 == 提交可见序」的**无空洞推进硬要求**（#183，DB 序列下迟到提交的小 ID 不得被跳过）、读失败游标不动幂等补读、可选 `CursorStore` 游标持久化接缝（重启从上次停点续随，停机窗口内事件仍被补灌）与 `WithTailOnGap` 空洞哨兵（跳号从静默丢帧变响亮告警）；**scope:replica 每副本一条，不套 leader 门**——套了非 leader 副本就收不到他副本事件；重复帧不归它去重，归订阅侧游标）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
 | `dispatch` | 380 | oagentkit/guardx、oagentkit/toolgate | 改派失败面（issue #169）：三档分类词表（transient 可跨域兜底 / fatal 换谁白跑直接终态 / other 仅同域重试）+ **两级判定**（第一级消费上游 `toolgate/policy.Disposition` 单源——toolfail 链 → MCP 协议层，零文本匹配；链与协议层都 Unknown 才落文本兜底，状态码判定带 `\b` 词边界：「省略中段 4032 字节」不得被裸 `Contains("403")` 命中）+ 改派环骨架（同域 N 次 → 瞬态跨域兜底一次 → fatal 直接终态；候选枚举 `FailoverCandidates(slug, tried, sameDomain)` 与执行步 `Attempt` 经回调注入，与宿主注册表/能力画像无关）+ 四级数据化策略解析（条目 > 表级 > conf > 代码缺省，指针区分「未声明」与「显式 0/false」）。**判定面只读首次失败的原始错误**——改派说明 `%w（已同域改派 X 仍失败）` 只进事件与最终消息。回答的是第四问「失败后还能不能再派、派给谁」：不碰可达性（上游 allow 矩阵/深度/自派发）、不做队列（`scheduling`）、不答「要不要原样重发」（`toolfail`） |
 | `spill` | 341 | oekit/pkg | 输出预算溢出：提示契约 / 取回（分页**rune 无损**，#199——页边界不切坏多字节字符，逐页拼接与原文逐字节相等）/ 按龄清理 |
-| `pii` | 712 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
+| `pii` | 970 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，代次从此不只可查、还可响应 |
 | `netguard` | 1212 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
 | `statemachine` | 79 | 无 | 环节状态机：条件迁移的纯函数件 |
 | `contract` | 124 | 无 | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
@@ -223,8 +223,8 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 55,862 行 / 302 文件（不含 `_test.go`）|
-| 测试 | 327 个测试文件 |
+| 生产代码 | 56,113 行 / 302 文件（不含 `_test.go`）|
+| 测试 | 330 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 8 条规则（`rules` 段）+ 9 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 58 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |

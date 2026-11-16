@@ -1625,9 +1625,18 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 
 - **默认策略是 `mask`，不得改成 `block`**——block 会打断整条审计链，
   要用必须宿主显式 `SetStrategy` 并自行履行阻断。
+- **`hash` 档必须配套密钥**：`SetDigestKey` 注入 ≥16 字节的 HMAC 密钥（建议走
+  环境变量等密钥通道）。摘要 = 域分离 HMAC-SHA256 截断——同值同摘要、异值异摘要，
+  但**没有密钥的摘要只是可离线穷举的明文等价物**（手机号域约 9×10⁹），所以
+  缺密钥时 hash 档 fail-closed：整段替换 `("[redacted]", true)`，不出摘要。
+  接线期用 `DigestKeyed()` 自查。
 - **未登记面名 fail-closed**：`Apply` 遇未知面返回 `("[redacted]", true)`——
   整段替换 + 要求阻断，**不 panic、不静默放行**。面未登记与「宿主显式关闭」是两件事，
   塌缩成同一状态等于拼错一个字符即可让该面完全不脱敏。
+- **map 的键与值走同一条判定面**：以手机号/身份证为键的载荷不再整键明文外泄，
+  键命中与值命中同样产出处置与 blocked 信号。普通键（`order_id` 等）逐字不变；
+  不同原键处置出同一形态时按原键字典序加 `#n` 后缀消解——不丢条目、不依赖
+  map 迭代顺序。
 - **策略是单原子指针，不可撕裂读**。旧的三个独立原子变量在热重载下会产出从未被任何
   写侧设置过的组合。**处置路径必须经 `CurrentPolicy()` 拿快照**，
   不得分字段调访问器再拼。
@@ -1637,6 +1646,11 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
   但会再触发一轮通知，**递归深度由订阅者自己收敛**。
 - **15 位旧身份证不检**（已停用 20 年）；**裸 `86` 前缀不认**，只认 `+86` / `0086`。
 - **不下探标量**：数字/布尔原样返回——JSON number 形态的手机号不在覆盖面。
+- **未登记容器形状 fail-closed**：`[]map[string]string`、`map[string][]string`、
+  `[]byte`（含 `json.RawMessage`）、struct 等未登记结构不再静默透传——
+  `ApplyValue` 整段替换为 `"[redacted]"` 并回报 blocked，宿主不会再把
+  「根本没看」误读成「没命中」。接线期用 `ValidateShape` 对典型载荷自查，
+  报错带可定位路径（如 `$.items[0].blob`）。
 - **`Redact` / `RedactValue` 已于 2026-11-06 删除**（面无关且不回报是否阻断——
   宿主把策略配成 `block` 时它拿不到信号，等于只能靠自觉）。唯一入口是
   `Apply` / `ApplyValue`，**必须显式指定面**；每个出口声明自己在哪一面，
