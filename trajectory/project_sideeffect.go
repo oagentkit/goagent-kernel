@@ -25,12 +25,14 @@ import (
 // 同一个逻辑动作的先后两段/侧面）；同轮内标识可重复是多段的设计事实，段序
 // （Row.Segment / AttrRowSegment）区分先后，聚合口径见契约表（issue #301）。
 
-// sideEffectPayload 从事件载荷取副作用行的公共字段。
-func sideEffectPayload(ev eventbus.Event) (key, resource, safety string, fence uint64) {
+// sideEffectPayload 从事件载荷取副作用行的公共字段。fence 越界时投影器不猜
+// （字段按未设置处理），越界状态随返回值交由行上的标记显形（issue #305）。
+func sideEffectPayload(ev eventbus.Event) (key, resource, safety string, fence uint64, fenceBad bool) {
 	key = payloadString(ev, "key")
 	resource = payloadString(ev, "resource")
 	safety = payloadString(ev, "retry_safety")
-	fence = payloadUint(ev, "fence")
+	fence, st := payloadUint(ev, "fence")
+	fenceBad = st == payloadOutOfRange
 	return
 }
 
@@ -40,17 +42,18 @@ func sideEffectPayload(ev eventbus.Event) (key, resource, safety string, fence u
 // 事实（可能是缺口，也可能宿主没发布收口事件），改写或补收口都是伪造——
 // 旧行保持打开，Finalize 时作为未完成行显形。
 func openSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := sideEffectPayload(ev)
+	key, resource, safety, fence, fenceBad := sideEffectPayload(ev)
 	r := Row{
-		Kind:               KindSideEffect,
-		Turn:               p.currentTurn(),
-		SideEffectKey:      key,
-		SideEffectPhase:    SideEffectGranted,
-		SideEffectResource: resource,
-		SideEffectSafety:   safety,
-		SideEffectFence:    fence,
-		StartAt:            ev.OccurredAt,
-		Status:             StatusOpen,
+		Kind:                      KindSideEffect,
+		Turn:                      p.currentTurn(),
+		SideEffectKey:             key,
+		SideEffectPhase:           SideEffectGranted,
+		SideEffectResource:        resource,
+		SideEffectSafety:          safety,
+		SideEffectFence:           fence,
+		SideEffectFenceOutOfRange: fenceBad,
+		StartAt:                   ev.OccurredAt,
+		Status:                    StatusOpen,
 	}
 	if key == "" {
 		r.ID = seqID(KindSideEffect, p.seq+1)
@@ -72,7 +75,7 @@ func openSideEffect(p *Projector, ev eventbus.Event) {
 // 没有打开中的授予段（授予发生在别的进程 / 宿主没发布授予事件）时落成孤儿行
 // （只有终点的行）——结论要显形，不能因为没有可收口的行就丢掉。
 func settleSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
-	key, resource, safety, fence := sideEffectPayload(ev)
+	key, resource, safety, fence, fenceBad := sideEffectPayload(ev)
 	if idx, ok := p.grants[key]; ok && key != "" {
 		delete(p.grants, key)
 		row := &p.rows[idx]
@@ -87,7 +90,7 @@ func settleSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
 		}
 		return
 	}
-	appendSideEffectOrphan(p, ev, key, resource, safety, fence, phase)
+	appendSideEffectOrphan(p, ev, key, resource, safety, fence, fenceBad, phase)
 }
 
 // uncertainSideEffect 结果未知：收口授予段（phase=uncertain），并开启同 Key
@@ -96,7 +99,7 @@ func settleSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
 // 两个动作出自同一事件：转未知既是「上次尝试的结论」也是「对账的开始理由」。
 // 没有可收口的授予段时只开对账段（授予段从未被观测到，不伪造它）。
 func uncertainSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := sideEffectPayload(ev)
+	key, resource, safety, fence, fenceBad := sideEffectPayload(ev)
 	if idx, ok := p.grants[key]; ok && key != "" {
 		delete(p.grants, key)
 		row := &p.rows[idx]
@@ -110,16 +113,16 @@ func uncertainSideEffect(p *Projector, ev eventbus.Event) {
 			row.SideEffectSafety = safety
 		}
 	} else {
-		appendSideEffectOrphan(p, ev, key, resource, safety, fence, SideEffectUncertain)
+		appendSideEffectOrphan(p, ev, key, resource, safety, fence, fenceBad, SideEffectUncertain)
 	}
-	openReconcile(p, ev, key, resource, safety, fence)
+	openReconcile(p, ev, key, resource, safety, fence, fenceBad)
 }
 
 // openReconcile 开一个对账段（打开中，phase=uncertain）。
 //
-// 同 Key 已有打开中的对账段时**不重开**：第二次 uncertain 只是同一场对账的
+// 同一 Key 已有打开中的对账段时**不重开**：第二次 uncertain 只是同一场对账的
 // 又一条理由，重开等于把「等了多久才裁决」的实测起点改掉——第一次观测是真相。
-func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string, fence uint64) {
+func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string, fence uint64, fenceBad bool) {
 	if key == "" {
 		return // 无键无处挂对账段；点语义已由孤儿行承载
 	}
@@ -127,16 +130,17 @@ func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string
 		return
 	}
 	r := Row{
-		Kind:               KindSideEffect,
-		Turn:               p.currentTurn(),
-		SideEffectKey:      key,
-		SideEffectPhase:    SideEffectUncertain,
-		SideEffectResource: resource,
-		SideEffectSafety:   safety,
-		SideEffectFence:    fence,
-		StartAt:            ev.OccurredAt,
-		Status:             StatusOpen,
-		ID:                 sideeffectRowID(key),
+		Kind:                      KindSideEffect,
+		Turn:                      p.currentTurn(),
+		SideEffectKey:             key,
+		SideEffectPhase:           SideEffectUncertain,
+		SideEffectResource:        resource,
+		SideEffectSafety:          safety,
+		SideEffectFence:           fence,
+		SideEffectFenceOutOfRange: fenceBad,
+		StartAt:                   ev.OccurredAt,
+		Status:                    StatusOpen,
+		ID:                        sideeffectRowID(key),
 	}
 	if id, ok := stepIDOf(ev); ok {
 		r.HasStep = true
@@ -150,7 +154,7 @@ func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string
 //
 // 没有打开中的对账段时落成孤儿行（对账发生在别的进程 / 事件流只有尾部）。
 func resolveSideEffect(p *Projector, ev eventbus.Event) {
-	key, resource, safety, fence := sideEffectPayload(ev)
+	key, resource, safety, fence, fenceBad := sideEffectPayload(ev)
 	phase := SideEffectResolvedCleared
 	if payloadBool(ev, "applied") {
 		phase = SideEffectResolvedApplied
@@ -166,7 +170,7 @@ func resolveSideEffect(p *Projector, ev eventbus.Event) {
 		}
 		return
 	}
-	appendSideEffectOrphan(p, ev, key, resource, safety, fence, phase)
+	appendSideEffectOrphan(p, ev, key, resource, safety, fence, fenceBad, phase)
 }
 
 // pointSideEffect 点观察（replayed / contended）：无括号段，落成孤儿行。
@@ -174,22 +178,23 @@ func resolveSideEffect(p *Projector, ev eventbus.Event) {
 // 「动作早已完成」「正被别人持有」都是**观测到的结论**，时刻记在 EndAt、
 // 起点留空：没有实测时长，Duration() 返回 ok=false——不拿 0 冒充。
 func pointSideEffect(p *Projector, ev eventbus.Event, phase SideEffectPhase) {
-	key, resource, safety, fence := sideEffectPayload(ev)
-	appendSideEffectOrphan(p, ev, key, resource, safety, fence, phase)
+	key, resource, safety, fence, fenceBad := sideEffectPayload(ev)
+	appendSideEffectOrphan(p, ev, key, resource, safety, fence, fenceBad, phase)
 }
 
 // appendSideEffectOrphan 追加一条孤儿副作用行（只有终点 / 点观察）。
-func appendSideEffectOrphan(p *Projector, ev eventbus.Event, key, resource, safety string, fence uint64, phase SideEffectPhase) {
+func appendSideEffectOrphan(p *Projector, ev eventbus.Event, key, resource, safety string, fence uint64, fenceBad bool, phase SideEffectPhase) {
 	r := Row{
-		Kind:               KindSideEffect,
-		Turn:               p.currentTurn(),
-		SideEffectKey:      key,
-		SideEffectPhase:    phase,
-		SideEffectResource: resource,
-		SideEffectSafety:   safety,
-		SideEffectFence:    fence,
-		EndAt:              ev.OccurredAt,
-		Status:             StatusOrphan,
+		Kind:                      KindSideEffect,
+		Turn:                      p.currentTurn(),
+		SideEffectKey:             key,
+		SideEffectPhase:           phase,
+		SideEffectResource:        resource,
+		SideEffectSafety:          safety,
+		SideEffectFence:           fence,
+		SideEffectFenceOutOfRange: fenceBad,
+		EndAt:                     ev.OccurredAt,
+		Status:                    StatusOrphan,
 	}
 	if key == "" {
 		r.ID = seqID(KindSideEffect, p.seq+1)
@@ -205,17 +210,20 @@ func appendSideEffectOrphan(p *Projector, ev eventbus.Event, key, resource, safe
 
 // checkpointCommitted 快照提交（点事件）：落成孤儿行——一次提交没有括号段，
 // 「提交耗时多久」从未被观测，不拿 0 冒充实测。
+//
+// seq 载荷越界时投影器不猜（字段按未设置处理），越界在行标记上显形（issue #305）。
 func checkpointCommitted(p *Projector, ev eventbus.Event) {
 	runID := payloadString(ev, "run_id")
-	seq := payloadUint(ev, "seq")
+	seq, st := payloadUint(ev, "seq")
 	r := Row{
-		Kind:             KindCheckpoint,
-		Turn:             p.currentTurn(),
-		CheckpointRunID:  runID,
-		CheckpointSeq:    seq,
-		CheckpointStatus: payloadString(ev, "status"),
-		EndAt:            ev.OccurredAt,
-		Status:           StatusOrphan,
+		Kind:                    KindCheckpoint,
+		Turn:                    p.currentTurn(),
+		CheckpointRunID:         runID,
+		CheckpointSeq:           seq,
+		CheckpointSeqOutOfRange: st == payloadOutOfRange,
+		CheckpointStatus:        payloadString(ev, "status"),
+		EndAt:                   ev.OccurredAt,
+		Status:                  StatusOrphan,
 	}
 	if runID == "" || seq == 0 {
 		r.ID = seqID(KindCheckpoint, p.seq+1)

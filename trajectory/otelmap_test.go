@@ -39,7 +39,12 @@ func specSamples() []Row {
 		// 下一站」。
 		{Seq: 8, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1, Segment: 2,
 			SideEffectKey: "act-a", SideEffectPhase: SideEffectUncertain,
-			StartAt: at(310), Status: StatusOpen, Summary: "sideeffect:act-a"},
+			SideEffectFenceOutOfRange: true,
+			StartAt:                   at(310), Status: StatusOpen, Summary: "sideeffect:act-a"},
+		// 越界快照（issue #305）：载荷越界被拒 → 溢出诊断位（seq 属性不写）。
+		{Seq: 9, Kind: KindCheckpoint, ID: "checkpoint#run-a#8", Turn: 1,
+			CheckpointRunID: "run-a", CheckpointSeqOutOfRange: true,
+			EndAt: at(320), Status: StatusOrphan, Summary: "checkpoint#run-a#8"},
 	}
 }
 
@@ -52,8 +57,8 @@ func TestAttrSpecsCoverEveryAttribute(t *testing.T) {
 		AttrToolName, AttrToolCallID, AttrToolPairing, AttrToolDupResults,
 		AttrDurationMs, AttrSummary, AttrRowSegment,
 		AttrSideEffectKey, AttrSideEffectPhase, AttrSideEffectResource,
-		AttrSideEffectFence, AttrSideEffectSafety,
-		AttrCheckpointRunID, AttrCheckpointSeq, AttrCheckpointStatus,
+		AttrSideEffectFence, AttrSideEffectFenceOverflow, AttrSideEffectSafety,
+		AttrCheckpointRunID, AttrCheckpointSeq, AttrCheckpointSeqOverflow, AttrCheckpointStatus,
 	}
 	if len(AttrSpecs) != len(all) {
 		t.Fatalf("契约表 %d 条、常量 %d 个：多与少都算没对上", len(AttrSpecs), len(all))

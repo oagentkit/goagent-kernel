@@ -63,6 +63,7 @@
 package trajectory
 
 import (
+	"math"
 	"time"
 )
 
@@ -108,6 +109,11 @@ const (
 	AttrSideEffectResource = "harness.sideeffect.resource"
 	// AttrSideEffectFence 栅栏令牌（授予段 / 点行为观察到的代数；非授予段不写）。
 	AttrSideEffectFence = "harness.sideeffect.fence"
+	// AttrSideEffectFenceOverflow 栅栏令牌溢出诊断位（仅 true 时出现）：载荷
+	// 越界被拒（SideEffectFenceOutOfRange）或值超出导出面 int64 可表示范围时，
+	// 本位写 true 且**不写** fence 属性——不用 -1 把溢出伪装成合法值
+	// （issue #305）。
+	AttrSideEffectFenceOverflow = "harness.sideeffect.fence_overflow"
 	// AttrSideEffectSafety 重试安全性声明（unknown / safe / unsafe，与
 	// sideeffect.RetrySafety.String() 逐字一致；空声明不写——沉默按最弱处理，
 	// 属性面不替宿主补默认值）。
@@ -119,6 +125,10 @@ const (
 	AttrCheckpointRunID = "harness.checkpoint.run_id"
 	// AttrCheckpointSeq 快照序号（严格递增；0 不会出现——seq=0 的快照不是一次真实提交）。
 	AttrCheckpointSeq = "harness.checkpoint.seq"
+	// AttrCheckpointSeqOverflow 快照序号溢出诊断位（仅 true 时出现）：载荷越界
+	// 被拒（CheckpointSeqOutOfRange）或值超出导出面 int64 可表示范围时，本位写
+	// true 且**不写** seq 属性——不用 -1 把溢出伪装成合法值（issue #305）。
+	AttrCheckpointSeqOverflow = "harness.checkpoint.seq_overflow"
 	// AttrCheckpointStatus 快照的编排状态（取值域见 contract 的状态常量集；
 	// 本包**引用**那份词表而不复制——契约表里用 Note 指过去，抄一份就是第二真相）。
 	AttrCheckpointStatus = "harness.checkpoint.status"
@@ -204,7 +214,12 @@ func SpanOf(r Row) Span {
 		if r.SideEffectResource != "" {
 			s.Attributes[AttrSideEffectResource] = r.SideEffectResource
 		}
-		if r.SideEffectFence > 0 {
+		switch {
+		case r.SideEffectFenceOutOfRange || r.SideEffectFence > math.MaxInt64:
+			// 没有可信的 int64 表示就不写 fence 属性——int64(MaxUint64) 的
+			// 溢出结果 -1 会让下游的单调性判断得出「倒退」的结论（issue #305）。
+			s.Attributes[AttrSideEffectFenceOverflow] = true
+		case r.SideEffectFence > 0:
 			s.Attributes[AttrSideEffectFence] = int64(r.SideEffectFence)
 		}
 		if r.SideEffectSafety != "" {
@@ -215,7 +230,10 @@ func SpanOf(r Row) Span {
 		if r.CheckpointRunID != "" {
 			s.Attributes[AttrCheckpointRunID] = r.CheckpointRunID
 		}
-		if r.CheckpointSeq > 0 {
+		switch {
+		case r.CheckpointSeqOutOfRange || r.CheckpointSeq > math.MaxInt64:
+			s.Attributes[AttrCheckpointSeqOverflow] = true // 同上：溢出不伪装（issue #305）
+		case r.CheckpointSeq > 0:
 			s.Attributes[AttrCheckpointSeq] = int64(r.CheckpointSeq)
 		}
 		if r.CheckpointStatus != "" {

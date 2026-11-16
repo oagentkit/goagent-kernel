@@ -150,6 +150,11 @@ type Row struct {
 	SideEffectResource string
 	// SideEffectFence 栅栏令牌（仅副作用行；授予段/点行为观察到的代数）。
 	SideEffectFence uint64
+	// SideEffectFenceOutOfRange 载荷越界标记（仅副作用行）：fence 载荷声称的值
+	// 超出 uint64 可表示范围（负数 / NaN / ±Inf / ≥2^64）时投影器不猜——字段按
+	// 未设置处理（0），越界本身在此显形，与「载荷没带 fence」区分得开
+	// （issue #305）。导出面以 AttrSideEffectFenceOverflow 标注。
+	SideEffectFenceOutOfRange bool
 	// SideEffectSafety 重试安全性声明（仅副作用行；取值域 unknown/safe/unsafe，
 	// 与 sideeffect.RetrySafety 的 String() 形态逐字一致）。
 	SideEffectSafety string
@@ -157,6 +162,11 @@ type Row struct {
 	CheckpointRunID string
 	// CheckpointSeq 快照序号（仅快照行；「恢复点停在哪个序号」的答案）。
 	CheckpointSeq uint64
+	// CheckpointSeqOutOfRange 载荷越界标记（仅快照行）：seq 载荷声称的值超出
+	// uint64 可表示范围时投影器不猜——字段按未设置处理（0），越界在此显形，
+	// 与「载荷没带 seq」区分得开（issue #305）。导出面以 AttrCheckpointSeqOverflow
+	// 标注。
+	CheckpointSeqOutOfRange bool
 	// CheckpointStatus 快照的编排状态（仅快照行；取值域见 contract 的状态常量集，
 	// 本包不复制那份词表——引用而不是抄写，才不会漂出第二份真相）。
 	CheckpointStatus string

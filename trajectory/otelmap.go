@@ -194,9 +194,15 @@ var AttrSpecs = []AttrSpec{
 	},
 	{
 		Name:   AttrSideEffectFence,
-		Source: "Row.SideEffectFence（仅副作用行，且 >0；授予段与点行为才携带）",
+		Source: "Row.SideEffectFence（仅副作用行，且 >0 且 ≤ MaxInt64；授予段与点行为才携带）",
 		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配"},
 		Card:   Cardinality{Why: "随接管次数增长，本仓定不出上界"},
+	},
+	{
+		Name:   AttrSideEffectFenceOverflow,
+		Source: "Row.SideEffectFenceOutOfRange（载荷越界被拒）或 Row.SideEffectFence > MaxInt64（导出面 int64 不可表示）",
+		Domain: Domain{Kind: "bool", Note: "越界诊断位：仅 true 时出现，且同时不写 fence 属性——没有可信的 int64 表示就不产出值，不用 -1 把溢出伪装成合法值（issue #305）"},
+		Card:   Cardinality{Max: 1, Why: "单值诊断位（恒 true）"},
 	},
 	{
 		Name:      AttrSideEffectSafety,
@@ -214,9 +220,15 @@ var AttrSpecs = []AttrSpec{
 	},
 	{
 		Name:   AttrCheckpointSeq,
-		Source: "Row.CheckpointSeq（仅快照行，且 >0——seq=0 的快照不是一次真实提交）",
+		Source: "Row.CheckpointSeq（仅快照行，且 >0 且 ≤ MaxInt64——seq=0 的快照不是一次真实提交）",
 		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）"},
 		Card:   Cardinality{Why: "随步骤推进次数增长，本仓定不出上界"},
+	},
+	{
+		Name:   AttrCheckpointSeqOverflow,
+		Source: "Row.CheckpointSeqOutOfRange（载荷越界被拒）或 Row.CheckpointSeq > MaxInt64（导出面 int64 不可表示）",
+		Domain: Domain{Kind: "bool", Note: "越界诊断位：仅 true 时出现，且同时不写 seq 属性——没有可信的 int64 表示就不产出值，不用 -1 把溢出伪装成合法值（issue #305）"},
+		Card:   Cardinality{Max: 1, Why: "单值诊断位（恒 true）"},
 	},
 	{
 		Name:   AttrCheckpointStatus,
