@@ -74,6 +74,12 @@
 | `ErrAlreadyCommitted` | 该环节终态已被提交过（两条分支都赢了） | 对账：放弃本次提交；用 `As` 取 `AlreadyCommittedError` 读先前提交者与状态，判定谁是赢家 |
 | `ErrEmptyRef` | 引用缺字段（空 RunID 或空 Step） | 修声明：补全引用后重试 |
 
+### contract
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrSessionDeadline` | 会话级墙钟到点（`deadline.WithCause` 装饰的轮 ctx 携带的 cause；`finalize` 用同一值做收尾路由） | 收敛 timed_out 终态（deny-by-default：超时的产出不可信）；**必须先于停机臂判定**（次序纪律，见 `deadline.Route`/`finalize.Route`）。与 `drain.ErrDeadline` 是两个 Cause，不要互相代入。deadline/finalize 都是本哨兵的别名（issue #333） |
+
 ### controlplane
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -87,6 +93,10 @@
 | `ErrInvalidAudit` | 留痕条目不完整（谁/动作/目标/依据缺一不可，或动作不在词表内） | 修声明：补齐留痕字段；留痕面拒收不完整的条目，不得静默补空 |
 | `ErrNoStore` | 未装配 Store 就构造持久化 Plane（`NewStorePlane(nil, ...)`） | 修声明：装配 Store（任务/运行/效果键的持久化后端）；不得静默退化成进程内状态——多副本下两份真相 |
 | `ErrStoreConflict` | Store 的版本锚不匹配：快照之后目标被另一个副本改过 | **重试**：重读快照、重判后再提交；StorePlane 已内部重试，穷尽后仍见它说明并发介入持续冲突 |
+| `ErrUnknownRunStatus` | 运行状态不在已知词表内（可能是宿主自定义终态，如 `aborted`）；无法判定是否终态，Terminate 拒绝改写 | 修声明/对账：由宿主显式判定该状态的含义；内核不把「读不懂」当成「还活着」（issue #334） |
+| `ErrAuditorPanic` | 宿主留痕实现 panic（已被内核隔离，状态一字不动） | 修实现：Auditor.Append 不得 panic；本次介入按失败处置，可重试 |
+| `ErrAuthorityMismatch` | 权威控制面的 Store 与任务权威面来源标识不一致，或缺任务权威面（装配期拒绝） | 修装配：强制释放必须接到运行时的同一份 taskboard.Board（issue #268） |
+| `ErrNoEffectAuthority` | 权威控制面未装配副作用权威面，裁决无处落地（fail-closed） | 修装配：注入落到 sideeffect.Store 同一份状态的 EffectAuthority |
 
 ### coord
 
@@ -108,8 +118,10 @@
 
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
-| `ErrSessionDeadline` | 会话级墙钟到点（轮内 ctx 经 `WithTimeoutCause` 携带的 cause） | 收敛 timed_out 终态（deny-by-default：超时的产出不可信）；**必须先于停机臂判定**（次序纪律，见 `deadline.Route`）。与 `drain.ErrDeadline` 是两个 Cause，不要互相代入 |
 | `ErrNoStore` | 未注入锚点持久化接缝（`Store`）就要读/写 shared 锚点 | 修声明：shared 模式必须注入 Store——静默跳过会让总时限被续跑轮重置，且没有任何信号 |
+
+> `ErrSessionDeadline` 的身份来自 `contract`（issue #333）：本包变量是别名，与
+> 收尾侧 `finalize` 共享同一个 error 值（`errors.Is` 一条链）。
 
 ### delegate
 
@@ -143,7 +155,9 @@
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
 | `ErrUserCancelled` | 用户经取消 API 触发协作中止的 Cause（`Route` 据此落 cancelled 终态） | 按取消收敛；与停机（裸 ctx 取消）/ 接管（`steer.ErrSteered`）三分可辨——宿主用 `WithCancelCause` 携带 |
-| `ErrSessionDeadline` | 会话级墙钟超时的 Cause（`Route` 据此落 timed_out，判定先于停机分支） | 会话超时必须 `WithTimeoutCause` 携带本哨兵；**裸 deadline 归停机臂不落终态**——接线写错会让超时会话滞留 running |
+
+> `ErrSessionDeadline` 的身份来自 `contract`（issue #333）：本包变量是别名，
+> 与 `deadline` 包装的 ctx 共享同一个 error 值；裸 deadline 仍归停机臂、不落终态。
 
 ### gatecheck
 
@@ -174,6 +188,7 @@
 | `ErrNotSource` | 收回者不是交接发起方 | 修声明：收回权只在 From |
 | `ErrLeaseLost` | 领取令牌不匹配（凭令牌认人，不凭内容） | 对账：责任期已易主或已收口，迟到动作一律放弃 |
 | `ErrAlreadySettled` | 交接单已是终态 | 放弃本次动作；重新交接开新一代 |
+| `ErrNoStoreClock` | 构造分布式交接台时 Ledger 未实现 `ClockedLedger`（无存储时钟） | 修装配：实现存储时钟或改用单机 `NewDesk`；跨副本不得回退进程本地时钟（issue #270） |
 | `ErrConflict` | 持久化记录的 Revision 已被并发写者推进（条件写失败，`Ledger.Save`） | 对账：重新 `Load` 并按最新状态重新判定；不得盲目重放同一次写入（并发领取的输家要在最新状态下读到 accepted，才能返回 `ErrTaken`） |
 | `ErrStaleEpoch` | 出示的所有权代次不是当前代（旧代 `Save` / `TakeAt` / Delete 重建后用旧代） | 放弃本次动作，按最新代次重新挂出/领取；重试同一次旧代写入无意义（防 ABA 的判据） |
 
@@ -228,7 +243,10 @@
 |---|---|---|
 | `ErrInvalidConfig` | 权重非正 / 配额上限为负 / 背压阈值为负 / 占用释放量非正 / 公平选择器空集 | 修声明：装配期参数错误，重试无意义 |
 | `ErrQuotaExhausted` | 配额余额不足以整单占用 | **重试**：等别的调用方 Release 后同一调用可能成功；当永久失败处理会让动作永远丢失 |
-| `ErrOverRelease` | 释放量超过已占用量 | 修调用点：重复释放或释放了别人的额度；钳位会把配额账本变成负数 |
+| `ErrOverRelease` | 释放/回收凭据未知或已归还（重复释放、已回收后的迟到释放） | 修调用点：重复释放或释放了别人的额度；钳位会把配额账本变成负数 |
+| `ErrLeaseNotExpired` | 配额预占尚未到期就要回收 | 等待到期再回收：Worker 可能还在真跑（issue #267） |
+| `ErrLeaseStillHeld` | 关联任务的租约仍有效，回收被拒 | 放弃回收：旧任务可能还在真跑；确认任务租约失效后再走 Reclaim |
+| `ErrNoLeaseOracle` | 预占带任务归属但未注入任务租约判定面（TaskLeaseOracle） | 修装配：注入任务租约存活判定；判不了就不回收（fail-closed） |
 
 ### sideeffect
 

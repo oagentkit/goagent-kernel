@@ -87,7 +87,7 @@ func TestForceReleaseVsWorkerCompleteSingleWinner(t *testing.T) {
 		errs := make(chan error, 2)
 		go func() {
 			<-start
-			errs <- plane.ForceRelease(ctx, ForceRelease{TaskID: id, Operator: "op-1", Basis: "运维介入"})
+			errs <- plane.ForceRelease(ctx, ForceRelease{TaskID: id, Operator: "op-1", Basis: "合成依据"})
 		}()
 		go func() {
 			<-start

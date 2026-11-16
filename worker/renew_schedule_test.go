@@ -93,7 +93,7 @@ func (b *batchCountingBoard) RenewBatch(ctx context.Context, reqs []taskboard.Re
 	out := make([]taskboard.Renewal, len(reqs))
 	for i, req := range reqs {
 		b.itemCalls.Add(1)
-		task, err := b.BoardAdapter.Renew(ctx, req.ID, req.Token, taskboard.ClaimRequest{TTL: req.TTL})
+		task, err := b.Renew(ctx, req.ID, req.Token, taskboard.ClaimRequest{TTL: req.TTL})
 		out[i] = taskboard.Renewal{ID: req.ID, Task: task, Err: err}
 	}
 	return out, nil

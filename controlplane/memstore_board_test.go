@@ -26,14 +26,14 @@ func (b *memStoreBoard) Claim(ctx context.Context, id taskboard.TaskID,
 }
 
 func (b *memStoreBoard) Seed(tasks ...taskboard.Task) {
-	b.MemStore.mu.Lock()
-	defer b.MemStore.mu.Unlock()
-	b.MemStore.ensureLocked()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.ensureLocked()
 	for _, t := range tasks {
 		if t.State == "" {
 			t.State = taskboard.StateOpen
 		}
-		b.MemStore.tasks[t.ID] = &memTask{task: cloneTask(t), gen: t.Lease.Fence}
+		b.tasks[t.ID] = &memTask{task: cloneTask(t), gen: t.Lease.Fence}
 	}
 }
 

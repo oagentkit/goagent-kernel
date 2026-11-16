@@ -106,7 +106,7 @@ modules:
 
   - id: contract
     roots: [contract]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"] # 哨兵用 pkg/errors（ErrSessionDeadline 单源，#333）
     owner: harness
     managed: true
     notes: |
