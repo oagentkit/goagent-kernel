@@ -113,10 +113,6 @@ func NewMemPlane(aud Auditor, opts ...MemOption) *MemPlane {
 	}
 }
 
-// MemPlane 实现的 Plane 实例化：taskboard 三型（issue #238 的「用本仓
-// taskboard 的宿主不必动」路径）。契约是泛型的，本参考实现钉住这一档选型。
-var _ Plane[taskboard.TaskID, taskboard.Task, taskboard.Problem] = (*MemPlane)(nil)
-
 // ── 查询 ──
 
 // requireTenant 读/写共用的租户 fail-closed 判定（issue #197）：返回错误
@@ -135,15 +131,15 @@ func (m *MemPlane) requireTenant(ctx context.Context) error {
 // → tenant.ErrNoContext——宿主 Authorizer 返回零值 Context 时读路径
 // 同样 401，不留「只有读放行」的口子。匿名读须装配期显式
 // AllowAnonymousRead(true)。
-func (m *MemPlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView[taskboard.Task, taskboard.Problem], error) {
+func (m *MemPlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error) {
 	if err := m.requireTenant(ctx); err != nil {
-		return TaskView[taskboard.Task, taskboard.Problem]{}, err
+		return TaskView{}, err
 	}
 	m.mu.Lock()
 	mt, ok := m.tasks[id]
 	if !ok {
 		m.mu.Unlock()
-		return TaskView[taskboard.Task, taskboard.Problem]{}, errors.Wrap(ErrNotFound, "任务不存在: "+string(id))
+		return TaskView{}, errors.Wrap(ErrNotFound, "任务不存在: "+string(id))
 	}
 	tasks := m.runTasksLocked(mt.run)
 	m.mu.Unlock()
@@ -155,24 +151,24 @@ func (m *MemPlane) TaskView(ctx context.Context, id taskboard.TaskID) (TaskView[
 			own = append(own, p)
 		}
 	}
-	return TaskView[taskboard.Task, taskboard.Problem]{Task: cloneTask(mt.task), Problems: own}, nil
+	return TaskView{Task: cloneTask(mt.task), Problems: own}, nil
 }
 
 // RunView 实现 Plane：运行视图（状态 / 代次 / 全部任务 / 全 run 不变量）。
 // 租户 fail-closed 与 TaskView 同一道闸（见上，issue #197）。
-func (m *MemPlane) RunView(ctx context.Context, id RunID) (RunView[taskboard.Task, taskboard.Problem], error) {
+func (m *MemPlane) RunView(ctx context.Context, id RunID) (RunView, error) {
 	if err := m.requireTenant(ctx); err != nil {
-		return RunView[taskboard.Task, taskboard.Problem]{}, err
+		return RunView{}, err
 	}
 	m.mu.Lock()
 	run, ok := m.runs[id]
 	if !ok {
 		m.mu.Unlock()
-		return RunView[taskboard.Task, taskboard.Problem]{}, errors.Wrap(ErrNotFound, "运行不存在: "+string(id))
+		return RunView{}, errors.Wrap(ErrNotFound, "运行不存在: "+string(id))
 	}
 	tasks := m.runTasksLocked(id)
 	m.mu.Unlock()
-	return RunView[taskboard.Task, taskboard.Problem]{
+	return RunView{
 		RunID:    id,
 		Status:   run.status,
 		Gen:      run.gen,
@@ -199,7 +195,7 @@ func (m *MemPlane) runTasksLocked(id RunID) []taskboard.Task {
 //
 // 留痕与状态变更在同一临界区：留痕失败 ⇒ 状态不变 ⇒ 整体失败——
 // 不存在「改完了但没留痕」的窗口。
-func (m *MemPlane) ForceRelease(ctx context.Context, req ForceRelease[taskboard.TaskID]) error {
+func (m *MemPlane) ForceRelease(ctx context.Context, req ForceRelease) error {
 	if err := req.Validate(); err != nil {
 		return err
 	}

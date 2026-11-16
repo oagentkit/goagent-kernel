@@ -32,24 +32,23 @@
 //
 // # 边界
 //
-// 控制平面是**接口面**，不是 UI；具体界面归宿主。本包给三样：
+// 控制平面是**接口面**，不是 UI；具体界面归宿主。本包给四样：
 //
-//  1. Plane 契约（宿主包着自己的任务/运行状态源实现它）——**泛型契约**
-//     （issue #238）：任务 ID / 任务快照 / 不量项三型由宿主选型
-//     （Plane[ID, Task, Problem]），用本仓 taskboard 的宿主不必动
-//     （MemPlane 实现的就是 taskboard 三型的实例化）；自有任务 ID /
-//     快照形态的宿主用自己的类型实现同一份契约，不必再经过
-//     taskboard.TaskID/Task/Problem 的强制转换面；
-//  2. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
-//     也是测试与演练的最小运行时面；它演示的是 taskboard 实例化）；
-//  3. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权；
-//     租户上下文类型同样由宿主选型，Authorizer[TC]）。
+//  1. Plane 契约（宿主包着自己的 taskboard.Board / sideeffect Runner /
+//     运行状态存储实现它）；
+//  2. 宿主自有类型的窄契约族（HostPlane / AuthorizerOf——泛型 ID 与宿主
+//     快照/租户类型，纯接口零实现，见 hostiface.go；issue #238）；
+//  3. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
+//     也是测试与演练的最小运行时面）；
+//  4. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权）。
 package controlplane
 
 import (
 	"context"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // RunID 运行标识（一轮编排；宿主生成，与 contract.RunContext.ID 同源）。
@@ -57,16 +56,11 @@ type RunID string
 
 // Plane 控制面契约：查询 + 介入。存储中立——实现方是宿主。
 //
-// # 泛型参数（issue #238：宿主用自己的 ID / 快照 / 不变量类型接入）
+// 本接口是 **taskboard 原生**的便利契约（任务 ID / 快照 / 不变量条目都直接用
+// taskboard 的类型）。宿主自有任务模型或租户体系时实现 [HostPlane] /
+// [AuthorizerOf]（hostiface.go）——两条契约并列，判定纪律相同，只是类型解耦。
 //
-//   - ID 任务标识（~string 约束：HTTP 面按路径字符串定位目标，宿主的
-//     自有 ID 类型须能从 string 转换；用本仓 taskboard 的宿主传
-//     taskboard.TaskID）；
-//   - Task 任务快照（视图载荷；用 taskboard 的宿主传 taskboard.Task，
-//     自有运行时形态的宿主传自己的快照 struct）；
-//   - Problem 一条不变量违反项（用 taskboard 的宿主传 taskboard.Problem）。
-//
-// 契约本身（三条硬契约）不随型参变化：
+// 实现方必须保证（三条硬契约，缺一即破）：
 //
 //   - 介入**走运行时的同一套判据**（令牌 / 代次 / 栅栏），不绕闸；
 //   - 介入**留痕**：Auditor 缺位时一律拒绝（ErrNoAuditor），不允许
@@ -80,39 +74,39 @@ type RunID string
 // 放行」就是控制面自己开的口子。确需匿名只读（健康检查式读取）的宿主在
 // 实现里**显式**放开（参考实现经 AllowAnonymousRead）并在装配期记录，
 // 不许缺省放行。
-type Plane[ID ~string, Task any, Problem any] interface {
+type Plane interface {
 	// ── 查询 ──
 
 	// TaskView 任务的运行状态视图（快照 + 该任务身上的不变量违反）。
 	// 上下文未注入租户信息 → tenant.ErrNoContext（fail-closed，除非实现
 	// 显式声明匿名只读）；不存在 → ErrNotFound。
-	TaskView(ctx context.Context, id ID) (TaskView[Task, Problem], error)
+	TaskView(ctx context.Context, id taskboard.TaskID) (TaskView, error)
 	// RunView 运行的状态视图（状态、代次、全部任务、全 run 不变量视图）。
 	// 租户 fail-closed 判据与 TaskView 相同；不存在 → ErrNotFound。
-	RunView(ctx context.Context, id RunID) (RunView[Task, Problem], error)
+	RunView(ctx context.Context, id RunID) (RunView, error)
 
 	// ── 介入 ──
 
 	// ForceRelease 强制释放任务认领（契约见 ForceRelease）。
-	ForceRelease(ctx context.Context, req ForceRelease[ID]) error
+	ForceRelease(ctx context.Context, req ForceRelease) error
 	// Adjudicate 裁决未知结果（契约见 Adjudication）。
 	Adjudicate(ctx context.Context, req Adjudication) error
 	// Terminate 终止运行（契约见 Termination）。
 	Terminate(ctx context.Context, req Termination) error
 }
 
-// TaskView 任务的运行状态视图（型参 = Plane 的 Task / Problem 选型）。
-type TaskView[Task any, Problem any] struct {
+// TaskView 任务的运行状态视图。
+type TaskView struct {
 	// Task 任务快照（状态 / owner / 租约 / 代次——与运行时读到的同一份）。
-	Task Task
-	// Problems 该任务身上的不变量违反（run 级不变量视图的投影；
+	Task taskboard.Task
+	// Problems 该任务身上的不变量违反（run 级 taskboard.Check 的投影；
 	// 空 = 干净）。控制面不止报状态，还报「这份状态是否自相矛盾」——
 	// 人工介入的结论（Basis）往往正是一条 Problem。
-	Problems []Problem
+	Problems []taskboard.Problem
 }
 
-// RunView 运行的状态视图（型参 = Plane 的 Task / Problem 选型）。
-type RunView[Task any, Problem any] struct {
+// RunView 运行的状态视图。
+type RunView struct {
 	// RunID 运行标识。
 	RunID RunID
 	// Status 运行状态。取值建议用 contract 的状态常量（内核不解释词表；
@@ -123,9 +117,9 @@ type RunView[Task any, Problem any] struct {
 	// 两次介入之间状态若已前进，旧视图上的动作必须重查。
 	Gen uint64
 	// Tasks 该 run 的全部任务快照（按任务 id 排序，确定性输出）。
-	Tasks []Task
-	// Problems 全 run 的不变量视图。
-	Problems []Problem
+	Tasks []taskboard.Task
+	// Problems 全 run 的不变量视图（taskboard.Check）。
+	Problems []taskboard.Problem
 }
 
 // ForceRelease 强制释放任务认领。
@@ -143,9 +137,9 @@ type RunView[Task any, Problem any] struct {
 //
 // 对不在认领态的任务强释 → 包装 taskboard.ErrLeaseLost 的错误（该任务
 // 的租约已经不在了；介入重试撞上它说明第一次介入已生效）。
-type ForceRelease[ID ~string] struct {
-	// TaskID 要释放的任务（型参 = Plane 的 ID 选型）。
-	TaskID ID
+type ForceRelease struct {
+	// TaskID 要释放的任务。
+	TaskID taskboard.TaskID
 	// Operator 谁在介入（留痕必填）。
 	Operator string
 	// Basis 依据什么结论（留痕必填：证据 / 判据 / 单号，宿主词表）。
@@ -223,7 +217,7 @@ var (
 )
 
 // Validate 介入请求的留痕完整性判定（Operator 与 Basis 必填——无归责不介入）。
-func (r ForceRelease[ID]) Validate() error {
+func (r ForceRelease) Validate() error {
 	return validateIntervention(string(r.TaskID), r.Operator, r.Basis)
 }
 
@@ -247,8 +241,14 @@ func (r Termination) Validate() error {
 
 // validateIntervention 三类介入请求共用的留痕完整性判据（一个真相）。
 func validateIntervention(target, operator, basis string) error {
+	return validateInterventionTarget(target != "", operator, basis)
+}
+
+// validateInterventionTarget 留痕完整性判据的形态无关版本：目标是否为空由
+// 调用方按自己的 ID 类型判（原生契约判字符串，窄契约判 comparable 零值）。
+func validateInterventionTarget(targetPresent bool, operator, basis string) error {
 	switch {
-	case target == "":
+	case !targetPresent:
 		return errors.Wrap(ErrInvalidRequest, "介入目标为空")
 	case operator == "":
 		return errors.Wrap(ErrInvalidRequest, "缺介入者（Operator）")

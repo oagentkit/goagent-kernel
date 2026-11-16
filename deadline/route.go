@@ -41,25 +41,22 @@ func (o Outcome) String() string {
 	return "unknown"
 }
 
-// StatusOf Outcome → 终态词表的**可注入映射钩子**（issue #237，装配期注入）。
+// StatusOf 结论 → 终态词表值的映射钩子（issue #237）。
 //
-// nil（缺省）⇒ [DefaultStatus]：消费 contract 的词表（StatusTimedOut /
-// StatusCancelled）。非 contract 模型的宿主把自有词表的映射函数赋到这里
-// （一次、装配期；运行期换映射是宿主自己的并发决定），此后全部 Status()
-// 读数随宿主词表——宿主不必再把 contract 词表自映射一遍。
-//
-// 钩子收到的 o 已是**纯 enum**（Route 的返回值就是它）：只想要枚举、
-// 不想要任何词表的宿主直接 switch o，可以不碰本钩子。
-var StatusOf func(Outcome) string
+// 宿主的状态词表不归内核假定：contract 的词表只是**缺省**，使用自有状态机
+// （不 import contract、或状态名不同）的宿主可注入自己的映射，不必先把
+// Outcome 转成 contract 的状态常量再自映射。返回空串 = 该结论不落终态
+// （与缺省映射对 None / Shutdown 的处理同一口径）。
+type StatusOf func(Outcome) string
 
-// DefaultStatus 内建映射：Outcome → contract 终态词表（[StatusOf] 缺省所指）。
-//
-// 单独导出是因为宿主钩子的典型形态是「只重映射个别档、其余回落内建」——
-// 没有这个名字，回落就得把 contract 词表抄一遍（第二份真相）。
+// DefaultStatusOf 缺省映射：**消费 contract 的词表**，不另造一份。
 //
 // 不落终态的两档（None / Shutdown）返回空串：空串即「本轮没有终态要写」，
 // 宿主据此跳过状态迁移，而不是写一个空状态。
-func DefaultStatus(o Outcome) string {
+//
+// 独立导出是为了让宿主能「只覆盖个别档、其余仍走缺省」——在注入的
+// StatusOf 里回落本函数即可（见 StatusWith）。
+func DefaultStatusOf(o Outcome) string {
 	switch o {
 	case OutcomeTimedOut:
 		return contract.StatusTimedOut
@@ -70,17 +67,22 @@ func DefaultStatus(o Outcome) string {
 	}
 }
 
-// Status 该结论对应的终态词表值：经 [StatusOf] 钩子映射（nil ⇒ 内建
-// [DefaultStatus]，即 contract 的词表——**消费它，不另造一份**）。
+// Status 该结论对应的缺省终态词表值（contract 词表）。
 //
-// 宿主词表（非 contract 模型）经装配期给 StatusOf 注入自有映射（issue #237）；
-// 注入前/后的零值语义不变：不落终态的两档（None / Shutdown）映射为空串
-// 「本轮没有终态要写」（钩子实现应保持这一约定）。
-func (o Outcome) Status() string {
-	if StatusOf != nil {
-		return StatusOf(o)
+// 行为与既有版本逐字一致（issue #237 的零值兼容要求）：不注入映射的调用方
+// 一行不改。自有词表的宿主用 StatusWith 注入 StatusOf。
+func (o Outcome) Status() string { return DefaultStatusOf(o) }
+
+// StatusWith 按注入的映射钩子取终态词；mapper 为 nil 时回落 DefaultStatusOf
+// （contract 词表）——「没注入」与「注入缺省实现」是同一个行为。
+//
+// 映射是逐次参数而不是全局开关：同一个进程里 contract 模型与自有模型的
+// 宿主可以各用各的，互不污染。
+func (o Outcome) StatusWith(mapper StatusOf) string {
+	if mapper == nil {
+		return DefaultStatusOf(o)
 	}
-	return DefaultStatus(o)
+	return mapper(o)
 }
 
 // Route 收尾段的三分路由（判据面；宿主的 finalize 路由表按同一形状实现）。

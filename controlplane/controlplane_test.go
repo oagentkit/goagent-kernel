@@ -45,10 +45,10 @@ func TestValidateInterventions(t *testing.T) {
 		err  error
 		want error
 	}{
-		{"强释缺 operator", ForceRelease[taskboard.TaskID]{TaskID: "t1", Basis: "b"}.Validate(), ErrInvalidRequest},
-		{"强释缺 basis", ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op"}.Validate(), ErrInvalidRequest},
-		{"强释缺 target", ForceRelease[taskboard.TaskID]{Operator: "op", Basis: "b"}.Validate(), ErrInvalidRequest},
-		{"强释完整", ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op", Basis: "b"}.Validate(), nil},
+		{"强释缺 operator", ForceRelease{TaskID: "t1", Basis: "b"}.Validate(), ErrInvalidRequest},
+		{"强释缺 basis", ForceRelease{TaskID: "t1", Operator: "op"}.Validate(), ErrInvalidRequest},
+		{"强释缺 target", ForceRelease{Operator: "op", Basis: "b"}.Validate(), ErrInvalidRequest},
+		{"强释完整", ForceRelease{TaskID: "t1", Operator: "op", Basis: "b"}.Validate(), nil},
 		{"裁决缺 basis", Adjudication{EffectKey: "k", Verdict: VerdictApplied, Operator: "op"}.Validate(), ErrInvalidRequest},
 		{"裁决结论不在词表", Adjudication{EffectKey: "k", Verdict: "maybe", Operator: "op", Basis: "b"}.Validate(), ErrInvalidRequest},
 		{"裁决完整", Adjudication{EffectKey: "k", Verdict: VerdictNotApplied, Operator: "op", Basis: "b"}.Validate(), nil},
@@ -115,7 +115,7 @@ func TestInterventionGates(t *testing.T) {
 
 	// 留痕面缺位 → 介入一律拒绝（fail-closed）
 	naive := NewMemPlane(nil)
-	err := naive.ForceRelease(tenantCtx(), ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op", Basis: "b"})
+	err := naive.ForceRelease(tenantCtx(), ForceRelease{TaskID: "t1", Operator: "op", Basis: "b"})
 	if !errors.Is(err, ErrNoAuditor) {
 		t.Fatalf("无留痕面应拒绝 ErrNoAuditor，got %v", err)
 	}
@@ -129,19 +129,19 @@ func TestInterventionGates(t *testing.T) {
 	}
 
 	// 请求不完整 → ErrInvalidRequest（无归责不介入）
-	err = m.ForceRelease(tenantCtx(), ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op"})
+	err = m.ForceRelease(tenantCtx(), ForceRelease{TaskID: "t1", Operator: "op"})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("缺 basis 应拒绝，got %v", err)
 	}
 
 	// 未注入租户上下文 → ErrNoContext（介入是写路径，必须可归责）
-	err = m.ForceRelease(emptyCtx(), ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op", Basis: "b"})
+	err = m.ForceRelease(emptyCtx(), ForceRelease{TaskID: "t1", Operator: "op", Basis: "b"})
 	if !errors.Is(err, tenant.ErrNoContext) {
 		t.Fatalf("未注入租户上下文应拒绝，got %v", err)
 	}
 
 	// 目标不存在 → ErrNotFound（同样留痕）
-	err = m.ForceRelease(tenantCtx(), ForceRelease[taskboard.TaskID]{TaskID: "nope", Operator: "op", Basis: "b"})
+	err = m.ForceRelease(tenantCtx(), ForceRelease{TaskID: "nope", Operator: "op", Basis: "b"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("未知任务应 ErrNotFound，got %v", err)
 	}

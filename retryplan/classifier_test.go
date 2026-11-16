@@ -1,130 +1,118 @@
 package retryplan
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/oagentkit/guardx/toolfail"
+
 	"github.com/oekit/pkg/errors"
 )
 
-// 本文件是 Classifier 注入接缝（issue #240）的判据：
-//   - 缺省（Options.Classifier=nil）= DefaultClassifier = toolfail 既有
-//     判定——注入路径不得改缺省行为（存量语义逐字不变）；
-//   - 注入宿主分类器 ⇒ 分类与处置位随宿主口径，路径合成（三问→Decision）
-//     仍是同一份；认不出的失败按不可重试处理（保守单向失败）；
-//   - 逐次表态（toolfail.As 的 SafeToResubmit / RetryAfter）住在 err 本身，
-//     与分类器是谁无关——现场事实优先于类别缺省的次序不因注入而变。
+// TestInjectedClassifierChangesDecision 钉住 issue #240 的注入接缝：
+// 分类器与 sideeffect 的 RetrySafety 同层——是宿主对「这次失败是什么」的
+// 表态；内核只做组合判定。缺省（nil）分类器 = 现有 toolfail 口径，行为零变化。
+func TestInjectedClassifierChangesDecision(t *testing.T) {
+	plain := errors.New("宿主自有的失败类型")
 
-// hostClassifier 宿主自有分类器（非 toolfail 词表）。
-type hostClassifier struct{ verdict Verdict }
-
-func (h hostClassifier) Classify(error) Verdict { return h.verdict }
-
-// Test缺省仍是toolfail判定 —— nil 分类器 = DefaultClassifier：
-// 超时类（可重试不可原样重发）走幂等键重放；限流类（原样重发安全）直发；
-// 参数类（不可重试）终态。存量语义逐字不变。
-func Test缺省仍是toolfail判定(t *testing.T) {
-	// toolfail 超时失败（transient：可重试、退避、不可原样重发）。
-	err := toolfail.New(toolfail.ClassTransient, "ETIMEDOUT", "调用超时")
-	d := Decide(err, Options{})
-	if d.Path != PathReplayed || !d.Retryable || !d.Backoff {
-		t.Fatalf("缺省超时类应走幂等键重放: %+v", d)
-	}
-	if d.Reason != "值得重试，但原样重发不安全；须走幂等键重放以保证至多一次" {
-		t.Fatalf("缺省 Reason 漂移: %q", d.Reason)
-	}
-	// 无幂等键 → 降级不重试（关键取舍二）。
-	if d := Decide(err, Options{WithoutIdempotency: true}); d.Path != PathNone {
-		t.Fatalf("无幂等键必须不重试: %+v", d)
-	}
-	// 缺省分类器 = DefaultClassifier（同物同判）。
-	if DefaultClassifier().Classify(err) != (toolfailClassifier{}).Classify(err) {
-		t.Fatalf("DefaultClassifier 与缺省路径判定不一致: %+v vs %+v",
-			DefaultClassifier().Classify(err), (toolfailClassifier{}).Classify(err))
-	}
-}
-
-// Test注入宿主分类器 —— issue #240 验收：宿主自有错误体系经 Classifier
-// 注入，分类名与处置位随宿主；合成逻辑同一份（这一档「可重试但不安全 +
-// 有幂等键」照样给 PathReplayed）。
-func Test注入宿主分类器(t *testing.T) {
-	hostErr := errors.New("host: 上游队列拥塞")
-	c := hostClassifier{verdict: Verdict{
-		Class:     "queue_congestion",
-		Retryable: true,
-		Backoff:   true,
-		// SafeToResubmit=false：宿主口径下原样重发不安全
-	}}
-	d := Decide(hostErr, Options{Classifier: c})
-	if d.Path != PathReplayed {
-		t.Fatalf("宿主口径（可重试不可重发+有幂等键）应走 PathReplayed: %+v", d)
-	}
-	if !d.Retryable || !d.Backoff {
-		t.Fatalf("处置位应随宿主分类器: %+v", d)
-	}
-	if d.Reason != "值得重试，但原样重发不安全；须走幂等键重放以保证至多一次" {
-		t.Fatalf("合成文案应保持同一份: %q", d.Reason)
+	// ① 默认口径：归不出类别的失败 → 不重试。
+	if d := Decide(plain, Options{}); d.Path != PathNone || d.Retryable {
+		t.Fatalf("默认口径应判不可重试, got path=%v retryable=%v", d.Path, d.Retryable)
 	}
 
-	// 宿主判定「不可重试」⇒ 终态，Reason 带宿主类别名（第二真相不进来）。
-	d = Decide(hostErr, Options{Classifier: hostClassifier{verdict: Verdict{
-		Class:     "quota_exhausted",
-		Retryable: false,
-	}}})
+	// ② 注入分类器：同一个错误判成「可重试且原样重发安全」→ 结论翻成 PathDirect，
+	// 且分类器给出的四维原样带出（注入替换的是分类，不是决策字段的映射）。
+	direct := Classifier(func(error) Classification {
+		return Classification{
+			Class:          "host-retryable",
+			Retryable:      true,
+			SafeToResubmit: true,
+			Backoff:        true,
+			RetryAfter:     2 * time.Second,
+			NeedsOperator:  true,
+		}
+	})
+	d := Decide(plain, Options{Classifier: direct})
+	if d.Path != PathDirect {
+		t.Fatalf("注入「可重试且重发安全」后应判原样重发, got %v（%s）", d.Path, d.Reason)
+	}
+	if !d.Retryable || !d.Backoff || !d.NeedsOperator || d.RetryAfter != 2*time.Second {
+		t.Fatalf("分类器给出的字段应原样带出: %+v", d)
+	}
+
+	// ③ 反方向：toolfail 明确判 transient 的失败默认走幂等键重放；
+	// 注入「永久不可重试」分类后结论必须变成 PathNone，且理由里带自定义类别名。
+	transient := toolfail.New(toolfail.ClassTransient, "code-x", "暂时不可用")
+	if got := Decide(transient, Options{}); got.Path != PathReplayed {
+		t.Fatalf("默认口径下 transient 应走幂等键重放, got %v", got.Path)
+	}
+	permanent := Classifier(func(error) Classification {
+		return Classification{Class: "host-permanent"}
+	})
+	d = Decide(transient, Options{Classifier: permanent})
 	if d.Path != PathNone || d.Retryable {
-		t.Fatalf("宿主判不可重试必须终态: %+v", d)
+		t.Fatalf("注入不可重试分类后应判 PathNone, got path=%v retryable=%v", d.Path, d.Retryable)
 	}
-	if d.Reason != "该失败不可重试：quota_exhausted" {
-		t.Fatalf("Reason 应带宿主类别名: %q", d.Reason)
+	if !strings.Contains(d.Reason, "host-permanent") {
+		t.Fatalf("理由应带注入分类器的类别名, got %q", d.Reason)
 	}
 
-	// 宿主判「原样重发安全」⇒ 直发（无需幂等键兜底，合成逻辑同一份）。
-	d = Decide(hostErr, Options{Classifier: hostClassifier{verdict: Verdict{
-		Class: "read_only_probe", Retryable: true, SafeToResubmit: true,
-	}}})
-	if d.Path != PathDirect {
-		t.Fatalf("宿主判原样重发安全必须直发: %+v", d)
+	// ④ nil 分类器与不注入逐字一致（零值兼容）。
+	for _, err := range []error{plain, transient} {
+		if got, want := Decide(err, Options{Classifier: nil}), Decide(err, Options{}); got != want {
+			t.Fatalf("nil 分类器必须等同于缺省路径: got %+v want %+v", got, want)
+		}
 	}
 }
 
-// Test逐次表态与分类器无关 —— SafeToResubmit/RetryAfter 是「这次调用的
-// 现场事实」（住在 err 上，toolfail.As），优先于任何分类器的类别缺省；
-// RetryAfter 直通 Decision（分类器不解释它）。
-func Test逐次表态与分类器无关(t *testing.T) {
-	// err 自带「本次原样重发安全」声明 + 服务端等待时长；分类器缺省判
-	// 「不安全」（transient 类）——现场表态必须赢。
-	err := toolfail.New(toolfail.ClassTransient, "E429", "被限流").
-		WithRetryAfter(3 * time.Second).
-		WithIdempotency(toolfail.IdempotencyYes)
-	c := hostClassifier{verdict: Verdict{ // 宿主分类器对同一 err 的类别缺省
-		Class: "upstream_busy", Retryable: true, Backoff: true, SafeToResubmit: false,
-	}}
-	d := Decide(err, Options{Classifier: c})
-	if d.Path != PathDirect {
-		t.Fatalf("现场表态（可安全重发）应优先于类别缺省: %+v", d)
+// TestInjectedClassifierDoesNotBypassIdempotencyGate 注入分类器只替换分类输入，
+// 不绕过「可重试但重发不安全 + 无幂等键 ⇒ 不重试」这条组合判据——
+// 否则注入面就成了绕过内核取舍的后门。
+func TestInjectedClassifierDoesNotBypassIdempotencyGate(t *testing.T) {
+	err := errors.New("宿主自有的失败类型")
+	retryableUnsafe := Classifier(func(error) Classification {
+		return Classification{Class: "host-retryable-unsafe", Retryable: true}
+	})
+
+	if d := Decide(err, Options{Classifier: retryableUnsafe}); d.Path != PathReplayed {
+		t.Fatalf("有幂等键时应走幂等键重放, got %v（%s）", d.Path, d.Reason)
 	}
-	if d.RetryAfter != 3*time.Second {
-		t.Fatalf("RetryAfter 应从 err 直通（与分类器无关）: %+v", d)
+	d := Decide(err, Options{Classifier: retryableUnsafe, WithoutIdempotency: true})
+	if d.Path != PathNone {
+		t.Fatalf("无幂等键兜底时不得重试（注入分类器不能绕过该判据）, got %v（%s）", d.Path, d.Reason)
+	}
+	if !d.Retryable {
+		t.Fatal("「值得重试」的事实仍应保留")
 	}
 }
 
-// Test注入分类器对同一失败各判各的 —— 同一次构建、两次调用带不同分类器
-// 互不干扰（与 RetrySafety 同层的字段注入，不是包级全局）。
-func Test注入分类器对同一失败各判各的(t *testing.T) {
-	err := errors.New("host: 一样失败")
-	retryable := Decide(err, Options{Classifier: hostClassifier{verdict: Verdict{
-		Class: "a_retryable", Retryable: true,
-	}}})
-	fatal := Decide(err, Options{Classifier: hostClassifier{verdict: Verdict{
-		Class: "b_fatal", Retryable: false,
-	}}})
-	if retryable.Path == fatal.Path {
-		t.Fatalf("不同分类器对同一失败应有不同结论: %+v vs %+v", retryable, fatal)
+// TestDefaultClassifierMatchesToolfail 默认分类器与 toolfail 的既有判定逐维对齐
+// （#240 之前的 Decide 行为零变化）：类别、可重试、重发安全、退避、需人工、
+// 等待时长，以及「宿主逐次幂等表态优先于类别缺省」这条顺序。
+func TestDefaultClassifierMatchesToolfail(t *testing.T) {
+	err := toolfail.New(toolfail.ClassTransient, "code-y", "暂时不可用").
+		WithRetryAfter(3 * time.Second).Idempotent()
+	got := DefaultClassifier(err)
+	policy := toolfail.PolicyOf(toolfail.ClassTransient)
+
+	if got.Class != string(toolfail.ClassTransient) {
+		t.Fatalf("类别 = %q, want %q", got.Class, toolfail.ClassTransient)
 	}
-	// nil 分类器的第三次调用仍是 toolfail 缺省——注入不泄漏。
-	d := Decide(toolfail.New(toolfail.ClassInvalidArgument, "E", "参数非法"), Options{})
-	if d.Retryable || d.Path != PathNone {
-		t.Fatalf("nil 分类器必须回落 toolfail 缺省: %+v", d)
+	if got.Retryable != policy.Retryable || got.Backoff != policy.Backoff ||
+		got.NeedsOperator != policy.NeedsOperator {
+		t.Fatalf("策略位漂移: got %+v policy %+v", got, policy)
+	}
+	if !got.SafeToResubmit {
+		t.Fatal("逐次 Idempotent() 表态应优先于类别缺省（transient 缺省不安全）")
+	}
+	if got.RetryAfter != 3*time.Second {
+		t.Fatalf("等待时长 = %v, want 3s", got.RetryAfter)
+	}
+
+	// 未逐次表态时取类别缺省。
+	plain := DefaultClassifier(toolfail.New(toolfail.ClassRateLimited, "code-z", "被限流"))
+	if !plain.SafeToResubmit {
+		t.Fatal("rate_limited 的类别缺省是重发安全")
 	}
 }

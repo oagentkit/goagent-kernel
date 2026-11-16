@@ -24,11 +24,7 @@ func TestSpecsSelfCheck(t *testing.T) {
 	for _, f := range ForbiddenLabels {
 		forbidden[f.Name] = true
 	}
-	// 自校验只对内核表跑：harness.* 前缀/口径纪律是内核的承诺；宿主经
-	// Register 进开放表（hostSpecs），指标词归宿主（issue #239），
-	// 同样过 Register 的判据（Name 非空/Kind/单位/维度封闭域），
-	// 但不受 harness 前缀约束。
-	all := kernelSpecs
+	all := Specs()
 	if len(all) == 0 {
 		t.Fatal("登记表为空：契约面没有登记任何指标")
 	}

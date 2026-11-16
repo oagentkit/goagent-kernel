@@ -4,15 +4,10 @@
 //
 // scope 词表、租户体系、会话形态全是宿主资产。Handler 持有 Authorizer 钩子
 // （宿主实现）：它从请求解析主体与租户、判定该动作是否可执行，返回的
-// 租户/权限上下文经 Inject 被注入 request context 传给 Plane——Plane 侧的
-// fail-closed 租户判定（读与写共用，issue #197）据此有据可判。
+// tenant.Context 被注入 request context 传给 Plane——Plane 侧的
+// tenant.Require（读与写共用的 fail-closed 判据，issue #197）据此有据可判。
 // 这是「HTTP 面 ↔ 机制面」的唯一接缝：宿主在钩子里做完自己的判定，
 // 机制面拿到的已经是判定过的上下文。
-//
-// 租户上下文类型由宿主选型（issue #238）：用本仓 tenant 体系的宿主
-// TC = tenant.Context（Inject = TenantInject）；自有租户体系的宿主
-// 用自己的 TC 与自己的 Inject（注入 request context 的形态归宿主）。
-// Handler 本身也是泛型（与 Plane 同型参 + TC），NewHandler 按实参推断。
 //
 // 两层 fail-closed，缺一即 401：钩子缺位 ⇒ 全部请求 401；钩子在但对任何
 // 请求返回零值 tenant.Context + nil ⇒ 全部请求（**含两个只读端点**）
@@ -60,29 +55,15 @@ import (
 )
 
 // Authorizer 鉴权钩子（宿主实现）：解析请求 → 判定动作是否可执行 →
-// 返回租户/权限上下文并把它装进 request context。返回错误 ⇒ 403，不触达
-// Plane。TC 是宿主的租户上下文类型（issue #238；kernel tenant 体系 =
-// tenant.Context，Inject 用 [TenantInject]）。
-type Authorizer[TC any] interface {
-	// Authorize 判定该请求对该目标能否执行该动作。返回错误 ⇒ 403。
-	Authorize(r *http.Request, act Action, target string) (TC, error)
-	// Inject 把判过的租户上下文注入 request context（供 Plane 侧的
-	// fail-closed 租户判定读取）。kernel tenant 体系 = [TenantInject]。
-	Inject(ctx context.Context, tc TC) context.Context
+// 返回注入 request context 的租户/权限上下文。返回错误 ⇒ 403，不触达 Plane。
+type Authorizer interface {
+	Authorize(r *http.Request, act Action, target string) (tenant.Context, error)
 }
 
-// TenantInject kernel tenant 体系的 Inject 实现：tenant.WithContext。
-// 宿主 Authorizer 的 TC = tenant.Context 时经它装配（issue #238 的
-// 「用本仓 tenant 体系的宿主不必动」路径）。
-func TenantInject(ctx context.Context, tc tenant.Context) context.Context {
-	return tenant.WithContext(ctx, tc)
-}
-
-// Handler 控制面的 JSON 适配面（泛型：与 Plane 同型参 + 租户上下文 TC）。
-// 经 NewHandler 构造，直接挂到任意 http.Server。
-type Handler[ID ~string, Task any, Problem any, TC any] struct {
-	plane Plane[ID, Task, Problem]
-	auth  Authorizer[TC]
+// Handler 控制面的 JSON 适配面。经 NewHandler 构造，直接挂到任意 http.Server。
+type Handler struct {
+	plane Plane
+	auth  Authorizer
 	mux   *http.ServeMux
 }
 
@@ -92,8 +73,8 @@ const maxBodyBytes = 1 << 20
 
 // NewHandler 构造适配面。auth 可为 nil——此时全部请求 401（见包内
 // httpapi 头注：控制面不开无鉴权的口子）。
-func NewHandler[ID ~string, Task any, Problem any, TC any](p Plane[ID, Task, Problem], a Authorizer[TC]) *Handler[ID, Task, Problem, TC] {
-	h := &Handler[ID, Task, Problem, TC]{plane: p, auth: a, mux: http.NewServeMux()}
+func NewHandler(p Plane, a Authorizer) *Handler {
+	h := &Handler{plane: p, auth: a, mux: http.NewServeMux()}
 	h.mux.HandleFunc("GET /tasks/{id}", h.taskView)
 	h.mux.HandleFunc("GET /runs/{id}", h.runView)
 	h.mux.HandleFunc("POST /tasks/{id}/force-release", h.forceRelease)
@@ -103,13 +84,11 @@ func NewHandler[ID ~string, Task any, Problem any, TC any](p Plane[ID, Task, Pro
 }
 
 // ServeHTTP 实现 http.Handler。
-func (h *Handler[ID, Task, Problem, TC]) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	h.mux.ServeHTTP(w, r)
-}
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.mux.ServeHTTP(w, r) }
 
 // authorize 鉴权闸：通过返回注入租户上下文的 request context；
 // 不通过时已写好 4xx 响应，返回 false。
-func (h *Handler[ID, Task, Problem, TC]) authorize(w http.ResponseWriter, r *http.Request, act Action, target string) (context.Context, bool) {
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, act Action, target string) (context.Context, bool) {
 	if h.auth == nil {
 		writeErr(w, http.StatusUnauthorized, errors.New("controlplane: 鉴权面未装配"))
 		return nil, false
@@ -119,20 +98,20 @@ func (h *Handler[ID, Task, Problem, TC]) authorize(w http.ResponseWriter, r *htt
 		writeErr(w, http.StatusForbidden, err)
 		return nil, false
 	}
-	return h.auth.Inject(r.Context(), tc), true
+	return tenant.WithContext(r.Context(), tc), true
 }
 
-func (h *Handler[ID, Task, Problem, TC]) taskView(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) taskView(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx, ok := h.authorize(w, r, ActionQuery, id)
 	if !ok {
 		return
 	}
-	v, err := h.plane.TaskView(ctx, ID(id))
+	v, err := h.plane.TaskView(ctx, taskboard.TaskID(id))
 	h.write(w, v, err)
 }
 
-func (h *Handler[ID, Task, Problem, TC]) runView(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) runView(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx, ok := h.authorize(w, r, ActionQuery, id)
 	if !ok {
@@ -142,21 +121,21 @@ func (h *Handler[ID, Task, Problem, TC]) runView(w http.ResponseWriter, r *http.
 	h.write(w, v, err)
 }
 
-func (h *Handler[ID, Task, Problem, TC]) forceRelease(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) forceRelease(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx, ok := h.authorize(w, r, ActionForceRelease, id)
 	if !ok {
 		return
 	}
-	var req ForceRelease[ID]
+	var req ForceRelease
 	if !h.decode(w, r, &req) {
 		return
 	}
-	req.TaskID = ID(id) // 目标以路径为准（body 同名字段被忽略）
+	req.TaskID = taskboard.TaskID(id) // 目标以路径为准（body 同名字段被忽略）
 	h.write(w, okBody{Status: "ok"}, h.plane.ForceRelease(ctx, req))
 }
 
-func (h *Handler[ID, Task, Problem, TC]) adjudicate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) adjudicate(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("key")
 	ctx, ok := h.authorize(w, r, ActionAdjudicate, key)
 	if !ok {
@@ -170,7 +149,7 @@ func (h *Handler[ID, Task, Problem, TC]) adjudicate(w http.ResponseWriter, r *ht
 	h.write(w, okBody{Status: "ok"}, h.plane.Adjudicate(ctx, req))
 }
 
-func (h *Handler[ID, Task, Problem, TC]) terminate(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) terminate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	ctx, ok := h.authorize(w, r, ActionTerminate, id)
 	if !ok {
@@ -194,7 +173,7 @@ type okBody struct {
 // Content-Type 闸（issue #198）：只收 application/json（charset 等参数经
 // mime.ParseMediaType 归一，不影响判定）；缺省与其它类型一律 415——判定
 // 失败不回退到「当作 JSON 试一试」，那是把闸开成摆设。
-func (h *Handler[ID, Task, Problem, TC]) decode(w http.ResponseWriter, r *http.Request, v any) bool {
+func (h *Handler) decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mt != "application/json" {
 		writeErr(w, http.StatusUnsupportedMediaType, errors.New(
@@ -211,7 +190,7 @@ func (h *Handler[ID, Task, Problem, TC]) decode(w http.ResponseWriter, r *http.R
 }
 
 // write 统一出口：错误按哨兵映射状态码，成功按 JSON 编码。
-func (h *Handler[ID, Task, Problem, TC]) write(w http.ResponseWriter, v any, err error) {
+func (h *Handler) write(w http.ResponseWriter, v any, err error) {
 	if err != nil {
 		writeErr(w, statusFor(err), err)
 		return

@@ -56,11 +56,13 @@
 //
 // # 关键取舍三：失败类别的判定归上游，本包不重新分类
 //
-// 本包**不重新判定**失败是什么类别（那是判据上游的事）。缺省上游是
-// `toolfail`（判定口径跨宿主一致）；宿主自有错误体系经 [Classifier]
-// 注入（Options.Classifier，issue #240），本包只把判定结论**组合**成决策。
-// 路径合成的三个判定位（Retryable / SafeToResubmit / 幂等键可用性）
-// 语义不随分类器变化——换分类器换的是「失败是什么」，不是「怎么组合」。
+// 本包**不重新判定**失败是什么类别（那是 `toolfail` 的事，判定口径必须
+// 跨宿主一致）。它只把既有判定**组合**成决策。
+//
+// 分类器可注入（`Options.Classifier`，issue #240）：缺省实现
+// `DefaultClassifier` 就是 `toolfail` 的既有口径（行为零变化）；宿主自有
+// 错误体系注入自己的 `Classifier` 即可，**组合判据不变**——注入换的是分类
+// 输入，不是「无幂等键不赌重试」这类内核取舍。
 //
 // # 与 sideeffect 的关系
 //
@@ -129,6 +131,60 @@ type Decision struct {
 	Reason string
 }
 
+// Classification 一次失败的分类结论（重试决策的全部输入）。
+//
+// 这是内核与分类器之间的**唯一约定**：宿主自有分类器只需填这张表，
+// 不必 import 或伪造 toolfail 的类别。Class 是机读名，只进 Decision.Reason
+// （人读理由），**不参与判定**——判定只看四个布尔位与等待时长。
+type Classification struct {
+	// Class 失败类别名（机读；注入分类器可用自己的词面）。
+	Class string
+	// Retryable 这次失败值得重试吗。
+	Retryable bool
+	// SafeToResubmit 原样重发安全吗（不产生重复副作用）。
+	//
+	// 与 Retryable 正交：可重试但重发不安全是最危险的一档，必须走幂等键。
+	SafeToResubmit bool
+	// Backoff 是否建议退避后重试（限流类）。
+	Backoff bool
+	// RetryAfter 服务端建议的等待时长（0 = 无此信息）。
+	RetryAfter time.Duration
+	// NeedsOperator 是否需要人工介入（改凭证 / 放权限）。
+	NeedsOperator bool
+}
+
+// Classifier 失败分类器：把一次失败映射成决策输入（issue #240）。
+//
+// 与 sideeffect.Action.RetrySafety 同层——都是**宿主对该次调用的表态**：
+// 内核不重新判定失败性质，只把表态组合成决策。缺省实现是
+// DefaultClassifier（现有 toolfail 口径），注入即替换分类，不绕过
+// 「无幂等键不赌重试」的组合判据。
+type Classifier func(err error) Classification
+
+// DefaultClassifier 缺省分类器：toolfail.Classify + PolicyOf + 逐次幂等表态。
+//
+// 与 issue #240 之前的 Decide 内部逻辑逐字等价（含「宿主逐次 Idempotency
+// 表态优先于类别缺省」这条顺序）；显式导出供注入分类器做兜底/组合。
+func DefaultClassifier(err error) Classification {
+	cls := toolfail.Classify(err)
+	policy := toolfail.PolicyOf(cls)
+
+	// 取逐次表态（宿主对该次调用的幂等性声明），它优先于类别缺省。
+	safeToResubmit := policy.SafeToResubmit
+	if f, ok := toolfail.As(err); ok {
+		safeToResubmit = f.SafeToResubmit()
+	}
+
+	return Classification{
+		Class:          string(cls),
+		Retryable:      policy.Retryable,
+		SafeToResubmit: safeToResubmit,
+		Backoff:        policy.Backoff,
+		RetryAfter:     retryAfterOf(err),
+		NeedsOperator:  policy.NeedsOperator,
+	}
+}
+
 // Options 决策的输入条件。
 type Options struct {
 	// WithoutIdempotency 声明本次调用**没有**幂等键可用。
@@ -139,14 +195,12 @@ type Options struct {
 	// 置 true 时，该档降级为 PathNone：值得重试，但没有安全的重试路径
 	// （见 §关键取舍二：宁可如实失败，不赌一次重复副作用）。
 	WithoutIdempotency bool
-	// Classifier 宿主注入的**失败分类器**（issue #240，可选）。
+
+	// Classifier 失败分类器注入（issue #240；nil = DefaultClassifier）。
 	//
-	// nil（缺省）⇒ [DefaultClassifier]：toolfail 的既有判定（Classify +
-	// PolicyOf），口径跨宿主一致。宿主自有错误体系（非 toolfail 词表）
-	// 实现 [Classifier] 经本字段注入：分类与处置位随宿主口径，
-	// 路径合成逻辑（三问 → Decision）不因换分类器而有第二份。
-	// 逐次表态（toolfail.As 的 SafeToResubmit/RetryAfter）仍从 err 本身
-	// 读取——那是「这次调用的现场事实」，与分类器无关。
+	// 零值保持既有行为：不注入时分类完全走 toolfail 的既有口径。
+	// 注入后分类由宿主负责，本包只做组合判定——「无幂等键不赌重试」
+	// 等组合纪律仍然生效（见 TestInjectedClassifierDoesNotBypassIdempotencyGate）。
 	Classifier Classifier
 }
 
@@ -154,41 +208,33 @@ type Options struct {
 //
 // err 为 nil 时返回 PathNone（没有失败可处置）。
 //
-// 失败分类经 opts.Classifier（nil ⇒ [DefaultClassifier]，即 `toolfail`
-// 的既有判定）；本包不重新分类失败，只把分类结论**组合**成决策——
-// 组合逻辑（三问 → Decision）只有一份。
+// 分类由 Options.Classifier 注入；nil 时走 DefaultClassifier（toolfail 的
+// 既有口径，行为与注入接缝引入前逐字一致）。判定只消费 Classification 的
+// 四维与等待时长，不重新分类失败。
 func Decide(err error, opts Options) Decision {
 	if err == nil {
 		return Decision{Path: PathNone, Reason: "无失败，无需处置"}
 	}
 
-	c := opts.Classifier
-	if c == nil {
-		c = DefaultClassifier()
+	classifier := opts.Classifier
+	if classifier == nil {
+		classifier = DefaultClassifier
 	}
-	verdict := c.Classify(err)
+	cls := classifier(err)
 
 	d := Decision{
-		Retryable:     verdict.Retryable,
-		Backoff:       verdict.Backoff,
-		RetryAfter:    retryAfterOf(err),
-		NeedsOperator: verdict.NeedsOperator,
-	}
-
-	// 取逐次表态（宿主对该次调用的幂等性声明），它优先于类别缺省。
-	// 逐次表态住在 err 本身（toolfail.As），与分类器是谁无关。
-	f, ok := toolfail.As(err)
-	safeToResubmit := verdict.SafeToResubmit
-	if ok {
-		safeToResubmit = f.SafeToResubmit()
+		Retryable:     cls.Retryable,
+		Backoff:       cls.Backoff,
+		RetryAfter:    cls.RetryAfter,
+		NeedsOperator: cls.NeedsOperator,
 	}
 
 	switch {
-	case !verdict.Retryable:
+	case !cls.Retryable:
 		// 不可重试：终态，换处置路径（改参数 / 找人工 / 收口）。
 		d.Path = PathNone
-		d.Reason = "该失败不可重试：" + verdict.Class
-	case safeToResubmit:
+		d.Reason = "该失败不可重试：" + cls.Class
+	case cls.SafeToResubmit:
 		// 可重试且原样重发安全：直接重发。
 		d.Path = PathDirect
 		d.Reason = "可重试，且原样重发安全"

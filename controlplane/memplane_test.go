@@ -32,7 +32,7 @@ func TestForceReleaseContract(t *testing.T) {
 		t.Fatalf("认领应铸造令牌与代次： %+v", first.Lease)
 	}
 
-	err = m.ForceRelease(ctx, ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op-1", Basis: "持有者已失联超时"})
+	err = m.ForceRelease(ctx, ForceRelease{TaskID: "t1", Operator: "op-1", Basis: "持有者已失联超时"})
 	if err != nil {
 		t.Fatalf("ForceRelease: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestForceReleaseContract(t *testing.T) {
 	}
 
 	// 对不在认领态的任务强释 → ErrLeaseLost（介入重试撞上它说明首次已生效）
-	if err := m.ForceRelease(ctx, ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op-1", Basis: "重试"}); !errors.Is(err, taskboard.ErrLeaseLost) {
+	if err := m.ForceRelease(ctx, ForceRelease{TaskID: "t1", Operator: "op-1", Basis: "重试"}); !errors.Is(err, taskboard.ErrLeaseLost) {
 		t.Fatalf("对已释放任务再强释应 ErrLeaseLost，got %v", err)
 	}
 
@@ -339,7 +339,7 @@ func TestInterventionsFailClosedOnAuditFailure(t *testing.T) {
 			return m.Terminate(ctx, Termination{RunID: "r1", ExpectedGen: view0.Gen, Operator: "op-1", Basis: "b"})
 		}},
 		{"ForceRelease", func() error {
-			return m.ForceRelease(ctx, ForceRelease[taskboard.TaskID]{TaskID: "t1", Operator: "op-1", Basis: "b"})
+			return m.ForceRelease(ctx, ForceRelease{TaskID: "t1", Operator: "op-1", Basis: "b"})
 		}},
 		{"Adjudicate", func() error {
 			return m.Adjudicate(ctx, Adjudication{EffectKey: "effect-1", Verdict: VerdictApplied, Operator: "op-1", Basis: "b"})

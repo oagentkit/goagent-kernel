@@ -29,8 +29,10 @@
 //     不是维度。禁区清单见 ForbiddenLabels。
 //  4. **先登记再埋点**：每个指标的名称 / 类型 / 维度 / 基数上界在 Specs 里登记，
 //     自校验（metrics_test）保证登记表自洽。埋一个没登记的指标 = 看板口径外
-//     的暗数，Validate 会显式报错。登记表是**开放的**（issue #239）：宿主
-//     自有指标装配期经 Register 注册后，复用同一份 Validate / 基数门。
+//     的暗数，Validate 会显式报错。
+//  5. **宿主自有指标不挤进内核登记表**：DefaultSpecs().Register/Merge 得到一份
+//     SpecSet，复用同一套 Validate 与基数门；Register/Merge 返回新表（Clone
+//     语义），包级表不被篡改（issue #239）。
 //
 // # 覆盖清单（issue #100 验收的五类量）
 //
@@ -210,4 +212,104 @@ type Metric struct {
 	Desc string
 	// Labels 维度（无维度时为 nil——零维指标不是缺陷，积压总量就该是零维）。
 	Labels []LabelDim
+}
+
+// specs 登记表本体。**先登记再埋点**：新增指标在这里加一行 + ACCESS-POINTS.md
+// 加一个接入点，自校验才认。
+var specs = []Metric{
+	{
+		Name: NameExecDuration,
+		Kind: KindHistogram,
+		Unit: "ms",
+		Desc: "一次编排单元（轮 / 环节 / 工具调用 / 副作用 / 快照落库）的实测耗时。" +
+			"口径与轨迹属性 " + "harness.trajectory.duration_ms" + " 同源：起止相减现算，" +
+			"只记实测，估算值不许冒充实测。",
+		Labels: []LabelDim{
+			{
+				Key: LabelExecKind,
+				Values: []string{
+					ExecKindTurn, ExecKindStep, ExecKindToolCall,
+					ExecKindToolResult, ExecKindSideEffect, ExecKindCheckpoint,
+				},
+				Why: "逐字对齐 trajectory 的行类目（Kind* 常量），轨迹上加类目才加这里——两份枚举不许各自长",
+			},
+			{
+				Key:    LabelExecStatus,
+				Values: []string{ExecStatusUnset, ExecStatusOK, ExecStatusError},
+				Why:    "状态三值纪律与 trajectory 同源：在途记 unset 不记 error，事故不被在途噪声淹没",
+			},
+		},
+	},
+	{
+		Name: NameRetryTotal,
+		Kind: KindCounter,
+		Unit: "1",
+		Desc: "重试决策计数。每次 retryplan.Decide 落地一条（按 path 分）——数的是" +
+			"「决定走哪条路」，不是「实际重发了几次」：后者是宿主执行面的事，内核不猜。",
+		Labels: []LabelDim{
+			{
+				Key:    LabelRetryPath,
+				Values: []string{RetryPathNone, RetryPathDirect, RetryPathReplayed},
+				Why:    "取值 = retryplan.Path 的 String()，路径枚举加值须两边同步（metrics_test 比对）",
+			},
+		},
+	},
+	{
+		Name: NameLeaseContended,
+		Kind: KindCounter,
+		Unit: "1",
+		Desc: "租约竞争拒绝计数：「这次没执行成」的竞争面信号。contended=等一等再来，" +
+			"uncertain=须先对账（硬阻塞）。两类合看就是「竞争压力」与「对账压力」。",
+		Labels: []LabelDim{
+			{
+				Key:    LabelLeaseSubsystem,
+				Values: []string{LeaseSubsystemSideEffect, LeaseSubsystemTaskBoard},
+				Why:    "租约面只有 sideeffect（副作用闸）与 taskboard（任务认领）两个子系统；加新租约面才算新值",
+			},
+			{
+				Key:    LabelLeaseOutcome,
+				Values: []string{LeaseOutcomeContended, LeaseOutcomeUncertain},
+				Why:    "拒绝形态对齐 sideeffect.Outcome 的 Contended / Uncertain 二值",
+			},
+		},
+	},
+	{
+		Name: NameRecoveryTotal,
+		Kind: KindCounter,
+		Unit: "1",
+		Desc: "恢复尝试计数（按 outcome 分）。恢复成功率由看板用 success / failure 两时序" +
+			"现算——内核不产出第二个真相（派生量只算一遍）。",
+		Labels: []LabelDim{
+			{
+				Key:    LabelRecoverySubsystem,
+				Values: []string{RecoverySubsystemCheckpoint, RecoverySubsystemSideEffect},
+				Why:    "恢复面目前只有快照恢复与副作用对账两处；新增恢复路径才加值",
+			},
+			{
+				Key:    LabelRecoveryOutcome,
+				Values: []string{RecoveryOutcomeSuccess, RecoveryOutcomeFailure},
+				Why:    "两值封闭：blocked 也计 failure——「没恢复成」只有一种计法，看板不用先学会内核细分语义",
+			},
+		},
+	},
+	{
+		Name: NameUncertainBacklog,
+		Kind: KindGauge,
+		Unit: "1",
+		Desc: "未知结果积压量：当前处于「结果未知」态的副作用 Key 数。" +
+			"零维（无标签）——积压看总量与趋势，明细（哪个 Key）走日志与对账面，不进指标。",
+	},
+}
+
+// Specs 返回登记表的**深拷贝**（调用方改不动登记表——口径只有一处能改；
+// Labels / Values 子切片同样复制）。
+func Specs() []Metric { return cloneMetrics(specs) }
+
+// SpecOf 按名取登记项（深拷贝）。未登记的指标名 = 埋点面之外的暗数，Validate 会拦。
+func SpecOf(name string) (Metric, bool) {
+	m, ok := findSpec(specs, name)
+	if !ok {
+		return Metric{}, false
+	}
+	return cloneMetric(m), true
 }

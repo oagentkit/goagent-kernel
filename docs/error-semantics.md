@@ -297,8 +297,10 @@
 
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
-| `ErrUnregisteredMetric` | 埋点用了未在 `Specs` 登记表登记的指标名（`Validate` 判，`Mem` 严格档计数） | 修声明：先在 `metrics.go` 登记指标（名称/类型/维度/基数上界）+ ACCESS-POINTS.md 加接入点，再埋点——未登记的数是看板口径外的暗数 |
-| `ErrInvalidSpec` | `Register` 的登记判据拒绝（#239 开放登记面）：字段缺失（Name/Kind/Unit/Desc）、Kind 词表外、维度键缺失/重复/在禁区清单、取值域为空或含重复、指标名撞名、宿主指标冒用 `harness.` 前缀 | 修声明：按报错点名的判据改登记项再 `Register`——声明自相矛盾的「封闭枚举」会让基数门失去可信上界，重试注册无意义 |
+| `ErrUnregisteredMetric` | 埋点用了未在 `Specs` 登记表登记的指标名（`Validate` 判，`Mem` 严格档计数；`SpecSet.Validate` 对宿主自有登记表同一判据） | 修声明：先在 `metrics.go` 登记指标（名称/类型/维度/基数上界）+ ACCESS-POINTS.md 加接入点，再埋点——未登记的数是看板口径外的暗数 |
+| `ErrInvalidSpec` | 经 `SpecSet.Register` / `Merge` 注册的指标登记项自身不自洽（名称/类型/单位/说明/维度取值域/基数上界依据缺一不可） | 修声明：按报错补全登记项；拒收的登记项不会进入表，也不会影响已有登记 |
+| `ErrDuplicateMetric` | `SpecSet.Register` / `Merge` 遇到同名指标（看板与查询按名字对应，重名等于两个口径） | 修声明：改名或去掉重复登记；拒绝「后者覆盖前者」的静默替换 |
+
 ### worker
 
 | 哨兵 | 触发条件 | 调用方处置 |
