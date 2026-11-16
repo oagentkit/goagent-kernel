@@ -185,14 +185,37 @@ func (k *K8sJob) listNetworkPolicies(ctx context.Context, ns string) ([]k8sNetwo
 	return out.Items, nil
 }
 
-func (k *K8sJob) deleteJob(ctx context.Context, ns, name string) error {
-	q := url.Values{"propagationPolicy": {"Background"}}
-	resp, err := k.call(ctx, http.MethodDelete, k8sJobsPath(ns, name), nil, q)
+// k8sDeleteOptions DELETE 请求体：清理 Job 时带 UID 前置条件（issue #276）。
+//
+// 用 K8s 原生 `preconditions.uid` 而不是「先查后删」的两步：两步之间对象
+// 仍可被替换，前置条件是服务端在同一次删除里校验身份。
+type k8sDeleteOptions struct {
+	PropagationPolicy string                  `json:"propagationPolicy,omitempty"`
+	Preconditions     *k8sDeletePreconditions `json:"preconditions,omitempty"`
+}
+
+type k8sDeletePreconditions struct {
+	UID string `json:"uid"`
+}
+
+// deleteJobWithUID 删除本次创建的 Job，UID 不符时由 API 拒绝（409）。
+//
+// 404 = 已被 TTL / 控制面清掉：清理幂等；409 = 同名对象已不是本次创建的那一份
+// （UID 前置条件不成立）：**不删**，这是本函数存在的全部理由。
+func (k *K8sJob) deleteJobWithUID(ctx context.Context, ns, name, uid string) error {
+	body := k8sDeleteOptions{
+		PropagationPolicy: "Background",
+		Preconditions:     &k8sDeletePreconditions{UID: uid},
+	}
+	resp, err := k.call(ctx, http.MethodDelete, k8sJobsPath(ns, name), body, nil)
 	if err != nil {
 		return err
 	}
-	if resp.status == http.StatusNotFound {
+	switch resp.status {
+	case http.StatusNotFound:
 		return nil // 已被 TTL / 控制面清掉：清理是幂等的
+	case http.StatusConflict:
+		return nil // UID 不符：同名对象是后来者，拒绝删除即正确结果
 	}
 	return k8sAPIError("删除 Job", resp)
 }

@@ -31,10 +31,17 @@ type fakeKube struct {
 	npRaw      [][]byte
 	jobDeletes []string
 	npDeletes  []string
-	getCalls   int
-	jobNS      string
-	npNS       string
-	podsNS     string
+	// jobDeleteBodies DELETE 请求体（issue #276：断言 preconditions.uid）。
+	jobDeleteBodies [][]byte
+	getCalls        int
+	jobNS           string
+	npNS            string
+	podsNS          string
+
+	// jobUID 作业对象 UID；空 = "uid-1"。jobUIDOmit 让创建应答不带 uid
+	// （读不出 UID ⇒ 显式清理必须退化到 TTL，不按名字删）。
+	jobUID     string
+	jobUIDOmit bool
 
 	npCreateStatus  int
 	npGetStatus     int // 非 0 ⇒ 单读 NetworkPolicy 回该状态码（读回校验失败用例）
@@ -146,6 +153,7 @@ func (f *fakeKube) handler() http.Handler {
 		f.jobNS = r.PathValue("ns")
 		st := f.jobCreateStatus
 		lost := f.createLost
+		uid, omitUID := f.uidLocked(), f.jobUIDOmit
 		f.mu.Unlock()
 		if lost {
 			// 服务端已受理（对象落集群），响应丢失：幂等创建的整条验收线都骑在这上面。
@@ -168,7 +176,11 @@ func (f *fakeKube) handler() http.Handler {
 		f.mu.Lock()
 		f.created[bodyName(raw)] = bodyLabels(raw)
 		f.mu.Unlock()
-		writeJSON(w, http.StatusCreated, map[string]any{"metadata": map[string]any{"name": bodyName(raw), "uid": "uid-1"}})
+		meta := map[string]any{"name": bodyName(raw)}
+		if !omitUID {
+			meta["uid"] = uid
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"metadata": meta})
 	})
 	mux.HandleFunc("GET /apis/batch/v1/namespaces/{ns}/jobs/{name}", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -176,6 +188,7 @@ func (f *fakeKube) handler() http.Handler {
 		f.getNames = append(f.getNames, r.PathValue("name"))
 		name := r.PathValue("name")
 		code, deleting := f.jobGetStatus, f.deleting
+		uid := f.uidLocked()
 		seed, pre := f.preseeded[name]
 		labels, created := f.created[name]
 		f.mu.Unlock()
@@ -204,7 +217,7 @@ func (f *fakeKube) handler() http.Handler {
 			}
 			f.mu.Unlock()
 		}
-		meta := map[string]any{"name": name, "uid": "uid-1"}
+		meta := map[string]any{"name": name, "uid": uid}
 		if len(labels) > 0 {
 			meta["labels"] = labels
 		}
@@ -216,7 +229,18 @@ func (f *fakeKube) handler() http.Handler {
 		})
 	})
 	mux.HandleFunc("DELETE /apis/batch/v1/namespaces/{ns}/jobs/{name}", func(w http.ResponseWriter, r *http.Request) {
+		raw := readBody(r)
 		f.mu.Lock()
+		f.jobDeleteBodies = append(f.jobDeleteBodies, raw)
+		uid := f.uidLocked()
+		var opts k8sDeleteOptions
+		_ = json.Unmarshal(raw, &opts)
+		if opts.Preconditions != nil && opts.Preconditions.UID != "" && opts.Preconditions.UID != uid {
+			f.mu.Unlock()
+			// 真 apiserver 的 preconditions.uid 不成立时回 409，且不删对象。
+			writeStatus(w, http.StatusConflict, "Precondition failed: uid mismatch")
+			return
+		}
 		f.jobDeletes = append(f.jobDeletes, r.PathValue("name"))
 		delete(f.created, r.PathValue("name")) // 集群状态如实：删了就是没了
 		f.mu.Unlock()
@@ -258,33 +282,42 @@ func (f *fakeKube) handler() http.Handler {
 	return mux
 }
 
+func (f *fakeKube) uidLocked() string {
+	if f.jobUID == "" {
+		return "uid-1"
+	}
+	return f.jobUID
+}
+
 type fakeKubeSnapshot struct {
-	jobRaw     [][]byte
-	npRaw      [][]byte
-	jobDeletes []string
-	npDeletes  []string
-	getCalls   int
-	jobNS      string
-	npNS       string
-	podsNS     string
-	jobGets    int
-	getNames   []string
+	jobRaw          [][]byte
+	npRaw           [][]byte
+	jobDeletes      []string
+	npDeletes       []string
+	jobDeleteBodies [][]byte
+	getCalls        int
+	jobNS           string
+	npNS            string
+	podsNS          string
+	jobGets         int
+	getNames        []string
 }
 
 func (f *fakeKube) snapshot() fakeKubeSnapshot {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return fakeKubeSnapshot{
-		jobRaw:     append([][]byte(nil), f.jobRaw...),
-		npRaw:      append([][]byte(nil), f.npRaw...),
-		jobDeletes: append([]string(nil), f.jobDeletes...),
-		npDeletes:  append([]string(nil), f.npDeletes...),
-		getCalls:   f.getCalls,
-		jobNS:      f.jobNS,
-		npNS:       f.npNS,
-		podsNS:     f.podsNS,
-		jobGets:    f.jobGets,
-		getNames:   append([]string(nil), f.getNames...),
+		jobRaw:          append([][]byte(nil), f.jobRaw...),
+		npRaw:           append([][]byte(nil), f.npRaw...),
+		jobDeletes:      append([]string(nil), f.jobDeletes...),
+		npDeletes:       append([]string(nil), f.npDeletes...),
+		jobDeleteBodies: append([][]byte(nil), f.jobDeleteBodies...),
+		getCalls:        f.getCalls,
+		jobNS:           f.jobNS,
+		npNS:            f.npNS,
+		podsNS:          f.podsNS,
+		jobGets:         f.jobGets,
+		getNames:        append([]string(nil), f.getNames...),
 	}
 }
 

@@ -31,6 +31,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
@@ -80,24 +81,25 @@ func k8sSanitizeDNSLabel(s string) string {
 
 // k8sReconcileJob 对账先于创建：按派生名查询同标识作业。
 //
-// found=true 表示集群里已有该执行标识的作业（不发创建请求，等它的终态）。
+// found=true 表示集群里已有该执行标识的作业（不发创建请求，等它的终态）；
+// uid 是该对象的 metadata.uid（清理时作为删除前置条件，issue #276）。
 // 查询失败 ⇒ 拒绝创建（无法确认是否已存在，fail-closed）；命中同名对象但
 // 执行标识不符 ⇒ 拒绝（可能是别人的对象，绝不对着它等终态）。
-func (k *K8sJob) k8sReconcileJob(ctx context.Context, ns, name, executionID string) (bool, error) {
+func (k *K8sJob) k8sReconcileJob(ctx context.Context, ns, name, executionID string) (found bool, uid string, err error) {
 	job, found, err := k.getJob(ctx, ns, name)
 	if err != nil {
-		return false, errors.Wrap(ErrAPICall,
+		return false, "", errors.Wrap(ErrAPICall,
 			"对账查询失败：无法确认同标识作业是否已存在，拒绝创建（fail-closed）: "+err.Error())
 	}
 	if !found {
-		return false, nil
+		return false, "", nil
 	}
 	if got := job.Metadata.Labels[k8sExecutionIDLabel]; got != executionID {
-		return false, errors.Wrap(ErrAPICall, fmt.Sprintf(
+		return false, "", errors.Wrap(ErrAPICall, fmt.Sprintf(
 			"对账命中同名作业 %s/%s 但执行标识不符（got=%q want=%q）——拒绝创建，不对别人的对象等终态",
 			ns, name, got, executionID))
 	}
-	return true, nil
+	return true, job.Metadata.UID, nil
 }
 
 // k8sCreateOutcome 创建请求的落点分级（「没建成」与「建成了但响应丢了」
@@ -115,22 +117,30 @@ const (
 	k8sCreateUncertain
 )
 
-// createJob 创建 Job 并回报落点分级。
-func (k *K8sJob) createJob(ctx context.Context, ns, name string, j backend.Job) (k8sCreateOutcome, error) {
+// createJob 创建 Job 并回报落点分级与对象 UID。
+//
+// uid 只在 2xx 且应答可解析时非空：清理要用它做删除前置条件（issue #276）。
+// 应答读不出 UID 不影响执行本身（Job 已建成），但会让显式清理退化到 TTL
+// ——宁可不删，也不按名字误删后来者。
+func (k *K8sJob) createJob(ctx context.Context, ns, name string, j backend.Job) (k8sCreateOutcome, string, error) {
 	resp, err := k.call(ctx, http.MethodPost, k8sJobsPath(ns, ""), buildK8sJob(name, ns, j, k), nil)
 	if err != nil {
-		return k8sCreateUncertain, err // 传输失败：请求可能已到达服务端
+		return k8sCreateUncertain, "", err // 传输失败：请求可能已到达服务端
 	}
 	if resp.status >= 200 && resp.status < 300 {
-		return k8sCreated, nil
+		var out k8sJobResponse
+		if jerr := json.Unmarshal(resp.body, &out); jerr != nil {
+			return k8sCreated, "", nil // 已建成但读不出 UID：清理交给 TTL
+		}
+		return k8sCreated, out.Metadata.UID, nil
 	}
 	if resp.status == http.StatusConflict {
-		return k8sCreateConflict, k8sAPIError("创建 Job", resp)
+		return k8sCreateConflict, "", k8sAPIError("创建 Job", resp)
 	}
 	if resp.status >= 500 {
-		return k8sCreateUncertain, k8sAPIError("创建 Job", resp) // 5xx：可能已受理
+		return k8sCreateUncertain, "", k8sAPIError("创建 Job", resp) // 5xx：可能已受理
 	}
-	return k8sCreateRejected, k8sAPIError("创建 Job", resp)
+	return k8sCreateRejected, "", k8sAPIError("创建 Job", resp)
 }
 
 // k8sPolicyIsOursDenyAll 判同名既有策略是否就是本作业的全拒策略（重试路径上
