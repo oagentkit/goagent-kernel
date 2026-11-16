@@ -440,6 +440,7 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 |---|---|
 | `NewCatalog` / `NewCatalogWithLimit` | `func NewCatalog(tools []Tool) *Catalog` |
 | `Catalog.Load` / `ExposeAll` / `Search` | `Load` 是披露的唯一写入口 |
+| `SearchWithStats` / `SearchResult` | 检索并携带截断信号（`Total` / `Truncated`，与 `skilldisclose.Result.Truncated` 同名同义，#287）；`Search` 只是丢信号的薄包装 |
 | `NewGate` / `Gate.Check` | 三种结局见上表 |
 | `Retryable` / `Guidance` | `func Retryable(err error) bool` / `func Guidance(err error) string` |
 | `Stage` / `StageName` | `func Stage(cat *Catalog) invoke.Stage` / `const StageName = "tool_disclosure"` |
@@ -453,7 +454,8 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 - **描述按 rune 截到 320 字符，在存进目录前截断**——不是渲染时截，
   否则检索打分读全文、模型看摘要。
 - **`Search` 无命中返回空，不兜底给「随便几个」；且只排序不激活**——
-  检索顺手激活会把刚省下的上下文吐回去。
+  检索顺手激活会把刚省下的上下文吐回去。命中数超过检索上限时会**显式截断**：
+  要知道「还有多少没给」用 `SearchWithStats`（#287）。
 - **`SignatureOf` 派生不出来就报错，不硬凑**。退化占位 schema（Properties 为 nil）、
   参数名非合法 JS 标识符、`Required` 点名了不存在的参数，三种都返回 `ErrSchemaNotDerivable`。
   宁可装配失败，也不让「看起来能用、实际不对」的东西进模型面前。

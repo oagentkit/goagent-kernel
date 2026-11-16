@@ -23,7 +23,27 @@ type Match struct {
 	Score int
 }
 
+// SearchResult 一次检索的完整结果：命中集 + 截断信号（#287）。
+//
+// # 与 skilldisclose.Result.Truncated 的关系
+//
+// 同一条判据的两处落地：「裁剪显式」——命中集因上限被截断时必须标出来，静默截断
+// 会让模型以为「就这几个工具相关」而不再检索，召回被静默削掉。**同名同义**：
+// Truncated=true 当且仅当有候选因检索上限没进 Matches；未披露数 = Total − len(Matches)。
+// 两条披露面对同一件事给同一形态，宿主不必为另一个包打补丁。
+type SearchResult struct {
+	// Matches 按 (分值降序, 名字升序) 排好并已按检索上限截断的命中。
+	Matches []Match
+	// Total 截断前的命中总数（含被上限挤掉者）。
+	Total int
+	// Truncated 是否有命中因检索上限被截断（即 Total > len(Matches)）。
+	Truncated bool
+}
+
 // Search 按关键词检索目录，返回按 (分值降序, 名字升序) 排好并已截断的命中。
+//
+// 要问「还有多少没给」（是否有候选被上限挤掉、共命中多少），用 SearchWithStats——
+// 本方法只回命中集本身，截断信号拿不到。
 //
 // # 无命中返回空，不兜底给「随便几个」
 //
@@ -34,9 +54,17 @@ type Match struct {
 // 检索只排序、**不激活**：激活是宿主（或门禁）的显式决定。若检索顺手把命中项全部标成已加载，
 // 一次宽泛的查询就能把刚省下来的上下文又吐回去，本包也就退化成了「带搜索框的全量披露」。
 func (c *Catalog) Search(query string) []Match {
+	return c.SearchWithStats(query).Matches
+}
+
+// SearchWithStats 检索并携带截断信号。
+//
+// 语义与 Search 逐条相同（无命中不兜底、只排序不激活、排序键全序），两条出口共享
+// 同一次扫描——Search 只是丢掉信号的薄包装，不存在第二份判据。
+func (c *Catalog) SearchWithStats(query string) SearchResult {
 	terms := tokenize(query)
 	if len(terms) == 0 {
-		return nil // 没有检索词就没有检索意图，不猜
+		return SearchResult{} // 没有检索词就没有检索意图，不猜
 	}
 	normalized := normalizeQuery(terms)
 
@@ -50,12 +78,12 @@ func (c *Catalog) Search(query string) []Match {
 			r.add(Match{Tool: e.tool, Score: score})
 		}
 	}
-	// 有检索词但无命中：返回**空切片而非 nil**（旧行为）。调用方拿 nil 与空切片做
+	// 有检索词但无命中：Matches 为**空切片而非 nil**（旧行为）。调用方拿 nil 与空切片做
 	// 分支的写法在本包之外不该出现，但这条是既有契约，改它就是改语义。
 	if r.top == nil {
-		return []Match{}
+		r.top = []Match{}
 	}
-	return r.top
+	return SearchResult{Matches: r.top, Total: r.total, Truncated: r.total > len(r.top)}
 }
 
 // ranker 实时维护分值前 limit 名命中。
@@ -73,6 +101,10 @@ func (c *Catalog) Search(query string) []Match {
 type ranker struct {
 	top   []Match
 	limit int
+	// total 截断前的命中总数：每条 score>0 的候选都计数一次（#287），
+	// 与「能否挤进前 limit」无关——挤不进的不进结果，但必须留在账上，
+	// 否则「还有多少没给」少报，宿主的再检索决策就建立在错的账上。
+	total int
 }
 
 // higher 报告 a 是否排在 b 之前：分值降序，同分按名字升序。
@@ -88,6 +120,7 @@ func higher(a, b Match) bool {
 // 插入位置用二分：top 恒按 higher 升序（即"最好的在前"），故「m 排在 top[j] 之前」
 // 这个谓词是**单调**的（真值从某个 j 起恒真），sort.Search 的前提成立。
 func (r *ranker) add(m Match) {
+	r.total++
 	i := sort.Search(len(r.top), func(j int) bool { return higher(m, r.top[j]) })
 	if i >= r.limit {
 		return // 连末位都挤不进：更差的候选不影响结果
