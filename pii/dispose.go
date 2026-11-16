@@ -51,12 +51,31 @@ func applySpan(v string, kind Kind, s StrategyKind, digestKey string) string {
 // 消除拼接歧义（kind 来自固定枚举，v 任意——定界后 (kind,v) 与
 // (kind',v') 的编码不可能相同）。密钥保密 ⇒ 字典枚举失效：攻击者没有密钥
 // 就无法对候选值复算摘要，9×10⁹ 的手机号域不再可穷举。
+//
+// 摘要吃**归一化后的值**（#297）：同一个号码的全角/零宽/分组形态与 ASCII 形态
+// 产出同一摘要——「同值同摘要」的可关联性不被书写形态撕裂。取值口径见
+// digestValue：手机号取本地 11 位数字（国家码前缀与分隔符不进摘要，同号必
+// 同值），身份证取归一化后的 18 位。ASCII 连续、无前缀形态的摘要不变。
 func keyedDigest(v string, kind Kind, key string) string {
 	mac := hmac.New(sha256.New, []byte(key))
 	mac.Write([]byte(kind))
 	mac.Write([]byte{0})
-	mac.Write([]byte(v))
+	mac.Write([]byte(digestValue(v, kind)))
 	return hex.EncodeToString(mac.Sum(nil))[:16]
+}
+
+// digestValue 摘要的取值口径：同一个 PII 值的不同书写形态产出同一个摘要，
+// 「可关联」按值算，不按写法算。手机号的国家码前缀不进摘要（归属信息不敏感，
+// 见 maskMobile；带不带 +86 是同一个号码）；形态异常（数字位不足）时退回归一化
+// 原文，不虚构形态。
+func digestValue(v string, kind Kind) string {
+	n := normalizeText(v)
+	if kind == KindMobile {
+		if _, digits := trailingDigits(n, 11); digits != nil {
+			return string(digits)
+		}
+	}
+	return n
 }
 
 // applySpansAs 以**指定**策略与摘要密钥处置，是「一次调用一个策略」这一不变量的

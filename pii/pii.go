@@ -15,8 +15,11 @@
 // 省级码白名单 + 出生日期合法（含未来拒绝）+ 顺序码非全零 + MOD 11-2 校验码——
 // 订单号/流水号/银行卡号等长数字串几乎不可能同时通过；手机号要求两侧不邻接
 // 字母数字（Go RE2 无环视断言，边界在代码判定），13 位毫秒时间戳因尾邻数字不
-// 会误命中。缺省策略 mask 保长度（前段+星号+尾段），日志对齐与残留定位友好；其余
-// 策略的处置形态由宿主注入的 StrategyKind 决定（见 policy.go）。
+// 会误命中。数字形态归一化（#297，normalize.go）在匹配前展开：全角 ASCII 变体
+// 折半、零宽字符剔除、3-4-4 分组手机号按标准书写形态收口（分组连排 / 叠用 /
+// 其他分组形状一律不认——宁可漏打）；归一化与判定共用一条路径，防误命中语义
+// 不被形态扩张拉宽。缺省策略 mask 保长度（前段+星号+尾段），日志对齐与残留
+// 定位友好；其余策略的处置形态由宿主注入的 StrategyKind 决定（见 policy.go）。
 //
 // 结构面：ApplyValue（按敏感面）递归下探 map[string]any /
 // map[string]string / []any / []string——其中 map[string]string 是 agentkit
@@ -62,6 +65,14 @@ type Span struct {
 // 无法区分，保守放弃）。
 var mobileRe = regexp.MustCompile(`(?:\+86|0086)?1[3-9][0-9]{9}`)
 
+// groupedMobileRe 手机号的**标准 3-4-4 分组**书写形态（#297）：1[3-9] 开头，
+// 组间单个分隔符（`-` / `.` / 空格——归一化后全角连字符/句点/表意空格也落到
+// 这三类）。误检面口径（评估后写死）：分组**连排**（3-4-4-4 的分组列数据）、
+// 分隔符**叠用**、**其他分组形状**（4-4-4-4 银行卡等）一律不认——宁可漏打
+// 不可错打；命中之后再过 groupedTrailingOK 的「不得紧跟分隔符+数字」护栏。
+// 身份证不设分组形态（分组书写罕见，而 18 位数字串的误检面比手机号宽）。
+var groupedMobileRe = regexp.MustCompile(`(?:(?:\+86|0086)[-. ]?)?1[3-9][0-9][-. ][0-9]{4}[-. ][0-9]{4}`)
+
 // 身份证粗筛：17 位数字 + 校验位（数字或 X/x）。语义校验在 validResidentID。
 var residentIDRe = regexp.MustCompile(`[0-9]{17}[0-9Xx]`)
 
@@ -82,29 +93,75 @@ var idWeights = [17]int{7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2}
 const idCheckChars = "10X98765432"
 
 // Detect 找出 s 中全部 PII span（已完成语义校验与边界判定，重叠时保留更长者）。
-// 返回按 Start 升序、互不重叠。
+// 返回按 Start 升序、互不重叠；坐标是**原文**字节偏移，处置面拿原文切片。
+//
+// # 数字形态归一化（#297）
+//
+// 匹配与判定跑在「判定视角」文本上（normalize.go）：全角 ASCII 变体折半、
+// 表意空格折空格、零宽字符剔除，span 经 formMap 映射回原文——归一化与判定
+// 共用一条路径，防误命中语义不被形态扩张拉宽。纯 ASCII 输入视角即原文
+// （零分配快路），既有行为逐字节不变。
 func Detect(s string) []Span {
-	if len(s) < 11 || !strings.ContainsFunc(s, func(r rune) bool { return r >= '0' && r <= '9' }) {
+	if len(s) < 11 {
 		return nil
 	}
-	var out []Span
-	for _, m := range mobileRe.FindAllStringIndex(s, -1) {
-		if !boundaryOK(s, m[0], m[1]) {
-			continue
+	if asciiOnly(s) {
+		if !strings.ContainsFunc(s, hasASCIIDigit) {
+			return nil
 		}
-		out = append(out, Span{Kind: KindMobile, Start: m[0], End: m[1]})
+		return detectIn(s, nil) // 视角 == 原文，映射免掉
 	}
-	for _, m := range residentIDRe.FindAllStringIndex(s, -1) {
-		if !boundaryOK(s, m[0], m[1]) {
+	view, starts, ends := normalizeForm(s)
+	if !strings.ContainsFunc(view, hasASCIIDigit) {
+		return nil
+	}
+	return detectIn(view, &formMap{starts: starts, ends: ends})
+}
+
+// detectIn 在判定视角文本上跑三类形态匹配，span 映射回原文坐标后消解重叠。
+func detectIn(view string, m *formMap) []Span {
+	var out []Span
+	for _, match := range mobileRe.FindAllStringIndex(view, -1) {
+		if !boundaryOK(view, match[0], match[1]) {
 			continue
 		}
-		if !validResidentID(s[m[0]:m[1]]) {
+		start, end := m.span(match[0], match[1])
+		out = append(out, Span{Kind: KindMobile, Start: start, End: end})
+	}
+	for _, match := range groupedMobileRe.FindAllStringIndex(view, -1) {
+		if !boundaryOK(view, match[0], match[1]) || !groupedTrailingOK(view, match[1]) {
 			continue
 		}
-		out = append(out, Span{Kind: KindResidentID, Start: m[0], End: m[1]})
+		start, end := m.span(match[0], match[1])
+		out = append(out, Span{Kind: KindMobile, Start: start, End: end})
+	}
+	for _, match := range residentIDRe.FindAllStringIndex(view, -1) {
+		if !boundaryOK(view, match[0], match[1]) {
+			continue
+		}
+		if !validResidentID(view[match[0]:match[1]]) {
+			continue
+		}
+		start, end := m.span(match[0], match[1])
+		out = append(out, Span{Kind: KindResidentID, Start: start, End: end})
 	}
 	return dedupeSpans(out)
 }
+
+// groupedTrailingOK 分组命中的尾护栏：命中之后不得紧跟「分隔符串+数字」——
+// 那是分组列数据（多组连排），不是单号；宁可漏打。普通符号收尾（句号、
+// 括号等）放行。
+func groupedTrailingOK(view string, end int) bool {
+	i := end
+	for i < len(view) && (view[i] == '-' || view[i] == '.' || view[i] == ' ') {
+		i++
+	}
+	return i >= len(view) || !isASCIIDigit(view[i])
+}
+
+func isASCIIDigit(b byte) bool { return b >= '0' && b <= '9' }
+
+func hasASCIIDigit(r rune) bool { return r >= '0' && r <= '9' }
 
 // boundaryOK 命中两侧不得邻接字母数字（RE2 无环视，代码判定；下划线/连字符等
 // 符号边界放行——「tel:13812345678」「工单-11010519491231002X」应打码）。
@@ -176,17 +233,48 @@ func dedupeSpans(in []Span) []Span {
 // 校验位**不保留**（issue #298）：MOD 11-2 校验位原样留下，就成了对
 // 「生日 × 顺序码 × 区县」候选的免费验算器——原本候选还需自洽才算命中。
 // 留前 4 已够宿主做省市级定位，尾 2 没有等价的定位价值。
+//
+// # 非 ASCII 形态先过同一条归一化（#297）
+//
+// 识别面新增的形态（全角/零宽/分组）进到处置面时拿到的是**原文切片**，直接按
+// ASCII 取位会把全角的多字节切烂。故先 normalizeText 取位——处置输出的数字
+// 形态恒为半角 ASCII；既有 ASCII 连续形态的输出逐字节不变。代价：非连续形态
+// 的字节长度不保（全角 33 字节 → 掩码 11 字节），保长性质仅在原形态为 ASCII
+// 连续时成立（USAGE 已声明）。形态异常（位数对不上）时全掩 fail-closed：
+// 处置面拿不到可定位的前后段，就一段都不留。
 func maskSpan(v string, kind Kind) string {
 	switch kind {
 	case KindMobile:
-		digits := v
-		prefix := ""
-		if len(v) > 11 {
-			prefix, digits = v[:len(v)-11], v[len(v)-11:]
-		}
-		return prefix + digits[:3] + "****" + digits[7:]
+		return maskMobile(v)
 	case KindResidentID:
-		return v[:4] + strings.Repeat("*", 14)
+		return maskResidentID(v)
 	}
 	return strings.Repeat("*", len(v))
+}
+
+// maskMobile 手机号掩码：末 11 位数字为本地号（留前 3 尾 4），其余为前缀
+// （+86/0086，分组间分隔符不保留——与连续形态输出同形）。
+func maskMobile(v string) string {
+	n := normalizeText(v)
+	idx, digits := trailingDigits(n, 11)
+	if idx < 0 {
+		return strings.Repeat("*", len(v)) // 形态异常：全掩，不放行任何数字
+	}
+	prefix := strings.Map(func(r rune) rune {
+		if r == '-' || r == '.' || r == ' ' {
+			return -1 // 分组间分隔符不进输出（与连续形态同形）
+		}
+		return r
+	}, n[:idx])
+	return prefix + string(digits[:3]) + "****" + string(digits[7:])
+}
+
+// maskResidentID 身份证掩码：留前 4（省市级可见），生日、顺序码与校验位全掩
+// （#298 收紧：校验位不保留——它是「生日 × 顺序码 × 区县」候选的免费验算器）。
+func maskResidentID(v string) string {
+	n := normalizeText(v)
+	if len(n) != 18 {
+		return strings.Repeat("*", len(v)) // 形态异常：全掩
+	}
+	return n[:4] + strings.Repeat("*", 14)
 }
