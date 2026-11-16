@@ -22,7 +22,8 @@ import (
 // 无括号段，落成孤儿行——没有实测时长就不写时长，不拿 0 冒充。
 //
 // 配对键是幂等键。同一 Key 的授予段、对账段、点观察共用一个行标识（它们是
-// 同一个逻辑动作的先后两段/侧面），跨 span join 时应聚到一起。
+// 同一个逻辑动作的先后两段/侧面）；同轮内标识可重复是多段的设计事实，段序
+// （Row.Segment / AttrRowSegment）区分先后，聚合口径见契约表（issue #301）。
 
 // sideEffectPayload 从事件载荷取副作用行的公共字段。
 func sideEffectPayload(ev eventbus.Event) (key, resource, safety string, fence uint64) {

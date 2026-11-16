@@ -42,8 +42,10 @@ const (
 )
 
 // sideeffectRowID 副作用行的标识：幂等键是它的自然键。同一个 Key 的授予段、
-// 对账段、点观察共用一个标识——它们是**同一个逻辑动作**的先后两段/侧面，
-// 跨 span 按标识 join 时应聚到一起。
+// 对账段、点观察共用一个标识——它们是**同一个逻辑动作**的先后两段/侧面。
+// 同轮内标识因此可重复：多段以 Row.Segment（段序）区分，OTel 导出经
+// AttrRowSegment 显式标注，跨 span 聚合按（标识, 段序）或幂等键属性 join
+// （issue #301）。
 func sideeffectRowID(key string) string { return "sideeffect#" + key }
 
 // checkpointRowID 快照行的标识：run + 序号唯一定位一次提交。
@@ -62,8 +64,9 @@ func seqID(kind Kind, seq int) string {
 // 否则父子连不上——而连不上**不会报错**，导出器只会把那一行当根，trace 少一段。
 // 故格式只在这里写一次，投影与映射都调这几个函数。
 //
-// 唯一性的范围是**轮内**：环节号由调用方给定，同一环节号在两轮里各出现一次是合法的
-// （故 step#7 会出现在两个轮次里）。trace 边界因此定在轮，见 otel.go 头注。
+// 唯一性的范围是**（轮, 段序）**：环节号由调用方给定，同一环节号在两轮里各出现
+// 一次是合法的（故 step#7 会出现在两个轮次里）；同轮内同标识可重复（副作用多段、
+// 重复快照投递），以段序区分。trace 边界因此定在轮，见 otel.go 头注。
 func turnRowID(turn int) string      { return fmt.Sprintf("turn#%d", turn) }
 func stepRowID(id uint64) string     { return fmt.Sprintf("step#%d", id) }
 func toolRowID(callID string) string { return "tool#" + callID }

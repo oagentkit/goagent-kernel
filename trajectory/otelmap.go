@@ -46,7 +46,8 @@ const (
 // TraceBoundary 本仓选定的 trace 切分单位。
 //
 // 依据见 otel.go 头注「trace 边界」：选「轮」不是习惯，是因为 Row.ID 的唯一性
-// 范围恰好是轮内——把边界挪到环节，标识唯一性与 trace 内唯一性就不再是同一个范围。
+// 范围（轮, 段序）与 trace 范围一致——把边界挪到环节，同号环节会在两个 trace 里
+// 撞同一个标识；留在轮，trace 内重复的 row_id 只有「多段」一种含义（段序属性区分）。
 const TraceBoundary = TracePerTurn
 
 // Domain 属性取值域。
@@ -87,7 +88,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrRowID,
 		Source: "Row.ID",
-		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / <kind>#-<seq>），唯一范围是轮内"},
+		Domain: Domain{Kind: "string", Note: "行标识；形态由投影器决定（turn#N / step#N / tool#<call_id> / <kind>#-<seq>）。唯一性范围是（轮, 段序）：同轮内标识可重复——重复即同一逻辑动作的多段（副作用行的授予段/对账段/点观察共用标识、同 (run,seq) 的重复快照投递），以段序属性（AttrRowSegment）区分与排序；跨轮重复（两轮各开一次的 step#7）不是多段，段序各自从 1 起算"},
 		Card:   Cardinality{Why: "取值随行数增长（行数由事件流长度决定），本仓定不出上界"},
 	},
 	{
@@ -161,11 +162,17 @@ var AttrSpecs = []AttrSpec{
 		Domain: Domain{Kind: "string", Note: "宿主注入的展示文案；内核默认标签不含任何领域词"},
 		Card:   Cardinality{Why: "自由文本，本仓定不出上界"},
 	},
+	{
+		Name:   AttrRowSegment,
+		Source: "Row.Segment（同轮内同标识的出现序，1 起；=1 不写——单段行不带噪声）",
+		Domain: Domain{Kind: "int64", Note: "多段标注与聚合口径：同一 trace 内重复的 row_id 是同一逻辑动作的多段（不是撞号），按 (row_id, 段序) 排序去重——下游按 row_id 单值聚合会静默丢段"},
+		Card:   Cardinality{Why: "段数随同标识的重复投递 / 对账轮次增长，本仓定不出上界"},
+	},
 	// ── 副作用行（v0.33.0，issue #99）：「这个副作用到底施加了吗」的属性面 ──
 	{
 		Name:   AttrSideEffectKey,
 		Source: "Row.SideEffectKey（仅副作用行）",
-		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察共用一个行标识，宿主跨 span join 用"},
+		Domain: Domain{Kind: "string", Note: "幂等键：一个逻辑动作一个值（宿主构造，须稳定）；同 Key 的授予段/对账段/点观察共用一个行标识（多段以 AttrRowSegment 区分），宿主跨 span join 用"},
 		Card:   Cardinality{Why: "动作数无上界（随运行规模增长）"},
 	},
 	{

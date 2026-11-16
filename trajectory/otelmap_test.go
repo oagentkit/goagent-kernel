@@ -23,7 +23,7 @@ func specSamples() []Row {
 			CallID: "c1", Tool: "alpha_fn", Pairing: PairingDuplicateResult, DupResults: 2,
 			StartAt: at(30), EndAt: at(400), Status: StatusClosed, Summary: "tool_call:alpha_fn"},
 		{Seq: 5, Kind: KindToolResult, ID: "tool#c2", Turn: 1, HasStep: true, StepID: 1,
-			CallID: "c2", Tool: "beta_fn", Pairing: PairingUnpairedResult,
+			CallID: "c2", Tool: "beta_fn", Pairing: PairingUnidentifiedResult,
 			EndAt: at(450), Status: StatusOrphan, Summary: "tool_result:beta_fn"},
 		// 副作用行（v0.33.0）：授予段收口态携带全部 sideeffect 属性。
 		{Seq: 6, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1, HasStep: true, StepID: 1,
@@ -34,6 +34,12 @@ func specSamples() []Row {
 		{Seq: 7, Kind: KindCheckpoint, ID: "checkpoint#run-a#7", Turn: 1,
 			CheckpointRunID: "run-a", CheckpointSeq: 7, CheckpointStatus: "running",
 			EndAt: at(310), Status: StatusOrphan, Summary: "checkpoint#run-a#7"},
+		// 多段行（issue #301）：同一 Key 的对账段与授予段共用标识，段序 2
+		// ——导出面以 AttrRowSegment 显式标注「这不是撞号，是同一个动作的
+		// 下一站」。
+		{Seq: 8, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1, Segment: 2,
+			SideEffectKey: "act-a", SideEffectPhase: SideEffectUncertain,
+			StartAt: at(310), Status: StatusOpen, Summary: "sideeffect:act-a"},
 	}
 }
 
@@ -44,7 +50,7 @@ func TestAttrSpecsCoverEveryAttribute(t *testing.T) {
 	all := []string{
 		AttrRowID, AttrKind, AttrRowStatus, AttrTurnSeq, AttrStepID,
 		AttrToolName, AttrToolCallID, AttrToolPairing, AttrToolDupResults,
-		AttrDurationMs, AttrSummary,
+		AttrDurationMs, AttrSummary, AttrRowSegment,
 		AttrSideEffectKey, AttrSideEffectPhase, AttrSideEffectResource,
 		AttrSideEffectFence, AttrSideEffectSafety,
 		AttrCheckpointRunID, AttrCheckpointSeq, AttrCheckpointStatus,

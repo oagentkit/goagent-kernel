@@ -108,6 +108,15 @@ const (
 type Row struct {
 	// Seq 行序号（1 起，按创建顺序）：宿主据此排序，投影内稳定。
 	Seq int
+	// Segment 段序：同一轮次内同一行标识的第几段（1 起）。
+	//
+	// 同一个 Key 的授予段、对账段、点观察**共用一个行标识**（它们是同一个
+	// 逻辑动作的先后段，issue #301 实证过的设计事实），同一 (run_id, seq) 的
+	// 重复快照投递也产出同标识的两行。故「行标识在轮内唯一」不成立——成立
+	// 的是「（轮, 标识, 段序）唯一」：同轮重复的标识必带递增段序，跨轮重复
+	// （两轮各开一次的 step#7）不是多段，段序各自从 1 起算。OTel 导出面以
+	// AttrRowSegment 显式标注（段序 1 不写属性，单段行不带噪声）。
+	Segment int
 	// Kind 行类目。
 	Kind Kind
 	// ID 行标识：轮次行 "turn#1"；带环节号的步骤行 "step#7"；
@@ -115,6 +124,8 @@ type Row struct {
 	// ——授予段、对账段——共用一个标识：它们是同一个动作的先后两段）；
 	// 快照行 "checkpoint#<run_id>#<seq>"；无自然键的行用 "step#-<seq>" 形式兜底
 	// （"-" 前缀表示「这个标识是投影生成的，不是业务自然键」）。
+	// 同轮内标识可重复（多段共用标识、重复投递）——多段以 Segment 段序区分，
+	// 导出面经 AttrRowSegment 显式标注（issue #301）。
 	// 格式的唯一生成点是 turnRowID / stepRowID / toolRowID / sideeffectRowID /
 	// checkpointRowID / seqID——otel 的父子关系复用同一组函数，另写一份格式
 	// 父子就会连不上。
@@ -223,6 +234,7 @@ type Projector struct {
 	rows       []Row          // 按创建顺序追加；下标 + 1 即行序号
 	tools      map[string]int // call_id → 行下标（一个 call_id 最多一行）
 	anonCalls  []int          // 打开中的无 call_id 工具调用行下标（先进先出配对）
+	segCounts  map[segKey]int // （轮, 行标识）→ 已产出的段数（段序计数的唯一源）
 	opens      []int          // 仍打开的步骤行下标（按创建顺序）
 	grants     map[string]int // 幂等键 → 打开中的副作用授予段行下标
 	reconciles map[string]int // 幂等键 → 打开中的副作用对账段行下标
@@ -232,6 +244,12 @@ type Projector struct {
 	issues     []Issue
 }
 
+// segKey 段序计数键：（轮次序号, 行标识）。跨轮的同名标识不是多段。
+type segKey struct {
+	turn int
+	id   string
+}
+
 // NewProjector 构造投影器。
 func NewProjector(opts Options) *Projector {
 	return &Projector{
@@ -239,6 +257,7 @@ func NewProjector(opts Options) *Projector {
 		tools:      map[string]int{},
 		grants:     map[string]int{},
 		reconciles: map[string]int{},
+		segCounts:  map[segKey]int{},
 		turn:       -1,
 	}
 }
@@ -313,61 +332,11 @@ func (p *Projector) Finalize() []Row {
 	return open
 }
 
-// append 追加一行（分配序号、填默认摘要）。
-func (p *Projector) append(r Row) int {
-	p.seq++
-	r.Seq = p.seq
-	r.Summary = defaultSummary(r)
-	if p.opts.Summarize != nil {
-		if s := p.opts.Summarize(r); s != "" {
-			r.Summary = s
-		}
-	}
-	p.rows = append(p.rows, r)
-	return len(p.rows) - 1
-}
-
-// resummarize 就地重算一行摘要（默认标签 + 宿主钩子覆盖）。
-//
-// 与 append 同源：摘要永远从行的当前可读字段算出。就地归并（结果先到、调用后到）
-// 改写类目与归属后必须走这里，否则摘要停留在创建时的类目上，导出面出现
-// kind=tool_call 而 summary 写着 tool_result 的自相矛盾行。
-func (p *Projector) resummarize(r *Row) {
-	r.Summary = defaultSummary(*r)
-	if p.opts.Summarize != nil {
-		if s := p.opts.Summarize(*r); s != "" {
-			r.Summary = s
-		}
-	}
-}
-
 // currentTurn 当前轮次序号（尚未开轮时为 0）。
 func (p *Projector) currentTurn() int {
 	if p.turn < 0 {
 		return 0
 	}
 	return p.rows[p.turn].Turn
-}
-
-// defaultSummary 默认行摘要：通用标签，不含任何领域词。
-func defaultSummary(r Row) string {
-	switch r.Kind {
-	case KindTurn, KindStep:
-		return r.ID
-	case KindToolCall, KindToolResult:
-		if r.Tool == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.Tool
-	case KindSideEffect:
-		if r.SideEffectKey == "" {
-			return string(r.Kind)
-		}
-		return string(r.Kind) + ":" + r.SideEffectKey
-	case KindCheckpoint:
-		return r.ID
-	default:
-		return string(r.Kind)
-	}
 }
 

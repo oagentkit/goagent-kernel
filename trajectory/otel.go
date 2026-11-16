@@ -37,10 +37,13 @@
 // 新 trace（@trace_id@ 的真相源在 @oekit/tracing@，本仓不生成 ID，只声明关系）。
 //
 // 边界定在**轮**（@TraceBoundary@），不是环节。依据不是习惯，是**行标识的唯一边界**：
-// @Row.ID@ 只在轮内唯一（@step#7@ 在第一轮与第二轮各出现一次是合法的，投影器不把
-// 轮次拼进环节号）。以环节为 trace 边界时，同号环节会在两个 trace 里获得同一个 span
-// 标识，而工具行同时引用环节与轮次——按 OTel 语义，父 span 不在本 trace 内即断链。
-// 以轮为边界时，「行 ID 唯一」与「trace 内标识唯一」是同一个范围，两条约束不打架。
+// @Row.ID@ 的唯一性范围是（轮, 段序）——同轮内标识可重复（副作用行的授予段/对账段
+// 共用标识、同 (run,seq) 的重复快照投递，是同一逻辑动作的多段，由 @AttrRowSegment@
+// 显式标注并排序；issue #301），跨轮重复（@step#7@ 在第一轮与第二轮各出现一次）
+// 是合法的，投影器不把轮次拼进环节号。以环节为 trace 边界时，同号环节会在两个
+// trace 里获得同一个 span 标识，而工具行同时引用环节与轮次——按 OTel 语义，父 span
+// 不在本 trace 内即断链。以轮为边界时，标识唯一性的范围与 trace 范围一致：trace 内
+// 重复的 row_id 只有「多段」一种含义，且有段序属性可区分——两条约束不打架。
 //
 // # 父子是**声明的**，悬空父要清成根
 //
@@ -87,6 +90,10 @@ const (
 	AttrDurationMs = "harness.trajectory.duration_ms"
 	// AttrSummary 行摘要（宿主可用 Options.Summarize 覆盖；空则不写）。
 	AttrSummary = "harness.trajectory.summary"
+	// AttrRowSegment 段序（同轮内同标识的多段序号，1 起；**仅段序 > 1 时写**）。
+	// 同一 trace 内重复的 row_id 不是撞号，是同一逻辑动作的多段（授予段/对账段/
+	// 点观察、重复快照投递）——由这个属性显式标注并排序（issue #301）。
+	AttrRowSegment = "harness.trajectory.segment"
 
 	// ── 副作用行（v0.33.0，issue #99）─────────────────────────────
 	// 排障第一问「这个副作用到底施加了吗」的属性面。属性命名与既有三类同构：
@@ -221,6 +228,9 @@ func SpanOf(r Row) Span {
 	}
 	if r.Summary != "" {
 		s.Attributes[AttrSummary] = r.Summary
+	}
+	if r.Segment > 1 {
+		s.Attributes[AttrRowSegment] = int64(r.Segment)
 	}
 	return s
 }
