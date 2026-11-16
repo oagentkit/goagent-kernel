@@ -30,10 +30,15 @@
 // 三步走完整闭环，全部在本包内：
 //
 //	m := budget.Meter{}; m.Add(budget.SegmentConversation, 60000)
-//	p, _ := budget.BuildPlan(budget.PlanInput{Items: 10, KeepTail: 4, ItemTokens: 2500})
-//	res, _ := budget.Apply(ctx, p, leading, tail, arc, sum)
+//	p, _ := budget.BuildPlan(budget.PlanInput{Items: 10, KeepTail: 4})
+//	res, _ := budget.Apply(ctx, p, leading, tail, arc, sum) // leading/tail 逐条带 Tokens
 //	m.Shrink(budget.SegmentConversation,
 //	    budget.NetRemovedTokens(res.GrossRemovedTokens, res.Summary.Tokens))
+//
+// **实际移除量以入参条目的逐条 Tokens 之和为准**（Apply 出参携带），计划的
+// ItemTokens 估算只是宿主没提供逐条量时的兜底。只填计划估算而不填逐条量时，
+// 账会停在估算上；估算与逐条真实量不符时（计划按 25/条、实际 900/条），
+// 账上会少减——而压实是不可逆的逐字丢弃，少减会导致对同一段会话反复压实。
 //
 // 毛移除量与净移除量必须分开取（NetRemovedTokens 有专门注释）：按名字对齐参考实现的
 // 同名字段会静默错账，方向恰好是「看起来更省了」。
@@ -79,6 +84,15 @@ var canonicalSegments = []Segment{
 	SegmentSystem, SegmentTools, SegmentRules,
 	SegmentSkills, SegmentMCP, SegmentConversation,
 }
+
+// canonicalSegment 规范分段集合（Reset 用它区分「保留零值」与「删键」）。
+var canonicalSegment = func() map[Segment]bool {
+	m := make(map[Segment]bool, len(canonicalSegments))
+	for _, s := range canonicalSegments {
+		m[s] = true
+	}
+	return m
+}()
 
 // SegmentUsage 单段计量结果。
 type SegmentUsage struct {
@@ -188,11 +202,22 @@ func (m *Meter) Segments() []SegmentUsage {
 	return out
 }
 
-// Reset 清零（新一轮计量）。保留 map 复用——计量每轮都调，不必每次重新分配。
+// Reset 清零（新一轮计量），并**删除宿主动态分段的键**。
+//
+// 规范分段保留零值（Segments/Snapshot 本来就会列出它们）；非规范分段
+// （宿主按会话 / 按 key 建名——开放键纪律明确允许）必须连键一起删：
+// 只清值不删键时，m.seg 随会话数无界增长，且每轮 Segments()/Snapshot()
+// 仍遍历全量。账是 0、段却全在，正是「无界但看不出来」的形态。
+//
+// map 本身保留复用（计量每轮都调，不必每次重新分配）。
 func (m *Meter) Reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for s := range m.seg {
+		if !canonicalSegment[s] {
+			delete(m.seg, s)
+			continue
+		}
 		m.seg[s] = 0
 	}
 }
@@ -210,15 +235,28 @@ type Display struct {
 
 // Used 展示值 = min(Input, Cap)。未设上限时返回 Input。
 func (d Display) Used() int {
-	if d.Cap <= 0 {
+	if !capacityKnown(d.Cap) {
 		return d.Input
 	}
 	return min(d.Input, d.Cap)
 }
 
-// Overflow 输入是否已越界（仅在设了上限时有意义）。
+// Overflow 输入是否已越界。
+//
+// # 上限未知时返回 true（与 Classify 同向）
+//
+// 此前实现是 `d.Cap > 0 && d.Input > d.Cap`：Cap<=0 时恒 false，读作
+// 「未越界」；而同一个 capacity<=0 在 Classify 里判 critical（「不知道会不会
+// 溢出」与「不会溢出」行为完全相反）。宿主拿 Overflow 当「要不要处置」的
+// 闸门时，未知上限会恒放行——同一份账两个相反结论。
+//
+// 故未知上限一律判 true：不能证明未越界，就不得声称未越界。已知上限
+// （capacityKnown）仍按 Input > Cap 判，恰好等于上限不算越界。
 func (d Display) Overflow() bool {
-	return d.Cap > 0 && d.Input > d.Cap
+	if !capacityKnown(d.Cap) {
+		return true
+	}
+	return d.Input > d.Cap
 }
 
 // Report 一次计量报告：分段估算、provider 报数、展示口径三者**分列**。

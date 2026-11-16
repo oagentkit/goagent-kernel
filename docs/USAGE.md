@@ -253,7 +253,13 @@ func advance(from, to statemachine.StepStatus) error {
 - **`statemachine` 的终态包含 `interrupted`**：环节因用户取消/会话超时/进程中断而中止，
   **区别于失败**（执行了但失败）。下一轮对话历史如实携带，LLM 自行决定重做或跳过。
 - **`RequiresApproval(TypePlan)` 与 `TypeExecute` 为真**；`readonly` 裁剪审批。
-- `statemachine` 零外部依赖，纯 stdlib。
+  大小写/空白变体（`"PLAN"` / `" plan "`）先归一，结论与规范形态一致；
+  **词表外类别一律要求审批**（fail-closed），宿主可用 `StepType.Valid()`
+  区分「本就免审」与「内核不认识」。
+- **`MustTransition` 区分「状态不在词表」与「迁移非法」**：词表外 `from`/`to`
+  包装 `ErrUnknownStatus`（文案不含「非法状态转移」），词表内但不允许的迁移
+  包装 `ErrIllegalTransition`。宿主要按 `errors.Is` 分流排障方向。
+- `statemachine` 只依赖 `oekit/pkg/errors`（错误哨兵与判定），无编排/存储依赖。
 
 ---
 
@@ -334,7 +340,11 @@ func toReport(raw string) (*protocol.Report, error) {
 - **「证据要点」这个标题字面不可单边改**——前端折叠按它匹配，改字面即破坏折叠。
 - **severity 序表刻意不导出**。导出的 map 可被就地改写，
   `SeverityRank["critical"] = 0` 会静默把最高危降级为「未评估」。
-  读取一律走 `SeverityRankOf` / `MaxSeverity` / `IsSeverityValid`。
+  读取一律走 `SeverityRankOf` / `MaxSeverity` / `IsSeverityValid`；
+  合法值集合走 `AllSeverities()` / `SeverityRanks()`（返回排序副本）。
+  大小写/空白变体先归一（`"Critical"` 与 `"critical"` 同序）；空串=未评估
+  （rank 0），非空但词表外=读不懂（`SeverityRankUnknown`，聚合按高于 critical
+  保守处理，不会与「未填」同档）。
 - **经修复通道救回的报告 `Confidence` 被钳为 low**——下游 `needs_review` 语义据此承接。
 - `ValidateStructured` 对「未声明 schema」与「旧 server 无 structuredContent」双写兼容，
   **直接放行**；校验失败是漂移信号，不阻断主流程。
@@ -918,14 +928,18 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
 		return nil
 	}
 
-	// ④ 计划是纯计算，无 I/O；三条空操作守卫返回「原因」而非 bool
+	// ④ 计划是纯计算，无 I/O；三条空操作守卫返回「原因」而非 bool。
+	// 条目逐条带 Item.Tokens，Apply 按逐条之和记毛移除量；PlanInput.ItemTokens
+	// 只是宿主没提供逐条量时的兜底估算。
 	plan, err := budget.BuildPlan(budget.PlanInput{Items: len(items), KeepTail: 4})
 	if err != nil {
 		return nil // 条数不够等，本轮不压
 	}
 
+	// 尾部从 plan.Cutoff 起切（= plan.SummarizeItems），不是从
+	// plan.KeepTailItems 起切：后者是「保留几条」，前者才是「从哪里开始」。
 	res, err := budget.Apply(ctx, plan,
-		items[:plan.SummarizeItems], items[plan.KeepTailItems:],
+		items[:plan.Cutoff], items[plan.Cutoff:],
 		blobArchive{}, llmSummarizer{})
 	if err != nil {
 		return err
@@ -940,14 +954,23 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
 
 **坑**
 
+- **`Apply` 的尾部从 `plan.Cutoff` 起切，不是从 `plan.KeepTailItems` 起切**。
+  `Cutoff` 是「截断下标」（尾部起点），`KeepTailItems` 是「保留几条」——两者
+  数值相近、含义不同，抄错会让入参条数与计划不符并撞 `ErrPlanMismatch`。
 - **毛/净移除量必须分开取**。`GrossRemovedTokens` 是扣摘要**之前**的毛量；
   按名字对齐参考实现的同名字段会**静默错账**，方向恰好是「看起来更省了」。
-  要「减掉多少」请直接用 `NetRemovedTokens`（钳位在 0）。
+  要「减掉多少」请直接用 `NetRemovedTokens`（钳位在 0）。`GrossRemovedTokens`
+  优先取被归档条目的逐条 `Tokens` 之和，计划的 `ItemTokens` 只是兜底估算——
+  条目逐条带量时不要指望计划估算兜住。
+- **`Apply` 的毛移除量以逐条 `Item.Tokens` 为准**。只填 `PlanInput.ItemTokens`
+  而条目不带 `Tokens` 时，账会停在兜底估算上；估算与真实量不符（例如计划按
+  25/条、实际 900/条）会让账上少减，而压实是不可逆的逐字丢弃。
 - **分段估算永不回填 provider 报数**。provider 报的是总数，回填到分段等于让
   tokenizer 误差披上分段精确度的外衣，而压实计划恰按段分配裁剪——喂残差等于喂假账。
 - **`MaxInput` 无预留或窗口未知时原样返回 `baseInput`**——扣减纯属内核自作主张。
-- **`Classify` 在 `capacity<=0` 时返回 `PressureCritical`**：
-  「不知道会不会溢出」与「不会溢出」行为完全相反，不得声称余量充足。
+- **`Classify` 与 `Display.Overflow` 在 `capacity<=0` 时同向**：Classify 返回
+  `PressureCritical`，Overflow 返回 `true`——「不知道会不会溢出」与「不会溢出」
+  行为完全相反，不得声称余量充足。两者共用同一份「上限是否已知」派生。
 - **归档必须先于摘要**：摘要失败时原文已落盘可直接重试（重跑归档幂等）；
   反序可能出现「摘要已丢弃原文、摘要本身又没拿到」的净损失。
 - **`Apply` 的三条计划校验全在任何副作用之前**——被拒的调用不得留下任何副作用。

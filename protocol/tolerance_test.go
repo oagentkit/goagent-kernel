@@ -88,8 +88,8 @@ func TestWalkNormalizeDeep(t *testing.T) {
 	if r.Evidence[0].Tool != "true" || r.Evidence[0].Snippet != "123" {
 		t.Fatalf("evidence 标量未归一: %+v", r.Evidence[0])
 	}
-	if r.Scope != "in" {
-		t.Fatalf("scope 对象应规整为 in: %q", r.Scope)
+	if r.Scope != "" {
+		t.Fatalf("scope 对象形态应删除（未声明），实得 %q", r.Scope)
 	}
 	if r.Decision != "" {
 		t.Fatalf("decision 对象应删除: %q", r.Decision)

@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"math"
 	"slices"
 	"sync"
 	"testing"
@@ -261,5 +262,91 @@ func TestLedgerConcurrentRecord(t *testing.T) {
 		if total.Amount(KindToolCalls) != perWorker {
 			t.Fatalf("agent %v 合计漂移： %d", total.Dims, total.Amount(KindToolCalls))
 		}
+	}
+}
+
+// TestAggregateSaturatesInt64 同一 Kind 的累加跨过 int64 上限时必须钳位到
+// math.MaxInt64 并留下饱和标记，**不得**回绕成负数——负数总额会让下游配额
+// 判据恒判「未超限」（fail-open），并让 Remaining 反向虚报巨额余额。
+func TestAggregateSaturatesInt64(t *testing.T) {
+	const half = int64(5_000_000_000_000_000_000) // 5e18；两条合计 1e19 > MaxInt64
+	events := []Event{
+		{Kind: KindInputTokens, Amount: half, Dims: map[string]string{DimTenant: "acme"}},
+		{Kind: KindInputTokens, Amount: half, Dims: map[string]string{DimTenant: "acme"}},
+		{Kind: KindToolCalls, Amount: 1, Dims: map[string]string{DimTenant: "acme"}},
+	}
+	totals, err := ByTenant(slices.Values(events))
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if len(totals) != 1 {
+		t.Fatalf("应聚出 1 组，got %d", len(totals))
+	}
+	got := totals[0].Amount(KindInputTokens)
+	if got < 0 {
+		t.Fatalf("饱和加法不得回绕成负数，实得 %d", got)
+	}
+	if got != math.MaxInt64 {
+		t.Fatalf("溢出的 Kind 应钳位到 math.MaxInt64，实得 %d", got)
+	}
+	if !totals[0].Saturated[KindInputTokens] {
+		t.Fatal("溢出的 Kind 必须留下饱和标记")
+	}
+	if totals[0].Saturated[KindToolCalls] {
+		t.Fatal("未溢出的 Kind 不得被标记饱和")
+	}
+	// 未溢出的同组 Kind 照常累加。
+	if n := totals[0].Amount(KindToolCalls); n != 1 {
+		t.Fatalf("未溢出的 Kind 合计漂移：%d", n)
+	}
+}
+
+// TestAggregateNULInDimsDoesNotCollide 分组键不得用可歧义的裸拼接：维度值
+// 含 NUL 时，{a:"x\0", b:"y"} 与 {a:"x", b:"\0y"} 是两组语义不同的事件，
+// 撞键会把两个租户/任务的用量并成一笔，并只保留首条的 Dims（跨租户串账）。
+func TestAggregateNULInDimsDoesNotCollide(t *testing.T) {
+	events := []Event{
+		{Kind: KindInputTokens, Amount: 10, Dims: map[string]string{"a": "x\x00", "b": "y"}},
+		{Kind: KindInputTokens, Amount: 20, Dims: map[string]string{"a": "x", "b": "\x00y"}},
+	}
+	totals, err := Aggregate(slices.Values(events), "a", "b")
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if len(totals) != 2 {
+		t.Fatalf("语义不同的维度必须聚成 2 组，实得 %d：%+v", len(totals), totals)
+	}
+	// 字典序下 a="x" 的组在前（"x" 是 "x\0" 的前缀），逐组核对 Dims 原样保留。
+	if got := totals[0]; got.Dims["a"] != "x" || got.Dims["b"] != "\x00y" || got.Amount(KindInputTokens) != 20 {
+		t.Fatalf("第二组维度或合计被改写：%+v", got)
+	}
+	if got := totals[1]; got.Dims["a"] != "x\x00" || got.Dims["b"] != "y" || got.Amount(KindInputTokens) != 10 {
+		t.Fatalf("第一组维度或合计被改写：%+v", got)
+	}
+}
+
+// TestLedgerReset 账本必须有可用的清理入口：进程内参考实现被文档定位为
+// 「每轮计量」，没有边界就是长生命周期进程里的单调增长。Reset 后 Count
+// 归零，且 Events 不再产出旧事件。
+func TestLedgerReset(t *testing.T) {
+	var l Ledger
+	for i := range 3 {
+		if err := l.Record(Event{Kind: KindToolCalls, Amount: int64(i + 1), Dims: map[string]string{DimTenant: "acme"}}); err != nil {
+			t.Fatalf("Record: %v", err)
+		}
+	}
+	l.Reset()
+	if got := l.Count(); got != 0 {
+		t.Fatalf("Reset 后 Count 应为 0，实得 %d", got)
+	}
+	for e := range l.Events() {
+		t.Fatalf("Reset 后 Events 不得再产出旧事件：%+v", e)
+	}
+	// 清理后可继续入账。
+	if err := l.Record(Event{Kind: KindToolCalls, Amount: 7}); err != nil {
+		t.Fatalf("Reset 后应可继续入账：%v", err)
+	}
+	if got := l.Count(); got != 1 {
+		t.Fatalf("Reset 后新入账计数应为 1，实得 %d", got)
 	}
 }

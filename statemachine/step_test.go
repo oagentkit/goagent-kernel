@@ -1,6 +1,11 @@
 package statemachine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/oekit/pkg/errors"
+)
 
 // 全转移表覆盖（DONE_CHECKLIST 2.6：合法转移每条 ≥1 正用例、非法转移 ≥1 负用例）。
 func TestLegalTransitions(t *testing.T) {
@@ -69,6 +74,117 @@ func TestTerminal(t *testing.T) {
 	for _, s := range []StepStatus{StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved} {
 		if IsTerminal(s) {
 			t.Errorf("%s 不应为终态", s)
+		}
+	}
+}
+
+// TestStepTypeValid 词表外取值必须可判定：宿主需要区分「这个类别免审」与
+// 「内核不认识这个类别」。
+func TestStepTypeValid(t *testing.T) {
+	valid := []StepType{
+		TypeReadonly, TypePlan, TypeApproval, TypeExecute, TypeVerify,
+		// 写法变体归一后仍属词表内（同一类别，不是新类别）。
+		"PLAN", " plan ", "Execute", "READONLY", " verify ",
+	}
+	for _, typ := range valid {
+		if !typ.Valid() {
+			t.Errorf("StepType(%q).Valid() 应为 true", typ)
+		}
+	}
+	invalid := []StepType{"", "remediate", "PLANN", "exec", "审批", "approval "}
+	// "approval " 归一后合法，单列出来说明它不是非法值。
+	invalid = invalid[:len(invalid)-1]
+	for _, typ := range invalid {
+		if typ.Valid() {
+			t.Errorf("StepType(%q).Valid() 应为 false", typ)
+		}
+	}
+}
+
+// TestRequiresApprovalFailClosed 审批类判定面的沉默必须落在**最严**一侧：
+// 词表外类别（含大小写变体写成词表外）一律要求审批，不得判免审。
+func TestRequiresApprovalFailClosed(t *testing.T) {
+	cases := []struct {
+		typ  StepType
+		want bool
+	}{
+		{TypeReadonly, false},
+		{TypePlan, true},
+		{TypeApproval, false},
+		{TypeExecute, true},
+		{TypeVerify, false},
+		// 大小写/空白变体与规范形态结论一致。
+		{"PLAN", true},
+		{"Execute", true},
+		{" plan ", true},
+		{"READONLY", false},
+		{" verify ", false},
+		// 词表外：保守侧（要求审批）。
+		{"remediate", true},
+		{"", true},
+		{"PLANN", true},
+		{"审批", true},
+	}
+	for _, c := range cases {
+		if got := RequiresApproval(c.typ); got != c.want {
+			t.Errorf("RequiresApproval(%q)=%v, want %v", c.typ, got, c.want)
+		}
+	}
+}
+
+// TestMustTransitionUnknownStatus 「状态不在词表内」必须与「非法转移」分成
+// 两条可判定的错误：前者是「读不懂」，后者是「迁移写错了」，排障方向完全不同。
+func TestMustTransitionUnknownStatus(t *testing.T) {
+	unknownFrom := MustTransition(StepStatus("bogus"), StatusRunning)
+	if unknownFrom == nil {
+		t.Fatal("词表外 from 必须报错")
+	}
+	if !errors.Is(unknownFrom, ErrUnknownStatus) {
+		t.Fatalf("词表外 from 应报 ErrUnknownStatus，实得 %v", unknownFrom)
+	}
+	if errors.Is(unknownFrom, ErrIllegalTransition) {
+		t.Fatalf("词表外 from 不得被报成非法转移：%v", unknownFrom)
+	}
+	if strings.Contains(unknownFrom.Error(), "非法状态转移") {
+		t.Fatalf("词表外 from 的错误文案不得含「非法状态转移」：%v", unknownFrom)
+	}
+
+	unknownTo := MustTransition(StatusCreated, StepStatus("bogus"))
+	if !errors.Is(unknownTo, ErrUnknownStatus) {
+		t.Fatalf("词表外 to 应报 ErrUnknownStatus，实得 %v", unknownTo)
+	}
+	if strings.Contains(unknownTo.Error(), "非法状态转移") {
+		t.Fatalf("词表外 to 的错误文案不得含「非法状态转移」：%v", unknownTo)
+	}
+
+	// 词表内但迁移非法：报 ErrIllegalTransition，不是未知状态。
+	illegal := MustTransition(StatusCreated, StatusApproved)
+	if !errors.Is(illegal, ErrIllegalTransition) {
+		t.Fatalf("非法迁移应报 ErrIllegalTransition，实得 %v", illegal)
+	}
+	if errors.Is(illegal, ErrUnknownStatus) {
+		t.Fatalf("非法迁移不得被报成未知状态：%v", illegal)
+	}
+	if !strings.Contains(illegal.Error(), "非法状态转移") {
+		t.Fatalf("非法迁移的文案应保留「非法状态转移」：%v", illegal)
+	}
+}
+
+// TestStepStatusValid 全部规范状态必须 Valid，词表外一律 false。
+func TestStepStatusValid(t *testing.T) {
+	valid := []StepStatus{
+		StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved,
+		StatusRejected, StatusExpired, StatusSucceeded, StatusFailed,
+		StatusInterrupted, StatusRolledBack, StatusSkipped, StatusCancelled,
+	}
+	for _, s := range valid {
+		if !s.Valid() {
+			t.Errorf("StepStatus(%q).Valid() 应为 true", s)
+		}
+	}
+	for _, s := range []StepStatus{"", "bogus", "RUNNING", "running "} {
+		if s.Valid() {
+			t.Errorf("StepStatus(%q).Valid() 应为 false", s)
 		}
 	}
 }

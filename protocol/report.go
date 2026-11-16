@@ -10,6 +10,8 @@ package protocol
 // report_validate.go 白名单 · report_render.go Markdown 渲染。
 
 import (
+	"strings"
+
 	"github.com/oekit/pkg/errors"
 )
 
@@ -59,7 +61,16 @@ var severityAll = map[string]bool{
 	SeverityHigh: true, SeverityCritical: true,
 }
 
-// severityRank 严重度序（越大越重；空/未知=0 未评估）。聚合取 max、dispute 钳制都用它。
+// severityRank 严重度序（越大越重；空串=0 未评估）。聚合取 max、dispute 钳制都用它。
+//
+// # 未知值与未评估必须分档（issue #324）
+//
+// 空串 = 未评估（rank 0）；非空但不在词表 = 读不懂（SeverityRankUnknown）。
+// 两者同档会让「填了但看不懂」在聚合里静默消失，方向恰好是「看起来更轻」。
+// 读不懂按高于 critical 处理：无法判断严重度时，聚合不得把它降级成不参与比较。
+//
+// 大小写与空白在读取时归一（SeverityRankOf 内部 ToLower+TrimSpace）：
+// 「Critical」与「critical」是同一个词，不是两个严重度。
 //
 // # 为什么不做成导出的 map
 //
@@ -76,18 +87,60 @@ var severityRank = map[string]int{
 	SeverityInfo: 1, SeverityLow: 2, SeverityMedium: 3, SeverityHigh: 4, SeverityCritical: 5,
 }
 
-// SeverityRankOf 严重度序取值。未知值与空串一律返回 0（未评估）。
-func SeverityRankOf(s string) int { return severityRank[s] }
+// SeverityRankUnassessed 未评估（空串）的序。
+const SeverityRankUnassessed = 0
 
-// IsSeverityValid 严重度白名单判定（空合法=未评估）。
-func IsSeverityValid(s string) bool { return s == "" || severityAll[s] }
+// SeverityRankUnknown 非空但不在词表内的取值序（读不懂）。
+//
+// 高于任何已知档：聚合取 max 时，读不懂的取值不会被静默降级成「未评估」。
+// 它不是 severity 的合法取值，不应出现在 AllSeverities() 里；校验面仍以
+// warn 留痕（severity 是增强面，不因它拦整份报告）。
+const SeverityRankUnknown = 6
 
-// MaxSeverity 取两者较重者（未知值视为未评估，不参与比较）。
+// normalizeSeverityValue severity 的写法归一：ToLower + TrimSpace。
+// 归一后命中词表才返回规范形态；仍词表外则保持原值（不臆断成某个档）。
+func normalizeSeverityValue(s string) string {
+	n := strings.ToLower(strings.TrimSpace(s))
+	if severityAll[n] {
+		return n
+	}
+	return s
+}
+
+// SeverityRankOf 严重度序取值。
+//
+//   - 空串（含纯空白）= SeverityRankUnassessed（未评估）；
+//   - 词表内的取值（大小写/空白变体先归一）= 1..5；
+//   - 非空但词表外 = SeverityRankUnknown（读不懂，按高于 critical 处理）。
+//
+// 大小写与空白不改变语义：「Critical」/「CRITICAL」/「 critical 」都是
+// critical，不得落进「未评估」——那会让聚合方向看起来更轻。
+func SeverityRankOf(s string) int {
+	n := strings.ToLower(strings.TrimSpace(s))
+	if n == "" {
+		return SeverityRankUnassessed
+	}
+	if rank, ok := severityRank[n]; ok {
+		return rank
+	}
+	return SeverityRankUnknown
+}
+
+// IsSeverityValid 严重度白名单判定（空合法=未评估；大小写/空白变体先归一）。
+func IsSeverityValid(s string) bool {
+	n := strings.ToLower(strings.TrimSpace(s))
+	return n == "" || severityAll[n]
+}
+
+// MaxSeverity 取两者较重者。
+//
+// 已知取值返回规范小写形态；词表外取值按 SeverityRankUnknown 参与比较
+// （读不懂不会被「未评估」吞掉，也不会被更轻的已知档盖过）。
 func MaxSeverity(a, b string) string {
 	if SeverityRankOf(b) > SeverityRankOf(a) {
-		return b
+		return normalizeSeverityValue(b)
 	}
-	return a
+	return normalizeSeverityValue(a)
 }
 
 var (

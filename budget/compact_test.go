@@ -288,3 +288,46 @@ func TestApplySegmentNoAlias(t *testing.T) {
 		t.Fatalf("结果段与入参共享了底层数组：%v", tail)
 	}
 }
+
+// TestApplyUsesPerItemTokensAsGrossRemoved 实际移除量的唯一真相是入参条目的
+// 逐条 Tokens 之和：计划里的 ItemTokens 只是宿主未提供逐条量时的兜底估算。
+// 两者刻意不一致时，账必须按逐条量减，否则压实后账面停在旧值，Classify
+// 会对同一段会话反复压实（不可逆丢弃）。
+func TestApplyUsesPerItemTokensAsGrossRemoved(t *testing.T) {
+	var m Meter
+	m.Add(SegmentConversation, 10*900) // 逐字账面 9000
+	p := mustPlan(t, 10, 4, 25)        // 计划的估算只有 150
+	leading := items(6, 900, "item")
+	tail := items(4, 900, "msg")
+	res, err := Apply(context.Background(), p, leading, tail, &fakeArchive{}, &fakeSummarizer{summary: Summary{Tokens: 100}})
+	if err != nil {
+		t.Fatalf("压实失败：%v", err)
+	}
+	if res.GrossRemovedTokens != 6*900 {
+		t.Fatalf("毛移除量应取逐条 Tokens 之和 5400，实得 %d（计划的 150 只是兜底估算）", res.GrossRemovedTokens)
+	}
+	net := NetRemovedTokens(res.GrossRemovedTokens, res.Summary.Tokens)
+	m.Shrink(SegmentConversation, net)
+	// 摘要 100 + 尾部 4*900 = 3700，而不是停在 9000。
+	if got := m.Tokens(SegmentConversation); got != 100+4*900 {
+		t.Fatalf("压实后会话段账应为摘要+尾部逐条之和 3700，实得 %d", got)
+	}
+}
+
+// TestApplyItemTokensZeroCannotZeroOutRemoval 宿主没填计划 ItemTokens 时，
+// 不得出现「减账 0 而实际删除 > 0」——逐条量在，账就必须跟着走。
+func TestApplyItemTokensZeroCannotZeroOutRemoval(t *testing.T) {
+	p := mustPlan(t, 10, 4, 0) // 计划估算为 0
+	if p.GrossRemovedTokens != 0 {
+		t.Fatalf("前置条件：计划估算应为 0，实得 %d", p.GrossRemovedTokens)
+	}
+	res, err := Apply(context.Background(), p,
+		items(6, 900, "item"), items(4, 900, "msg"),
+		&fakeArchive{}, &fakeSummarizer{summary: Summary{Tokens: 100}})
+	if err != nil {
+		t.Fatalf("压实失败：%v", err)
+	}
+	if res.GrossRemovedTokens != 6*900 {
+		t.Fatalf("ItemTokens=0 时仍须按逐条 Tokens 记账（5400），实得 %d", res.GrossRemovedTokens)
+	}
+}

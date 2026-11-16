@@ -18,10 +18,7 @@
 
 package protocol
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // TestActionCaseNormalized action 的大小写/空白变体必须收口，不得整份丢弃。
 //
@@ -115,39 +112,41 @@ func TestVerdictStanceCaseNormalized(t *testing.T) {
 // stance 三处就是漏网的）。改成**枚举式**检查后，新增枚举位若忘了归一，
 // 这条用例直接红。
 //
-// 判据：把该枚举位写成大写形态后，解析结果里不应再出现「原样的大写值」，
-// 且报告不得因它被整份拒。
+// 判据：把该枚举位的**合法取值**写成大写/带空白形态后，解析结果必须收敛
+// 到规范小写形态。注意注入的是取值（如 "OUT"），不是字段名——字段名大写
+// （如 "SCOPE"）本身就是词表外值，按 #321 应保留原值交 Validate 裁决，
+// 不能被当成「大小写变体」。
 func TestAllEnumFieldsAreCaseNormalized(t *testing.T) {
 	cases := []struct {
 		field string
 		// 注入位置：顶层键或 recommendation 子键
 		nested bool
+		// 注入的写法变体
+		input string
 		// 期望归一后的取值
 		want string
 		// 取值所在的字段（顶层用 Report 字段，嵌套用 Recommendation 字段）
 		read func(*Report) string
 	}{
-		{"confidence", false, ConfidenceHigh, func(r *Report) string { return r.Confidence }},
-		{"decision", false, "", func(r *Report) string { return r.Decision }},
-		{"scope", false, "in", func(r *Report) string { return r.Scope }},
-		{"action", true, ActionTune, func(r *Report) string { return r.Recommendation.Action }},
+		{"confidence", false, " HIGH ", ConfidenceHigh, func(r *Report) string { return r.Confidence }},
+		{"decision", false, "APPROVED", DecisionApproved, func(r *Report) string { return r.Decision }},
+		{"scope", false, "OUT", "out", func(r *Report) string { return r.Scope }},
+		{"action", true, "TUNE", ActionTune, func(r *Report) string { return r.Recommendation.Action }},
 	}
 	for _, c := range cases {
-		upper := strings.ToUpper(c.field)
 		raw := `{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s"`
 		if c.nested {
-			raw += `,"recommendation":{"action":"` + upper + `","steps":["ls"]}`
+			raw += `,"recommendation":{"action":"` + c.input + `","steps":["ls"]}`
 		} else {
-			raw += `,"` + c.field + `":"` + upper + `"`
+			raw += `,"` + c.field + `":"` + c.input + `"`
 		}
 		raw += `}`
 		r, err := ParseReport(raw)
 		if err != nil {
-			t.Fatalf("%s=%q 解析失败: %v", c.field, upper, err)
+			t.Fatalf("%s=%q 解析失败: %v", c.field, c.input, err)
 		}
-		got := c.read(r)
-		if got == upper {
-			t.Fatalf("%s=%q 未被归一（原样保留）——枚举位的大小写变体必须归一", c.field, upper)
+		if got := c.read(r); got != c.want {
+			t.Fatalf("%s=%q 应归一为 %q，实得 %q", c.field, c.input, c.want, got)
 		}
 	}
 }

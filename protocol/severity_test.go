@@ -17,28 +17,91 @@ func TestSeverityRankOrderIsMonotonic(t *testing.T) {
 	}
 }
 
-// TestSeverityRankUnknownIsZero 未知值与空串一律 0（未评估）。
+// TestSeverityRankUnassessedAndUnknown 「未评估」与「读不懂」必须分档。
 //
-// 0 不是「最低」，是「不参与比较」：MaxSeverity 拿 0 和真实值比，恒判真实值更重，
-// 于是未知值被当成最轻的那一档而非被丢弃——这是 MaxSeverity 的既有语义，
-// 这里只钉住「未知不得被登记成某个真实档位」。
-func TestSeverityRankUnknownIsZero(t *testing.T) {
-	for _, s := range []string{"", "nope", "CRITICAL", "critical "} {
-		if got := SeverityRankOf(s); got != 0 {
-			t.Fatalf("未知/非法值 %q 应为 0（未评估），实得 %d", s, got)
+// 空串是未评估（0）；非空但词表外是读不懂（SeverityRankUnknown，高于
+// critical）——旧实现把两者都算 0，聚合时读不懂的严重度被静默丢弃，方向
+// 恰好是「看起来更轻」。
+func TestSeverityRankUnassessedAndUnknown(t *testing.T) {
+	if got := SeverityRankOf(""); got != SeverityRankUnassessed {
+		t.Fatalf("空串应为未评估 %d，实得 %d", SeverityRankUnassessed, got)
+	}
+	for _, s := range []string{"nope", "严重", "重大"} {
+		if got := SeverityRankOf(s); got != SeverityRankUnknown {
+			t.Fatalf("词表外值 %q 应为 %d（读不懂），实得 %d", s, SeverityRankUnknown, got)
+		}
+	}
+	// 大小写/空白变体不是「未知」：归一后命中词表。
+	for _, s := range []string{"CRITICAL", "critical "} {
+		if got := SeverityRankOf(s); got == SeverityRankUnknown {
+			t.Fatalf("%q 是 critical 的写法变体，不得判为未知", s)
 		}
 	}
 }
 
-// TestMaxSeverityIgnoresUnranked MaxSeverity 对未评估值不敏感。
-func TestMaxSeverityIgnoresUnranked(t *testing.T) {
+// TestMaxSeverityUnassessedAndUnknown MaxSeverity 对未评估不敏感，但不得把
+// 「读不懂」当成未评估吞掉（保守侧：读不懂按更重处理）。
+func TestMaxSeverityUnassessedAndUnknown(t *testing.T) {
 	if got := MaxSeverity("", SeverityHigh); got != SeverityHigh {
 		t.Fatalf("空 + high 应得 high，实得 %q", got)
 	}
-	if got := MaxSeverity("nonsense", SeverityHigh); got != SeverityHigh {
-		t.Fatalf("未知 + high 应得 high，实得 %q", got)
+	if got := MaxSeverity("nonsense", SeverityHigh); got != "nonsense" {
+		t.Fatalf("读不懂 + high 应保留读不懂（不得静默降级），实得 %q", got)
 	}
 	if got := MaxSeverity("", ""); got != "" {
 		t.Fatalf("两个未评估应得空，实得 %q", got)
+	}
+}
+
+// TestSeverityCaseVariantsRankSame 大小写与空白是写法差异，不得改变严重度序：
+// 旧实现让 "Critical" 落进「未评估」（rank 0），聚合时静默丢失最高危。
+func TestSeverityCaseVariantsRankSame(t *testing.T) {
+	want := SeverityRankOf(SeverityCritical)
+	for _, s := range []string{"critical", "Critical", "CRITICAL", " critical ", "CrItIcAl\t"} {
+		if got := SeverityRankOf(s); got != want {
+			t.Fatalf("SeverityRankOf(%q)=%d，应与 %q 同为 %d", s, got, SeverityCritical, want)
+		}
+		if !IsSeverityValid(s) {
+			t.Fatalf("大小写/空白变体 %q 应判合法（写法差异不改语义）", s)
+		}
+	}
+}
+
+// TestSeverityUnknownDistinctFromUnassessed 「没填」与「填了但看不懂」不得同档：
+// 前者是未评估，后者是读不懂；聚合方向不能把读不懂静默算成更轻。
+func TestSeverityUnknownDistinctFromUnassessed(t *testing.T) {
+	if SeverityRankOf("") != 0 {
+		t.Fatalf("空串应为未评估 rank 0，实得 %d", SeverityRankOf(""))
+	}
+	unknown := SeverityRankOf("严重")
+	if unknown == 0 {
+		t.Fatal("词表外取值不得与「未评估」同档（rank 0）")
+	}
+	if unknown <= SeverityRankOf(SeverityCritical) {
+		t.Fatalf("词表外取值必须按保守侧聚合（不得低于 critical），实得 rank %d", unknown)
+	}
+	// 聚合：未评估 + 读不懂 必须保留读不懂，而不是被当成「什么都没填」。
+	if got := MaxSeverity("", "严重"); got != "严重" {
+		t.Fatalf("MaxSeverity(\"\", \"严重\") 应保留读不懂的取值，实得 %q", got)
+	}
+}
+
+// TestParseNormalizesSeverity 解析面必须把 severity 的大小写变体收敛到规范
+// 形态，且聚合结果不得低于 critical。
+func TestParseNormalizesSeverity(t *testing.T) {
+	raw := `{"agent_name":"a","domain":"d","conclusion":"c","confidence":"high","severity":"Critical"}`
+	r, err := ParseReport(raw)
+	if err != nil {
+		t.Fatalf("ParseReport: %v", err)
+	}
+	if r.Severity != SeverityCritical {
+		t.Fatalf("severity 应归一为 %q，实得 %q", SeverityCritical, r.Severity)
+	}
+	warns, verr := r.Validate()
+	if verr != nil {
+		t.Fatalf("归一后的 severity 不得被拒：%v（warns=%v）", verr, warns)
+	}
+	if got := MaxSeverity("", r.Severity); SeverityRankOf(got) < SeverityRankOf(SeverityCritical) {
+		t.Fatalf("聚合最高严重度不得低于 critical，实得 %q", got)
 	}
 }

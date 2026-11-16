@@ -195,6 +195,8 @@ func normalizeReportMap(m map[string]any) {
 			normalizeAction(m, k, v)
 		case "confidence":
 			normalizeConfidence(m, k, v)
+		case "severity":
+			normalizeSeverity(m, k, v)
 		}
 	}
 	normalizeNeedsFollowupScalar(m)

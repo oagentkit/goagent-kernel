@@ -71,10 +71,10 @@ modules:
 
   - id: statemachine
     roots: [statemachine]
-    requires: []
+    requires: ["ext:github.com/oekit/pkg"] # 哨兵/判定走全仓统一 errors（issue #325）
     owner: harness
     managed: true
-    notes: 环节状态机：条件迁移的纯函数件，零依赖
+    notes: 环节状态机：条件迁移的纯函数件，只依赖 pkg/errors（错误哨兵与判定），无编排依赖
 
   - id: eventbus
     roots: [eventbus]

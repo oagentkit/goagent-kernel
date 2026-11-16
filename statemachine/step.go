@@ -8,7 +8,12 @@
 // 所有状态迁移走条件 UPDATE（repo 层），影响行数=0 即竞态失败——standalone/cluster 同一写法。
 package statemachine
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/oekit/pkg/errors"
+)
 
 // StepStatus 环节状态。
 type StepStatus string
@@ -44,6 +49,22 @@ const (
 	TypeVerify   StepType = "verify"
 )
 
+// Valid 报告状态是否在本状态机词表内（词表 = 全部状态常量）。
+//
+// 词表外的值代表「内核读不懂这个状态」，与「状态合法但迁移非法」是两种
+// 不同的现场：前者排障应查数据来源/版本，后者查迁移代码。MustTransition
+// 据此分成两条可判定的错误（issue #325）。
+func (s StepStatus) Valid() bool {
+	switch s {
+	case StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved,
+		StatusRejected, StatusExpired, StatusSucceeded, StatusFailed,
+		StatusInterrupted, StatusRolledBack, StatusSkipped, StatusCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 // transitions 合法转移表。
 var transitions = map[StepStatus][]StepStatus{
 	StatusCreated:         {StatusRunning, StatusSkipped},
@@ -64,17 +85,82 @@ func CanTransition(from, to StepStatus) bool {
 	return false
 }
 
+// 转移错误哨兵（宿主按 errors.Is 分流排障方向）。
+var (
+	// ErrIllegalTransition 两个状态都在词表内，但转移不在合法转移表里。
+	ErrIllegalTransition = errors.New("statemachine: 非法状态转移")
+	// ErrUnknownStatus 状态值不在本状态机词表内（读不懂，不是迁移写错）。
+	//
+	// 与 ErrIllegalTransition 分开：旧实现把两者压成同一条「非法状态转移」，
+	// 宿主据此去查迁移代码，而真因往往是写库口径错/版本不一致/数据被截断。
+	// 同仓 checkpoint.classifyStatus 对同一问题已做三态（open/terminal/unknown），
+	// 本包口径向它对齐。
+	ErrUnknownStatus = errors.New("statemachine: 状态不在词表内")
+)
+
 // MustTransition 非法转移返回错误（repo 条件 UPDATE 前的快速失败；DB 侧仍有条件守卫兜底）。
+//
+// # 错误分三类（issue #325）
+//
+//   - 正常迁移 → nil；
+//   - from / to 有任一词表外 → 包装 ErrUnknownStatus，文案说明「不认识这个
+//     状态」，不含「非法状态转移」；
+//   - 两者都在词表内但不在转移表 → 包装 ErrIllegalTransition。
+//
+// 判定方向不变（词表外仍然拒绝），变的只是诊断分类：把「读不懂」说成
+// 「写错了」会让宿主照着错方向查。
 func MustTransition(from, to StepStatus) error {
+	if !from.Valid() || !to.Valid() {
+		return fmt.Errorf("%w: %s → %s", ErrUnknownStatus, from, to)
+	}
 	if CanTransition(from, to) {
 		return nil
 	}
-	return fmt.Errorf("非法状态转移: %s → %s", from, to)
+	return fmt.Errorf("%w: %s → %s", ErrIllegalTransition, from, to)
+}
+
+// normalized 写法归一：类别取值来自计划文件/配置（字符串），大小写与空白
+// 是常见漂移，不应改变治理语义。
+func (t StepType) normalized() StepType {
+	return StepType(strings.ToLower(strings.TrimSpace(string(t))))
+}
+
+// Valid 报告该类别是否在内核词表内（归一化后判定）。
+//
+// 为什么必须有：RequiresApproval 对词表外取值走保守侧（要求审批），宿主
+// 还需要一个手段区分「这类别本就免审」与「内核不认识它」。此前 StepType
+// 没有 Valid()，宿主只能看到 false，连「词表里没有它」都查不到。
+// 口径向 backend.Isolation.Valid() 对齐：越界值不得被当成最弱档。
+func (t StepType) Valid() bool {
+	switch t.normalized() {
+	case TypeReadonly, TypePlan, TypeApproval, TypeExecute, TypeVerify:
+		return true
+	default:
+		return false
+	}
 }
 
 // RequiresApproval 该环节类别是否必须经过审批态。
+//
+// # 口径（issue #322）
+//
+//   - 规范类别按治理语义判定：plan / execute 必经审批，readonly / approval /
+//     verify 免审；
+//   - 大小写与空白先归一（"PLAN" / "Execute" / " plan " 与规范形态同结论）——
+//     旧实现用精确相等，模型或配置里的大小写变体会静默落进「免审」；
+//   - **词表外一律返回 true**：这是审批类判定面，沉默必须落在最严一侧。
+//     旧实现在这里返回 false，一条 "remediate" / "" / 拼写错误就能把治理闸
+//     静默拆掉，而宿主没有任何信号（同包 CanTransition 对词表外是 fail-closed，
+//     两处口径本来就该一致）。
 func RequiresApproval(t StepType) bool {
-	return t == TypePlan || t == TypeExecute
+	switch t.normalized() {
+	case TypePlan, TypeExecute:
+		return true
+	case TypeReadonly, TypeApproval, TypeVerify:
+		return false
+	default:
+		return true // 内核不认识这个类别：保守要求审批，不得静默放行
+	}
 }
 
 // IsTerminal 是否终态。

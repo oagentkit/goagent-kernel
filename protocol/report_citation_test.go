@@ -139,7 +139,10 @@ func TestMaxSeverity(t *testing.T) {
 	if MaxSeverity(SeverityHigh, SeverityMedium) != SeverityHigh {
 		t.Fatal("取重者（反序）")
 	}
-	if MaxSeverity("乱写", SeverityInfo) != SeverityInfo {
-		t.Fatal("未知值视为未评估")
+	if got := MaxSeverity("乱写", SeverityInfo); got != "乱写" {
+		t.Fatalf("词表外取值按保守侧聚合（不得被未评估吞掉），实得 %q", got)
+	}
+	if got := MaxSeverity("Critical", SeverityInfo); got != SeverityCritical {
+		t.Fatalf("大小写变体应归一后参与比较并返回规范形态，实得 %q", got)
 	}
 }

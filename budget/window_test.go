@@ -178,3 +178,23 @@ func TestPressureString(t *testing.T) {
 		}
 	}
 }
+
+// TestUnknownCapacityOverflowMatchesClassify 同一个「上限未知」状态，展示面
+// Overflow 与压力档 Classify 必须同向：Classify 已判定 capacity<=0 即 critical
+// （不得声称余量充足），Overflow 也必须报越界，否则宿主拿 Overflow 当处置闸门
+// 时，未知上限会恒放行——同一份账两个相反结论。
+func TestUnknownCapacityOverflowMatchesClassify(t *testing.T) {
+	for _, input := range []int{0, 1, 5000} {
+		d := Display{Input: input, Cap: 0}
+		if got := Classify(d.Input, d.Cap); got != PressureCritical {
+			t.Fatalf("前置条件：cap=0 时 Classify 应为 critical，input=%d 实得 %v", input, got)
+		}
+		if !d.Overflow() {
+			t.Fatalf("上限未知时 Overflow 必须与 Classify 同向（true），input=%d", input)
+		}
+	}
+	// 设了上限且未越界时仍是 false：未知与已知的边界不能被扩大成「永远 true」。
+	if (Display{Input: 10, Cap: 10}).Overflow() {
+		t.Fatal("已知上限且恰好等于上限不应判越界")
+	}
+}

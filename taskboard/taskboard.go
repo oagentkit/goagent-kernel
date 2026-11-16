@@ -113,8 +113,18 @@ const (
 // 而宿主的补救路径（重新派一个人）会静默失效。
 func (s State) Terminal() bool { return s == StateDone }
 
-// valid 报告状态是否在词表内。
-func (s State) valid() bool {
+// Valid 报告状态是否在内核词表内。
+//
+// # 为什么必须导出（issue #323）
+//
+// 词表外状态代表「内核读不懂这个状态」：体检面（Check）会报
+// CodeUnknownState，但写路径此前只判 Terminal()（未知状态不是终态）⇒
+// 同一个状态「体检说非法、Claim 说可领」。宿主需要能自己区分
+// 「状态合法且非终态」与「状态不在词表内」——Valid() 就是这个判据。
+//
+// Terminal() 对词表外状态仍返回 false（不能把「读不懂」说成「终态」），
+// 所以写路径必须显式消费 Valid()，不能靠 Terminal() 反推。
+func (s State) Valid() bool {
 	switch s {
 	case StateOpen, StateClaimed, StateDone, StateFailed:
 		return true
@@ -236,6 +246,11 @@ var (
 	ErrBlocked = errors.New("taskboard: 依赖未完成")
 	// ErrTerminal 任务已是终态。
 	ErrTerminal = errors.New("taskboard: 任务已是终态")
+	// ErrUnknownState 任务状态不在内核词表内（读不懂 ⇒ 写路径拒绝，不认领）。
+	//
+	// 与 Check 的 CodeUnknownState 同一事实、同一方向：体检说「这状态非法」，
+	// 认领也必须拒绝——否则一条脏状态行会让副作用照常施加。
+	ErrUnknownState = errors.New("taskboard: 任务状态不在词表内")
 	// ErrLeaseLost 令牌不匹配（租约已易主或被释放过）。
 	//
 	// 旧持有者迟到的一切动作——Release / Complete / Renew——都用它拒收：
