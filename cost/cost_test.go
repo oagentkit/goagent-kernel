@@ -300,3 +300,27 @@ func TestAggregateSaturatesInt64(t *testing.T) {
 		t.Fatalf("未溢出的 Kind 合计漂移：%d", n)
 	}
 }
+
+// TestAggregateNULInDimsDoesNotCollide 分组键不得用可歧义的裸拼接：维度值
+// 含 NUL 时，{a:"x\0", b:"y"} 与 {a:"x", b:"\0y"} 是两组语义不同的事件，
+// 撞键会把两个租户/任务的用量并成一笔，并只保留首条的 Dims（跨租户串账）。
+func TestAggregateNULInDimsDoesNotCollide(t *testing.T) {
+	events := []Event{
+		{Kind: KindInputTokens, Amount: 10, Dims: map[string]string{"a": "x\x00", "b": "y"}},
+		{Kind: KindInputTokens, Amount: 20, Dims: map[string]string{"a": "x", "b": "\x00y"}},
+	}
+	totals, err := Aggregate(slices.Values(events), "a", "b")
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if len(totals) != 2 {
+		t.Fatalf("语义不同的维度必须聚成 2 组，实得 %d：%+v", len(totals), totals)
+	}
+	// 字典序下 a="x" 的组在前（"x" 是 "x\0" 的前缀），逐组核对 Dims 原样保留。
+	if got := totals[0]; got.Dims["a"] != "x" || got.Dims["b"] != "\x00y" || got.Amount(KindInputTokens) != 20 {
+		t.Fatalf("第二组维度或合计被改写：%+v", got)
+	}
+	if got := totals[1]; got.Dims["a"] != "x\x00" || got.Dims["b"] != "y" || got.Amount(KindInputTokens) != 10 {
+		t.Fatalf("第一组维度或合计被改写：%+v", got)
+	}
+}

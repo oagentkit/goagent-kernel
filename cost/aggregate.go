@@ -9,10 +9,17 @@ import (
 	"iter"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
 )
+
+// ErrGroupKeyCollision 分组键碰撞（维度取值序列不同却编出同一个键）。
+//
+// 长度前缀编码下这不应发生；留着是为了让编码退化（有人改回裸拼接）时
+// **显式报错**，而不是把两个租户/任务的用量静默并成一笔。
+var ErrGroupKeyCollision = errors.New("cost: 聚合分组键冲突（维度编码不可区分）")
 
 // Total 一组事件的聚合结果。
 type Total struct {
@@ -66,7 +73,7 @@ func Aggregate(events iter.Seq[Event], dims ...string) ([]Total, error) {
 		for i, d := range dims {
 			parts[i] = e.Dims[d]
 		}
-		return strings.Join(parts, "\x00")
+		return encodeGroupKey(parts)
 	}
 
 	for e := range events {
@@ -81,6 +88,16 @@ func Aggregate(events iter.Seq[Event], dims ...string) ([]Total, error) {
 				g.dims[d] = e.Dims[d]
 			}
 			groups[k] = g
+		} else {
+			// 键无歧义时不会走到这里；保留一致性校验是为了让「编码退化」
+			// 显式报错，而不是静默把两个维度组并成一笔（跨租户串账）。
+			for _, d := range dims {
+				if g.dims[d] != e.Dims[d] {
+					return nil, errors.Wrap(ErrGroupKeyCollision,
+						"维度编码不可区分",
+						"dim", d, "existing", g.dims[d], "incoming", e.Dims[d])
+				}
+			}
 		}
 		if sum, overflow := addSaturating(g.amounts[e.Kind], e.Amount); overflow {
 			g.amounts[e.Kind] = sum
@@ -117,6 +134,22 @@ func addSaturating(a, b int64) (int64, bool) {
 	return a + b, false
 }
 
+// encodeGroupKey 把维度取值序列编码成一个**无歧义**的分组键。
+//
+// 每个值写成「十进制长度 + ':' + 原值」，逐段拼接：值里出现任何字节
+// （含 NUL、':'）都不会与相邻段的分界混淆。裸 `strings.Join(parts, "\x00")`
+// 正好相反——{a:"x\x00", b:"y"} 与 {a:"x", b:"\x00y"} 会撞成同一个键，
+// 两个租户/任务的用量被并成一笔且只保留首条的 Dims（静默跨租户串账）。
+func encodeGroupKey(values []string) string {
+	var b strings.Builder
+	for _, v := range values {
+		b.WriteString(strconv.Itoa(len(v)))
+		b.WriteByte(':')
+		b.WriteString(v)
+	}
+	return b.String()
+}
+
 // totalKey 把聚合结果投影回分组键（与 Aggregate 内部的 key 同构）。
 func totalKey(t Total, dims []string) string {
 	if len(dims) == 0 {
@@ -126,7 +159,7 @@ func totalKey(t Total, dims []string) string {
 	for i, d := range dims {
 		parts[i] = t.Dims[d]
 	}
-	return strings.Join(parts, "\x00")
+	return encodeGroupKey(parts)
 }
 
 // ByTenant 按租户聚合（规范维度快捷面，口径与 Aggregate 完全一致）。
