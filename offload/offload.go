@@ -70,7 +70,8 @@ var (
 	// 未经净化的扩展名可以让同一份内容落进不同键，使去重与占位复用同时失效。
 	ErrBadExt = errors.New("外置扩展名非法（只允许字母数字与短横线/下划线）")
 
-	// ErrBadHash 摘要长度不足，无法推导分片目录。
+	// ErrBadHash 摘要非法：长度不足 2 或含非十六进制字符。
+	// 文案是契约的一部分，判据与文案必须同时覆盖「长度」与「字符集」两件事。
 	ErrBadHash = errors.New("内容摘要非法（至少 2 位十六进制）")
 )
 
@@ -340,7 +341,7 @@ func sanitizeExt(ext string) (string, error) {
 // 返回的键以 path 分隔（与宿主无关的逻辑键，不是本机文件路径）。
 func StorePath(hash, ext string) (string, error) {
 	h := strings.TrimSpace(hash)
-	if len(h) < 2 {
+	if !isHexString(h) {
 		return "", ErrBadHash
 	}
 	e, err := sanitizeExt(ext)
@@ -348,6 +349,26 @@ func StorePath(hash, ext string) (string, error) {
 		return "", err
 	}
 	return "blobs/" + h[:2] + "/" + h + e, nil
+}
+
+// isHexString 报告 s 是否为至少两位的十六进制串。
+//
+// 为什么必须严判字符集而不是只查长度：h[:2] 会直接拼进分片目录，`/`、`..` 与
+// 任意字节让键变成路径穿越的载体；多字节 rune 还会被劈成非法 UTF-8 目录名。
+// 长度下限与字符集同属 ErrBadHash 的文案契约（「至少 2 位十六进制」）。
+func isHexString(s string) bool {
+	if len(s) < 2 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // TruncatedHash 取占位文本里暴露的摘要前缀。
