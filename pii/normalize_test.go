@@ -57,8 +57,9 @@ func TestNormalizeDetectFullWidthResidentID(t *testing.T) {
 		t.Fatalf("全角身份证应被检出（四重校验过归一化数字跑），实得 %v", spans)
 	}
 	out, _ := Apply(SurfaceInput, full)
-	if out != "1101************2X" {
-		t.Fatalf("全角身份证处置输出应为归一化 ASCII 掩码，实得 %q", out)
+	// #298 收紧后：留前 4（省市级），生日/顺序码/校验位全掩——校验位不保留。
+	if out != "1101**************" {
+		t.Fatalf("全角身份证处置输出应为归一化 ASCII 掩码（校验位全掩），实得 %q", out)
 	}
 }
 
