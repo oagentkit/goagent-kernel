@@ -32,13 +32,15 @@
 //
 // # 边界
 //
-// 控制平面是**接口面**，不是 UI；具体界面归宿主。本包给三样：
+// 控制平面是**接口面**，不是 UI；具体界面归宿主。本包给四样：
 //
 //  1. Plane 契约（宿主包着自己的 taskboard.Board / sideeffect Runner /
 //     运行状态存储实现它）；
-//  2. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
+//  2. 宿主自有类型的窄契约族（HostPlane / AuthorizerOf——泛型 ID 与宿主
+//     快照/租户类型，纯接口零实现，见 hostiface.go；issue #238）；
+//  3. 进程内参考实现（MemPlane + MemAuditor——判据怎么落的演示体，
 //     也是测试与演练的最小运行时面）；
-//  3. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权）。
+//  4. net/http JSON 适配面（httpapi.go——鉴权钩子由宿主注入，内核不鉴权）。
 package controlplane
 
 import (
@@ -53,6 +55,10 @@ import (
 type RunID string
 
 // Plane 控制面契约：查询 + 介入。存储中立——实现方是宿主。
+//
+// 本接口是 **taskboard 原生**的便利契约（任务 ID / 快照 / 不变量条目都直接用
+// taskboard 的类型）。宿主自有任务模型或租户体系时实现 [HostPlane] /
+// [AuthorizerOf]（hostiface.go）——两条契约并列，判定纪律相同，只是类型解耦。
 //
 // 实现方必须保证（三条硬契约，缺一即破）：
 //
@@ -235,8 +241,14 @@ func (r Termination) Validate() error {
 
 // validateIntervention 三类介入请求共用的留痕完整性判据（一个真相）。
 func validateIntervention(target, operator, basis string) error {
+	return validateInterventionTarget(target != "", operator, basis)
+}
+
+// validateInterventionTarget 留痕完整性判据的形态无关版本：目标是否为空由
+// 调用方按自己的 ID 类型判（原生契约判字符串，窄契约判 comparable 零值）。
+func validateInterventionTarget(targetPresent bool, operator, basis string) error {
 	switch {
-	case target == "":
+	case !targetPresent:
 		return errors.Wrap(ErrInvalidRequest, "介入目标为空")
 	case operator == "":
 		return errors.Wrap(ErrInvalidRequest, "缺介入者（Operator）")
