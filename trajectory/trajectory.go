@@ -228,17 +228,18 @@ type Projector struct {
 	mu   sync.Mutex
 	opts Options
 
-	rows       []Row                   // 按创建顺序追加；下标 + 1 即行序号
-	tools      map[string]int          // call_id → 行下标（一个 call_id 最多一行）
-	opens      []int                   // 仍打开的步骤行下标（按创建顺序）
-	grants     map[string]int          // 幂等键 → 打开中的副作用授予段行下标
-	reconciles map[string]int          // 幂等键 → 打开中的副作用对账段行下标
-	usedIDs    map[turnRowKey]struct{} // (轮, 标识) → 已占用（行标识轮内唯一）
-	pending    []int                   // 待算摘要的行下标（锁外执行宿主钩子）
-	turn       int                     // 当前轮次行下标（-1 = 尚未开轮）
-	turnNo     int                     // 已开轮次计数
-	seq        int                     // 行序号计数
-	issues     []Issue
+	rows          []Row                   // 按创建顺序追加；下标 + 1 即行序号
+	tools         map[string]int          // call_id → 行下标（一个 call_id 最多一行）
+	opens         []int                   // 仍打开的步骤行下标（按创建顺序）
+	grants        map[string]int          // 幂等键 → 打开中的副作用授予段行下标
+	reconciles    map[string]int          // 幂等键 → 打开中的副作用对账段行下标
+	usedIDs       map[turnRowKey]struct{} // (轮, 标识) → 已占用（行标识轮内唯一）
+	pending       []int                   // 待算摘要的行下标（锁外执行宿主钩子）
+	payloadErrors []PayloadError          // 载荷数值字段的显式拒绝记录（issue #305）
+	turn          int                     // 当前轮次行下标（-1 = 尚未开轮）
+	turnNo        int                     // 已开轮次计数
+	seq           int                     // 行序号计数
+	issues        []Issue
 }
 
 // NewProjector 构造投影器。

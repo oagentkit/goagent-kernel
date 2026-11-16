@@ -188,7 +188,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrSideEffectFence,
 		Source: "Row.SideEffectFence（仅副作用行，且 >0；授予段与点行为才携带）",
-		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配"},
+		Domain: Domain{Kind: "int64", Note: "栅栏令牌：同一资源上单调递增的代数，由存储侧在原子操作里分配；超出 int64 的取值不写（不以溢出的 -1 冒充合法值）"},
 		Card:   Cardinality{Why: "随接管次数增长，本仓定不出上界"},
 	},
 	{
@@ -208,7 +208,7 @@ var AttrSpecs = []AttrSpec{
 	{
 		Name:   AttrCheckpointSeq,
 		Source: "Row.CheckpointSeq（仅快照行，且 >0——seq=0 的快照不是一次真实提交）",
-		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）"},
+		Domain: Domain{Kind: "int64", Note: "快照序号：同一 RunID 下严格递增（存储侧 CAS 判据）；超出 int64 的取值不写（不以溢出的 -1 冒充合法值）"},
 		Card:   Cardinality{Why: "随步骤推进次数增长，本仓定不出上界"},
 	},
 	{

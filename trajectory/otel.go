@@ -65,6 +65,7 @@
 package trajectory
 
 import (
+	"math"
 	"time"
 )
 
@@ -203,7 +204,9 @@ func SpanOf(r Row) Span {
 		if r.SideEffectResource != "" {
 			s.Attributes[AttrSideEffectResource] = r.SideEffectResource
 		}
-		if r.SideEffectFence > 0 {
+		if r.SideEffectFence > 0 && r.SideEffectFence <= math.MaxInt64 {
+			// 超出 int64 的取值**不写**：int64 的溢出语义会把它变成 -1，
+			// 而下流把 -1 当「未设置」——两种语义不能撞在同一个数上（issue #305）。
 			s.Attributes[AttrSideEffectFence] = int64(r.SideEffectFence)
 		}
 		if r.SideEffectSafety != "" {
@@ -214,7 +217,8 @@ func SpanOf(r Row) Span {
 		if r.CheckpointRunID != "" {
 			s.Attributes[AttrCheckpointRunID] = r.CheckpointRunID
 		}
-		if r.CheckpointSeq > 0 {
+		if r.CheckpointSeq > 0 && r.CheckpointSeq <= math.MaxInt64 {
+			// 同 fence：溢出语义产出的 -1 不得伪装成合法值（issue #305）。
 			s.Attributes[AttrCheckpointSeq] = int64(r.CheckpointSeq)
 		}
 		if r.CheckpointStatus != "" {
