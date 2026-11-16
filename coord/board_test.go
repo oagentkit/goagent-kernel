@@ -11,14 +11,20 @@ import (
 func TestBoardAdapterContractSuite(t *testing.T) {
 	boardtest.Run(t, func(t *testing.T, clock *boardtest.FakeClock) boardtest.ClockedBoard {
 		t.Helper()
-		b := NewBoardAdapter(NewMemoryBackend())
+		b, err := NewBoardAdapter(NewMemoryBackend())
+		if err != nil {
+			t.Fatal(err)
+		}
 		b.UseClock(clock.Now)
 		return b
 	})
 }
 
 func TestBoardAdapterListEmpty(t *testing.T) {
-	b := NewBoardAdapter(NewMemoryBackend())
+	b, err := NewBoardAdapter(NewMemoryBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
 	tasks, err := b.List(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +35,10 @@ func TestBoardAdapterListEmpty(t *testing.T) {
 }
 
 func TestBoardAdapterSeedSkipsEmptyID(t *testing.T) {
-	b := NewBoardAdapter(NewMemoryBackend())
+	b, err := NewBoardAdapter(NewMemoryBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
 	b.Seed(taskboard.Task{ID: ""}, taskboard.Task{ID: "t1", State: taskboard.StateOpen})
 	tasks, err := b.List(t.Context())
 	if err != nil {
@@ -42,7 +51,10 @@ func TestBoardAdapterSeedSkipsEmptyID(t *testing.T) {
 
 func TestBoardAdapterConcurrentClaimJudgment(t *testing.T) {
 	// 判据 taskboard.ConcurrentClaim 直接跑在适配器上（契约条款的可跑形态）。
-	b := NewBoardAdapter(NewMemoryBackend())
+	b, err := NewBoardAdapter(NewMemoryBackend())
+	if err != nil {
+		t.Fatal(err)
+	}
 	b.Seed(taskboard.Task{ID: "t1", State: taskboard.StateOpen})
 	n, err := taskboard.ConcurrentClaim(t.Context(), b, "t1", []taskboard.AgentID{"a1", "a2", "a3"}, 0)
 	if err != nil {

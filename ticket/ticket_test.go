@@ -196,3 +196,53 @@ func TestIssueStrict(t *testing.T) {
 		t.Fatalf("消费取回应与签发一致, got %+v", got)
 	}
 }
+
+// TestIssue时钟过期后自动回收再签发（issue #208 验收原案）：被签发但从未
+// 被消费的票没有 Take 来删它——时钟推过 TTL、不调 GC，再签发 ⇒ 必须
+// 成功（修复前：过期票永久占容量，签发恒报「票据空间已满」）。
+func TestIssue时钟过期后自动回收再签发(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	s := NewWithClock(2, func() time.Time { return now })
+	for i := 0; i < 2; i++ {
+		if _, _, err := s.Issue(Binding{Subject: "s"}, time.Minute); err != nil {
+			t.Fatalf("第 %d 次签发不应失败: %v", i+1, err)
+		}
+	}
+	// 时钟推过全部票据的 TTL：它们都过期了，但没人调 GC。
+	now = now.Add(2 * time.Minute)
+	id, _, err := s.Issue(Binding{Subject: "s2"}, time.Minute)
+	if err != nil {
+		t.Fatalf("过期票未回收时签发必须成功（实得 %v）——签发永久停摆即本条要修的病", err)
+	}
+	if _, ok := s.Consume(id); !ok {
+		t.Fatal("回收后新签发的票据必须可消费")
+	}
+}
+
+// TestIssue容量按未过期张数计（issue #208 验收）：容量判据不得把已过期
+// 票据算进去——混入过期票后，未过期张数未满就必须还能签发。
+func TestIssue容量按未过期张数计(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	s := NewWithClock(2, func() time.Time { return now })
+	// 一张短命票 + 一张长命票，把「条目数」打满上限 2。
+	if _, _, err := s.Issue(Binding{Subject: "short"}, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Issue(Binding{Subject: "long"}, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// 未过期票未满（只有 1 张长的），条目数已满 ⇒ 不回收就该拒发。
+	now = now.Add(2 * time.Minute)
+	id, _, err := s.Issue(Binding{Subject: "s3"}, time.Minute)
+	if err != nil {
+		t.Fatalf("容量必须按未过期张数计（实得 %v）", err)
+	}
+	// 新票入位后：未过期 2 张（长的 + 新的）⇒ 再签发拒发（满了说满不变）。
+	if _, _, err := s.Issue(Binding{Subject: "s4"}, time.Minute); err == nil {
+		t.Fatal("未过期票据打满上限后必须仍显式拒发（不得默默淘汰）")
+	}
+	// 末次签发的票据不受影响，可正常消费。
+	if _, ok := s.Consume(id); !ok {
+		t.Fatal("拒发前的最后一张有效票据必须可消费")
+	}
+}

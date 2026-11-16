@@ -5,11 +5,14 @@
 // scope 词表、租户体系、会话形态全是宿主资产。Handler 持有 Authorizer 钩子
 // （宿主实现）：它从请求解析主体与租户、判定该动作是否可执行，返回的
 // tenant.Context 被注入 request context 传给 Plane——Plane 侧的
-// tenant.Require（介入写路径的 fail-closed 判据）据此有据可判。
+// tenant.Require（读与写共用的 fail-closed 判据，issue #197）据此有据可判。
 // 这是「HTTP 面 ↔ 机制面」的唯一接缝：宿主在钩子里做完自己的判定，
 // 机制面拿到的已经是判定过的上下文。
 //
-// 钩子缺位 ⇒ 全部请求 401（fail-closed）：控制面不开无鉴权的口子。
+// 两层 fail-closed，缺一即 401：钩子缺位 ⇒ 全部请求 401；钩子在但对任何
+// 请求返回零值 tenant.Context + nil ⇒ 全部请求（**含两个只读端点**）
+// 仍被 Plane 的 tenant.Require 拒成 401——读路径不做第二道闸的话，
+// 「同样的鉴权钩子、同样的错误，只有读放行」就是口子（issue #197）。
 //
 // # CSRF 边界（issue #198）：Authorization 头形态，Cookie 会话不在此面
 //

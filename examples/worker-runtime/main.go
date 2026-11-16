@@ -45,7 +45,10 @@ func main() {
 func runDemo(ctx context.Context, out io.Writer) error {
 	// 1) 任务板 + 注册表（可注入时钟：过期场景要能确定性触发）。
 	boardClock := newWallClock()
-	board := coord.NewBoardAdapter(coord.NewMemoryBackend())
+	board, err := coord.NewBoardAdapter(coord.NewMemoryBackend())
+	if err != nil {
+		return err
+	}
 	board.UseClock(boardClock.Now)
 	registry := newMemRegistry(boardClock.Now)
 

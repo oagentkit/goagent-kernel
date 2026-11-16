@@ -39,6 +39,10 @@ import (
 type Backend interface {
 	// Put 写入一张未消费票据。容量策略由实现自判（内存参考实现满了报错，
 	// 与旧实现「票据空间已满」同一拒发口径）。
+	//
+	// 签发路径（Store.Issue）在 Put 前先经 GC 回收过期票据（issue #208）：
+	// 实现看到的容量压力以未过期票据为主——实现自身的容量判据不必（也无法，
+	// Put 没有时钟）分辨过期与否。
 	Put(id string, binding Binding, expiresAt time.Time) error
 	// Take 原子取出并删除：不存在或已过期 ⇒ ok=false。
 	//

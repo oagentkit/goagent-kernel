@@ -11,8 +11,10 @@
 //
 // token 每次认领尝试用 crypto/rand 现铸：断言保证只有铸这枚令牌的那次
 // 事务能提交，输家的令牌从不落库——「由存储铸造」的本意（凭据出自判定面，
-// 不由调用方自带）由此成立。到期时刻由适配器的时钟算（时钟可注入，
-// 契约套件用它做过期场景），不是调用方的时钟。
+// 不由调用方自带）由此成立。到期时刻由**存储的时钟**算（Backend 的
+// ClockSource 原语，与 examples/pgstore「到期由存储时钟算」同一口径——
+// 调用方的时钟与存储的时钟可能对不上，跨进程时更不能假设一致）；
+// UseClock 只留给契约套件做过期场景（issue #194：生产路径不得注入本地时钟）。
 //
 // # 依赖键的动态展开
 //
@@ -54,16 +56,30 @@ const fenceKeyPrefix = "coord/taskfence/"
 type BoardAdapter struct {
 	b Backend
 
+	// now 测试注入的时钟（UseClock；nil = 未注入）。缺省 nil 是刻意的：
+	// 判定时刻一律走 resolveNow 的时间权威次序（注入 → 存储时钟 → 声明过
+	// 仅单机才用节点时钟），绝不静默落回节点本地时钟（issue #194）。
 	mu  sync.Mutex
 	now func() time.Time
 }
 
 // NewBoardAdapter 构造 Board 适配器。
-func NewBoardAdapter(b Backend) *BoardAdapter {
-	return &BoardAdapter{b: b, now: time.Now}
+//
+// 装配期检查时间权威（issue #194）：后端既不实现 ClockSource 也不声明
+// SingleMachine 时返回 @@ErrNoTimeAuthority@@——拒绝装配，而不是静默
+// 退化成节点本地时钟。
+func NewBoardAdapter(b Backend) (*BoardAdapter, error) {
+	if !hasTimeAuthority(b) {
+		return nil, errors.Wrap(ErrNoTimeAuthority,
+			"coord: BoardAdapter 拒绝装配（租约到期必须由存储时钟算，或显式声明仅单机）")
+	}
+	return &BoardAdapter{b: b}, nil
 }
 
 // UseClock 注入时钟（boardtest 契约套件要求：过期判定必须读可注入的时钟）。
+//
+// 仅限测试：契约套件的过期场景用它做确定性推进。生产路径**不得**注入本地
+// 时钟——租约到期是跨进程共享的事实，时间真相在存储（issue #194）。
 func (a *BoardAdapter) UseClock(now func() time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -72,8 +88,13 @@ func (a *BoardAdapter) UseClock(now func() time.Time) {
 	}
 }
 
-// clock 当前时刻（持锁调用）。
-func (a *BoardAdapter) clock() time.Time { return a.now() }
+// nowAt 判定用当前时刻（时间权威次序见 resolveNow）。
+func (a *BoardAdapter) nowAt(ctx context.Context) (time.Time, error) {
+	a.mu.Lock()
+	inj := a.now
+	a.mu.Unlock()
+	return resolveNow(a.b, inj, ctx)
+}
 
 // Seed 摆初始任务（boardtest 契约套件的接缝：契约本身没有「创建」入口，
 // 任务拓扑是宿主资产）。
@@ -132,6 +153,12 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 	tk, fk := taskKeyPrefix+string(id), fenceKeyPrefix+string(id)
 	keys := []string{tk, fk}
 	for range casMaxAttempts {
+		// 判定时刻取存储时钟（issue #194）：每次重判都重取——CAS 循环的
+		// 「重判」判的是此刻的状态，时钟也该是此刻的。
+		now, nerr := a.nowAt(ctx)
+		if nerr != nil {
+			return taskboard.Task{}, errors.Wrap(nerr, "coord: Claim 取存储时钟失败")
+		}
 		snap, err := a.b.Snapshot(ctx, keys...)
 		if err != nil {
 			return taskboard.Task{}, errors.Wrap(err, "coord: Claim 快照读失败")
@@ -169,7 +196,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 					"依赖未完成", "task", string(id), "dep", string(dep))
 			}
 		}
-		if leaseHeld(cur, a.clock()) {
+		if leaseHeld(cur, now) {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人认领", "task", string(id))
 		}
 		token, terr := mintToken()
@@ -187,7 +214,7 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		next.Owner = agent
 		next.Lease = taskboard.Lease{Token: token, Fence: taskboard.Fence(fence)}
 		if req.TTL > 0 {
-			next.Lease.Until = a.clock().Add(req.TTL)
+			next.Lease.Until = now.Add(req.TTL)
 		}
 		next.Seq++
 		enc, merr := json.Marshal(next)
@@ -269,12 +296,18 @@ func (a *BoardAdapter) Renew(ctx context.Context, id taskboard.TaskID, token str
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
 			}
-			if !leaseHeld(cur, a.clock()) {
+			// 判定时刻取存储时钟（issue #194）：资格是跨进程共享的事实，
+			// 「过期与否」不能由续期请求所在节点的本地时钟说了算。
+			now, nerr := a.nowAt(ctx)
+			if nerr != nil {
+				return taskboard.Task{}, nil, nil, errors.Wrap(nerr, "coord: Renew 取存储时钟失败")
+			}
+			if !leaseHeld(cur, now) {
 				return taskboard.Task{}, nil, nil, errors.Wrap(taskboard.ErrLeaseLost,
 					"租约已过期，资格终止（请重新认领）", "task", string(id))
 			}
 			if req.TTL > 0 {
-				cur.Lease.Until = a.clock().Add(req.TTL)
+				cur.Lease.Until = now.Add(req.TTL)
 			} else {
 				cur.Lease.Until = time.Time{} // TTL=0 = 不限期（与 Claim 同一语义）
 			}

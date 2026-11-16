@@ -112,11 +112,11 @@ package sideeffect
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 )
 
@@ -130,8 +130,11 @@ import (
 // nil 与空切片同值（都哈希为空输入）——Payload 缺省即空，不制造
 // 「没传」与「传了空」的身份分裂。
 func HashPayload(p []byte) string {
-	sum := sha256.Sum256(p)
-	return hex.EncodeToString(sum[:])
+	// 单源：oekit/pkg/encoding.Sha256Hex 就是 sha256.Sum256 + hex.EncodeToString
+	// （小写十六进制、全长）。本仓不另写一份——哈希算法与编码口径一旦分叉，
+	// 「同 Key 同 Payload」的比对会得出两个不同答案（coord 的持久化身份、
+	// pgstore 的身份列、sidetest 的替身都读这一个入口）。
+	return encoding.Sha256Hex(p)
 }
 
 // MintHolder 铸造一份持有者身份（Lease.Holder / Reconcile.Holder 的参考

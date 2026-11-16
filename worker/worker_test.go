@@ -17,7 +17,10 @@ import (
 // 内存后端（判定逻辑那份实现已被契约套件验证过），注册表用本包替身。
 
 func newTestBoard(clock *testClock) *coord.BoardAdapter {
-	b := coord.NewBoardAdapter(coord.NewMemoryBackend())
+	b, err := coord.NewBoardAdapter(coord.NewMemoryBackend())
+	if err != nil {
+		panic("worker: 测试装配 BoardAdapter 失败: " + err.Error())
+	}
 	b.UseClock(clock.Now)
 	return b
 }

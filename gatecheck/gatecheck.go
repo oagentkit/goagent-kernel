@@ -284,7 +284,17 @@ func Check(ctx context.Context, gate *policy.Gate, registry *sandbox.Registry, r
 	}
 	d.Outcome = OutcomeProceed
 	d.Provider = provider
-	d.Reason = "三层都同意（审批 × 档位 × 出口）"
+	// 放行理由只陈述**真正判过**的维度（issue #212）：没判出口就不能出现
+	// 「出口」字样——留痕主动误导审计者比不留痕更糟（验收判据是「文案不出现
+	// 未判过的维度」，如实声明「未要求」也不行，按最严字面执行）。
+	switch {
+	case needEgress && req.MinLevel != sandbox.LevelNone:
+		d.Reason = "三层都同意（审批 × 档位 × 出口）"
+	case needEgress:
+		d.Reason = "审批与出口同意（未要求隔离档位）"
+	default:
+		d.Reason = "审批与档位同意"
+	}
 	return d
 }
 
