@@ -24,6 +24,15 @@
 // NewMemoryBackend：单进程成立，**不得上生产**（跨进程原子性它给不了）。
 // 它的职责是把判定逻辑垫在契约之下，让契约可测——与 coord 的内存后端、
 // examples/pgstore 对 taskboard 的分工同口径（内核证契约，宿主接生产）。
+//
+// # 本接口的 Take/GC 带调用方时钟（issue #186）
+//
+// 调用方 now 是单副本时代的形态：进程时钟 = 唯一时钟，语义正确。多副本下
+// 「票据是否过期」被每个副本的时钟偏移改写（快钟误删未过期票、慢钟放过期
+// 授权重放）。本包 Stable，改 Take/GC 签名是 breaking，故「接口去掉 now」
+// 的形态另立 [StorageClockBackend]（clockbackend.go：Put 收 TTL 时长、
+// 判定用存储自己的时钟，经 NewWithStorageClock 注入）。本接口保留为
+// Stable 兼容面；多副本宿主的**新**实现请实现 StorageClockBackend。
 package ticket
 
 import (
@@ -48,8 +57,14 @@ type Backend interface {
 	//
 	// ⚠️ 过期票据**也已被删除**——与进程内旧实现「消费尝试顺手清过期」
 	// 逐字一致（先删后判的顺序是语义的一部分，不是实现巧合）。
+	//
+	// ⚠️ 多副本实现的过期判定**不得信调用方 now**（issue #186）：它是签发侧
+	// 节点时钟，副本间偏移会改写「票据是否过期」——快钟误删未过期票
+	// （先删后判 ⇒ 持有者消费失败且不可恢复），慢钟放过期授权仍可重放。
+	// 跨进程**新**实现请改实现 [StorageClockBackend]（接口去掉 now，
+	// 判定用存储自己的时钟），经 NewWithStorageClock 注入。
 	Take(id string, now time.Time) (Binding, bool, error)
-	// GC 删除已过期票据，返回清理张数。
+	// GC 删除已过期票据，返回清理张数。（多副本实现的时钟纪律同 Take。）
 	GC(now time.Time) (int, error)
 	// Len 返回现存票据数（含过期未清理的——它们只是不可消费，仍占空间）。
 	Len() (int, error)

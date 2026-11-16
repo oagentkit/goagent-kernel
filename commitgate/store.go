@@ -26,6 +26,14 @@
 // NewMemoryStore：单进程成立，**不得上生产**（跨进程原子性与令牌全局唯一
 // 它都给不了）。职责是把判定逻辑垫在契约之下让契约可测——与 coord 的内存
 // 后端同口径。
+//
+// # 本接口不带 ctx（issue #185）
+//
+// 本接口的五个方法**没有** context.Context——网络 DB 实现在这一层拿不到
+// deadline/cancel。本包 Stable，改签名是 breaking，故带取消的形态另立
+// [CtxStore]（ctxstore.go：同一份原子性契约 + 逐调用承接取消，经
+// NewGuardWithCtxStore 注入）。本接口保留为 Stable 兼容面，已有实现零改动
+// 继续可用；多副本宿主的**新**实现请实现 CtxStore。
 package commitgate
 
 import "sync"

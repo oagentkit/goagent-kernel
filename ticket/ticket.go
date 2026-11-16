@@ -35,6 +35,15 @@
 // NewWithBackend 注入：判定逻辑（TTL / 单次消费 / 容量调用时机）留在本包，
 // 跨进程原子性归存储——原子性契约见 backend.go 文件头。本包**不提供**
 // 分布式实现，也不做任何集群语义（复制、选主、租约一概不认识）。
+//
+// # 过期的真相只有存储一个（issue #186）
+//
+// Backend.Take/GC 的 now 形态把签发侧时钟递进过期判定：多副本下副本时钟
+// 偏移会改写「票据是否过期」——快钟副本把未过期票**误删**（先删后判），
+// 持有者消费失败且不可恢复；慢钟副本让过期授权仍可重放。多副本宿主的
+// **新**实现请实现 [StorageClockBackend]（clockbackend.go：接口去掉 now，
+// Put 收 TTL 时长、判定用存储自己的时钟）经 NewWithStorageClock 注入；
+// 节点时钟不得参与过期判定。已有 Backend 实现零改动继续可用。
 package ticket
 
 import (
@@ -81,8 +90,15 @@ type entry struct {
 //
 // 零值不可用，用 New 构造。
 type Store struct {
+	// backend 旧形态状态接缝（调用方时钟；Stable 兼容面）。
+	// 注入 StorageClockBackend 时为 nil，全部调用改走 scb。
 	backend Backend
-	now     func() time.Time
+	// scb 存储时钟权威形态的状态接缝（issue #186，NewWithStorageClock 注入）。
+	// 与 backend 二选一；TTL/单次消费的判定逻辑不因换接缝而有第二份。
+	scb StorageClockBackend
+	// now 机制面的时钟（签发侧参考；scb 形态下过期判定不经过它——
+	// 时间的真相只有存储一个）。
+	now func() time.Time
 }
 
 // New 构造票据存储（进程内参考实现，容量上限取 DefaultMaxEntries）。
@@ -106,6 +122,10 @@ func NewWithClock(maxSize int, now func() time.Time) *Store {
 // 多副本宿主用它接自己的跨进程存储（DB / 协调后端）；Backend 的原子性契约
 // 见 backend.go 文件头（Take 必须原子——多副本并发消费同一张票恰好一个赢）。
 // b 为 nil ⇒ 退化为进程内参考实现（DefaultMaxEntries）。
+//
+// ⚠️ 多副本宿主的**新**实现建议改用 [NewWithStorageClock]（issue #186）：
+// 本构造把签发侧的 now 递给 Backend.Take/GC 当过期判据，副本间时钟偏移
+// 会改写「票据是否过期」——时间的真相应只有存储一个。
 func NewWithBackend(b Backend, now func() time.Time) *Store {
 	if b == nil {
 		b = NewMemoryBackend(DefaultMaxEntries)
@@ -114,6 +134,22 @@ func NewWithBackend(b Backend, now func() time.Time) *Store {
 		now = time.Now
 	}
 	return &Store{backend: b, now: now}
+}
+
+// NewWithStorageClock 构造票据存储：状态在**存储时钟权威**的接缝之后
+// （issue #186）。
+//
+// 多副本宿主实现 [StorageClockBackend] 经本构造注入：过期判定由实现用
+// 存储自己的时钟完成（签发侧不给 now，也没有可注入的时钟——**时间的真相
+// 只有存储一个**，副本时钟偏移不再改写「票据是否过期」）。签发时给实现
+// 的只是 TTL **时长**，存储按自己的当前时刻定 expires_at，并把权威时刻
+// 随 Issue 返回。原子性契约（Take 必须原子）见 backend.go 文件头。
+// b 为 nil ⇒ 退化为进程内参考实现（DefaultMaxEntries，time.Now）。
+func NewWithStorageClock(b StorageClockBackend) *Store {
+	if b == nil {
+		b = NewMemoryBackendWithClock(DefaultMaxEntries, nil)
+	}
+	return &Store{scb: b, now: time.Now}
 }
 
 // Issue 签发一张票据：返回**票据 id** 与**过期时刻**。
@@ -130,6 +166,10 @@ func NewWithBackend(b Backend, now func() time.Time) *Store {
 // 注入的 Backend 同样生效）；判定与 Take 同一把尺（now 晚于过期时刻）。
 // 回收是**尽力面**：GC 故障不拦签发，容量判定仍归 Backend（满了照样显式
 // 拒发）——回收成功与否只决定「过期票还占不占地方」，不改变放行语义。
+//
+// StorageClockBackend 形态（issue #186）下 ttl 是**时长**：存储以自己的
+// 时刻落 expires_at，返回的过期时刻是**权威值**（签发侧时钟不参与——
+// 节点时钟偏移不再被放大成 TTL 偏移）。
 //
 // ⚠️ 绑定载荷**零校验**（含零值 Binding{}——机制面不解释字段语义）。
 // 零绑定票据消费成功后返回全空 Binding，消费方拿到「授权成立」却答不出
@@ -148,6 +188,13 @@ func (s *Store) Issue(b Binding, ttl time.Duration) (string, time.Time, error) {
 	// 不回收的话过期票会永久占满容量，签发从此恒拒。回收后仍在场的都是
 	// 未过期票 ⇒ 「容量按未过期张数计」由此成立。
 	s.GC()
+	if s.scb != nil {
+		exp, err := s.scb.Put(id, b, ttl)
+		if err != nil {
+			return "", time.Time{}, err
+		}
+		return id, exp, nil
+	}
 	exp := s.now().Add(ttl)
 	if err := s.backend.Put(id, b, exp); err != nil {
 		return "", time.Time{}, err
@@ -192,9 +239,19 @@ func (s *Store) IssueStrict(b Binding, ttl time.Duration) (string, time.Time, er
 // Backend 故障 ⇒ 按消费失败处理（fail-closed：票没被取走，宿主侧表现为
 // 「这次没通过」，重试即可；绝不放行一张没验成的票）。本包入口没有 ctx
 // 可传，跨进程实现的超时/截止由实现内部管理。
+//
+// StorageClockBackend 形态（issue #186）下过期判定由实现用**存储时钟**
+// 完成——本方法不再有「签发侧时钟」可递，副本时钟偏移改写不了判定。
 func (s *Store) Consume(id string) (Binding, bool) {
 	if id == "" {
 		return Binding{}, false
+	}
+	if s.scb != nil {
+		binding, ok, err := s.scb.Take(id)
+		if err != nil {
+			return Binding{}, false
+		}
+		return binding, ok
 	}
 	binding, ok, err := s.backend.Take(id, s.now())
 	if err != nil {
@@ -210,6 +267,13 @@ func (s *Store) Consume(id string) (Binding, bool) {
 // （issue #208）——即使宿主从不主动 GC，过期票也不再永久占容量。
 // Backend 故障 ⇒ 返回 0（本轮没清成，下轮再试；清理是尽力面不是判定面）。
 func (s *Store) GC() int {
+	if s.scb != nil {
+		n, err := s.scb.GC()
+		if err != nil {
+			return 0
+		}
+		return n
+	}
 	n, err := s.backend.GC(s.now())
 	if err != nil {
 		return 0
@@ -220,6 +284,13 @@ func (s *Store) GC() int {
 // Len 当前未消费票据数（过期未清理的也算——它们只是不可消费，仍占空间）。
 // Backend 故障 ⇒ 返回 0（观测面；容量判定在 Backend 内部，不依赖这里）。
 func (s *Store) Len() int {
+	if s.scb != nil {
+		n, err := s.scb.Len()
+		if err != nil {
+			return 0
+		}
+		return n
+	}
 	n, err := s.backend.Len()
 	if err != nil {
 		return 0

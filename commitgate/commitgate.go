@@ -65,9 +65,20 @@
 // Store 接缝之后——缺省进程内参考实现 NewMemoryStore，多副本宿主注入自己的
 // 跨进程实现（NewGuardWithStore）。跨进程硬要求（Claim 原子、**令牌由存储
 // 铸造**）见 store.go 文件头；判定逻辑不因换存储而有第二份。
+//
+// # 取消与超时在 CtxStore 接缝（issue #185）
+//
+// Store 的方法不带 context.Context——网络 DB 实现在接口层拿不到 deadline/
+// cancel。本包 Stable，改 Store 签名是 breaking，故按 additive 路径另立
+// [CtxStore]（同一份原子性契约 + 逐调用承接取消）：新实现请实现它并经
+// NewGuardWithCtxStore 注入，Guard 的 *Context 方法族（AcquireContext 等）
+// 逐层透传调用方 ctx；已有 Store 实现零改动继续可用（迁移说明见
+// ctxstore.go 文件尾）。
 package commitgate
 
 import (
+	"context"
+
 	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 )
@@ -130,8 +141,12 @@ type Lease struct {
 //
 // 零值不可用，请用 NewGuard——闸的零值若表示「放行」，等于缺配置即失效。
 type Guard struct {
-	// store 已提交记录的存储接缝（缺省进程内参考实现）。
+	// store 已提交记录的存储接缝（缺省进程内参考实现）。注入 CtxStore 时为 nil，
+	// 全部调用改走 ctxStore（ctxstore.go 的路由）。
 	store Store
+	// ctxStore 带取消的存储接缝（issue #185，NewGuardWithCtxStore 注入）。
+	// 与 store 二选一；判定逻辑不因换接缝而有第二份。
+	ctxStore CtxStore
 	// isTerminal 由宿主注入的状态词表判定；nil 时按「全部都是终态」处理，
 	// 这是更保守的一侧（宁可多拦，不可在不知道词表时漏拦）。
 	isTerminal func(status string) bool
@@ -191,7 +206,7 @@ func (g *Guard) Seed(c Commit) {
 	}
 	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
 	// 故障吞掉的后果（issue #204）：闸为空、重复终态提交重新敞开——必须留痕。
-	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+	if err := g.seedIfAbsentCtx(context.Background(), c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
 		g.reportSeedFailure(c, err)
 	}
 }
@@ -215,7 +230,7 @@ func (g *Guard) SeedE(c Commit) error {
 	if g.isTerminal != nil && !g.isTerminal(c.Status) {
 		return nil
 	}
-	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+	if err := g.seedIfAbsentCtx(context.Background(), c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
 		return errors.Wrap(err, "回灌终态失败（闸未记上，重复终态提交将重新敞开）",
 			"run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
@@ -272,7 +287,7 @@ func (g *Guard) Acquire(c Commit) (Lease, error) {
 		return Lease{}, nil
 	}
 	// 判-占-铸令牌的原子性在 Store（跨进程实现见 store.go 文件头契约）。
-	out, claimed, err := g.store.Claim(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	out, claimed, err := g.claimCtx(context.Background(), c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
 	if err != nil {
 		return Lease{}, errors.Wrap(err, "占用终态失败", "run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
@@ -323,33 +338,22 @@ func (e *AlreadyCommittedError) Unwrap() error { return ErrAlreadyCommitted }
 //
 // 凭证对不上时静默返回（交还闸不是错误路径，闸被回灌/已释放时都属正常）。
 func (g *Guard) ReleaseLease(l Lease) {
-	if l.Token == 0 || g.store == nil {
-		return // 零值 Guard：与旧实现（nil map 读/删是良性 no-op）逐字一致
-	}
-	// 令牌不匹配时 Store 返回 released=false——迟到/重复/别人的释放一律无效。
-	_, _ = g.store.ReleaseToken(l.Ref, l.Token)
+	// 判定与 ReleaseLeaseContext 同一份（背景 ctx：无 ctx 形态本来就没有
+	// 可承接的取消）。
+	g.ReleaseLeaseContext(context.Background(), l)
 }
 
 // Status 查该环节当前已提交的终态。第二个返回值为是否已提交。
 // 零值 Guard / Store 故障 ⇒ 未提交（与旧实现 nil map 读的良性口径一致）。
 func (g *Guard) Status(ref Ref) (status string, branch string, committed bool) {
-	if g.store == nil {
-		return "", "", false
-	}
-	r, ok, err := g.store.Get(ref)
-	if err != nil || !ok {
-		return "", "", false
-	}
-	return r.Status, r.Branch, true
+	// 判定与 StatusContext 同一份（背景 ctx：无 ctx 形态没有可承接的取消）。
+	return g.StatusContext(context.Background(), ref)
 }
 
 // Committed 返回已终态提交的环节数（自检与留痕用）。
 // 零值 Guard / Store 故障 ⇒ 0（观测面，不因一次故障把自检打成假红）。
 func (g *Guard) Committed() int {
-	if g.store == nil {
-		return 0
-	}
-	n, err := g.store.Count()
+	n, err := g.CommittedContext(context.Background())
 	if err != nil {
 		return 0
 	}
