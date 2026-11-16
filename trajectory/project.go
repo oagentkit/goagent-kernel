@@ -51,6 +51,10 @@ func (p *Projector) apply(ev eventbus.Event) {
 // 伪造实测时长。它保持 open，Finalize 时作为未完成行报出。
 func (p *Projector) openTurn(ev eventbus.Event) {
 	p.turnNo++
+	// 上一轮遗留的步骤行退出配对面（opens 按轮分段）：它们不再是谁的结束
+	// 事件的候选，但行本身保持 open——Finalize 仍会报出，不替它们补结束时刻
+	// （补了就是伪造实测时长，issue #300）。
+	p.opens = p.opens[:0]
 	idx := p.append(Row{
 		Kind:    KindTurn,
 		ID:      turnRowID(p.turnNo),
@@ -124,22 +128,28 @@ func (p *Projector) closeStep(ev eventbus.Event) {
 
 // matchOpenStep 找出可与该结束事件配对的步骤行。
 //
-// 带环节号：配**最近**一条同号且仍打开的步骤行——同一环节号被重新开过一次时
-// （重试），后一条才是本次结束对应的。
-// 不带环节号：配**最早**一条仍打开的无环节号步骤行（先进先出）。
+// 作用域是**当前轮**：配对范围必须与行标识的唯一性范围（轮）一致——上一轮
+// 遗留的步骤行不得被下一轮的结束事件收口，否则导出的子 span 会晚于父 span
+// 结束（issue #300）。跨轮遗留的行保持 open，由 Finalize 作为未完成行显形；
+// 配不上的结束事件落成孤儿行，不静默丢弃。
+//
+// 带环节号：配**最近**一条同号且仍打开、同属当前轮的步骤行——同一环节号被重新
+// 开过一次时（重试），后一条才是本次结束对应的。
+// 不带环节号：配**最早**一条仍打开、同属当前轮的无环节号步骤行（先进先出）。
 // 都配不上时返回 -1（调用方落孤儿行）。
 func (p *Projector) matchOpenStep(ev eventbus.Event) int {
+	turn := p.currentTurn()
 	if id, ok := stepIDOf(ev); ok {
 		for i := len(p.opens) - 1; i >= 0; i-- {
 			idx := p.opens[i]
-			if p.rows[idx].HasStep && p.rows[idx].StepID == id {
+			if p.rows[idx].Turn == turn && p.rows[idx].HasStep && p.rows[idx].StepID == id {
 				return idx
 			}
 		}
 		return -1
 	}
 	for _, idx := range p.opens {
-		if !p.rows[idx].HasStep {
+		if p.rows[idx].Turn == turn && !p.rows[idx].HasStep {
 			return idx
 		}
 	}

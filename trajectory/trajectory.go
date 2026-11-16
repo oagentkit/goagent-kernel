@@ -166,6 +166,9 @@ type Row struct {
 //
 // 结束早于开始（事件时刻本身不自洽，例如结果先于调用到达）时同样返回
 // ok=false：负时长不是实测值。
+//
+// 投影器保证步骤行只与**同轮**事件配对（见 matchOpenStep）：跨轮遗留的步骤行
+// 保持 open、没有 EndAt，故本方法的实测值不会跨过它声称所属的轮（issue #300）。
 func (r Row) Duration() (time.Duration, bool) {
 	if r.StartAt.IsZero() || r.EndAt.IsZero() {
 		return 0, false
