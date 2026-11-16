@@ -41,12 +41,12 @@
 //
 // 正确顺序（用 Acquire + ReleaseLease——凭唯一令牌释放，承诺无条件成立）：
 //
-//	lease, err := g.Acquire(c)              // 抢终态独占权
+//	lease, err := g.Acquire(ctx, c)         // 抢终态独占权
 //	if err != nil {
 //	    return err                          // 抢不到就别干后面的活
 //	}
 //	if err := store.Save(ctx, snap); err != nil {
-//	    g.ReleaseLease(lease)               // 落库失败必须回滚
+//	    g.ReleaseLease(context.WithoutCancel(ctx), lease) // 落库失败必须回滚
 //	    return err
 //	}
 //
@@ -65,9 +65,21 @@
 // Store 接缝之后——缺省进程内参考实现 NewMemoryStore，多副本宿主注入自己的
 // 跨进程实现（NewGuardWithStore）。跨进程硬要求（Claim 原子、**令牌由存储
 // 铸造**）见 store.go 文件头；判定逻辑不因换存储而有第二份。
+//
+// # 调用链全程透传 context.Context（issue #185）
+//
+// 网络 DB 实现要在 API 层承接取消与超时（上游超时后连接不能仍占着，重试
+// 也要能停）。故 Guard 全部触及存储的方法都收 ctx 并逐层透传：Acquire /
+// ReleaseLease / Seed / SeedE 传 store 的写面，Status / Committed 传读面。
+// ctx 已取消时 Acquire **不进入存储**，直接返回可被 errors.Is 判定为
+// context.Canceled / context.DeadlineExceeded 的错误。释放是补偿动作：
+// 落库失败后的 ReleaseLease 请用不随请求取消的 ctx（例如
+// context.WithoutCancel 再套短超时），否则残留占用会把环节卡死。
 package commitgate
 
 import (
+	"context"
+
 	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 )
@@ -180,7 +192,10 @@ func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
 // 本包仍 Stable，Seed 在 minor 边界按流程拆除）。
 //
 // 幂等：以同一条记录重复 Seed 结果相同。已存在的记录不会被更旧的覆盖。
-func (g *Guard) Seed(c Commit) {
+//
+// ctx 透传到 Store.SeedIfAbsent（issue #185）。
+func (g *Guard) Seed(ctx context.Context, c Commit) {
+	ctx = nonNilCtx(ctx)
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
 		return
 	}
@@ -191,7 +206,7 @@ func (g *Guard) Seed(c Commit) {
 	}
 	// 不覆盖语义在 Store（SeedIfAbsent）：已有记录时内存/库里的现状更新。
 	// 故障吞掉的后果（issue #204）：闸为空、重复终态提交重新敞开——必须留痕。
-	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+	if err := g.store.SeedIfAbsent(ctx, c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
 		g.reportSeedFailure(c, err)
 	}
 }
@@ -208,14 +223,18 @@ func (g *Guard) Seed(c Commit) {
 //
 // 五步破坏性变更流程（docs/api-compat.md）：本符号是 Deprecated 过渡步给
 // Seed 指定的替代；宿主迁移完成后，Seed 在 minor 边界按流程拆除。
-func (g *Guard) SeedE(c Commit) error {
+//
+// ctx 透传到 Store.SeedIfAbsent（issue #185）：取消失败按「回灌未完成」上抛，
+// 不得吞掉——宿主据此决定重试或中止启动。
+func (g *Guard) SeedE(ctx context.Context, c Commit) error {
+	ctx = nonNilCtx(ctx)
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
 		return errors.Wrap(ErrEmptyRef, "回灌缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
 	if g.isTerminal != nil && !g.isTerminal(c.Status) {
 		return nil
 	}
-	if err := g.store.SeedIfAbsent(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
+	if err := g.store.SeedIfAbsent(ctx, c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq}); err != nil {
 		return errors.Wrap(err, "回灌终态失败（闸未记上，重复终态提交将重新敞开）",
 			"run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
@@ -259,9 +278,20 @@ func (g *Guard) reportSeedFailure(c Commit, cause error) {
 // 而那三元组不唯一——同名并行分支、或重试同一份快照时，三元组逐字相同，
 // 于是输家的迟到释放会删掉赢家的记录，闸对下一次提交敞开，
 // 同一环节的终态被提交两次（实测 8 路并发提交出现 4 个赢家）。
-func (g *Guard) Acquire(c Commit) (Lease, error) {
+//
+// ctx（issue #185）：取消/超时透传到 Store.Claim——网络存储实现在等待期间
+// 一收到取消就应中断，不再占着连接重试。ctx 已取消时本方法**不进入存储**，
+// 直接返回可被 errors.Is 判定为 context.Canceled / context.DeadlineExceeded
+// 的错误（错误链仍带 run_id/step 定位）。
+func (g *Guard) Acquire(ctx context.Context, c Commit) (Lease, error) {
+	ctx = nonNilCtx(ctx)
 	if c.Ref.RunID == "" || c.Ref.Step == "" {
 		return Lease{}, errors.Wrap(ErrEmptyRef, "提交缺环节引用", "run_id", c.Ref.RunID, "step", c.Ref.Step)
+	}
+	// ctx 短路：不把已取消的调用交给存储（存储实现不配合 ctx 时也成立）。
+	if err := contextErr(ctx); err != nil {
+		return Lease{}, errors.Wrap(err, "占用终态失败（ctx 已取消或超时）",
+			"run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
 
 	// 词表未知时按终态处理：宁可多拦一道，也不因缺配置漏放。
@@ -272,7 +302,7 @@ func (g *Guard) Acquire(c Commit) (Lease, error) {
 		return Lease{}, nil
 	}
 	// 判-占-铸令牌的原子性在 Store（跨进程实现见 store.go 文件头契约）。
-	out, claimed, err := g.store.Claim(c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
+	out, claimed, err := g.store.Claim(ctx, c.Ref, Record{Status: c.Status, Branch: c.Branch, Seq: c.Seq})
 	if err != nil {
 		return Lease{}, errors.Wrap(err, "占用终态失败", "run_id", c.Ref.RunID, "step", c.Ref.Step)
 	}
@@ -322,21 +352,31 @@ func (e *AlreadyCommittedError) Unwrap() error { return ErrAlreadyCommitted }
 // ——旧三元组认人接口（已删）挡不住「三元组完全相同」的两次占用。
 //
 // 凭证对不上时静默返回（交还闸不是错误路径，闸被回灌/已释放时都属正常）。
-func (g *Guard) ReleaseLease(l Lease) {
+//
+// ctx（issue #185）透传到 Store.ReleaseToken。释放是**补偿动作**：不要传
+// 一个已经随请求取消的 ctx——取消会让释放不执行，闸被残留占用永久卡住。
+// 建议 `context.WithoutCancel(requestCtx)` 再套一层短超时。Store 故障仍按
+// 既有口径静默（本方法没有 error 通道；凭证释放是尽力面，交还失败由
+// 下一次启动的回灌/对账兜底）。
+func (g *Guard) ReleaseLease(ctx context.Context, l Lease) {
+	ctx = nonNilCtx(ctx)
 	if l.Token == 0 || g.store == nil {
 		return // 零值 Guard：与旧实现（nil map 读/删是良性 no-op）逐字一致
 	}
 	// 令牌不匹配时 Store 返回 released=false——迟到/重复/别人的释放一律无效。
-	_, _ = g.store.ReleaseToken(l.Ref, l.Token)
+	_, _ = g.store.ReleaseToken(ctx, l.Ref, l.Token)
 }
 
 // Status 查该环节当前已提交的终态。第二个返回值为是否已提交。
-// 零值 Guard / Store 故障 ⇒ 未提交（与旧实现 nil map 读的良性口径一致）。
-func (g *Guard) Status(ref Ref) (status string, branch string, committed bool) {
+// 零值 Guard / Store 故障 / ctx 取消 ⇒ 未提交（与旧实现 nil map 读的良性
+// 口径一致；观测面不因一次失败把自检打成假红）。ctx 透传到 Store.Get
+// （issue #185）——单行读也可能走网络。
+func (g *Guard) Status(ctx context.Context, ref Ref) (status string, branch string, committed bool) {
+	ctx = nonNilCtx(ctx)
 	if g.store == nil {
 		return "", "", false
 	}
-	r, ok, err := g.store.Get(ref)
+	r, ok, err := g.store.Get(ctx, ref)
 	if err != nil || !ok {
 		return "", "", false
 	}
@@ -344,12 +384,14 @@ func (g *Guard) Status(ref Ref) (status string, branch string, committed bool) {
 }
 
 // Committed 返回已终态提交的环节数（自检与留痕用）。
-// 零值 Guard / Store 故障 ⇒ 0（观测面，不因一次故障把自检打成假红）。
-func (g *Guard) Committed() int {
+// 零值 Guard / Store 故障 / ctx 取消 ⇒ 0（观测面，不因一次故障把自检打成
+// 假红）。ctx 透传到 Store.Count（issue #185）——DB 计数也会慢。
+func (g *Guard) Committed(ctx context.Context) int {
+	ctx = nonNilCtx(ctx)
 	if g.store == nil {
 		return 0
 	}
-	n, err := g.store.Count()
+	n, err := g.store.Count(ctx)
 	if err != nil {
 		return 0
 	}

@@ -1,6 +1,7 @@
 package commitgate
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -22,7 +23,7 @@ func ref(step string) Ref { return Ref{RunID: "run-1", Step: step} }
 
 // TestFirstTerminalWins 首个终态提交应当通过。
 func TestFirstTerminalWins(t *testing.T) {
-	if _, err := g().Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b1", Seq: 1}); err != nil {
+	if _, err := g().Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b1", Seq: 1}); err != nil {
 		t.Fatalf("首个终态提交应通过，实得 %v", err)
 	}
 }
@@ -31,9 +32,9 @@ func TestFirstTerminalWins(t *testing.T) {
 // 这是本包存在理由的正面断言。
 func TestSecondTerminalRejected(t *testing.T) {
 	gd := g()
-	_, _ = gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "branch-A", Seq: 1})
+	_, _ = gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "branch-A", Seq: 1})
 
-	_, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "branch-B", Seq: 2})
+	_, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "failed", Branch: "branch-B", Seq: 2})
 	if err == nil {
 		t.Fatal("同一环节的第二个终态提交必须被拒")
 	}
@@ -48,9 +49,9 @@ func TestSecondTerminalRejected(t *testing.T) {
 // 没有「第二次本该被谁挡下」。错误里少了这条，排查就只能靠猜。
 func TestRejectCarriesIncumbent(t *testing.T) {
 	gd := g()
-	_, _ = gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "branch-A", Seq: 7})
+	_, _ = gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "branch-A", Seq: 7})
 
-	_, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "branch-B", Seq: 9})
+	_, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "failed", Branch: "branch-B", Seq: 9})
 	var ae *AlreadyCommittedError
 	if !errors.As(err, &ae) {
 		t.Fatalf("应能取出结构化错误，实得 %T", err)
@@ -71,12 +72,12 @@ func TestRejectCarriesIncumbent(t *testing.T) {
 func TestNonTerminalPassesRepeatedly(t *testing.T) {
 	gd := g()
 	for _, s := range []string{"running", "waiting_approval", "running"} {
-		if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: s, Branch: "b1", Seq: 1}); err != nil {
+		if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: s, Branch: "b1", Seq: 1}); err != nil {
 			t.Fatalf("中间态 %q 应放行，实得 %v", s, err)
 		}
 	}
-	if gd.Committed() != 0 {
-		t.Fatalf("中间态不应占用终态闸，实得已提交 %d", gd.Committed())
+	if gd.Committed(context.Background()) != 0 {
+		t.Fatalf("中间态不应占用终态闸，实得已提交 %d", gd.Committed(context.Background()))
 	}
 }
 
@@ -85,18 +86,18 @@ func TestNonTerminalPassesRepeatedly(t *testing.T) {
 func TestReleaseLeaseFreesForRetry(t *testing.T) {
 	gd := g()
 	c := Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b1", Seq: 1}
-	lease, err := gd.Acquire(c)
+	lease, err := gd.Acquire(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// 落库失败 → 凭占用凭证回滚。
-	gd.ReleaseLease(lease)
+	gd.ReleaseLease(context.Background(), lease)
 
-	if _, _, committed := gd.Status(ref("s1")); committed {
+	if _, _, committed := gd.Status(context.Background(), ref("s1")); committed {
 		t.Fatal("ReleaseLease 后不应仍占用闸")
 	}
 	// 重试应能成。
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b1", Seq: 2}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b1", Seq: 2}); err != nil {
 		t.Fatalf("ReleaseLease 后重试应成功，实得 %v", err)
 	}
 }
@@ -110,17 +111,17 @@ func TestReleaseLeaseFreesForRetry(t *testing.T) {
 func TestReleaseLeaseDoesNotStealOtherHolder(t *testing.T) {
 	gd := g()
 	a := Commit{Ref: ref("s1"), Status: "succeeded", Branch: "A", Seq: 1}
-	leaseA, err := gd.Acquire(a)
+	leaseA, err := gd.Acquire(context.Background(), a)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// B 的提交被拒后错误处理里迟到的释放（令牌对不上 A 的那次占用）。
-	gd.ReleaseLease(Lease{Ref: a.Ref, Token: leaseA.Token + 99})
+	gd.ReleaseLease(context.Background(), Lease{Ref: a.Ref, Token: leaseA.Token + 99})
 
-	if _, branch, committed := gd.Status(ref("s1")); !committed || branch != "A" {
+	if _, branch, committed := gd.Status(context.Background(), ref("s1")); !committed || branch != "A" {
 		t.Fatalf("A 的独占权不得被对不上号的 ReleaseLease 放掉，实得 branch=%q committed=%v", branch, committed)
 	}
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "C", Seq: 3}); err == nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "failed", Branch: "C", Seq: 3}); err == nil {
 		t.Fatal("独占权仍在，第三次提交必须被拒")
 	}
 }
@@ -129,19 +130,19 @@ func TestReleaseLeaseDoesNotStealOtherHolder(t *testing.T) {
 // 只按环节名去重会把第二次运行整个判成重复提交——这是会直接跑挂业务的错。
 func TestRefIsPerRunAndStep(t *testing.T) {
 	gd := g()
-	if _, err := gd.Acquire(Commit{Ref: Ref{RunID: "run-1", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
 		t.Fatal(err)
 	}
 	// 同一 run 的另一个环节：独立。
-	if _, err := gd.Acquire(Commit{Ref: Ref{RunID: "run-1", Step: "s2"}, Status: "succeeded", Branch: "b", Seq: 2}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: "s2"}, Status: "succeeded", Branch: "b", Seq: 2}); err != nil {
 		t.Fatalf("同 run 的不同环节应独立，实得 %v", err)
 	}
 	// 另一个 run 的同名环节：独立。
-	if _, err := gd.Acquire(Commit{Ref: Ref{RunID: "run-2", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: Ref{RunID: "run-2", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
 		t.Fatalf("不同 run 的同名环节应独立，实得 %v", err)
 	}
-	if gd.Committed() != 3 {
-		t.Fatalf("应记三条终态，实得 %d", gd.Committed())
+	if gd.Committed(context.Background()) != 3 {
+		t.Fatalf("应记三条终态，实得 %d", gd.Committed(context.Background()))
 	}
 }
 
@@ -151,7 +152,7 @@ func TestEmptyRefRejected(t *testing.T) {
 		{Ref: Ref{Step: "s1"}, Status: "succeeded", Branch: "b"},
 		{Ref: Ref{RunID: "run-1"}, Status: "succeeded", Branch: "b"},
 	} {
-		if _, err := g().Acquire(c); !errors.Is(err, ErrEmptyRef) {
+		if _, err := g().Acquire(context.Background(), c); !errors.Is(err, ErrEmptyRef) {
 			t.Fatalf("引用不完整应被拒，实得 %v", err)
 		}
 	}
@@ -161,10 +162,10 @@ func TestEmptyRefRejected(t *testing.T) {
 // 「不知道是不是终态就当不是」会在宿主漏注入时把闸整个架空。
 func TestNilIsTerminalTreatsEverythingAsTerminal(t *testing.T) {
 	gd := NewGuard(nil)
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "running", Branch: "A", Seq: 1}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "A", Seq: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "running", Branch: "B", Seq: 2}); err == nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "B", Seq: 2}); err == nil {
 		t.Fatal("词表未知时应按终态从严处理")
 	}
 }
@@ -176,9 +177,9 @@ func TestSeedSurvivesRestart(t *testing.T) {
 
 	// 场景：崩溃前 A 已提交终态并落库，重启后 B 又来提交。
 	restarted := g()
-	restarted.Seed(prior)
+	restarted.Seed(context.Background(), prior)
 
-	_, err := restarted.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "after-restart", Seq: 4})
+	_, err := restarted.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "failed", Branch: "after-restart", Seq: 4})
 	if err == nil {
 		t.Fatal("重启后 Seed 的终态必须仍然生效")
 	}
@@ -195,14 +196,14 @@ func TestSeedIsIdempotentAndDoesNotOverwrite(t *testing.T) {
 
 	// 进程内先提交出更新的记录（本次进程内提交过）。
 	fresh := Commit{Ref: ref("s1"), Status: "failed", Branch: "live", Seq: 9}
-	if _, err := gd.Acquire(fresh); err != nil {
+	if _, err := gd.Acquire(context.Background(), fresh); err != nil {
 		t.Fatal(err)
 	}
 	// 过期的持久化回灌不得覆盖内存中的现状；重复 Seed 幂等。
-	gd.Seed(seed)
-	gd.Seed(seed)
+	gd.Seed(context.Background(), seed)
+	gd.Seed(context.Background(), seed)
 
-	_, branch, _ := gd.Status(ref("s1"))
+	_, branch, _ := gd.Status(context.Background(), ref("s1"))
 	if branch != "live" {
 		t.Fatalf("过期回灌不得覆盖内存中的现状，实得 %q", branch)
 	}
@@ -215,15 +216,15 @@ func TestSeedIsIdempotentAndDoesNotOverwrite(t *testing.T) {
 func TestSeedSkipsNonTerminalRows(t *testing.T) {
 	gd := g()
 	// 宿主的持久化表里既有终态也有非终态行，按自然写法整表回灌。
-	gd.Seed(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
-	gd.Seed(Commit{Ref: ref("s2"), Status: "succeeded", Branch: "done", Seq: 2})
+	gd.Seed(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
+	gd.Seed(context.Background(), Commit{Ref: ref("s2"), Status: "succeeded", Branch: "done", Seq: 2})
 
 	// 非终态行不得记为已提交：首次真正终态提交必须放行（旧实现在此撞闸）。
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 3}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 3}); err != nil {
 		t.Fatalf("Seed 的非终态行不得挡住真正的终态提交: %v", err)
 	}
 	// 终态行照常生效（既有语义不回退）。
-	if _, err := gd.Acquire(Commit{Ref: ref("s2"), Status: "failed", Branch: "other", Seq: 4}); !errors.Is(err, ErrAlreadyCommitted) {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s2"), Status: "failed", Branch: "other", Seq: 4}); !errors.Is(err, ErrAlreadyCommitted) {
 		t.Fatalf("Seed 的终态行仍应挡住后续提交，实得 %v", err)
 	}
 }
@@ -232,8 +233,8 @@ func TestSeedSkipsNonTerminalRows(t *testing.T) {
 // 全终态处理，与 Acquire 同侧：宁可多拦，不因缺配置漏放。
 func TestSeedNilIsTerminalTreatsAllTerminal(t *testing.T) {
 	gd := NewGuard(nil)
-	gd.Seed(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
+	gd.Seed(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1})
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
 		t.Fatalf("词表未知时 Seed 的行应按终态从严处理，实得 %v", err)
 	}
 }
@@ -242,9 +243,9 @@ func TestSeedNilIsTerminalTreatsAllTerminal(t *testing.T) {
 // Acquire 的 ErrEmptyRef——签名级差异见 Seed 注释与 issue #154 的报告）。
 func TestSeedEmptyRefSkips(t *testing.T) {
 	gd := g()
-	gd.Seed(Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1})
-	gd.Seed(Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1})
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 2}); err != nil {
+	gd.Seed(context.Background(), Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1})
+	gd.Seed(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1})
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 2}); err != nil {
 		t.Fatalf("空 Ref 的回灌不得生效: %v", err)
 	}
 }
@@ -253,17 +254,17 @@ func TestSeedEmptyRefSkips(t *testing.T) {
 // 判定与 Seed 同一份，仅非法输入从「静默吞」改「ErrEmptyRef」，与 Acquire 同侧。
 func TestSeedELoudEmptyRef(t *testing.T) {
 	gd := g()
-	if err := gd.SeedE(Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
+	if err := gd.SeedE(context.Background(), Commit{Ref: Ref{RunID: "", Step: "s1"}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
 		t.Fatalf("SeedE 空 RunID 应报 ErrEmptyRef，实得 %v", err)
 	}
-	if err := gd.SeedE(Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
+	if err := gd.SeedE(context.Background(), Commit{Ref: Ref{RunID: "run-1", Step: ""}, Status: "succeeded", Branch: "b", Seq: 1}); !errors.Is(err, ErrEmptyRef) {
 		t.Fatalf("SeedE 空 Step 应报 ErrEmptyRef，实得 %v", err)
 	}
 	// 报错路径不得留下半条记录：同一环节随后可正常回灌+提交。
-	if err := gd.SeedE(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
+	if err := gd.SeedE(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "b", Seq: 1}); err != nil {
 		t.Fatalf("SeedE 合法回灌应放行: %v", err)
 	}
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "failed", Branch: "b2", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "failed", Branch: "b2", Seq: 2}); !errors.Is(err, ErrAlreadyCommitted) {
 		t.Fatalf("SeedE 回灌的终态行应挡住后续提交，实得 %v", err)
 	}
 }
@@ -272,10 +273,10 @@ func TestSeedELoudEmptyRef(t *testing.T) {
 // 且不报错（跳过是正常路径，不是失败）。
 func TestSeedESkipsNonTerminal(t *testing.T) {
 	gd := g()
-	if err := gd.SeedE(Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}); err != nil {
+	if err := gd.SeedE(context.Background(), Commit{Ref: ref("s1"), Status: "running", Branch: "in-flight", Seq: 1}); err != nil {
 		t.Fatalf("SeedE 非终态行跳过是正常路径，不应报错: %v", err)
 	}
-	if _, err := gd.Acquire(Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); err != nil {
+	if _, err := gd.Acquire(context.Background(), Commit{Ref: ref("s1"), Status: "succeeded", Branch: "later", Seq: 2}); err != nil {
 		t.Fatalf("SeedE 的非终态行不得挡住真正的终态提交: %v", err)
 	}
 }
@@ -293,7 +294,7 @@ func TestConcurrentTerminalCommitHasExactlyOneWinner(t *testing.T) {
 			wg.Add(1)
 			go func(n int) {
 				defer wg.Done()
-				_, err := gd.Acquire(Commit{
+				_, err := gd.Acquire(context.Background(), Commit{
 					Ref: ref("s1"), Status: "succeeded",
 					Branch: string(rune('A' + n)), Seq: uint64(n + 1),
 				})
