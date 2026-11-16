@@ -152,10 +152,26 @@ type ManagedConfig struct {
 
 // ManagedWork 一个受管任务要做的动作（由宿主按任务给出）。
 type ManagedWork struct {
-	// Action 副作用动作。Key / Resource 留空时由任务 id 派生
-	// （key = "task:" + id，resource = id）——同一次任务的重试因此天然
-	// 共用同一个幂等键；宿主需要更细的粒度时显式给。
+	// Action 副作用动作。Key / Resource 留空时由任务 id 派生（默认键的
+	// 作用域口径见 Scope）：零作用域时 key = "task:" + id、resource = id
+	// （旧口径逐字不变）；有作用域时按 @@sideeffect.ActionKeyBuilder@@
+	// 全段转义拼接。同一次任务的重试因此天然共用同一个幂等键；宿主需要
+	// 更细的粒度时显式给（拼装走 ActionKeyBuilder，不要各自拼字符串——
+	// 拼法分散就是口径漂移的开始）。
 	Action sideeffect.Action
+	// Scope 动作身份的**作用域段**（可选；宿主词汇——运行 id、环境名、
+	// 任务板未覆盖的命名空间维度……本仓不解释段的内容，见
+	// sideeffect.ActionKeyBuilder 的词汇归属说明）。
+	//
+	// 默认键的作用域段自动并入两项：
+	//   - 任务板的租户（@@Task.Tenant@@ 非空时）——与任务板的作用域口径
+	//     对齐：coord 的任务板分租户，副作用闸不分就会跨租户互相重放
+	//     （issue #261）；
+	//   - 本字段给的段（按给出顺序拼接）。
+	//
+	// 稳定性：同一逻辑动作的所有重试必须给同一组段——Attempt / 重试
+	// 计数 / 时间戳不得入段（入段即每次重试一个新动作，幂等闸形同虚设）。
+	Scope []string
 	// Effect 执行体（Prepare / Apply；Apply 必填）。
 	Effect sideeffect.Effect
 	// Snapshot 成功后构造进度快照（可选；nil = 不记录进度）。
@@ -248,11 +264,23 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 	defer session.Close(context.WithoutCancel(ctx))
 
 	act := work.Action
-	if act.Key == "" {
-		act.Key = sideeffect.Key("task:" + string(id))
-	}
-	if act.Resource == "" {
-		act.Resource = string(id)
+	if act.Key == "" || act.Resource == "" {
+		// 默认身份的作用域段：任务板的租户（任务板分租户，副作用闸必须
+		// 同口径，否则跨租户同名任务互相重放）+ 宿主给的作用域段（词汇
+		// 归宿主，本仓只提供拼装机制）。拼装是纯函数：重试同一逻辑动作
+		// 恒得同一个键（Attempt 不进键）。
+		scopes := make([]string, 0, len(work.Scope)+1)
+		if task.Tenant != "" {
+			scopes = append(scopes, task.Tenant)
+		}
+		scopes = append(scopes, work.Scope...)
+		b := sideeffect.NewActionKeyBuilder(scopes...)
+		if act.Key == "" {
+			act.Key = b.Key("task:" + string(id))
+		}
+		if act.Resource == "" {
+			act.Resource = b.Resource(string(id))
+		}
 	}
 
 	// 施加段跑在会话 ctx 上：租约易主时在途执行被取消（施加之前封口，
