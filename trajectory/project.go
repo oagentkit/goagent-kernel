@@ -209,6 +209,20 @@ func (p *Projector) dropOpen(idx int) {
 	}
 }
 
+// matchAnonCall 最早一条仍打开的无标识调用行下标（先进先出；没有时 -1）。
+//
+// 配上的行同时从打开清单里摘除——无标识调用行的一生只被一个结果收口。
+func (p *Projector) matchAnonCall() int {
+	for i, idx := range p.anonCalls {
+		r := p.rows[idx]
+		if r.Kind == KindToolCall && r.CallID == "" && r.EndAt.IsZero() {
+			p.anonCalls = append(p.anonCalls[:i], p.anonCalls[i+1:]...)
+			return idx
+		}
+	}
+	return -1
+}
+
 // openTool 开一个工具调用行。
 //
 // 配对键是 call_id。同一 call_id 的第二次声明**不新建行**：第一次观测是真相，
@@ -269,6 +283,8 @@ func (p *Projector) openTool(ev eventbus.Event) {
 	idx := p.append(r)
 	if callID != "" {
 		p.tools[callID] = idx
+	} else {
+		p.anonCalls = append(p.anonCalls, idx)
 	}
 }
 
@@ -276,13 +292,46 @@ func (p *Projector) openTool(ev eventbus.Event) {
 //
 // 第一次配上的结果：结束时刻取结果时刻，时长随之成为实测值。
 // 重复结果：**不重写结束时刻**（第一次观测是真相），只记缺口与计数。
-// 结果没有对应调用：落成结果行 + unpaired_result 缺口，不静默丢弃。
+// 结果没有对应调用分两种（issue #306）：没带 call_id 的走无标识路径——
+// 有打开中的无标识调用行就就地归并，没有才落孤儿行 + unidentified_result
+// 缺口；带了 call_id 却配不上的落结果行 + unpaired_result 缺口。
 func (p *Projector) closeTool(ev eventbus.Event) {
 	callID := payloadString(ev, "call_id")
 	tool := payloadString(ev, "tool")
+	if callID == "" {
+		// 「没有 call_id」与「call_id 找不到对应调用」是两件事：无标识的结果
+		// 先按先进先出归并到打开中的无标识调用行上（宿主不发 id 是它的自由，
+		// 一次正常调用不该被记成配对失败）；归并不了才显形，且类目写明
+		// 「调用方未提供标识」。无标识的结果无法与后到的调用建立对应
+		// （没有配对键），缺口一旦记下就留档。
+		if idx := p.matchAnonCall(); idx >= 0 {
+			row := &p.rows[idx]
+			row.EndAt = ev.OccurredAt
+			row.Status = StatusClosed
+			row.Pairing = PairingPaired
+			return
+		}
+		r := Row{
+			Kind:    KindToolResult,
+			Turn:    p.currentTurn(),
+			Tool:    tool,
+			EndAt:   ev.OccurredAt,
+			Status:  StatusOrphan,
+			Pairing: PairingUnidentifiedResult,
+		}
+		if id, has := stepIDOf(ev); has {
+			r.HasStep = true
+			r.StepID = id
+		}
+		r.ID = seqID(KindToolResult, p.seq+1)
+		pi := p.append(r)
+		p.issue(PairingUnidentifiedResult, "", p.rows[pi].Seq)
+		return
+	}
 	idx, ok := p.tools[callID]
-	if !ok || callID == "" {
-		// 结果没有对应调用：落成结果行 + unpaired_result 缺口，不静默丢弃。
+	if !ok {
+		// 结果带着 call_id 却没有对应调用：落成结果行 + unpaired_result 缺口，
+		// 不静默丢弃。
 		//
 		// 结果事件是「一次工具调用的**结束**」，故时刻记在 EndAt、起点留空
 		// （起点缺失 = StatusOrphan）。这样它后来若等到迟到的调用声明，
@@ -300,15 +349,9 @@ func (p *Projector) closeTool(ev eventbus.Event) {
 			r.HasStep = true
 			r.StepID = id
 		}
-		if callID == "" {
-			r.ID = seqID(KindToolResult, p.seq+1)
-		} else {
-			r.ID = toolRowID(callID)
-		}
+		r.ID = toolRowID(callID)
 		pi := p.append(r)
-		if callID != "" {
-			p.tools[callID] = pi
-		}
+		p.tools[callID] = pi
 		p.issue(PairingUnpairedResult, callID, p.rows[pi].Seq)
 		return
 	}

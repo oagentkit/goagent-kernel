@@ -17,8 +17,8 @@
 //     不拿 0 冒充「瞬时完成」，也不拿估算值填进实测字段。
 //
 //  2. **配对不完整要显形**。工具调用与结果按 call_id 配对；只有调用没有结果、
-//     结果重复、结果没有对应调用、同号重复声明——四种缺口都进 Issues()，
-//     不静默丢弃。
+//     结果重复、结果没有对应调用、结果没带 call_id 又无可归并的无标识调用、
+//     同号重复声明——五种缺口都进 Issues()，不静默丢弃。
 //
 //  3. **未完成不是完成**。只有开始没有结束的行，状态是 open（未收口），
 //     不是「时长 0 的已完成行」。Finalize() 把「不会再有新事件」落成显式事实，
@@ -89,8 +89,13 @@ const (
 	PairingMissingResult Pairing = "missing_result"
 	// PairingDuplicateResult 同一 call_id 收到第二个及以后的结果。
 	PairingDuplicateResult Pairing = "duplicate_result"
-	// PairingUnpairedResult 结果没有对应的调用。
+	// PairingUnpairedResult 结果带着 call_id、却找不到对应的调用声明。
 	PairingUnpairedResult Pairing = "unpaired_result"
+	// PairingUnidentifiedResult 结果事件**没有携带 call_id**，也没有可归并的
+	// 无标识调用。「调用方未提供标识」与「带了标识但配不上」是两件事
+	// （issue #306）：前者宿主自己能解释，后者说明事件流缺了一段——两类
+	// 缺口必须分得开。
+	PairingUnidentifiedResult Pairing = "unidentified_result"
 	// PairingDuplicateCall 同一 call_id 收到第二个调用声明。
 	PairingDuplicateCall Pairing = "duplicate_call"
 )
@@ -188,7 +193,7 @@ func (r Row) Complete() bool {
 // Issue 配对缺口（可观测面）：配对不完整时显式报出，不静默丢弃。
 type Issue struct {
 	// Pairing 缺口类目（missing_result / duplicate_result / unpaired_result /
-	// duplicate_call）。
+	// unidentified_result / duplicate_call）。
 	Pairing Pairing
 	// CallID 相关工具调用标识（无关联调用时为空）。
 	CallID string
@@ -217,6 +222,7 @@ type Projector struct {
 
 	rows       []Row          // 按创建顺序追加；下标 + 1 即行序号
 	tools      map[string]int // call_id → 行下标（一个 call_id 最多一行）
+	anonCalls  []int          // 打开中的无 call_id 工具调用行下标（先进先出配对）
 	opens      []int          // 仍打开的步骤行下标（按创建顺序）
 	grants     map[string]int // 幂等键 → 打开中的副作用授予段行下标
 	reconciles map[string]int // 幂等键 → 打开中的副作用对账段行下标

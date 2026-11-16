@@ -303,10 +303,10 @@ func spanStatusOf(r Row) SpanStatus {
 		return SpanStatusOK
 	}
 	switch r.Pairing {
-	case PairingDuplicateResult, PairingDuplicateCall, PairingUnpairedResult:
-		// 这三类都是**已经发生**的不一致：重复结果可能意味着副作用被施加了两次
+	case PairingDuplicateResult, PairingDuplicateCall, PairingUnpairedResult, PairingUnidentifiedResult:
+		// 这四类都是**已经发生**的不一致：重复结果可能意味着副作用被施加了两次
 		// （与 sideeffect 的「至多一次」正面冲突），结果无对应调用则说明有一次
-		// 调用从未被声明。
+		// 调用从未被声明，无标识孤儿结果说明有一次调用的声明与标识都缺了。
 		return SpanStatusError
 	}
 	if r.Pairing == PairingMissingResult {

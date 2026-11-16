@@ -103,6 +103,7 @@ func TestToolPairingStatus(t *testing.T) {
 		{trajectory.PairingDuplicateResult, trajectory.SpanStatusError},
 		{trajectory.PairingDuplicateCall, trajectory.SpanStatusError},
 		{trajectory.PairingUnpairedResult, trajectory.SpanStatusError},
+		{trajectory.PairingUnidentifiedResult, trajectory.SpanStatusError},
 		{trajectory.PairingMissingResult, trajectory.SpanStatusUnset},
 	}
 	for _, c := range cases {

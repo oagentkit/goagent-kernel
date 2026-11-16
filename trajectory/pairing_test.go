@@ -165,7 +165,95 @@ func TestDuplicateUnpairedResultsKeepUnpairedState(t *testing.T) {
 	}
 }
 
+// TestAnonymousCallResultPairsWithoutGap 不带 call_id 的正常调用+结果（issue #306）：
+// 「没有 call_id」与「call_id 找不到对应调用」是两件事。前者按无标识路径归并——
+// 不产生 unpaired_result 缺口、不拆成两行、不报未收口。
+func TestAnonymousCallResultPairsWithoutGap(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		ev(eventbus.EventToolCall, 100, map[string]any{"tool": "alpha_fn"}),  // 无 call_id
+		ev(eventbus.EventToolResult, 200, map[string]any{}),                  // 无 call_id
+	})
+
+	rows := p.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("一次无标识的调用+结果应归并成 1 行（旧行为拆成 2 行），实得 %d：%+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.Kind != KindToolCall || row.Status != StatusClosed || row.Pairing != PairingPaired {
+		t.Fatalf("无标识调用行应被结果就地收口（closed/paired）: %+v", row)
+	}
+	if d, ok := row.Duration(); !ok || d != 100*time.Millisecond {
+		t.Fatalf("归并后的实测时长应为 100ms，实得 %v (ok=%v)", d, ok)
+	}
+	if hasIssue(p.Issues(), PairingUnpairedResult, "") {
+		t.Fatalf("无 call_id 的正常配对不得记成 unpaired_result 缺口: %+v", p.Issues())
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("正常配对不该有任何缺口: %+v", p.Issues())
+	}
+	if open := p.Finalize(); len(open) != 0 {
+		t.Fatalf("收口后不应有未完成行: %+v", open)
+	}
+}
+
+// TestAnonymousCallsPairFIFO 多条无标识调用按先进先出与无标识结果配对
+// （与无环节号步骤行的配对口径一致）。
+func TestAnonymousCallsPairFIFO(t *testing.T) {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		ev(eventbus.EventToolCall, 100, map[string]any{"tool": "alpha_fn"}),
+		ev(eventbus.EventToolCall, 150, map[string]any{"tool": "beta_fn"}),
+		ev(eventbus.EventToolResult, 300, map[string]any{}), // 配第一条
+		ev(eventbus.EventToolResult, 400, map[string]any{}), // 配第二条
+	})
+
+	rows := p.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("两次无标识调用应归并成 2 行，实得 %d：%+v", len(rows), rows)
+	}
+	if rows[0].Tool != "alpha_fn" {
+		t.Fatalf("第一行应是 alpha_fn，实得 %q", rows[0].Tool)
+	}
+	if rows[1].Tool != "beta_fn" {
+		t.Fatalf("第二行应是 beta_fn，实得 %q", rows[1].Tool)
+	}
+	if !rows[0].EndAt.Equal(at(300)) || !rows[1].EndAt.Equal(at(400)) {
+		t.Fatalf("无标识结果应按先进先出配对: %v / %v", rows[0].EndAt, rows[1].EndAt)
+	}
+	if len(p.Issues()) != 0 {
+		t.Fatalf("先进先出配满后不该有缺口: %+v", p.Issues())
+	}
+}
+
+// TestUnidentifiedResultIsExplicit 无标识的结果又没有可归并的无标识调用：
+// 仍要显形，但类目必须能表达「调用方未提供标识」——与「带了标识但配不上」
+// （unpaired_result）分得开，宿主才能区分「自己没发 id」与「事件流缺了一段」。
+func TestUnidentifiedResultIsExplicit(t *testing.T) {
+	p := NewProjector(Options{})
+	p.Apply(ev(eventbus.EventToolResult, 300, map[string]any{})) // 无 call_id、无对应调用
+
+	rows := p.Rows()
+	if len(rows) != 1 || rows[0].Status != StatusOrphan {
+		t.Fatalf("无标识且无对应调用的结果应落成 1 行孤儿，实得 %+v", rows)
+	}
+	if rows[0].Pairing != PairingUnidentifiedResult {
+		t.Fatalf("应记 unidentified_result（调用方未提供标识），实得 %q", rows[0].Pairing)
+	}
+	if !hasIssue(p.Issues(), PairingUnidentifiedResult, "") {
+		t.Fatalf("缺口清单里应有 unidentified_result: %+v", p.Issues())
+	}
+	if hasIssue(p.Issues(), PairingUnpairedResult, "") {
+		t.Fatalf("无 call_id 不该与「找不到配对」同判: %+v", p.Issues())
+	}
+	// 导出侧：发生过的不一致 → error。
+	if got := SpanOf(rows[0]).Status; got != SpanStatusError {
+		t.Fatalf("无标识孤儿结果在导出侧应为 error，实得 %v", got)
+	}
+}
+
 // TestResultBeforeCallPairsInPlace 结果先到、调用后到：就地配对，不另起一行。
+
 func TestResultBeforeCallPairsInPlace(t *testing.T) {
 	p := NewProjector(Options{})
 	p.ApplyAll([]eventbus.Event{
