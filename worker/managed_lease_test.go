@@ -255,7 +255,7 @@ func TestLeaseSessionContextCancelsOnLeaseLost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer session.Close(context.Background())
+	defer func() { _ = session.Close(context.Background()) }()
 
 	clock.Advance(2 * time.Second) // 租约过期（资格在到期时刻终止）
 	if err := session.AssertOwned(context.Background()); !errors.Is(err, taskboard.ErrLeaseLost) {
@@ -299,7 +299,7 @@ func TestLeaseSessionRenewsUntilClosed(t *testing.T) {
 		}
 		time.Sleep(80 * time.Millisecond)
 	}
-	session.Close(ctx)
+	_ = session.Close(ctx)
 
 	// Close 后不再续期：租约最迟在最后一次续期 + TTL 后到期。
 	time.Sleep(700 * time.Millisecond)

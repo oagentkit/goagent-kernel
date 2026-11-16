@@ -261,7 +261,7 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 	if serr != nil {
 		return sideeffect.OutcomeContended, e.withRelease(ctx, id, token, serr)
 	}
-	defer session.Close(context.WithoutCancel(ctx))
+	defer func() { _ = session.Close(context.WithoutCancel(ctx)) }()
 
 	act := work.Action
 	if act.Key == "" || act.Resource == "" {
