@@ -2,6 +2,108 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.41.0] — 2026-11-16
+
+### 新增(backend)：作业声明接上游执行硬约束判据——Job.ExecSpec / Job.JudgeExec
+
+吃 guardx v0.27.0 的红利：上游把容器执行的**硬约束判定**下沉成
+`sandbox.ExecPolicy.Judge`（镜像必须带 digest、挂载源/目标白名单、
+控制面 socket 一律拒、只读 rootfs、非 root、cap 丢弃、seccomp、资源上限），
+并在文档里点明「由宿主把请求结构映射成 Spec 再交给 Judge」。
+**本仓的缺口（不是风格问题）**
+`backend.Job.Validate` 判的是**自洽**：镜像非空、Env 是 K=V、挂载两端齐、
+预算非负。它与策略无关，任何宿主都该过——但它看不见两类真实缺口：
+- **镜像没钉 digest**（`app:latest`）：同名 tag 重推后「钉住什么就跑什么」
+  不再成立，作业级可复现性当场失效，而 Validate 放行；
+- **挂载了控制面 socket**（`/var/run/docker.sock`）：作业可在里面创建任意
+  特权容器，network=none、只读 rootfs、cap_drop 全部被绕开；
+- 声明侧资源上限越过策略值同样无人判。
+**做法**
+`Job.ExecSpec()`：把作业声明映射成上游 `sandbox.Spec`。"声明 → Spec" 的
+对应归机制面——各宿主各写一份的话，漏映射一个字段，那条约束就在那个宿主上
+**静默失效**。**策略值**（允许哪些 digest、能不能挂宿主目录）仍是宿主的资产。
+`Job.JudgeExec(policy)`：两层判据显式分开——Validate 管自洽（无参），
+JudgeExec 管落在策略内（策略显式传入）。零值 ExecPolicy 即最严（上游取向）：
+镜像必须带 digest、任何挂载都拒。
+未映射项（RootfsReadOnly/NonRoot/CapDrop/SeccompProfile）在本包作业声明里
+无对应字段——任务式后端的这几项是后端无条件兑现的，不是作业自由度；映射
+留零值即「未声明」，策略要求时会如实判不过而不是假装满足（有专门断言钉住）。
+调用点归宿主（上游契约即如此）：示范后端的 `MountPolicy` 是资产层策略，
+本提交不越界改写它。
+**反向验证（坏实现必红，均已还原）**
+- `ExecSpec` 里加 `RootfsReadOnly: true`（假装满足未声明项）⇒
+  `TestExecSpecMapsJobFields` 红（"未声明的约束项不得被默认置真"）；
+- `Mounts` 映射置 nil ⇒ `TestJudgeExecRejectsControlSocketMount` 与
+  `TestJudgeExecEnforcesMountReadOnly` 双红（"控制面 socket 必须被拒…实得 <nil>"）。
+**验收**
+`make check` exit 0（含 lint/test/cover-gate/vuln/race/crossbuild/archcheck/
+docsync/apilifecheck）；README 工程底座 54,083 行 / 292 文件 / 314 测试文件。
+
+- 杂务(deps)：guardx v0.28.0（含 #198 Windows 控制面判据修复）+ concurrency v0.38.1；backend 断言收归统一形态
+
+Closes #257
+一、依赖
+- oagentkit/guardx v0.27.0 → **v0.28.0**：内含 oagentkit/guardx#198 的修复
+  （PR #199）：控制面判据两侧 foldSlash 归一 + 清单补 Windows 命名管道族
+  （\\.\pipe\docker_engine / dockerDesktopLinuxEngine / dockerDesktopWindowsEngine）。
+  本仓报的缺陷，上游按建议方向修完并发版。
+- oekit/concurrency v0.38.0 → **v0.38.1**：纯 refactor（fmt.Errorf → 三形态对位
+  替换）+ 依赖地板追平 pkg v0.52.0，零行为变更。
+- 其余已是最新（pkg v0.52.0 / logx v0.11.0 / runtime v0.13.0 / toolgate v0.17.4 /
+  tools v0.15.0 / mcpkit v0.14.0）。
+二、backend/execpolicy_test.go 收归统一形态
+上一版为了在 v0.27.0 上两边都绿，用了 runtime.GOOS 分支（unix 断言控制面 socket、
+Windows 断言白名单外挂载）。修复到位后分支即可撤掉，改成表驱动三形态：
+/var/run/docker.sock、Windows Clean 形态（反斜杠）、Windows 命名管道——
+每条都在 MountSourceAllow **包含自身**的前提下断言 ErrMountSourceNotAllowed。
+撤掉分支的理由写进注释：runtime.GOOS 分支会让「判据在某平台没生效」重新变成
+不可见，而这正是该缺陷藏过一整版的原因（上游当时也没有平台形态用例）。
+三、验收
+- **真实发布版**（v0.28.0，非 devlink）上统一用例 6 条全 PASS；
+- 反向证据（上一轮 devlink 实证，记录在 #257）：回到 v0.27.0 时同一用例红在
+  「Windows Clean 形态（反斜杠）…实得 <nil>」，与当初 CI windows job 报错同形；
+- make check exit 0（docsync 计数未变：54,083 行 / 292 文件 / 314 测试文件）。
+
+- 杂务(deps)：依赖地板追平——pkg v0.52.0 / concurrency v0.38.0 / guardx v0.27.0 / tools v0.15.0 / toolgate v0.17.4
+
+| 依赖 | 旧 | 新 | 该 tag 的关键内容 |
+|---|---|---|---|
+| oekit/pkg | v0.48.0 | v0.52.0 | v0.49 审计批（cron/timex/container/strmap/config/mathx/slicex/procx/httpjson 多单）+ auditchain/webhook.Forwarder；v0.50 sse 游标回放 + canon 规范形指纹；v0.51 shellx.QuoteMinimal + canon.FingerprintBytes；v0.52 errors.Newf/Wrapf |
+| oekit/concurrency | v0.36.1 | v0.38.0 | v0.37 scanrotation（周期扫描预算+轮转游标）；v0.38 breaker 状态转移观测钩子 |
+| oagentkit/guardx | v0.25.1 | v0.27.0 | v0.26 rbac 角色能力矩阵；v0.27 sandbox.ExecPolicy/Judge（容器执行硬约束面）+ logredact 掩码括号配对修复 |
+| oagentkit/tools | v0.14.6 | v0.15.0 | bashguard.UnwrapDispatch 单源导出（env/sudo/nohup/setsid 前缀解包）；workcopy deepen 同源收口 |
+| oagentkit/toolgate | v0.17.3 | v0.17.4 | 匿名未声明调用不并行、工具名消毒、阈值跨键有序性 |
+BREAKING 逐条核对（本仓均已不受影响）：
+- pkg v0.50 **摘除 licensx 与 webhook IM 载荷**（改道 yi-nology/gopkg）——本仓未 import；
+- agent v0.15 删 `router.OnNegationHit` 死写入口——本仓已不依赖 oagentkit/agent
+  （`go get` 曾把它作为直接依赖加回，`go mod tidy` 已剔除，依赖面无扩散）；
+- concurrency v0.36 删 `syncx.Slot.Panicked`——本仓未使用。
+升级后 `go build ./...` 与 `go vet ./...` 全绿，无需改任何调用面。
+
+
+- 测试(eventbus)：尾部游标持久化用例修掉读写竞态——等落盘而不是读一次
+
+main 在 43896997349 上 unit job 红：
+  --- FAIL: TestTailerCursorPersistsAcrossRestart
+      tail_cursor_test.go:266: 游标推进后应持久化（实得 5）
+与依赖升级无关（backend/guardx 那批 PR #258 的同一提交在 PR CI 上是绿的），
+是 eventbus 这条用例自身的时序竞态（#242 引入）。
+根因（代码层面成立，不是偶发）：
+- 实现是「逐条 Publish（**同步写入订阅者 channel**）→ 整批处理完再
+  SaveCursor」（eventbus/tail.go 的 Publish 与 SaveCursor 两处）；
+- 用例在订阅者拿到事件后**立刻**读 cursor.cur ⇒ 读到的还是上一批的值 5。
+- 本地高频复跑不复现（-count=60 全绿，窗口在微秒级），CI 慢 runner 撞上。
+修法（只改用例，不动实现）：把「读一次」改成**有界等待**（2s、5ms 步进）
+到持久化为 6。等的是「最终持久化」，与实现契约一致；不动实现是因为
+「发布前落盘」是另一个语义决定（会让每事件一次写、且崩溃语义从
+「可能重读」变成「可能漏读」），不该由一个用例的时序来拍板。
+反向验证（坏实现必红，已还原）：把 tail.go 的 SaveCursor 整块跳过 ⇒
+本条 2s 后红「游标推进后应持久化（2s 内仍实得 5）」；还原后复跑绿。
+验收：make check exit 0（docsync 计数未变）。
+
+
+## [v0.40.0] — 2026-11-16
+
 ## [v0.40.0] — 2026-11-16
 
 ### 修复(release)：v0.39.0 tag 快照编译缺陷勘误（#253）
