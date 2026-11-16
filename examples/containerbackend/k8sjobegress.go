@@ -39,10 +39,6 @@ import (
 	"github.com/yi-nology/goagent-kernel/backend"
 )
 
-// errCNICapabilityUnknown CNI 能力事实缺失（未注入探测接口）——按「答不上来」
-// 处理，禁网档声明随之降级。
-var errCNICapabilityUnknown = errors.New("containerbackend: 未注入 CNI 能力探测（答不上来）")
-
 // K8sCNICapability CNI 能力探测接口：回答「本集群 CNI 是否实现 NetworkPolicy
 // 数据面」。这是**装配期可问的事实**，不是运行期探测——apiserver 接受
 // NetworkPolicy 对象证明不了数据面生效，答案只能来自了解集群的一方（宿主
@@ -72,11 +68,13 @@ type K8sEgressProbe struct {
 }
 
 // cniNetworkPolicyEnforced CNI 能力事实（懒答 + 缓存：Egress() 在选择期与
-// Exec 期都会问，探测接口只该被调用一次）。
+// Exec 期都会问，探测接口只该被调用一次）。能力缺失（未注入探测接口）按
+// 「答不上来」处理，禁网档声明随之降级——这不是需要调用方分诊的哨兵错误，
+// 声明面把它消化成更弱的自报档位，不外泄。
 func (k *K8sJob) cniNetworkPolicyEnforced() (bool, error) {
 	k.cniOnce.Do(func() {
 		if k.cniCap == nil {
-			k.cniErr = errCNICapabilityUnknown
+			k.cniErr = errors.New("containerbackend: 未注入 CNI 能力探测（答不上来）")
 			return
 		}
 		k.cniOK, k.cniErr = k.cniCap.NetworkPolicyEnforced()
