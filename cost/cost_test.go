@@ -1,6 +1,7 @@
 package cost
 
 import (
+	"math"
 	"slices"
 	"sync"
 	"testing"
@@ -261,5 +262,41 @@ func TestLedgerConcurrentRecord(t *testing.T) {
 		if total.Amount(KindToolCalls) != perWorker {
 			t.Fatalf("agent %v 合计漂移： %d", total.Dims, total.Amount(KindToolCalls))
 		}
+	}
+}
+
+// TestAggregateSaturatesInt64 同一 Kind 的累加跨过 int64 上限时必须钳位到
+// math.MaxInt64 并留下饱和标记，**不得**回绕成负数——负数总额会让下游配额
+// 判据恒判「未超限」（fail-open），并让 Remaining 反向虚报巨额余额。
+func TestAggregateSaturatesInt64(t *testing.T) {
+	const half = int64(5_000_000_000_000_000_000) // 5e18；两条合计 1e19 > MaxInt64
+	events := []Event{
+		{Kind: KindInputTokens, Amount: half, Dims: map[string]string{DimTenant: "acme"}},
+		{Kind: KindInputTokens, Amount: half, Dims: map[string]string{DimTenant: "acme"}},
+		{Kind: KindToolCalls, Amount: 1, Dims: map[string]string{DimTenant: "acme"}},
+	}
+	totals, err := ByTenant(slices.Values(events))
+	if err != nil {
+		t.Fatalf("Aggregate: %v", err)
+	}
+	if len(totals) != 1 {
+		t.Fatalf("应聚出 1 组，got %d", len(totals))
+	}
+	got := totals[0].Amount(KindInputTokens)
+	if got < 0 {
+		t.Fatalf("饱和加法不得回绕成负数，实得 %d", got)
+	}
+	if got != math.MaxInt64 {
+		t.Fatalf("溢出的 Kind 应钳位到 math.MaxInt64，实得 %d", got)
+	}
+	if !totals[0].Saturated[KindInputTokens] {
+		t.Fatal("溢出的 Kind 必须留下饱和标记")
+	}
+	if totals[0].Saturated[KindToolCalls] {
+		t.Fatal("未溢出的 Kind 不得被标记饱和")
+	}
+	// 未溢出的同组 Kind 照常累加。
+	if n := totals[0].Amount(KindToolCalls); n != 1 {
+		t.Fatalf("未溢出的 Kind 合计漂移：%d", n)
 	}
 }

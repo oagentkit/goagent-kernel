@@ -31,10 +31,13 @@ type Quota struct {
 type Exceeded struct {
 	// Kind 超限的计量种类。
 	Kind cost.Kind
-	// Used 实际用量。
+	// Used 实际用量（饱和时为钳位值 math.MaxInt64：真实总量只会更大）。
 	Used int64
 	// Max 声明的上限（可为 0——归零声明被超出）。
 	Max int64
+	// Saturated 该 Kind 的合计在聚合时饱和（真实总量 >= math.MaxInt64）。
+	// 此时即使 Used <= Max 也同样判超限——饱和代表「至少这么多」，不是精确值。
+	Saturated bool
 }
 
 // Judge 配额判据（纯函数）：同 Kind 用量 > 上限即超限；未声明上限的 Kind
@@ -43,6 +46,15 @@ type Exceeded struct {
 // used 是**已经聚合过**的用量（cost.Aggregate 的产出）——窗口语义在聚合侧
 // 由宿主裁剪，判定不做任何时间判断（见包注释）。返回按 Kind 字典序排序
 // （确定性：同一份用量任何两次判定给出同一份顺序）。
+//
+// # fail-closed 的两条额外判据
+//
+//   - 饱和（used.Saturated[kind]）：合计已钳位到 math.MaxInt64，真实总量
+//     >= 该值，任何声明上限都不足以覆盖 ⇒ 必定超限；
+//   - 负总额：负用量只可能是聚合回绕或手工坏账，不是合法余量 ⇒ 显式判超限。
+//
+// 两条都不能落进 `amount > limit` 的裸比较：负/饱和总额会让它恒为假，
+// 方向正是 fail-open（额度用尽仍放行）。
 func (q Quota) Judge(used cost.Total) []Exceeded {
 	out := make([]Exceeded, 0, len(used.Amounts))
 	for kind, amount := range used.Amounts {
@@ -50,8 +62,9 @@ func (q Quota) Judge(used cost.Total) []Exceeded {
 		if !ok {
 			continue // 未声明 = 不设限
 		}
-		if amount > limit {
-			out = append(out, Exceeded{Kind: kind, Used: amount, Max: limit})
+		saturated := used.Saturated[kind]
+		if saturated || amount < 0 || amount > limit {
+			out = append(out, Exceeded{Kind: kind, Used: amount, Max: limit, Saturated: saturated})
 		}
 	}
 	slices.SortFunc(out, func(a, b Exceeded) int { return cmp.Compare(a.Kind, b.Kind) })
@@ -61,10 +74,18 @@ func (q Quota) Judge(used cost.Total) []Exceeded {
 // Remaining 各 Kind 的剩余额度（只含**声明了上限**的 Kind；未声明的
 // Kind 不设限，没有「剩余」可言）。剩余额度不为负：超限即 0——
 // 「还剩 -200」不是额度，是超限事实，超限明细走 Judge。
+//
+// 饱和与负总额一律报 0：前者真实总量未知但至少是 MaxInt64，后者是坏账；
+// 两者若按 `limit - amount` 计算都会反向虚报巨额余额。
 func (q Quota) Remaining(used cost.Total) map[cost.Kind]int64 {
 	out := make(map[cost.Kind]int64, len(q.Max))
 	for kind, limit := range q.Max {
-		out[kind] = max(0, limit-used.Amount(kind))
+		amount := used.Amount(kind)
+		if used.Saturated[kind] || amount < 0 {
+			out[kind] = 0
+			continue
+		}
+		out[kind] = max(0, limit-amount)
 	}
 	return out
 }
@@ -108,6 +129,9 @@ func Enforce(src QuotaSource, c Context, used cost.Total) error {
 		b.WriteString(strconv.FormatInt(e.Used, 10))
 		b.WriteString(" / 上限 ")
 		b.WriteString(strconv.FormatInt(e.Max, 10))
+		if e.Saturated {
+			b.WriteString("（合计已饱和，真实用量不少于该值）")
+		}
 	}
 	return errors.Wrap(ErrQuotaExceeded, "超限明细: "+b.String())
 }

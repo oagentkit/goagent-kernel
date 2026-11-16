@@ -7,6 +7,7 @@ package cost
 
 import (
 	"iter"
+	"math"
 	"slices"
 	"strings"
 
@@ -21,9 +22,18 @@ type Total struct {
 	Dims map[string]string
 	// Amounts 各计量的合计（只含出现过的事件种类；未出现的 Kind 查
 	// Amount 返回 0，不必判 map 键存在）。
+	//
+	// 同一 Kind 的累加走**饱和加法**：跨过 int64 上限时钳位到
+	// math.MaxInt64，绝不回绕成负数。负总额会让下游判据（tenant.Quota.
+	// Judge）恒判「未超限」并让 Remaining 反向虚报余额——方向是 fail-open，
+	// 账单与配额同时说谎。发生钳位的 Kind 在 Saturated 中标记。
 	Amounts map[Kind]int64
 	// Events 组内事件数。
 	Events int
+	// Saturated 本组内发生过 int64 饱和（钳位到 math.MaxInt64）的 Kind 集合。
+	// nil 表示本组没有任何 Kind 溢出；下游判据必须把它当「必定超限」消费
+	// （真实总量 >= math.MaxInt64，任何声明上限都不足以覆盖）。
+	Saturated map[Kind]bool
 }
 
 // Amount 某类计量的合计；未出现过返回 0。
@@ -42,9 +52,10 @@ func (t Total) Amount(k Kind) int64 { return t.Amounts[k] }
 //     任何两次聚合给出同一份顺序）。
 func Aggregate(events iter.Seq[Event], dims ...string) ([]Total, error) {
 	type group struct {
-		dims    map[string]string
-		amounts map[Kind]int64
-		count   int
+		dims      map[string]string
+		amounts   map[Kind]int64
+		saturated map[Kind]bool
+		count     int
 	}
 	groups := make(map[string]*group)
 	key := func(e Event) string {
@@ -71,13 +82,21 @@ func Aggregate(events iter.Seq[Event], dims ...string) ([]Total, error) {
 			}
 			groups[k] = g
 		}
-		g.amounts[e.Kind] += e.Amount
+		if sum, overflow := addSaturating(g.amounts[e.Kind], e.Amount); overflow {
+			g.amounts[e.Kind] = sum
+			if g.saturated == nil {
+				g.saturated = make(map[Kind]bool, 1)
+			}
+			g.saturated[e.Kind] = true
+		} else {
+			g.amounts[e.Kind] = sum
+		}
 		g.count++
 	}
 
 	out := make([]Total, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, Total{Dims: g.dims, Amounts: g.amounts, Events: g.count})
+		out = append(out, Total{Dims: g.dims, Amounts: g.amounts, Events: g.count, Saturated: g.saturated})
 	}
 	// 按「分组维度的取值序列」排序：先把 Total.Dims 投影回与 key 同构的
 	// 字符串，再排——顺序由**分组键**决定，与 map 迭代序无关。
@@ -85,6 +104,17 @@ func Aggregate(events iter.Seq[Event], dims ...string) ([]Total, error) {
 		return strings.Compare(totalKey(a, dims), totalKey(b, dims))
 	})
 	return out, nil
+}
+
+// addSaturating 饱和加法：跨过 int64 上限时钳位到 math.MaxInt64 并报告溢出。
+//
+// 事件量在 Validate 处已保证非负，故只需要处理正向上溢；负向回绕在本包
+// 不可能由合法事件产生（手工构造的负总额由判定面 fail-closed 拒绝）。
+func addSaturating(a, b int64) (int64, bool) {
+	if b > 0 && a > math.MaxInt64-b {
+		return math.MaxInt64, true
+	}
+	return a + b, false
 }
 
 // totalKey 把聚合结果投影回分组键（与 Aggregate 内部的 key 同构）。

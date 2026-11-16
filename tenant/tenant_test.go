@@ -2,6 +2,7 @@ package tenant
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/oekit/pkg/errors"
@@ -207,5 +208,34 @@ func TestNilContextDoesNotPanic(t *testing.T) {
 	}
 	if _, err := Require(nil); !errors.Is(err, ErrNoContext) { //nolint:staticcheck // SA1012: 同上
 		t.Fatalf("Require(nil) 应报 ErrNoContext，实得 %v", err)
+	}
+}
+
+// TestJudgeFailClosedOnSaturatedAndNegativeTotals 配额判据对「溢出饱和」与
+// 「负总额」必须显式判超限：负总额只可能是聚合回绕/坏账，不能当成合法余量。
+func TestJudgeFailClosedOnSaturatedAndNegativeTotals(t *testing.T) {
+	q := Quota{Max: map[cost.Kind]int64{cost.KindInputTokens: 1 << 60}}
+
+	saturated := cost.Total{
+		Amounts:   map[cost.Kind]int64{cost.KindInputTokens: math.MaxInt64},
+		Saturated: map[cost.Kind]bool{cost.KindInputTokens: true},
+	}
+	got := q.Judge(saturated)
+	if len(got) != 1 {
+		t.Fatalf("饱和总额必须判超限，实得 %+v", got)
+	}
+	if got[0].Kind != cost.KindInputTokens || !got[0].Saturated {
+		t.Fatalf("超限明细应带饱和标记： %+v", got[0])
+	}
+	if rem := q.Remaining(saturated); rem[cost.KindInputTokens] != 0 {
+		t.Fatalf("饱和总额的剩余额度必须钳位为 0，实得 %d", rem[cost.KindInputTokens])
+	}
+
+	negative := cost.Total{Amounts: map[cost.Kind]int64{cost.KindInputTokens: -1}}
+	if got := q.Judge(negative); len(got) != 1 {
+		t.Fatalf("负总额必须判超限（负总额只能是溢出/坏账），实得 %+v", got)
+	}
+	if rem := q.Remaining(negative); rem[cost.KindInputTokens] != 0 {
+		t.Fatalf("负总额的剩余额度必须钳位为 0（不得反向虚报余额），实得 %d", rem[cost.KindInputTokens])
 	}
 }
