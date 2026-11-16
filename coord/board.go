@@ -215,6 +215,13 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		if !snap[tk].Exists {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 		}
+		// 词表外状态是「内核读不懂」，不是「可再被认领」：Terminal() 对
+		// 未知状态返回 false，只看它会让一条脏状态行照常领到租约并发副作用。
+		// 与 taskboard.Check 的 CodeUnknownState 同向（写路径 fail-closed）。
+		if !cur.State.Valid() {
+			return taskboard.Task{}, errors.Wrap(taskboard.ErrUnknownState,
+				"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(cur.State))
+		}
 		if cur.State.Terminal() {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
 		}

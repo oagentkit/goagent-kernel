@@ -163,3 +163,21 @@ func TestCheckTenantCyclesArePerTenant(t *testing.T) {
 		t.Fatalf("环必须只报 tenant-a 且带租户归属，实得 %v", ps)
 	}
 }
+
+// TestStateValid 词表外状态必须可判定，且不因 Terminal()==false 被当成可领。
+func TestStateValid(t *testing.T) {
+	for _, s := range []State{StateOpen, StateClaimed, StateDone, StateFailed} {
+		if !s.Valid() {
+			t.Errorf("State(%q).Valid() 应为 true", s)
+		}
+	}
+	for _, s := range []State{"", "weird_state", "OPEN", "done "} {
+		if s.Valid() {
+			t.Errorf("State(%q).Valid() 应为 false", s)
+		}
+	}
+	// 词表外状态的 Terminal() 是 false（不是终态），写路径必须靠 Valid() 拦。
+	if State("weird_state").Terminal() {
+		t.Fatal("词表外状态不得被判终态（那会掩盖读不懂的事实）")
+	}
+}

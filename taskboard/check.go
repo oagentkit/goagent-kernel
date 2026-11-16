@@ -67,7 +67,7 @@ func Check(tasks []Task) []Problem {
 	}
 
 	for _, t := range byRef {
-		if !t.State.valid() {
+		if !t.State.Valid() {
 			out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeUnknownState,
 				Text: "状态不在词表内（open / claimed / done / failed）"})
 		}
