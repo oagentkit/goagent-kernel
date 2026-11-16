@@ -50,3 +50,20 @@ func payloadBool(ev eventbus.Event, key string) bool {
 	b, _ := ev.Payload[key].(bool)
 	return b
 }
+
+// payloadString 取事件载荷里的字符串键（缺失或类型不符时为空串）。
+func payloadString(ev eventbus.Event, key string) string {
+	if ev.Payload == nil {
+		return ""
+	}
+	s, _ := ev.Payload[key].(string)
+	return s
+}
+
+// stepIDOf 取事件的环节号（环节号 0 是合法值，故用独立标志位表达「有没有」）。
+func stepIDOf(ev eventbus.Event) (uint64, bool) {
+	if ev.StepID == nil {
+		return 0, false
+	}
+	return *ev.StepID, true
+}

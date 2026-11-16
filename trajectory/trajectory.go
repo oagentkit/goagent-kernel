@@ -201,8 +201,10 @@ type Options struct {
 	// Summarize 摘要注入点：宿主自定义行标签（展示文案归宿主，内核不认识
 	// 任何领域词）。返回空串时沿用本包的通用标签；nil 时全程用通用标签。
 	//
-	// 只在行创建时调用一次——行的可读字段（类目、标识、工具名、时刻）在创建
-	// 后不再变化，故摘要不需要跟着配对状态刷新。
+	// 在行创建时调用；唯一的例外是**就地归并**（结果先到、调用后到）：该路径
+	// 会把行的类目与归属（轮次 / 环节 / 工具名）改写为调用事件的，摘要随之
+	// 同源重算——钩子会对同一行再被调用一次，且最后一次见到的类目与行的最终
+	// Kind 一致。除这一条路径外，行的可读字段在创建后不再变化。
 	Summarize func(Row) string
 }
 
@@ -319,26 +321,18 @@ func (p *Projector) append(r Row) int {
 	return len(p.rows) - 1
 }
 
-// issue 记一条配对缺口（同一类目 + call_id 只记一条）。
-func (p *Projector) issue(kind Pairing, callID string, seq int) {
-	for _, is := range p.issues {
-		if is.Pairing == kind && is.CallID == callID {
-			return
+// resummarize 就地重算一行摘要（默认标签 + 宿主钩子覆盖）。
+//
+// 与 append 同源：摘要永远从行的当前可读字段算出。就地归并（结果先到、调用后到）
+// 改写类目与归属后必须走这里，否则摘要停留在创建时的类目上，导出面出现
+// kind=tool_call 而 summary 写着 tool_result 的自相矛盾行。
+func (p *Projector) resummarize(r *Row) {
+	r.Summary = defaultSummary(*r)
+	if p.opts.Summarize != nil {
+		if s := p.opts.Summarize(*r); s != "" {
+			r.Summary = s
 		}
 	}
-	p.issues = append(p.issues, Issue{Pairing: kind, CallID: callID, Seq: seq})
-}
-
-// clearIssue 清掉不再成立的缺口（缺结果等到了结果 / 无对应的结果等到了调用）。
-func (p *Projector) clearIssue(kind Pairing, callID string) {
-	kept := p.issues[:0]
-	for _, is := range p.issues {
-		if is.Pairing == kind && is.CallID == callID {
-			continue
-		}
-		kept = append(kept, is)
-	}
-	p.issues = kept
 }
 
 // currentTurn 当前轮次序号（尚未开轮时为 0）。
@@ -371,19 +365,3 @@ func defaultSummary(r Row) string {
 	}
 }
 
-// payloadString 取事件载荷里的字符串键（缺失或类型不符时为空串）。
-func payloadString(ev eventbus.Event, key string) string {
-	if ev.Payload == nil {
-		return ""
-	}
-	s, _ := ev.Payload[key].(string)
-	return s
-}
-
-// stepIDOf 取事件的环节号。
-func stepIDOf(ev eventbus.Event) (uint64, bool) {
-	if ev.StepID == nil {
-		return 0, false
-	}
-	return *ev.StepID, true
-}

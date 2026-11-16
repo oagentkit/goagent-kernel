@@ -9,6 +9,33 @@ import (
 // 事件类型取自本仓 eventbus 的词表——投影器吃本仓自己的事件，不另立事件模型：
 // 另立一套事件词表，等于让「什么算一次工具调用」在两处各答一次，
 // 答案迟早漂。
+// issue 记一条配对缺口（同一类目 + call_id 只记一条）。
+func (p *Projector) issue(kind Pairing, callID string, seq int) {
+	for _, is := range p.issues {
+		if is.Pairing == kind && is.CallID == callID {
+			return
+		}
+	}
+	p.issues = append(p.issues, Issue{Pairing: kind, CallID: callID, Seq: seq})
+}
+
+// clearIssue 清掉不再成立的缺口（缺结果等到了结果 / 无对应的结果等到了调用）。
+func (p *Projector) clearIssue(kind Pairing, callID string) {
+	kept := p.issues[:0]
+	for _, is := range p.issues {
+		if is.Pairing == kind && is.CallID == callID {
+			continue
+		}
+		kept = append(kept, is)
+	}
+	p.issues = kept
+}
+
+// apply 投一条事件到投影器（调用方已持锁）。
+//
+// 事件类型取自本仓 eventbus 的词表——投影器吃本仓自己的事件，不另立事件模型：
+// 另立一套事件词表，等于让「什么算一次工具调用」在两处各答一次，
+// 答案迟早漂。
 func (p *Projector) apply(ev eventbus.Event) {
 	switch ev.Type {
 	case eventbus.EventTurnStarted:
@@ -166,13 +193,28 @@ func (p *Projector) openTool(ev eventbus.Event) {
 	if callID != "" {
 		if idx, ok := p.tools[callID]; ok {
 			if p.rows[idx].Kind == KindToolResult {
-				// 结果先到、调用后到：就地配对（起点取调用时刻）。
-				// 事件顺序反了时两时刻会倒挂，Duration() 随之判定「无实测值」——
-				// 那正是事实，不拿绝对值糊过去。
-				p.rows[idx].Kind = KindToolCall
-				p.rows[idx].StartAt = ev.OccurredAt
-				p.rows[idx].Status = StatusClosed
-				p.rows[idx].Pairing = PairingPaired
+				// 结果先到、调用后到：就地**完整归并**（起点取调用时刻，归属一并并入）。
+				//
+				// 归属字段一律以调用事件为准：结果行创建时记下的轮次/环节/工具名是
+				// 「结果事件自己的上下文」，与这次调用无关——只补时刻不补归属，会把
+				// 第 2 轮真实发生的调用挂到第 1 轮、让没带 tool 键的结果行冒充调用行的
+				// 全部身份（issue #299 的三种静默错值）。事件顺序反了时两时刻会倒挂，
+				// Duration() 随之判定「无实测值」——那正是事实，不拿绝对值糊过去。
+				// 摘要与类目同源重算（Summarize 钩子会再次见到这一行，见 Options.Summarize）。
+				row := &p.rows[idx]
+				row.Kind = KindToolCall
+				row.Turn = p.currentTurn()
+				row.Tool = tool
+				row.HasStep = false
+				row.StepID = 0
+				if id, has := stepIDOf(ev); has {
+					row.HasStep = true
+					row.StepID = id
+				}
+				row.StartAt = ev.OccurredAt
+				row.Status = StatusClosed
+				row.Pairing = PairingPaired
+				p.resummarize(row)
 				p.clearIssue(PairingUnpairedResult, callID)
 				return
 			}
