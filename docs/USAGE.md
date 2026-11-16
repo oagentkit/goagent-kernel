@@ -337,7 +337,11 @@ func toReport(raw string) (*protocol.Report, error) {
 - **「证据要点」这个标题字面不可单边改**——前端折叠按它匹配，改字面即破坏折叠。
 - **severity 序表刻意不导出**。导出的 map 可被就地改写，
   `SeverityRank["critical"] = 0` 会静默把最高危降级为「未评估」。
-  读取一律走 `SeverityRankOf` / `MaxSeverity` / `IsSeverityValid`。
+  读取一律走 `SeverityRankOf` / `MaxSeverity` / `IsSeverityValid`；
+  合法值集合走 `AllSeverities()` / `SeverityRanks()`（返回排序副本）。
+  大小写/空白变体先归一（`"Critical"` 与 `"critical"` 同序）；空串=未评估
+  （rank 0），非空但词表外=读不懂（`SeverityRankUnknown`，聚合按高于 critical
+  保守处理，不会与「未填」同档）。
 - **经修复通道救回的报告 `Confidence` 被钳为 low**——下游 `needs_review` 语义据此承接。
 - `ValidateStructured` 对「未声明 schema」与「旧 server 无 structuredContent」双写兼容，
   **直接放行**；校验失败是漂移信号，不阻断主流程。

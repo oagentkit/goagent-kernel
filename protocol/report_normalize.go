@@ -11,12 +11,14 @@ import (
 //
 // # 这一组存在的理由：写法差异不该改变语义
 //
-// 协议里有五处枚举位此前没有归一，后果各不相同，但共同点是**结局由写法决定、
+// 协议里有一组枚举位此前没有归一，后果各不相同，但共同点是**结局由写法决定、
 // 不由内容决定**：
 //
 //   - action（recommendation 内）："None" → 白名单不命中 → **整份报告被拒**，
 //     且「有步骤却免审」的矛盾修复不触发；
 //   - confidence："High" → **整份报告被拒**；
+//   - severity："Critical" → 白名单不命中 → 序降为 0（未评估），聚合时
+//     静默不计入，方向恰好是「看起来更轻」；
 //   - verdicts[].stance："Adopt" → 条目**被静默丢弃**（连 warn 都没有，
 //     事后无法区分「模型没给裁决」与「裁决被大小写吃掉」）；
 //   - scope："OUT" → 被翻成 "in"——**语义反转**：模型说「超出范围、要转人工」，
@@ -27,7 +29,7 @@ import (
 //
 // 与本文件同目录的 decision / requires_approval 早已各修过一次同类错
 // （见 normalizeDecision / normalizeBoolField 的注释）——说明这不是「没想过」，
-// 是**逐个字段补**的必然漏网。故本文件把五处收成一处口径：
+// 是**逐个字段补**的必然漏网。故本文件把它们收成一处口径：
 // **ToLower + TrimSpace**。
 //
 // # 边界：只收拾写法差异，不改判定
@@ -75,6 +77,29 @@ func normalizeConfidence(m map[string]any, k string, v any) {
 		return
 	}
 	m[k] = strings.ToLower(strings.TrimSpace(s))
+}
+
+// normalizeSeverity severity 归一：大小写与空白收敛到白名单形态。
+//
+// # 漏网的第六个枚举位（issue #324）
+//
+// severity 是聚合/看板/分诊的输入，却一直没进本文件的归一清单。模型写
+// "Critical" / "HIGH" / "严重" 时白名单不命中 → SeverityRankOf 返回 0
+// （未评估）→ MaxSeverity 完全不计入，只在 warn 列表留一条。而同包的
+// confidence 对同类写法差异是「归一后通过」，severity 却是「静默降级」——
+// 方向恰好是「看起来更轻」（越危险越被算轻）。
+//
+// 本函数只把**词表内的写法变体**收敛到规范小写；归一后仍词表外的取值
+// 保持原值（不臆断成某个档），由 Validate 的 warn 与聚合口径
+// （SeverityRankUnknown）负责区分「没填」与「填了但看不懂」。
+func normalizeSeverity(m map[string]any, k string, v any) {
+	s, ok := v.(string)
+	if !ok {
+		return
+	}
+	if n := strings.ToLower(strings.TrimSpace(s)); severityAll[n] {
+		m[k] = n
+	}
 }
 
 // normalizeNeedsFollowupScalar needs_followup 标量形态是布尔（无目标语义）→

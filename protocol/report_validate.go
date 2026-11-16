@@ -76,10 +76,11 @@ func (r *Report) Validate() ([]string, error) {
 		}
 	}
 
-	// —— severity 白名单（批次一百三十七；warn 级放行——severity 是增强面，未知值
-	// 渲染按未评估处理，不因它拦整份报告） ——
-	if r.Severity != "" && !severityAll[r.Severity] {
-		warns = append(warns, fmt.Sprintf("severity 不在白名单: %q（按未评估处理）", r.Severity))
+	// —— severity 白名单（批次一百三十七；warn 级放行——severity 是增强面，不因它
+	// 拦整份报告）。大小写/空白变体先归一（IsSeverityValid），只有归一后仍词表外
+	// 才留痕：这类取值与「未填」不同档，聚合按 SeverityRankUnknown 保守处理。 ——
+	if r.Severity != "" && !IsSeverityValid(r.Severity) {
+		warns = append(warns, fmt.Sprintf("severity 不在白名单: %q（读不懂，聚合按 unknown 处理）", r.Severity))
 	}
 
 	// —— evidence 蒸馏（warn 级：放行，留痕） ——
