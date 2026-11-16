@@ -135,7 +135,10 @@ func runNetworkPartitionLeaseTakeover(t *testing.T) {
 	aLoop, err := worker.NewLoop(partitioned, reg, aHandler, worker.Config{
 		Agent: "worker-a", TTL: time.Minute, PollInterval: time.Millisecond,
 		HeartbeatInterval: 5 * time.Millisecond,
-		RenewFailMax:      1_000_000, // 分区时长远小于阈值：本格要测接管而不是自检失败
+		// issue #266 后续期按到期时刻调度：本格要在分区恢复后的短窗口内
+		// 看到 A 的续期被判易主，故把安全余量调到 TTL 附近（每拍都到点）。
+		RenewMargin:  time.Minute - time.Millisecond,
+		RenewFailMax: 1_000_000, // 分区时长远小于阈值：本格要测接管而不是自检失败
 		OnLeaseLost: func(_ taskboard.TaskID, cause worker.LeaseLostCause) {
 			causesMu.Lock()
 			causes = append(causes, cause)

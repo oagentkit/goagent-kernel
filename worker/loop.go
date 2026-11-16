@@ -46,6 +46,15 @@ import (
 // DefaultPollInterval 领取轮询的缺省间隔。
 const DefaultPollInterval = 200 * time.Millisecond
 
+// DefaultRenewConcurrency 续期并发的缺省上限（issue #266）。
+//
+// 200 个在途任务、单次续期 100ms 时：8 并发一轮约 2.5s，远小于常见 TTL；
+// 串行实现是 20s（TTL 15s 时后段任务在轮到它之前就已过期）。
+const DefaultRenewConcurrency = 8
+
+// renewBatchLimit 批量续期单次请求的条数上限（防止单次往返过大）。
+const renewBatchLimit = 100
+
 // Handler 一个任务的执行体（宿主实现；本包不认识任务内容）。
 //
 // Execute 收到的 ctx 在「租约易主」「外层停机」时被取消：**施加副作用之前**
@@ -93,6 +102,18 @@ type Config struct {
 	// ceil(TTL/HeartbeatInterval)——连续失败跨过一个 TTL 还没续上，租约
 	// 按已到期对待（期间接管者随时可能就位）；负值非法（装配期拦下）。
 	RenewFailMax int
+	// RenewMargin 提前续期的安全余量（issue #266）：租约到期前 margin 就发起
+	// 下一次续期，而不是等到最后一拍。0 = TTL/3；必须 >0 且 < TTL。
+	//
+	// 续期调度按**本进程时钟**推算「距上次成功续期已过去多久」，不与存储的
+	// 绝对 Until 比较——调用方与存储的时钟可能对不上（TTL 才是共同刻度）。
+	RenewMargin time.Duration
+	// RenewConcurrency 同一拍内逐条续期的并发上限（issue #266）。0 = 8；
+	// 负值非法。批量续期接口存在时本值不参与（一次往返续一批）。
+	RenewConcurrency int
+	// RenewTimeout 单条/单批续期的超时（issue #266）。超时只算该任务一次
+	// 续期失败（与其它错误分开计数），不阻断同拍其它任务。0 = TTL/4。
+	RenewTimeout time.Duration
 	// OnLeaseLost 在途租约失去资格时的可观测钩子（nil = 不回调）。
 	//
 	// 三个触发点（见 @@LeaseLostCause@@）：续期报 @@taskboard.ErrLeaseLost@@
@@ -150,6 +171,32 @@ func NewLoop(board taskboard.RenewingBoard, registry Registry, handler Handler, 
 		// 所以这里除数恒为正、结果恒 >= 2）。
 		cfg.RenewFailMax = int((cfg.TTL + cfg.HeartbeatInterval - 1) / cfg.HeartbeatInterval)
 	}
+	if cfg.RenewMargin < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期安全余量不能为负", "margin", cfg.RenewMargin)
+	}
+	if cfg.RenewMargin == 0 {
+		cfg.RenewMargin = cfg.TTL / 3 // 至少留两次重试机会（TTL 已 >0）
+	}
+	if cfg.RenewMargin >= cfg.TTL {
+		return nil, errors.Wrap(ErrInvalidConfig,
+			"worker: 续期安全余量必须短于 TTL——余量 ≥ TTL 等于永不提前续期",
+			"margin", cfg.RenewMargin, "ttl", cfg.TTL)
+	}
+	if cfg.RenewConcurrency < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期并发上限必须非负", "concurrency", cfg.RenewConcurrency)
+	}
+	if cfg.RenewConcurrency == 0 {
+		cfg.RenewConcurrency = DefaultRenewConcurrency
+	}
+	if cfg.RenewTimeout < 0 {
+		return nil, errors.Wrap(ErrInvalidConfig, "worker: 续期超时不能为负", "timeout", cfg.RenewTimeout)
+	}
+	if cfg.RenewTimeout == 0 {
+		cfg.RenewTimeout = cfg.TTL / 4
+		if cfg.RenewTimeout <= 0 {
+			cfg.RenewTimeout = cfg.TTL / 2
+		}
+	}
 	return &Loop{board: board, registry: registry, handler: handler, cfg: cfg}, nil
 }
 
@@ -172,9 +219,26 @@ type claimed struct {
 	// 一旦开始，心跳不得再对本任务 Renew——否则会出现「Complete 已成功、
 	// 随后的 Renew 却报 ErrLeaseLost」的假事件（续期读到的已是终态）。
 	// 这是并发池新增的共享面（issue #196 的「事件串行化」）。
-	mu         sync.Mutex
-	finalizing bool // 收场已开始（含 panic 兜底路径）
-	renewFails int  // 连续续期失败计数（心跳协程在 mu 下读写）
+	mu            sync.Mutex
+	finalizing    bool      // 收场已开始（含 panic 兜底路径）
+	renewFails    int       // 连续的非超时续期失败（心跳协程在 mu 下读写）
+	renewTimeouts int       // 连续的续期超时（与普通失败分开计数，issue #266）
+	nextRenew     time.Time // 本地时钟下的下次续期时刻（零值 = 立即到期）
+}
+
+// scheduleRenew 安排下一次续期（本地时钟；TTL 是调用方与存储的共同刻度，
+// 不与存储的绝对 Until 比较——两边时钟可能对不上）。
+func (c *claimed) scheduleRenew(d time.Duration) {
+	c.mu.Lock()
+	c.nextRenew = time.Now().Add(d)
+	c.mu.Unlock()
+}
+
+// nextRenewAt 读下次续期时刻（mu 下读；调度扫描用）。
+func (c *claimed) nextRenewAt() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.nextRenew
 }
 
 // renewVerdict 一次续期判定的结论（锁内只判定，后续动作一律锁外执行）。
@@ -189,9 +253,13 @@ const (
 	renewRetry
 	// renewTakenOver 租约已易主（ErrLeaseLost）：取消在途执行并留痕。
 	renewTakenOver
-	// renewUnconfirmed 连续失败达到阈值：无法确认持有资格。
+	// renewUnconfirmed 连续失败（含超时）达到阈值：无法确认持有资格。
 	renewUnconfirmed
 )
+
+// noRenewAfterLeaseLost 已判易主/无法确认后的调度占位：任务即将被取消并
+// 移出集合，不再重复发起续期（避免每个心跳拍都刷一遍 OnLeaseLost）。
+const noRenewAfterLeaseLost = time.Hour
 
 // renew 在「本任务尚未进入收场」时执行一次续期判定。
 //
@@ -199,25 +267,69 @@ const (
 // 的事件串行化），但通知/取消等宿主可见动作由调用方在 mu **外**执行。
 // 此前整个闭包（含宿主 OnLeaseLost 回调）都在锁内，回调回查本包即二次
 // 抢锁死锁、panic 则掀翻心跳协程（issue #326）。
-func (c *claimed) renew(renew func() (taskboard.Task, error), failMax int) renewVerdict {
+//
+// timeout > 0 时单条续期有独立的截止时间（issue #266）：超时按「超时」
+// 单独计数（renewTimeouts），不吞进普通失败；成功并重排下次续期。
+// renewAfter 是成功后的续期间隔（TTL − 安全余量），retryAfter 是失败后的
+// 重试间隔（心跳节拍）。
+func (c *claimed) renew(
+	ctx context.Context,
+	timeout time.Duration,
+	renew func(context.Context) (taskboard.Task, error),
+	renewAfter, retryAfter time.Duration,
+	failMax int,
+) renewVerdict {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.finalizing {
 		return renewSkipped
 	}
-	_, err := renew()
+
+	rctx := ctx
+	cancel := func() {}
+	if timeout > 0 {
+		rctx, cancel = context.WithTimeout(ctx, timeout)
+	}
+	_, err := renew(rctx)
+	timedOut := rctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded)
+	cancel()
+
+	return c.recordRenewLocked(err, timedOut, ctx.Err() != nil, renewAfter, retryAfter, failMax)
+}
+
+// recordRenewLocked 记录一次续期结果并给出结论（持 mu 调用）。
+func (c *claimed) recordRenewLocked(
+	err error, timedOut, outerCanceled bool,
+	renewAfter, retryAfter time.Duration,
+	failMax int,
+) renewVerdict {
 	switch {
 	case err == nil:
-		c.renewFails = 0
+		c.renewFails, c.renewTimeouts = 0, 0
+		c.nextRenew = time.Now().Add(renewAfter)
 		return renewOK
 	case errors.Is(err, taskboard.ErrLeaseLost):
-		c.renewFails = 0
+		c.renewFails, c.renewTimeouts = 0, 0
+		c.nextRenew = time.Now().Add(noRenewAfterLeaseLost)
 		return renewTakenOver
 	default:
-		c.renewFails++
-		if c.renewFails >= failMax {
+		if timedOut {
+			c.renewTimeouts++
+		} else {
+			c.renewFails++
+		}
+		if outerCanceled {
+			c.nextRenew = time.Time{}
+			return renewRetry // 外层停机：不把抖动升级成「资格无法确认」
+		}
+		if c.renewFails+c.renewTimeouts >= failMax {
+			c.nextRenew = time.Now().Add(noRenewAfterLeaseLost)
 			return renewUnconfirmed
 		}
+		if retryAfter <= 0 {
+			retryAfter = time.Millisecond // 直构测试的兜底，生产恒为正
+		}
+		c.nextRenew = time.Now().Add(retryAfter)
 		return renewRetry
 	}
 }
@@ -237,16 +349,26 @@ func (c *claimed) beginFinalize() {
 type inflight struct {
 	mu    sync.Mutex
 	tasks map[taskboard.TaskID]*claimed
+	// wake 在途集合新增时唤醒心跳重排续期时刻（缓冲 1：多次新增合并为一次
+	// 重排；issue #266）。
+	wake chan struct{}
 }
 
 func newInflight() *inflight {
-	return &inflight{tasks: map[taskboard.TaskID]*claimed{}}
+	return &inflight{
+		tasks: map[taskboard.TaskID]*claimed{},
+		wake:  make(chan struct{}, 1),
+	}
 }
 
 func (s *inflight) add(c *claimed) {
 	s.mu.Lock()
 	s.tasks[c.id] = c
 	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
 }
 
 // remove 只删仍是这条认领的条目：任务释放后可能被再次认领，旧执行体的
@@ -271,6 +393,37 @@ func (s *inflight) snapshot() []*claimed {
 		return strings.Compare(string(x.id), string(y.id))
 	})
 	return out
+}
+
+// due 取「到点该续期」的在途任务（按 nextRenew 与本地时钟判定）。
+func (s *inflight) due(now time.Time) []*claimed {
+	var out []*claimed
+	for _, c := range s.snapshot() {
+		if !c.nextRenewAt().After(now) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// nextRenewDelay 距离最近一次到期续期还有多久（无在途任务时返回 idle
+// 占位值；新增任务经 wake 通道重排，不靠这个占位值兜住）。
+func (s *inflight) nextRenewDelay(now time.Time) time.Duration {
+	const idle = time.Hour
+	next := time.Time{}
+	for _, c := range s.snapshot() {
+		at := c.nextRenewAt()
+		if next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	if next.IsZero() {
+		return idle
+	}
+	if d := next.Sub(now); d > 0 {
+		return d
+	}
+	return 0
 }
 
 // Run 跑完整生命周期（阻塞到外层 ctx 取消或身份丢失）。

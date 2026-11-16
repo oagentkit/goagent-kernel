@@ -45,7 +45,7 @@ func TestLoopConcurrencyTwoLongTasksRunInParallel(t *testing.T) {
 
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: time.Millisecond,
-		HeartbeatInterval: 50 * time.Millisecond, Concurrency: 2,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 50 * time.Millisecond, Concurrency: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestLoopConcurrencyRenewsEveryInflightLease(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond, Concurrency: 2,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond, Concurrency: 2,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +204,7 @@ func TestLoopConcurrencyLeaseLostCancelsOnlyItself(t *testing.T) {
 	var t1Picked atomic.Bool
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond, Concurrency: 2,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond, Concurrency: 2,
 		Pick: func(candidates []taskboard.Task) (taskboard.TaskID, bool) {
 			for _, c := range candidates {
 				if c.ID == "t2" {

@@ -96,7 +96,7 @@ func TestOnLeaseLostPanicKeepsHeartbeatAlive(t *testing.T) {
 	})
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
 		OnLeaseLost: func(taskboard.TaskID, LeaseLostCause) {
 			panic("probe: 宿主留痕回调 panic")
 		},

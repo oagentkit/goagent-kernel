@@ -62,6 +62,9 @@ func TestNewLoopValidatesConfig(t *testing.T) {
 		{"零 TTL", Config{Agent: "w-1"}},
 		{"心跳不短于 TTL", Config{Agent: "w-1", TTL: time.Minute, HeartbeatInterval: 2 * time.Minute}},
 		{"负并发度", Config{Agent: "w-1", TTL: time.Minute, Concurrency: -1}},
+		{"续期余量不小于 TTL", Config{Agent: "w-1", TTL: time.Minute, RenewMargin: time.Minute}},
+		{"负续期并发", Config{Agent: "w-1", TTL: time.Minute, RenewConcurrency: -1}},
+		{"负续期超时", Config{Agent: "w-1", TTL: time.Minute, RenewTimeout: -1}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,6 +87,11 @@ func TestNewLoopValidatesConfig(t *testing.T) {
 	}
 	if loop.cfg.Concurrency != 1 {
 		t.Fatalf("并发度零值必须归一为 1（实得 %d）——缺省串行是兼容承诺", loop.cfg.Concurrency)
+	}
+	if loop.cfg.RenewMargin != 20*time.Second || loop.cfg.RenewConcurrency != DefaultRenewConcurrency ||
+		loop.cfg.RenewTimeout != 15*time.Second {
+		t.Fatalf("续期缺省值未补齐：margin=%v concurrency=%d timeout=%v",
+			loop.cfg.RenewMargin, loop.cfg.RenewConcurrency, loop.cfg.RenewTimeout)
 	}
 }
 
@@ -181,7 +189,7 @@ func TestLoopLeaseLostCancelsInFlight(t *testing.T) {
 
 	loop, err := NewLoop(board, reg, handler, Config{
 		Agent: "w-1", TTL: time.Minute, PollInterval: 5 * time.Millisecond,
-		HeartbeatInterval: 5 * time.Millisecond,
+		RenewMargin: renewEveryTickMargin, HeartbeatInterval: 5 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
