@@ -14,6 +14,8 @@ import (
 )
 
 func TestK8sJobDeclarations(t *testing.T) {
+	// 禁网档声明已改为 fail-closed（issue #262）：没有能力事实与出站探测的
+	// 缺省装配不得自报 EgressDenied——完整门禁见 TestK8sEgressDeclarationGate。
 	k := NewK8sJob()
 	if k.ID() != "k8s-job" {
 		t.Fatalf("id=%s", k.ID())
@@ -21,8 +23,8 @@ func TestK8sJobDeclarations(t *testing.T) {
 	if k.Isolation() != backend.IsolationContainer {
 		t.Fatalf("Job 落容器边界，必须自报容器档：%s", k.Isolation())
 	}
-	if k.Egress() != sandbox.EgressDenied {
-		t.Fatal("默认逐作业 NetworkPolicy 必须自报禁网档")
+	if k.Egress() != sandbox.EgressUnrestricted {
+		t.Fatal("缺省装配（无 CNI 能力事实、无出站探测）不得自报禁网档")
 	}
 	cases := []struct {
 		name string
@@ -40,13 +42,6 @@ func TestK8sJobDeclarations(t *testing.T) {
 			}
 		})
 	}
-	t.Run("判据联动：容器+禁网+内存要求由它满足", func(t *testing.T) {
-		spec := backend.Spec{MinIsolation: backend.IsolationContainer,
-			Egress: sandbox.EgressDenied, Budget: sandbox.Budget{MaxMemory: 1 << 20}}
-		if err := spec.SatisfiedBy(k); err != nil {
-			t.Fatalf("期望满足，得到 %v", err)
-		}
-	})
 	t.Run("关闭 NetworkPolicy ⇒ 自报降为 unrestricted，不谎报禁网", func(t *testing.T) {
 		off := NewK8sJob(WithK8sNetworkPolicy(false))
 		if off.Egress() != sandbox.EgressUnrestricted {

@@ -13,37 +13,32 @@
 //
 //   - Namespace / ServiceAccount 可配（WithK8sNamespace / WithK8sServiceAccount）；
 //     SA 只做名字注入，最小权限 Role/RoleBinding 由宿主在集群侧准备。
-//   - Egress=denied 以**逐作业 NetworkPolicy** 兑现：policyTypes: [Egress] +
-//     egress: [] ⇒ 该 Job 的 Pod 默认拒绝全部出站。策略建不出来就拒绝创建
-//     Job（ErrNetworkPolicy，fail-closed）——兑现不了的禁网不许静默降级。
+//     禁网任务可另落独立执行命名空间（WithK8sExecutionNamespace）。
+//   - Egress=denied 以「逐作业 NetworkPolicy + 严格策略装配 + 实际出站探测」
+//     兑现，声明面与验证面分开（issue #262，机制详见 k8sjobegress.go）：
+//     Egress() 只在策略装配 + CNI 能力事实 + 探测装配三者齐备时自报禁网档；
+//     策略建不出来 / 策略面对账不了 / 叠加语义可能放行 ⇒ 拒绝创建作业
+//     （ErrNetworkPolicy，fail-closed）——兑现不了的禁网不许静默降级。
 //   - TTL：spec.ttlSecondsAfterFinished（缺省 300s）在进程崩溃/对账中断时由
 //     控制面兜底清理；正常路径 Exec 结束还会显式删 Job（与 Docker remove 对齐）。
 //   - 状态对账：轮询 Job 的 conditions / succeeded / failed / active，映射
 //     backend.Result；Job 消失、Pod 被强删（active>0 但无 Pod）、Pod phase
 //     Unknown、有 Job 无 Pod 超过宽限，一律给「未知」失败结论，不谎报成功。
 //
-// # Egress 的边界（如实声明）
-//
-// NetworkPolicy 的**强制**依赖实现它的 CNI；apiserver 接受策略不等于数据面
-// 生效。本后端保证的是「策略提交失败 / RBAC 不允许就绝不创建作业」。集群
-// CNI 不实现 NetworkPolicy 时，宿主必须显式 WithK8sNetworkPolicy(false)：
-// 此时 Egress() 自报 EgressUnrestricted，要求禁网的 Spec 不会选中它。
-//
 // # 宿主装配期的声明校验（guardx ExecPolicy）
 //
-// 本仓 go.mod 钉的 oagentkit/guardx v0.25.1 尚未导出 sandbox.ExecPolicy /
-// Judge / Spec（v0.27.0 才提供），故本后端**不为此升级依赖**、也不私造第二套
-// 判据。宿主应在装配期先用 guardx 的 sandbox.ExecPolicy 校验 Job 声明
-// （镜像 / 挂载 / 环境 / 出站要求与作业档位是否一致），再把满足者登记进
-// backend.Registry。本后端的 MountPolicy 只是「挂载白名单」一条在参考实现里
-// 的落地，不冒充完整 ExecPolicy。
+// guardx v0.27.0 起导出了 sandbox.ExecPolicy / Judge / Spec；宿主应在装配期
+// 用它校验 Job 声明（镜像 / 挂载 / 环境 / 出站要求与作业档位是否一致），再把
+// 满足者登记进 backend.Registry。本后端的 MountPolicy 只是「挂载白名单」一条
+// 在参考实现里的落地，不冒充完整 ExecPolicy。
 //
 // # Pod 安全约束
 //
 // runAsNonRoot、readOnlyRootFilesystem、allowPrivilegeEscalation=false、
 // capabilities.drop=[ALL]、seccompProfile=RuntimeDefault、
 // automountServiceAccountToken=false。镜像必须以非 root 运行且不写 rootfs；
-// 不满足的镜像由 kubelet 拒绝启动（失败而不是降级）。
+// 不满足的镜像由 kubelet 拒绝启动（失败而不是降级）。出站探测 init 容器与
+// 业务容器同等受约束。
 //
 // 日志走 Pod log 端点，stdout/stderr 是**合并流**（K8s API 不拆），全部放进
 // Result.Stdout；Detail 标注 log_stream=combined。
@@ -52,6 +47,7 @@ package containerbackend
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/oekit/concurrency/async"
@@ -66,9 +62,10 @@ var (
 	// 作业没跑起来属基础设施故障，修复对象是集群侧（凭据 / RBAC / 网络）。
 	ErrAPICall = errors.New("containerbackend: kube-apiserver 调用失败")
 
-	// ErrNetworkPolicy NetworkPolicy 未能建立——Egress=denied 无法兑现，拒绝
-	// 创建作业（fail-closed）。修集群能力（CNI / RBAC），或显式关闭策略并
-	// 接受 Egress 自报降级；不得跳过策略继续执行。
+	// ErrNetworkPolicy NetworkPolicy 未能建立或策略面叠加工况会放行出站——
+	// Egress=denied 无法兑现，拒绝创建作业（fail-closed）。修集群能力
+	// （CNI / RBAC / 执行命名空间的策略卫生），或显式关闭策略并接受 Egress
+	// 自报降级；不得跳过策略继续执行。
 	ErrNetworkPolicy = errors.New("containerbackend: NetworkPolicy 未能建立，Egress=denied 无法兑现（拒绝创建作业）")
 )
 
@@ -88,6 +85,7 @@ type K8sJob struct {
 
 	endpoint       string
 	namespace      string
+	execNamespace  string
 	serviceAccount string
 	tokenFile      string
 	tokenExplicit  bool
@@ -97,6 +95,11 @@ type K8sJob struct {
 	orphanGrace    time.Duration
 	ttlSeconds     int32
 	networkPolicy  bool
+	probe          K8sEgressProbe
+	cniCap         K8sCNICapability
+	cniOnce        sync.Once
+	cniOK          bool
+	cniErr         error
 	mounts         MountPolicy
 
 	client *http.Client
@@ -109,12 +112,21 @@ func (k *K8sJob) ID() string { return k.id }
 // Isolation 容器档（Job/Pod 由 kubelet 落 namespace + cgroup）。
 func (k *K8sJob) Isolation() backend.Isolation { return backend.IsolationContainer }
 
-// Egress 默认逐作业 NetworkPolicy 全拒出站；策略被显式关闭时如实降级。
+// Egress 声明面（issue #262）：禁网档只在「策略装配开启 + CNI 能力事实为真 +
+// 出站探测已装配」三者齐备时自报；缺任何一半降级为 EgressUnrestricted
+// （fail-closed）——没有实测面的禁网声明，正是本后端不许再犯的洞。
 func (k *K8sJob) Egress() sandbox.EgressMode {
-	if k.networkPolicy {
-		return sandbox.EgressDenied
+	if !k.networkPolicy {
+		return sandbox.EgressUnrestricted
 	}
-	return sandbox.EgressUnrestricted
+	if !k.k8sEgressProbeRequired() {
+		return sandbox.EgressUnrestricted // 没有实测面，不许声明禁网
+	}
+	ok, err := k.cniNetworkPolicyEnforced()
+	if err != nil || !ok {
+		return sandbox.EgressUnrestricted // 答不上来 / CNI 不实现 ⇒ 按兜不住处理
+	}
+	return sandbox.EgressDenied
 }
 
 // Capable 内存经 limits 兜住；输出截断与逐调用计数兜不住。
@@ -122,12 +134,31 @@ func (k *K8sJob) Capable(b sandbox.Budget) bool {
 	return b.MaxMemory > 0 && b.MaxBytes == 0 && b.MaxCalls == 0
 }
 
-// Exec 执行一次作业：NetworkPolicy → Job → 轮询 → 取日志/退出码 → 清理。
+// execNS 本作业的执行命名空间：禁网路径（策略装配开启）优先落独立执行
+// 命名空间，未装配时退回作业命名空间。
+func (k *K8sJob) execNS() string {
+	if k.networkPolicy && k.execNamespace != "" {
+		return k.execNamespace
+	}
+	return k.namespace
+}
+
+// Exec 执行一次作业：执行标识对账 → 策略面对账 → NetworkPolicy → Job →
+// 轮询 → 取日志/退出码 → 清理。
 //
 // 步骤契约：
 //
 //   - 挂载先过 MountPolicy（缺省拒绝一切），不满足即创建阶段拒绝（ErrMountDenied）；
-//   - Egress 策略建不出来 ⇒ ErrNetworkPolicy，Job 根本不创建（fail-closed）；
+//   - Job.ExecutionID 非空 ⇒ 作业名确定性派生 + harness.io/execution-id 标签，
+//     创建前按派生名对账：已存在 ⇒ 不发创建请求、返回既有作业的结果（幂等键，
+//     issue #263）；对账失败 ⇒ 拒绝创建（fail-closed）；
+//   - 禁网路径先对账执行命名空间的策略面（叠加语义 ⇒ ErrNetworkPolicy），
+//     Egress 策略建不出来 ⇒ ErrNetworkPolicy，Job 根本不创建（fail-closed）；
+//   - 禁网作业携带出站探测 init 容器：探测未通过（连上外部或不可判）⇒
+//     作业被拒；实测结果进 Detail["egress_verified"]；
+//   - 创建结果分级（issue #263）：409 在幂等路径上=「并发创建者已建成」，
+//     等它的终态；传输失败/5xx=结果不明 ⇒ 不删 Job 不删策略（删了可能砍掉
+//     已建成作业的禁网面与作业本体，孤儿由 TTL 兜底）；其余 4xx=一定没建成；
 //   - Budget.MaxMemory ⇒ Pod limits.memory；Budget.WallClock ⇒
 //     activeDeadlineSeconds + 截止 watcher（到点删 Job，返回作业失败，不是引擎故障）；
 //   - 终态以 Job conditions 为准（Complete / Failed）；对账给不出结论时
@@ -150,17 +181,85 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 		return backend.Result{}, err
 	}
 
+	ns := k.execNS()
 	name := newK8sJobName()
-	if k.networkPolicy {
-		if err := k.createNetworkPolicy(ctx, name); err != nil {
-			return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
+	reconciled := false
+	if j.ExecutionID != "" {
+		// 稳定执行标识：名与标签都由它派生，创建因此具备幂等键。
+		name = k8sStableJobName(j.ExecutionID)
+		found, err := k.k8sReconcileJob(ctx, ns, name, j.ExecutionID)
+		if err != nil {
+			return backend.Result{}, err
 		}
-		defer k.cleanup(ctx, k.deleteNetworkPolicy, name)
+		reconciled = found
 	}
-	if err := k.createJob(ctx, name, j); err != nil {
-		return backend.Result{}, err
+
+	jobCreated, policyCreated, uncertain := false, false, false
+	defer func() {
+		if uncertain {
+			// 创建结果不明：不删。删了可能砍掉已建成作业的禁网面（NetworkPolicy）
+			// 与作业本体（Job）；孤儿由 TTL 兜底，全拒策略孤儿只会拒绝不会放行。
+			return
+		}
+		if jobCreated || reconciled {
+			k.cleanup(ctx, ns, k.deleteJob, name)
+		}
+		if policyCreated {
+			k.cleanup(ctx, ns, k.deleteNetworkPolicy, name)
+		}
+	}()
+
+	if k.networkPolicy {
+		// 严格策略装配：先对账策略面，叠加语义可能放行出站即拒绝（先于任何创建）。
+		if err := k8sCheckForeignPolicies(ctx, k, ns, name, j.ExecutionID); err != nil {
+			return backend.Result{}, err
+		}
+		conflict, err := k.createNetworkPolicy(ctx, ns, name)
+		if err != nil {
+			if !conflict {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy, err.Error())
+			}
+			// 同名策略已存在（重试路径）：验证它就是本作业的全拒策略才复用。
+			p, _, gerr := k.getNetworkPolicy(ctx, ns, name)
+			if gerr != nil {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
+					"同名 NetworkPolicy 对账失败（fail-closed）: "+gerr.Error())
+			}
+			if !k8sPolicyIsOursDenyAll(p, name) {
+				return backend.Result{}, errors.Wrap(ErrNetworkPolicy,
+					"同名 NetworkPolicy 不是本作业的 Egress 全拒策略（拒绝复用别人的对象）")
+			}
+		}
+		policyCreated = true
 	}
-	defer k.cleanup(ctx, k.deleteJob, name)
+
+	if !reconciled {
+		outcome, err := k.createJob(ctx, ns, name, j)
+		switch {
+		case err == nil:
+			jobCreated = true
+		case outcome == k8sCreateConflict && j.ExecutionID != "":
+			// 对账（404）与创建之间的竞态窗口：同标识的并发创建者先到了。
+			reconciled = true
+		default:
+			uncertain = outcome == k8sCreateUncertain
+			return backend.Result{}, err
+		}
+	}
+
+	stamp := func(res backend.Result) backend.Result {
+		res = k8sAttachEgressFacts(k, res, k.verifiedOrNone())
+		if j.ExecutionID == "" {
+			return res
+		}
+		if d, ok := res.Detail.(map[string]any); ok {
+			d["execution_id"] = j.ExecutionID
+			if reconciled {
+				d["reconciled"] = true
+			}
+		}
+		return res
+	}
 
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -175,7 +274,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			defer t.Stop()
 			select {
 			case <-t.C:
-				k.cleanup(ctx, k.deleteJob, name)
+				k.cleanup(ctx, ns, k.deleteJob, name)
 				cancel(errWallClock)
 			case <-runCtx.Done():
 			}
@@ -183,14 +282,14 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 		defer func() { cancel(errWallClock); <-watcherDone }() // 收口：确保 watcher 停下
 	}
 
-	res, err := k.await(runCtx, name)
+	res, err := k.await(runCtx, ns, name)
 	if err != nil {
 		if errors.Is(context.Cause(runCtx), errWallClock) {
-			return backend.Result{
+			return stamp(backend.Result{
 				OK:     false,
 				Stderr: errWallClock.Error(),
 				Detail: map[string]any{"budget_exceeded": "wall_clock"},
-			}, nil
+			}), nil
 		}
 		return backend.Result{}, err
 	}
@@ -201,7 +300,16 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			res.Stderr = errWallClock.Error()
 		}
 	}
-	return res, nil
+	return stamp(res), nil
+}
+
+// verifiedOrNone 实测面的兜底值：await 未能从 Pod 状态读出探测事实时（Job 消失、
+// Pod 被强删等 unknown 路径），按探测是否装配记 unseen / none，不猜。
+func (k *K8sJob) verifiedOrNone() string {
+	if k.k8sEgressProbeRequired() {
+		return "unseen"
+	}
+	return "none"
 }
 
 // checkMounts 挂载判据闸：任何一条不满足即在创建阶段拒绝（先于 apiserver 调用）。
@@ -214,132 +322,11 @@ func (k *K8sJob) checkMounts(j backend.Job) error {
 	return nil
 }
 
-// await 轮询 Job 直到终态或对账给不出结论。
-func (k *K8sJob) await(ctx context.Context, name string) (backend.Result, error) {
-	var pendingSince time.Time
-	for {
-		job, found, err := k.getJob(ctx, name)
-		if err != nil {
-			return backend.Result{}, err
-		}
-		if !found {
-			return k.unknown(name, "job_not_found"), nil
-		}
-		if job.Metadata.DeletionTimestamp != nil {
-			return k.unknown(name, "job_deleting"), nil
-		}
-		if done, res, reason := classifyK8sJob(job.Status); done {
-			return k.collect(ctx, name, res, reason), nil
-		}
-		pods, err := k.listPods(ctx, name)
-		if err != nil {
-			return backend.Result{}, err
-		}
-		switch {
-		case job.Status.Active > 0 && len(pods) == 0:
-			// Job 认为有活着的 Pod、集群里却一个都没有：Pod 被强删/节点失联。
-			return k.unknown(name, "active_without_pods"), nil
-		case anyPodPhaseUnknown(pods):
-			return k.unknown(name, "pod_phase_unknown"), nil
-		case len(pods) == 0 && job.Status.Succeeded == 0 && job.Status.Failed == 0:
-			if pendingSince.IsZero() {
-				pendingSince = time.Now()
-			} else if time.Since(pendingSince) >= k.orphanGrace {
-				return k.unknown(name, "no_pods"), nil
-			}
-		default:
-			pendingSince = time.Time{}
-		}
-		t := time.NewTimer(k.pollInterval)
-		select {
-		case <-ctx.Done():
-			t.Stop()
-			return backend.Result{}, k8sWaitError(ctx)
-		case <-t.C:
-		}
-	}
-}
-
-// classifyK8sJob 把 Job 状态映射成终态结论（false = 还没到终态）。
-//
-// 判定只认 conditions 与计数：Complete=True / succeeded>0 ⇒ 成功；
-// Failed=True 或 failed>0 且无 active ⇒ 失败。条件缺失不是成功。
-func classifyK8sJob(st k8sJobStatus) (bool, backend.Result, string) {
-	for _, c := range st.Conditions {
-		if c.Status != "True" {
-			continue
-		}
-		switch c.Type {
-		case "Failed":
-			reason := c.Reason
-			if reason == "" {
-				reason = "failed_condition"
-			}
-			return true, backend.Result{OK: false}, reason
-		case "Complete":
-			return true, backend.Result{OK: true}, "complete"
-		}
-	}
-	if st.Succeeded > 0 {
-		return true, backend.Result{OK: true}, "succeeded"
-	}
-	if st.Failed > 0 && st.Active == 0 {
-		return true, backend.Result{OK: false}, "failed"
-	}
-	return false, backend.Result{}, ""
-}
-
-// collect 终态后取 Pod 退出码与日志（读取失败只进明细，不改写终态）。
-func (k *K8sJob) collect(ctx context.Context, name string, res backend.Result, reason string) backend.Result {
-	detail := map[string]any{
-		"job": name, "namespace": k.namespace, "reason": reason, "log_stream": "combined",
-	}
-	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer cancel()
-	pods, err := k.listPods(cctx, name)
-	if err != nil {
-		detail["pods_error"] = err.Error()
-		res.Detail = detail
-		return res
-	}
-	pod := pickK8sPod(pods)
-	if pod == nil {
-		if !res.OK {
-			res.ExitCode = 1 // 失败结论已定，但没有 Pod 退出码：给非零值，不伪装成「没跑」
-		}
-		res.Detail = detail
-		return res
-	}
-	detail["pod"] = pod.Metadata.Name
-	if code, ok := terminatedExitCode(*pod); ok {
-		res.ExitCode = code
-	}
-	if !res.OK && res.ExitCode == 0 {
-		res.ExitCode = 1
-	}
-	logs, lerr := k.podLogs(cctx, pod.Metadata.Name)
-	if lerr != nil {
-		detail["log_error"] = lerr.Error()
-	} else {
-		res.Stdout = logs
-	}
-	res.Detail = detail
-	return res
-}
-
-// unknown 对账给不出结论：Result 层失败 + 明确 unknown 明细（不返回 error——
-// 「不知道」不是「后端坏了」，但绝不能猜成成功）。
-func (k *K8sJob) unknown(name, reason string) backend.Result {
-	return backend.Result{OK: false, Detail: map[string]any{
-		"job": name, "namespace": k.namespace, "state": "unknown", "reason": reason,
-	}}
-}
-
 // cleanup 用脱离调用方取消的短超时执行清理（清理失败不掩盖主结果）。
-func (k *K8sJob) cleanup(ctx context.Context, del func(context.Context, string) error, name string) {
+func (k *K8sJob) cleanup(ctx context.Context, ns string, del func(context.Context, string, string) error, name string) {
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
-	_ = del(cctx, name)
+	_ = del(cctx, ns, name)
 }
 
 // k8sWaitError 把等待被取消转成基础设施错误（墙钟路径由 Exec 先行分流）。
@@ -352,38 +339,4 @@ func k8sWaitError(ctx context.Context) error {
 		cause = errors.New("context canceled")
 	}
 	return errors.New("containerbackend: k8s 作业等待被取消: " + cause.Error())
-}
-
-// pickK8sPod 优先取有终止状态的 Pod（失败作业可能留下多个 Pod）。
-func pickK8sPod(pods []k8sPod) *k8sPod {
-	for i := range pods {
-		if _, ok := terminatedExitCode(pods[i]); ok {
-			return &pods[i]
-		}
-	}
-	if len(pods) > 0 {
-		return &pods[0]
-	}
-	return nil
-}
-
-// terminatedExitCode 取容器终止退出码。
-func terminatedExitCode(p k8sPod) (int, bool) {
-	for _, cs := range p.Status.ContainerStatuses {
-		if cs.State.Terminated != nil {
-			return cs.State.Terminated.ExitCode, true
-		}
-	}
-	return 0, false
-}
-
-// anyPodPhaseUnknown 节点失联的 Pod 会被标记为 Unknown——此时给结论是猜测，
-// 一律按未知失败收场。
-func anyPodPhaseUnknown(pods []k8sPod) bool {
-	for _, p := range pods {
-		if p.Status.Phase == "Unknown" {
-			return true
-		}
-	}
-	return false
 }

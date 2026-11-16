@@ -3,6 +3,7 @@ package backend
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -98,6 +99,12 @@ func TestJobValidate(t *testing.T) {
 		{"挂载合法", func(j *Job) { j.Mounts = []Mount{{Source: "/a", Target: "/b", ReadOnly: true}} }, false},
 		{"负内存预算", func(j *Job) { j.Budget.MaxMemory = -1 }, true},
 		{"负墙钟", func(j *Job) { j.Budget.WallClock = -1 }, true},
+		{"执行标识合法（uuid 形态）", func(j *Job) { j.ExecutionID = "0b89ea8e-2c77-4d3f-9d2a-5f1f6f1b9e01" }, false},
+		{"执行标识合法（点与下划线）", func(j *Job) { j.ExecutionID = "run_42.session-1" }, false},
+		{"执行标识以 - 开头", func(j *Job) { j.ExecutionID = "-run" }, true},
+		{"执行标识以非字母数字结尾", func(j *Job) { j.ExecutionID = "run." }, true},
+		{"执行标识含非法字符", func(j *Job) { j.ExecutionID = "run/42" }, true},
+		{"执行标识超长（>63，骑不进标签值）", func(j *Job) { j.ExecutionID = strings.Repeat("x", 64) }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) { // 逐条独立报告，避免共享 Fatal 造成假绿

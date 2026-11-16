@@ -146,6 +146,16 @@ type Job struct {
 	// MaxCalls 在任务式执行里没有对应物（作业不是逐调用解释的），要求了它
 	// 的 Spec 不会被声明 Capable 的任务式后端满足（见 Spec.SatisfiedBy）。
 	Budget sandbox.Budget
+	// ExecutionID 稳定执行标识（幂等键，issue #263）：由内核/宿主给定，同一
+	// 业务动作的重试必须携带同一标识。后端用它派生稳定资源名并在创建前
+	// 对账：「创建请求已发出但响应丢失」后重试，对账命中即不发创建请求、
+	// 返回既有作业的结果——不会产生第二份作业（机制见各实现；K8s Job 的
+	// 落法：Job 名确定性派生 + harness.io/execution-id 标签）。
+	//
+	// 空 = 未声明幂等键，后端自行命名（非幂等路径：响应丢失后重试可能产生
+	// 双份作业）。跨进程的资源对账归宿主与 SideEffect 台账（终态结果持久化），
+	// 本字段保证的是**同一时刻同一动作只有一份在后端跑**。
+	ExecutionID string
 }
 
 // Validate 判作业请求是否自洽（不满足即报错，不静默补全）。
@@ -155,7 +165,10 @@ type Job struct {
 //     要么被静默拼进一条——两种都让「作业看见了什么」不可判定；
 //   - 挂载两端都必填：缺端点的挂载在后端侧无从解释；
 //   - 预算不得为负：负值是「忘了设」与「设错了」的混合体，拒绝比按 0 处理
-//     更响亮。
+//     更响亮；
+//   - ExecutionID 非空时必须是合法标签值形态（≤63 字符，字母数字开头结尾，
+//     中间限 [-_.A-Za-z0-9]）：幂等键要绑定到资源标签上，骑不进标签词表的
+//     标识在实现侧无从兑现，拒绝比静默改写诚实。
 func (j Job) Validate() error {
 	if strings.TrimSpace(j.Image) == "" {
 		return errors.New("backend: 作业没有镜像——既不能执行，也无从隔离")
@@ -174,7 +187,31 @@ func (j Job) Validate() error {
 	if j.Budget.WallClock < 0 || j.Budget.MaxCalls < 0 || j.Budget.MaxBytes < 0 || j.Budget.MaxMemory < 0 {
 		return errors.New("backend: 预算出现负值——「忘了设」与「设错了」不能共用一个静默解释")
 	}
+	if id := j.ExecutionID; id != "" && !isValidExecutionID(id) {
+		return fmt.Errorf("backend: 执行标识 %q 不是合法标签值形态（≤63 字符，字母数字开头结尾，中间限 -_. 与字母数字）", id)
+	}
 	return nil
+}
+
+// isValidExecutionID 按 Kubernetes 标签值词表判执行标识（幂等键必须能骑进
+// 资源标签）。
+func isValidExecutionID(id string) bool {
+	if len(id) > 63 {
+		return false
+	}
+	alnum := func(r rune) bool {
+		return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9'
+	}
+	rs := []rune(id)
+	if !alnum(rs[0]) || !alnum(rs[len(rs)-1]) {
+		return false
+	}
+	for _, r := range rs {
+		if !alnum(r) && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 // Result 一次任务式执行的结果。
