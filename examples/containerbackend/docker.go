@@ -12,8 +12,11 @@
 //   - Docker（docker.go）：逐字实现 `backend.Backend`，走 Docker Engine
 //     HTTP API（unix socket 或 TCP），**零第三方依赖**（stdlib net/http）——
 //     不引 Docker 客户端库，与内核「依赖面窄」的既有优势同一条纪律；
-//   - Kubernetes Job（k8sjob.go）：**接入点占位**——契约已经对齐，实现
-//     留给宿主（client-go 是宿主侧依赖；本仓不引 K8s 客户端）。
+//   - Kubernetes Job（k8sjob.go）：同一张映射表落到 batch/v1 Job，走
+//     kube-apiserver HTTP API（stdlib net/http + in-cluster token/CA），
+//     同样**不引 client-go**；Namespace / ServiceAccount / TTL 可配，
+//     Egress=denied 以逐作业 NetworkPolicy 兑现，状态对账按 conditions
+//     映射 Result（对账给不出结论时显式 unknown，不谎报成功）。
 //
 // # 接线方式（宿主视角）
 //
@@ -22,11 +25,12 @@
 // backend.Spec 解析执行方：
 //
 //	var reg backend.Registry
-//	_ = reg.Register(containerbackend.NewDocker())   // 容器隔离档
-//	_ = reg.Register(backend.NewInline())            // 进程内兜底档
+//	_ = reg.Register(containerbackend.NewDocker())  // 容器隔离档（network=none）
+//	_ = reg.Register(containerbackend.NewK8sJob())  // 集群内可用时：容器隔离档（NetworkPolicy）
+//	_ = reg.Register(backend.NewInline())           // 进程内兜底档
 //	b, err := reg.Resolve(backend.Spec{
 //	    MinIsolation: backend.IsolationContainer,
-//	    Egress:       sandbox.EgressDenied,   // Docker 实现以 network=none 兑现
+//	    Egress:       sandbox.EgressDenied,   // 两份实现分别以 network=none / NetworkPolicy 兑现
 //	    Budget:       sandbox.Budget{MaxMemory: 256 << 20},
 //	})
 //	res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:…", ...})

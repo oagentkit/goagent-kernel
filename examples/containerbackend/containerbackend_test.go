@@ -292,28 +292,3 @@ func frame(stream byte, payload string) []byte {
 	out := []byte{stream, 0, 0, 0, byte(n >> 24), byte(n >> 16), byte(n >> 8), byte(n)}
 	return append(out, payload...)
 }
-
-func TestK8sJobPlaceholder(t *testing.T) {
-	k := NewK8sJob()
-	if k.ID() != "k8s-job" {
-		t.Fatalf("id=%s", k.ID())
-	}
-	t.Run("未接入前按最弱档自报（fail-closed）", func(t *testing.T) {
-		if k.Isolation() != backend.IsolationNone {
-			t.Fatalf("占位实现不得自报容器档：%s", k.Isolation())
-		}
-		spec := backend.Spec{MinIsolation: backend.IsolationContainer}
-		if err := spec.SatisfiedBy(k); kerrors.Is(err, backend.ErrNoBackend) || err == nil {
-			t.Fatalf("占位不应满足容器要求：err=%v", err)
-		}
-	})
-	t.Run("Exec 响亮拒绝", func(t *testing.T) {
-		res, err := k.Exec(context.Background(), backend.Job{Image: "img"})
-		if err == nil || !kerrors.Is(err, ErrNotWired) {
-			t.Fatalf("期望 ErrNotWired，得到 %v", err)
-		}
-		if res.OK {
-			t.Fatal("占位不得返回成功")
-		}
-	})
-}
