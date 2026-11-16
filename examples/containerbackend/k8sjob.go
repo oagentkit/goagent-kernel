@@ -205,7 +205,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			return
 		}
 		if jobCreated || reconciled {
-			k.cleanupJob(ctx, ns, name, jobUID)
+			cleanupJobWithUID(k, ctx, ns, name, jobUID)
 		}
 		if policyCreated {
 			k.cleanup(ctx, ns, k.deleteNetworkPolicy, name)
@@ -284,7 +284,7 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			defer t.Stop()
 			select {
 			case <-t.C:
-				k.cleanupJob(ctx, ns, name, jobUID)
+				cleanupJobWithUID(k, ctx, ns, name, jobUID)
 				cancel(errWallClock)
 			case <-runCtx.Done():
 			}
@@ -339,7 +339,7 @@ func (k *K8sJob) cleanup(ctx context.Context, ns string, del func(context.Contex
 	_ = del(cctx, ns, name)
 }
 
-// cleanupJob 按 **UID 前置条件**清理本次创建的 Job（issue #276）。
+// cleanupJobWithUID 按 **UID 前置条件**清理本次创建的 Job（issue #276）。
 //
 // 只按名字删是不安全的：Job 被删后同名可被重建（稳定 ExecutionID 命名下
 // 名字可预测、可重复），一次延迟清理会删掉后来者。UID 是对象身份的凭据；
@@ -347,7 +347,10 @@ func (k *K8sJob) cleanup(ctx context.Context, ns string, del func(context.Contex
 //
 // UID 未知（创建应答读不出、409 后补读失败）时**不发出删除**：宁可按名字
 // 不删、交给 TTL 兜底，也不冒误删他人作业的风险。清理失败不掩盖主结果。
-func (k *K8sJob) cleanupJob(ctx context.Context, ns, name, uid string) {
+//
+// 自由函数而不是 K8sJob 方法：archcheck 对 K8sJob 的实质方法数有阈值
+// （god object 25），这条清理策略不需要扩类型面。
+func cleanupJobWithUID(k *K8sJob, ctx context.Context, ns, name, uid string) {
 	if uid == "" {
 		return
 	}

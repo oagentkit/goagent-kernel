@@ -29,13 +29,15 @@ func mustNotDeadlock(t *testing.T, what string, fn func()) {
 // TestNowClockCallbackReentry Now 的时钟回调重入 Load 必须正常返回。
 func TestNowClockCallbackReentry(t *testing.T) {
 	want := time.Unix(1700000000, 0)
-	var l *MemoryLedger
-	l = NewMemoryLedger(WithLedgerClock(func() time.Time {
-		_, _ = l.Load(context.Background(), Key("reentry")) // 重入本包
+	// 回调要引用 ledger 本身（重入 Load），用 holder 承接「构造后再赋值」。
+	type holder struct{ l *MemoryLedger }
+	h := &holder{}
+	h.l = NewMemoryLedger(WithLedgerClock(func() time.Time {
+		_, _ = h.l.Load(context.Background(), Key("reentry")) // 重入本包
 		return want
 	}))
 	mustNotDeadlock(t, "Now", func() {
-		got, err := l.Now(context.Background())
+		got, err := h.l.Now(context.Background())
 		if err != nil {
 			t.Errorf("Now: %v", err)
 			return
@@ -49,8 +51,7 @@ func TestNowClockCallbackReentry(t *testing.T) {
 // TestUseClockCallbackReentry UseClock 注入的时钟同样不得在持锁期间调用。
 func TestUseClockCallbackReentry(t *testing.T) {
 	want := time.Unix(1700000000, 0)
-	var l *MemoryLedger
-	l = NewMemoryLedger()
+	l := NewMemoryLedger()
 	l.UseClock(func() time.Time {
 		_, _ = l.Epoch(context.Background(), Key("reentry"))
 		return want
