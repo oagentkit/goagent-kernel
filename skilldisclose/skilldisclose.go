@@ -216,11 +216,20 @@ const (
 	scoreDescWordMax = 5
 )
 
+// normalizeSkillName 技能名/Exclude 的**唯一**归一化口径：TrimSpace + 小写。
+//
+// 名字在 New 里已 TrimSpace 并单独存了 lowerName；Exclude 是查询侧输入，必须走同一
+// 条归一化，否则 "Vue"/" vue"/"VUE" 排除不掉（精确比原值），而包内其余匹配全部
+// 大小写无关——两套口径必然漂移（issue #291）。
+func normalizeSkillName(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 // Disclose 按查询挑技能。
 func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 	excluded := make(map[string]bool, len(q.Exclude))
 	for _, e := range q.Exclude {
-		excluded[e] = true
+		excluded[normalizeSkillName(e)] = true
 	}
 	words := tokenize(q.Text)
 	mention := strings.TrimSpace(q.Mention)
@@ -230,7 +239,8 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 
 	var scored []Scored
 	for _, e := range c.skills {
-		if excluded[e.skill.Name] {
+		// lowerName 与 name 同源（New 里都已 TrimSpace），故与 Exclude 归一化后可直比。
+		if excluded[e.lowerName] {
 			continue
 		}
 		score := scoreOf(e, mention, mentionLower, words, pathsLower)
@@ -318,7 +328,7 @@ func allExcluded(c *Catalog, excluded map[string]bool) bool {
 		return false
 	}
 	for _, e := range c.skills {
-		if !excluded[e.skill.Name] {
+		if !excluded[e.lowerName] {
 			return false
 		}
 	}
@@ -374,9 +384,18 @@ func scoreOf(e entry, mention, mentionLower string, words map[string]bool, paths
 
 // resourceHit 判当前资源路径是否落在技能的声明里。
 //
-// 支持两种声明形态：**目录前缀**（以 / 结尾）与**后缀**（以 . 开头）。
-// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而「按目录/按后缀」
-// 这两种已经能表达全部实际用法，且判据无歧义。
+// **三种声明形态，全部显式**（旧注释只写两种，实际 default 分支是未声明的任意
+// 子串匹配——声明 "log" 会命中 "src/catalog.ts"，issue #291）：
+//
+//   - 目录前缀：以 / 结尾（如 "deploy/"），匹配路径以其开头；
+//   - 后缀：以 . 开头（如 ".vue"），匹配路径以其结尾；
+//   - 路径段：其余裸声明（如 "log"、"src/logs"），按**完整路径段**匹配——
+//     "log" 命中 "src/log/app.log" 但不命中 "src/catalog.ts"；含 / 的声明按
+//     连续路径段序列匹配。
+//
+// 不做完整 glob：glob 的语义（** 是否跨层）各实现不同，而以上三种已能表达
+// 全部实际用法，且判据无歧义。段级而非子串是安全/相关性两面共同的要求：
+// 子串会把不相关技能（含其资源与标签）注入上下文。
 // resourceHitLower 资源匹配的**唯一**判定实现；两侧入参须已是小写形态。
 //
 // 为什么不提供「入参原样、内部小写化」的包装版本：包装层一旦存在，它和主路径就
@@ -397,9 +416,34 @@ func resourceHitLower(declaredLower []string, pathLower string) bool {
 				return true
 			}
 		default:
-			if pathLower == d || strings.Contains(pathLower, d) {
+			if pathHasSegmentRun(pathLower, d) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// pathHasSegmentRun 报告 declared（可含 /）是否作为**连续完整路径段序列**出现在 path 中。
+//
+// 例："log" 命中 "src/log/app.log"；"src/logs" 命中 "a/src/logs/x" 但不命中
+// "src/logsx/x"（"logsx" 不是 "logs"）；"log" 不命中 "catalog.ts"。
+func pathHasSegmentRun(path, declared string) bool {
+	ds := strings.Split(declared, "/")
+	ps := strings.Split(path, "/")
+	if len(ds) == 0 || len(ds) > len(ps) {
+		return false
+	}
+	for i := 0; i+len(ds) <= len(ps); i++ {
+		match := true
+		for j := range ds {
+			if ps[i+j] != ds[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
 		}
 	}
 	return false
