@@ -21,6 +21,9 @@ import (
 )
 
 // scanRecordingBackend 记录调用序列的替身（转发 MemoryBackend）。
+// SingleMachine：测试替身只活在单进程内（#194 装配判据要求显式声明）。
+func (b *scanRecordingBackend) SingleMachine() bool { return true }
+
 type scanRecordingBackend struct {
 	inner *MemoryBackend
 
