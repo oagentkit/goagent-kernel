@@ -65,7 +65,10 @@ func (b *scanRecordingBackend) ScanSnapshot(ctx context.Context, prefix string) 
 func TestListIsSingleAtomicScan(t *testing.T) {
 	ctx := context.Background()
 	b := &scanRecordingBackend{inner: NewMemoryBackend()}
-	board := NewBoardAdapter(b)
+	board, err := NewBoardAdapter(b)
+	if err != nil {
+		t.Fatal(err)
+	}
 	board.Seed(
 		taskboard.Task{ID: "t1", State: taskboard.StateOpen},
 		taskboard.Task{ID: "t2", State: taskboard.StateOpen},
@@ -85,7 +88,10 @@ func TestListIsSingleAtomicScan(t *testing.T) {
 func TestListExcludesDeletedTasks(t *testing.T) {
 	ctx := context.Background()
 	inner := NewMemoryBackend()
-	board := NewBoardAdapter(inner)
+	board, err := NewBoardAdapter(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
 	board.Seed(
 		taskboard.Task{ID: "t1", State: taskboard.StateOpen},
 		taskboard.Task{ID: "t2", State: taskboard.StateOpen},
