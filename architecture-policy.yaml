@@ -850,7 +850,9 @@ modules:
       机器可判的原因）。纯函数面，不做队列不做执行；可达性/深度归上游
       oagentkit/agent/dispatch（原 dispatch 门面 v0.35.0 已整包删除）。
       多副本配额原语 QuotaStore（Reserve/Release 存储侧原子预占；issue #189）
-      是接口 + MemQuotaStore 进程内参考实现，跨进程落库归宿主。
+      + 悬挂预占回收协议（ReserveLease/Reclaim/SweepExpired；归属 TaskID/Owner、
+      有效期 Until、任务租约判定面 TaskLeaseOracle；issue #267）是接口 +
+      MemQuotaStore 进程内参考实现，跨进程落库归宿主。
 
   # ── 2026-11-15 新增（issue #169 #170，下沉提案落地）─────────────────
   #
