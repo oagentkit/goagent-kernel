@@ -315,10 +315,10 @@ func applyOne(it *Item, b Blob, req Request, fresh map[string]struct{}) (storedN
 func sanitizeExt(ext string) (string, error) {
 	e := strings.TrimSpace(ext)
 	e = strings.TrimPrefix(e, ".")
-	if e == "" || strings.Trim(e, ".") == "" {
+	if e == "" || strings.Trim(e, ".") == "" || strings.HasPrefix(e, ".") || strings.Contains(e, "..") {
 		return "", ErrBadExt
 	}
-	if strings.ContainsAny(e, `/\`) || strings.Contains(e, "..") {
+	if strings.ContainsAny(e, `/\`) {
 		return "", ErrBadExt
 	}
 	for _, r := range e {
