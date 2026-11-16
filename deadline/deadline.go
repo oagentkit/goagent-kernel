@@ -139,6 +139,51 @@ func (a *Anchor) Remaining(now time.Time) time.Duration {
 	return a.DeadlineAt.Sub(now)
 }
 
+// Constraint 本轮时限形态（Begin 的返回值，issue #318）。
+//
+// # 为什么不是 bool
+//
+// 「本轮 expired 没有」只有两态，而本轮至少有三态：**关闭直通**（Timeout<=0，
+// 本轮无限跑、ctx 不带 Deadline）、**受约束**（装饰了 Deadline）、**已过期**
+// （不装饰，认领后立即收敛）。前两者用 bool 表达时返回值完全相同，调用方无法
+// 从返回值判断本轮有没有墙钟保护——只能去猜 ctx.Deadline()，而父 ctx 自带的
+// Deadline 会污染这个信号。
+//
+// 这里复用包内已有的三态判定面（Anchor.State）的决策结果，只把「锚点三态」
+// 投影成「本轮形态」：StateUnwritten/Live → ConstraintActive，StateExpired →
+// ConstraintExpired，Timeout<=0 → ConstraintOff。
+type Constraint int
+
+const (
+	// ConstraintOff 本轮**不受**时限约束（Timeout<=0 的关闭直通）：ctx 原样返回。
+	ConstraintOff Constraint = iota
+	// ConstraintActive 本轮受约束：ctx 带本包装饰的 Deadline（新开或锚点剩余）。
+	ConstraintActive
+	// ConstraintExpired 本轮已过期：不装饰，宿主认领迁移后立即按 timed_out 收敛。
+	ConstraintExpired
+)
+
+// String 机读名（进日志与测试断言）。
+func (c Constraint) String() string {
+	switch c {
+	case ConstraintOff:
+		return "off"
+	case ConstraintActive:
+		return "active"
+	case ConstraintExpired:
+		return "expired"
+	}
+	return "unknown"
+}
+
+// Constrained 本轮是否有墙钟保护（受约束或已过期都算——已过期只是余量为 0）。
+func (c Constraint) Constrained() bool {
+	return c == ConstraintActive || c == ConstraintExpired
+}
+
+// Expired 本轮是否已过期（仅 ConstraintExpired）。
+func (c Constraint) Expired() bool { return c == ConstraintExpired }
+
 // WithCause 按剩余时长装饰轮 ctx，cause 携带专属 ErrSessionDeadline。
 //
 // remaining <= 0 得到一个**立即过期**的 ctx（cause 仍是 ErrSessionDeadline）。
@@ -148,34 +193,42 @@ func WithCause(ctx context.Context, remaining time.Duration) (context.Context, c
 	return context.WithTimeoutCause(ctx, remaining, ErrSessionDeadline)
 }
 
-// Begin 为本轮装饰墙钟 ctx：返回 (轮 ctx, 释放函数, expired)。
+// Begin 为本轮装饰墙钟 ctx：返回 (轮 ctx, 释放函数, 本轮时限形态)。
 //
 // now 为当前时刻（宿主传 time.Now()；判定与余量都以它为准）。
 //
-//   - **0=关闭直通**（Timeout<=0）：原样返回 ctx，不装饰、不判锚点；
-//   - **shared 且锚点有效**：沿用同一锚点的剩余时长——总时限不因续跑轮重置；
-//   - **shared 且锚点已过期**：不装饰、expired=true。宿主在**认领迁移成功后**
-//     按 OutcomeTimedOut 收敛（不进编排），见包头次序纪律；
-//   - **首轮（锚点未写）/ 非 shared**：新开一段 Timeout。
+// 四种输入与返回值（issue #318：返回值必须能把前两者分开）：
 //
-// release 非 nil 时必须 defer（释放定时器）；expired=true 时 release 是空操作。
-func (c Config) Begin(ctx context.Context, a *Anchor, now time.Time) (context.Context, context.CancelFunc, bool) {
+//   - **0=关闭直通**（Timeout<=0）：原样返回 ctx，ConstraintOff——
+//     本轮**不受**约束，ctx 不带 Deadline；
+//   - **shared 且锚点有效**：沿用同一锚点的剩余时长，ConstraintActive——
+//     总时限不因续跑轮重置；
+//   - **shared 且锚点已过期**：不装饰，ConstraintExpired。宿主在**认领迁移
+//     成功后**按 OutcomeTimedOut 收敛（不进编排），见包头次序纪律；
+//   - **首轮（锚点未写）/ 非 shared**：新开一段 Timeout，ConstraintActive。
+//
+// 调用方判断「本轮是否受墙钟保护」一律看第三个返回值，**不要**用
+// ctx.Deadline() 推断：父 ctx 自带的 Deadline 会被误读成本包的约束。
+//
+// release 非 nil 时必须 defer（释放定时器）；ConstraintExpired 与
+// ConstraintOff 时 release 是空操作。
+func (c Config) Begin(ctx context.Context, a *Anchor, now time.Time) (context.Context, context.CancelFunc, Constraint) {
 	if c.Timeout <= 0 {
-		return ctx, func() {}, false // 0=关闭直通
+		return ctx, func() {}, ConstraintOff // 0=关闭直通
 	}
 	if c.Shared {
 		switch a.State(now) {
 		case StateExpired:
 			// 认领排队窗口已耗完余量：本轮不进编排，宿主认领后立即收敛。
-			return ctx, func() {}, true
+			return ctx, func() {}, ConstraintExpired
 		case StateLive:
 			rctx, cancel := WithCause(ctx, a.Remaining(now))
-			return rctx, cancel, false
+			return rctx, cancel, ConstraintActive
 		}
 		// StateUnwritten（首轮）→ 落到下面新开一段 Timeout，锚点在认领成功后写。
 	}
 	rctx, cancel := WithCause(ctx, c.Timeout)
-	return rctx, cancel, false
+	return rctx, cancel, ConstraintActive
 }
 
 // anchorAt 生成新锚点（只在首轮认领成功后调用）。
