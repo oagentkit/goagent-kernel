@@ -18,15 +18,16 @@ import (
 // 返回。旧实现把钩子放在 Apply 的锁内执行 ⇒ 同一把不可重入锁二次加锁 ⇒
 // 事件投递方 goroutine 永久挂死。
 func TestSummarizeHookMayCallProjector(t *testing.T) {
-	var p *Projector
-	p = NewProjector(Options{Summarize: func(r Row) string {
+	p := NewProjector(Options{})
+	// 钩子闭包需要引用 p 本身（回查投影器）；先构造再装配，避免在 RHS 自引用。
+	p.opts.Summarize = func(r Row) string {
 		// 宿主的常见诉求：按当前行数/既有行生成展示文案。
 		if n := p.Len(); n == 0 {
 			t.Errorf("钩子执行时行已应可查，Len()=%d", n)
 		}
 		_ = p.Rows()
 		return "hooked"
-	}})
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -51,14 +52,14 @@ func TestSlowSummarizeDoesNotBlockOtherApply(t *testing.T) {
 	var once sync.Once
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	var p *Projector
-	p = NewProjector(Options{Summarize: func(Row) string {
+	p := NewProjector(Options{})
+	p.opts.Summarize = func(Row) string {
 		once.Do(func() {
 			close(entered)
 			<-release
 		})
 		return ""
-	}})
+	}
 
 	firstDone := make(chan struct{})
 	go func() {
