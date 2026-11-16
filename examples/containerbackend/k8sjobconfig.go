@@ -91,9 +91,36 @@ func WithK8sTTLSeconds(sec int32) K8sJobOption {
 // WithK8sNetworkPolicy 控制是否逐作业创建 Egress 拒绝策略（缺省 true）。
 //
 // 集群 CNI 不实现 NetworkPolicy 时必须显式关闭：关闭后 Egress() 如实降为
-// EgressUnrestricted，要求禁网的 Spec 不会选中它——不静默假报。
+// EgressUnrestricted，要求禁网的 Spec 不会选中它——不静默假报。开启时禁网
+// 档的声明还要求能力事实（WithK8sCNICapability）与出站探测
+// （WithK8sEgressProbe）齐备，见 k8sjobegress.go 的声明面门禁。
 func WithK8sNetworkPolicy(enabled bool) K8sJobOption {
 	return func(k *K8sJob) { k.networkPolicy = enabled }
+}
+
+// WithK8sExecutionNamespace 禁网任务的独立执行命名空间：策略装配开启时，
+// 作业整体（Job / NetworkPolicy / Pod / 日志 / 清理）落在此处，与业务命名
+// 空间的策略面隔离开。未装配时退回 WithK8sNamespace 的命名空间——严格策略
+// 装配（叠加语义对账）在任何命名空间都执行，独立命名空间是让对账便宜且
+// 可预期的结构前提。
+func WithK8sExecutionNamespace(ns string) K8sJobOption {
+	return func(k *K8sJob) { k.execNamespace = ns }
+}
+
+// WithK8sCNICapability 注入 CNI 能力探测：回答「本集群 CNI 是否实现
+// NetworkPolicy 数据面」（issue #262 的装配期事实）。这是禁网档声明面的
+// 必要条件——答不上来（未注入 / 报错）或不实现，Egress() 都降级为
+// EgressUnrestricted，要求禁网的 Spec 不会选中本后端（fail-closed）。
+func WithK8sCNICapability(cap K8sCNICapability) K8sJobOption {
+	return func(k *K8sJob) { k.cniCap = cap }
+}
+
+// WithK8sEgressProbe 注入出站探测（禁网作业的 init 容器）：作业启动即尝试
+// 访问外部地址，探测约定见 K8sEgressProbe。没有实测面的禁网声明不许存在：
+// 探测未装配时 Egress() 降级为 EgressUnrestricted；探测已装配时实测结果写进
+// Result.Detail["egress_verified"]，探测未通过 ⇒ 作业被拒（Pod 到不了业务容器）。
+func WithK8sEgressProbe(p K8sEgressProbe) K8sJobOption {
+	return func(k *K8sJob) { k.probe = p }
 }
 
 // WithK8sMountPolicy 装配挂载白名单（issue #187 的 K8s 落点）。缺省零值 =

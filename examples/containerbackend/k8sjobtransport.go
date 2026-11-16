@@ -1,6 +1,7 @@
 // k8sjobtransport.go —— K8s Job 的传输管道：apiserver 请求骨架、状态码归一与路径。
 //
 // 拆分只为满足单文件 400 行阈值：载荷构造在 k8sjobwire.go，语义在 k8sjob.go。
+// 命名空间一律按调用传入（禁网路径可落独立执行命名空间，issue #262）。
 package containerbackend
 
 import (
@@ -15,8 +16,6 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
-
-	"github.com/yi-nology/goagent-kernel/backend"
 )
 
 type k8sResponse struct {
@@ -44,7 +43,7 @@ func (k *K8sJob) call(ctx context.Context, method, path string, body any, q url.
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	token, err := k.bearerToken()
+	token, err := k8sBearerToken(k)
 	if err != nil {
 		return k8sResponse{}, err
 	}
@@ -63,8 +62,8 @@ func (k *K8sJob) call(ctx context.Context, method, path string, body any, q url.
 	return k8sResponse{status: resp.StatusCode, body: raw}, nil
 }
 
-// bearerToken 每请求重读 token（轮换生效）；缺省文件不存在 = 无认证。
-func (k *K8sJob) bearerToken() (string, error) {
+// k8sBearerToken 每请求重读 token（轮换生效）；缺省文件不存在 = 无认证。
+func k8sBearerToken(k *K8sJob) (string, error) {
 	if k.tokenFile == "" {
 		return "", nil
 	}
@@ -90,16 +89,10 @@ func k8sAPIError(op string, resp k8sResponse) error {
 	return errors.Wrap(ErrAPICall, fmt.Sprintf("containerbackend: %s 返回 %d: %s", op, resp.status, msg))
 }
 
-func (k *K8sJob) createJob(ctx context.Context, name string, j backend.Job) error {
-	resp, err := k.call(ctx, http.MethodPost, k.jobsPath(""), buildK8sJob(name, j, k), nil)
-	if err != nil {
-		return err
-	}
-	return k8sAPIError("创建 Job", resp)
-}
+// createJob 在 k8sjobidem.go（创建落点分级：created/conflict/rejected/uncertain）。
 
-func (k *K8sJob) getJob(ctx context.Context, name string) (k8sJobResponse, bool, error) {
-	resp, err := k.call(ctx, http.MethodGet, k.jobsPath(name), nil, nil)
+func (k *K8sJob) getJob(ctx context.Context, ns, name string) (k8sJobResponse, bool, error) {
+	resp, err := k.call(ctx, http.MethodGet, k8sJobsPath(ns, name), nil, nil)
 	if err != nil {
 		return k8sJobResponse{}, false, err
 	}
@@ -116,9 +109,9 @@ func (k *K8sJob) getJob(ctx context.Context, name string) (k8sJobResponse, bool,
 	return out, true, nil
 }
 
-func (k *K8sJob) listPods(ctx context.Context, name string) ([]k8sPod, error) {
+func (k *K8sJob) listPods(ctx context.Context, ns, name string) ([]k8sPod, error) {
 	q := url.Values{"labelSelector": {k8sJobLabel + "=" + name}}
-	resp, err := k.call(ctx, http.MethodGet, k.podsPath(), nil, q)
+	resp, err := k.call(ctx, http.MethodGet, k8sPodsPath(ns), nil, q)
 	if err != nil {
 		return nil, err
 	}
@@ -132,9 +125,9 @@ func (k *K8sJob) listPods(ctx context.Context, name string) ([]k8sPod, error) {
 	return out.Items, nil
 }
 
-func (k *K8sJob) podLogs(ctx context.Context, pod string) (string, error) {
+func (k *K8sJob) podLogs(ctx context.Context, ns, pod string) (string, error) {
 	q := url.Values{"container": {k8sJobContainerName}}
-	resp, err := k.call(ctx, http.MethodGet, k.podsPath()+"/"+url.PathEscape(pod)+"/log", nil, q)
+	resp, err := k.call(ctx, http.MethodGet, k8sPodsPath(ns)+"/"+url.PathEscape(pod)+"/log", nil, q)
 	if err != nil {
 		return "", err
 	}
@@ -144,17 +137,57 @@ func (k *K8sJob) podLogs(ctx context.Context, pod string) (string, error) {
 	return string(resp.body), nil
 }
 
-func (k *K8sJob) createNetworkPolicy(ctx context.Context, name string) error {
-	resp, err := k.call(ctx, http.MethodPost, k.networkPoliciesPath(""), buildK8sNetworkPolicy(name, k), nil)
+// createNetworkPolicy 建 Egress 全拒策略；同名已存在（重试路径）回 conflict=true，
+// 由调用方对账验证后复用。
+func (k *K8sJob) createNetworkPolicy(ctx context.Context, ns, name string) (conflict bool, err error) {
+	resp, err := k.call(ctx, http.MethodPost, k8sNetworkPoliciesPath(ns, ""), buildK8sNetworkPolicy(name, ns), nil)
 	if err != nil {
-		return err
+		return false, err // 传输失败：结果不明，调用方按 fail-closed 拒绝
 	}
-	return k8sAPIError("创建 NetworkPolicy", resp)
+	if resp.status == http.StatusConflict {
+		return true, k8sAPIError("创建 NetworkPolicy", resp)
+	}
+	return false, k8sAPIError("创建 NetworkPolicy", resp)
 }
 
-func (k *K8sJob) deleteJob(ctx context.Context, name string) error {
+// getNetworkPolicy 读单个策略（重试路径上同名重建遇 409 后的复用校验）。
+func (k *K8sJob) getNetworkPolicy(ctx context.Context, ns, name string) (k8sNetworkPolicy, bool, error) {
+	resp, err := k.call(ctx, http.MethodGet, k8sNetworkPoliciesPath(ns, name), nil, nil)
+	if err != nil {
+		return k8sNetworkPolicy{}, false, err
+	}
+	if resp.status == http.StatusNotFound {
+		return k8sNetworkPolicy{}, false, nil
+	}
+	if err := k8sAPIError("查询 NetworkPolicy", resp); err != nil {
+		return k8sNetworkPolicy{}, false, err
+	}
+	var out k8sNetworkPolicy
+	if err := json.Unmarshal(resp.body, &out); err != nil {
+		return k8sNetworkPolicy{}, false, errors.Wrap(ErrAPICall, "containerbackend: 解析 NetworkPolicy 应答失败: "+err.Error())
+	}
+	return out, true, nil
+}
+
+// listNetworkPolicies 执行命名空间的策略面全量（严格策略装配的对账入口）。
+func (k *K8sJob) listNetworkPolicies(ctx context.Context, ns string) ([]k8sNetworkPolicy, error) {
+	resp, err := k.call(ctx, http.MethodGet, k8sNetworkPoliciesPath(ns, ""), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := k8sAPIError("查询 NetworkPolicy", resp); err != nil {
+		return nil, err
+	}
+	var out k8sNetworkPolicyList
+	if err := json.Unmarshal(resp.body, &out); err != nil {
+		return nil, errors.Wrap(ErrAPICall, "containerbackend: 解析 NetworkPolicy 应答失败: "+err.Error())
+	}
+	return out.Items, nil
+}
+
+func (k *K8sJob) deleteJob(ctx context.Context, ns, name string) error {
 	q := url.Values{"propagationPolicy": {"Background"}}
-	resp, err := k.call(ctx, http.MethodDelete, k.jobsPath(name), nil, q)
+	resp, err := k.call(ctx, http.MethodDelete, k8sJobsPath(ns, name), nil, q)
 	if err != nil {
 		return err
 	}
@@ -164,8 +197,8 @@ func (k *K8sJob) deleteJob(ctx context.Context, name string) error {
 	return k8sAPIError("删除 Job", resp)
 }
 
-func (k *K8sJob) deleteNetworkPolicy(ctx context.Context, name string) error {
-	resp, err := k.call(ctx, http.MethodDelete, k.networkPoliciesPath(name), nil, nil)
+func (k *K8sJob) deleteNetworkPolicy(ctx context.Context, ns, name string) error {
+	resp, err := k.call(ctx, http.MethodDelete, k8sNetworkPoliciesPath(ns, name), nil, nil)
 	if err != nil {
 		return err
 	}
@@ -175,22 +208,22 @@ func (k *K8sJob) deleteNetworkPolicy(ctx context.Context, name string) error {
 	return k8sAPIError("删除 NetworkPolicy", resp)
 }
 
-func (k *K8sJob) jobsPath(name string) string {
-	p := "/apis/batch/v1/namespaces/" + url.PathEscape(k.namespace) + "/jobs"
+func k8sJobsPath(ns, name string) string {
+	p := "/apis/batch/v1/namespaces/" + url.PathEscape(ns) + "/jobs"
 	if name != "" {
 		p += "/" + url.PathEscape(name)
 	}
 	return p
 }
 
-func (k *K8sJob) networkPoliciesPath(name string) string {
-	p := "/apis/networking.k8s.io/v1/namespaces/" + url.PathEscape(k.namespace) + "/networkpolicies"
+func k8sNetworkPoliciesPath(ns, name string) string {
+	p := "/apis/networking.k8s.io/v1/namespaces/" + url.PathEscape(ns) + "/networkpolicies"
 	if name != "" {
 		p += "/" + url.PathEscape(name)
 	}
 	return p
 }
 
-func (k *K8sJob) podsPath() string {
-	return "/api/v1/namespaces/" + url.PathEscape(k.namespace) + "/pods"
+func k8sPodsPath(ns string) string {
+	return "/api/v1/namespaces/" + url.PathEscape(ns) + "/pods"
 }
