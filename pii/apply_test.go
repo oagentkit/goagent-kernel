@@ -37,7 +37,10 @@ func TestApplyHonorsStrategy(t *testing.T) {
 		t.Fatalf("ApplyValue 未跟随策略 redact，实得 %q", out)
 	}
 
-	// hash：不可逆摘要
+	// hash：密钥化摘要（可关联；缺密钥 fail-closed，不出摘要）
+	if err := SetDigestKey(testDigestKey); err != nil {
+		t.Fatal(err)
+	}
 	if err := SetStrategy(StrategyHash); err != nil {
 		t.Fatal(err)
 	}

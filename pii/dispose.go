@@ -10,9 +10,10 @@ package pii
 // （「为什么原包不够」与三条不变量在 policy.go 的文件头，此处不重复。）
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
-
-	"github.com/oekit/pkg/encoding"
 )
 
 // redactedPlaceholder redact 策略的固定占位。
@@ -20,24 +21,47 @@ const redactedPlaceholder = "[redacted]"
 
 // applySpan 按**给定**策略处置单个 span 的原值。
 //
-// 策略由调用方传入而不是就地读全局：一次处置是一个不可分割的动作，让处置形态
-// 依赖调用时刻而返回的阻断信号依赖返回时刻，两者可能对不上（见 applySpans）。
-func applySpan(v string, kind Kind, s StrategyKind) string {
+// 策略与摘要密钥都由调用方从同一份 Policy 快照传入而不是就地读全局：一次处置
+// 是一个不可分割的动作，让处置形态依赖调用时刻而返回的阻断信号依赖返回时刻，
+// 两者可能对不上（见 applySpans）。
+func applySpan(v string, kind Kind, s StrategyKind, digestKey string) string {
 	switch s {
 	case StrategyRedact:
 		return redactedPlaceholder
 	case StrategyHash:
-		return encoding.Sha256(v + "|" + string(kind))[:16]
+		// 缺密钥 fail-closed：不出摘要。无盐无密钥的摘要只是原值的可离线穷举
+		// 等价物（手机号域 9×10⁹，字典枚举即还原），那比 mask 更危险——它
+		// 「看起来什么都不留」。缺密钥时整段替换 + applySpansAs 回报阻断，
+		// 让接线错误第一次处置就显形（取舍记录在 SetDigestKey）。
+		if digestKey == "" {
+			return redactedPlaceholder
+		}
+		return keyedDigest(v, kind, digestKey)
 	default:
 		return maskSpan(v, kind) // mask 与 block 都走保长打码；block 的处置在 Apply 层
 	}
 }
 
-// applySpansAs 以**指定**策略处置，是「一次调用一个策略」这一不变量的可测形式：
-// 测试可固定策略断言「处置形态与 blocked 互相自洽」，不必与全局开关赛跑出竞态窗口。
+// keyedDigest 域分离 + HMAC-SHA256 + 截断 16 位 hex。
 //
-// 策略由 Policy 快照带进来，而不是就地读全局——见 applySpans 下方注释。
-func applySpansAs(text string, s StrategyKind) (string, bool) {
+// 域分离（kind 作前段 + NUL 定界）让不同 Kind 的同形值永不撞摘要；NUL 定界
+// 消除拼接歧义（kind 来自固定枚举，v 任意——定界后 (kind,v) 与
+// (kind',v') 的编码不可能相同）。密钥保密 ⇒ 字典枚举失效：攻击者没有密钥
+// 就无法对候选值复算摘要，9×10⁹ 的手机号域不再可穷举。
+func keyedDigest(v string, kind Kind, key string) string {
+	mac := hmac.New(sha256.New, []byte(key))
+	mac.Write([]byte(kind))
+	mac.Write([]byte{0})
+	mac.Write([]byte(v))
+	return hex.EncodeToString(mac.Sum(nil))[:16]
+}
+
+// applySpansAs 以**指定**策略与摘要密钥处置，是「一次调用一个策略」这一不变量的
+// 可测形式：测试可固定策略断言「处置形态与 blocked 互相自洽」，不必与全局开关
+// 赛跑出竞态窗口。
+//
+// 策略与密钥由 Policy 快照带进来，而不是就地读全局——见 applySpans 下方注释。
+func applySpansAs(text string, s StrategyKind, digestKey string) (string, bool) {
 	spans := Detect(text)
 	if len(spans) == 0 {
 		return text, false
@@ -47,11 +71,13 @@ func applySpansAs(text string, s StrategyKind) (string, bool) {
 	prev := 0
 	for _, sp := range spans {
 		b.WriteString(text[prev:sp.Start])
-		b.WriteString(applySpan(text[sp.Start:sp.End], sp.Kind, s))
+		b.WriteString(applySpan(text[sp.Start:sp.End], sp.Kind, s, digestKey))
 		prev = sp.End
 	}
 	b.WriteString(text[prev:])
-	return b.String(), s == StrategyBlock
+	// hash 缺密钥与 block 同档：要求阻断。摘要没出去，宿主必须看见「这次处置
+	// 没有按配置的形态完成」。
+	return b.String(), s == StrategyBlock || (s == StrategyHash && digestKey == "")
 }
 
 // Apply 对指定面处置一段文本。
@@ -90,7 +116,7 @@ func applyWith(p Policy, s Surface, text string) (string, bool) {
 	if !p.surfaces.Has(s) {
 		return text, false // 确属显式关闭：既定语义，原文返回
 	}
-	return applySpansAs(text, p.strategy)
+	return applySpansAs(text, p.strategy, p.digestKey)
 }
 
 // ApplyValue 递归下探常见载荷结构处置（结构面覆盖与原面无关门面一致，

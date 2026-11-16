@@ -1625,6 +1625,11 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 
 - **默认策略是 `mask`，不得改成 `block`**——block 会打断整条审计链，
   要用必须宿主显式 `SetStrategy` 并自行履行阻断。
+- **`hash` 档必须配套密钥**：`SetDigestKey` 注入 ≥16 字节的 HMAC 密钥（建议走
+  环境变量等密钥通道）。摘要 = 域分离 HMAC-SHA256 截断——同值同摘要、异值异摘要，
+  但**没有密钥的摘要只是可离线穷举的明文等价物**（手机号域约 9×10⁹），所以
+  缺密钥时 hash 档 fail-closed：整段替换 `("[redacted]", true)`，不出摘要。
+  接线期用 `DigestKeyed()` 自查。
 - **未登记面名 fail-closed**：`Apply` 遇未知面返回 `("[redacted]", true)`——
   整段替换 + 要求阻断，**不 panic、不静默放行**。面未登记与「宿主显式关闭」是两件事，
   塌缩成同一状态等于拼错一个字符即可让该面完全不脱敏。
