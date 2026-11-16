@@ -56,6 +56,8 @@ func TestChainBothGatesPass(t *testing.T) {
 //
 // 这是本包二分里最容易被抹掉的一条：链路一「顺畅」，就有人把可重试也一并抹平，
 // 于是模型为取 schema 得多绕一圈，渐进披露的收益当场归零。
+// 「可重试」的前提是先交付 schema（宿主 Load，#286）：拒绝不激活，
+// 同参重试在交付前必须照样被拒。
 func TestChainNotLoadedIsRetryable(t *testing.T) {
 	cat := catalogOf("read_logs") // 未 Load
 	c, hits := chain(t, cat, policy.NewGate(nil, nil), policy.Op{Type: policy.OpToolCall, Mutating: policy.Mutating(false), Mode: policy.ModeAuto})
@@ -65,14 +67,21 @@ func TestChainNotLoadedIsRetryable(t *testing.T) {
 		t.Fatal("未取回 schema 应拒绝")
 	}
 	if !invoke.Retryable(err) {
-		t.Fatal("目录内未取回应判为可重试（Check 已激活，重试即可成）")
+		t.Fatal("目录内未取回应判为可重试（先交付 schema 再试即可成）")
 	}
 	if *hits != 0 {
 		t.Fatalf("被拒调用不得触达执行体，实得 %d 次", *hits)
 	}
-	// 重试即可成——这是「可重试」的实际含义，不是标签。
+	// 交付前重试必须照样被拒：拒绝不是「已激活」，原样重试绕不过取回（#286）。
+	if _, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"}); err == nil {
+		t.Fatal("未交付 schema 前重试不得放行（拒绝不得激活，#286）")
+	}
+	// 交付 schema 后重试即可成——这是「可重试」的实际含义，不是标签。
+	if _, ok := cat.Load("read_logs"); !ok {
+		t.Fatal("前置失败：交付应成功")
+	}
 	if _, err := c.Do(context.Background(), invoke.Call{Name: "read_logs"}); err != nil {
-		t.Fatalf("重试应成功（Check 已激活），实得 %v", err)
+		t.Fatalf("交付后重试应成功，实得 %v", err)
 	}
 	if *hits != 1 {
 		t.Fatalf("重试成功后应触达执行体一次，实得 %d", *hits)

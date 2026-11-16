@@ -12,9 +12,13 @@ import (
 	"github.com/oekit/pkg/errors"
 )
 
-// TestGateNotLoadedIsRetryableAndActivates 目录内但未取回 → 可重试，且**已作为副作用激活**。
-// 这是本包的核心：模型凭占位猜出的调用不必为「取 schema」再绕一圈，重试即可成。
-func TestGateNotLoadedIsRetryableAndActivates(t *testing.T) {
+// TestGateNotLoadedIsRetryableWithoutActivation 目录内但未取回 → 可重试，
+// 但**不得产生激活副作用**（#286）。
+//
+// 被拒的调用尝试不是「schema 已交付」：拿它当放行判据，「猜参数 ⇒ 被拒 ⇒
+// 原样重试 ⇒ 放行」就成了绕过检索的最短路径，「先取回 schema 再调用」这道闸
+// 从未被机制强制过。放行判据必须与交付事件（宿主 Load）同源。
+func TestGateNotLoadedIsRetryableWithoutActivation(t *testing.T) {
 	c := NewCatalog(tools())
 	g := NewGate(c)
 
@@ -29,14 +33,11 @@ func TestGateNotLoadedIsRetryableAndActivates(t *testing.T) {
 		t.Fatal("未加载不得被混成「不在目录」：那是不可重试的另一种结局")
 	}
 	if !Retryable(err) {
-		t.Fatal("未加载是可恢复的，必须标为可重试")
-	}
-	if !c.IsLoaded("alpha_lookup") {
-		t.Fatal("门禁必须把该工具作为副作用激活")
+		t.Fatal("未加载是可恢复的（先取回 schema），必须标为可重试")
 	}
 	ge := gateErr(t, err)
-	if !ge.Activated {
-		t.Fatal("结构化错误应记录激活副作用")
+	if ge.Activated {
+		t.Fatal("门禁拒绝不得激活该工具：拒绝本身不是「schema 已交付」（#286）")
 	}
 	if ge.Name != "alpha_lookup" {
 		t.Fatalf("结构化错误应带工具名，实得 %q", ge.Name)
@@ -44,9 +45,22 @@ func TestGateNotLoadedIsRetryableAndActivates(t *testing.T) {
 	if !ge.Retryable() {
 		t.Fatal("结构化错误自报的重试性应与 Retryable 一致")
 	}
-	// 激活是副作用而非放行：这次调用照样被拒，但重试必成。
+	// 核心回归：未交付 schema 前，同一工具的第二次调用**仍不得放行**。
+	if err := g.Check("alpha_lookup"); err == nil || !errors.Is(err, ErrNotLoaded) {
+		t.Fatalf("未交付 schema 前第二次调用必须仍被拒为未加载，实得 %v", err)
+	}
+	if c.IsLoaded("alpha_lookup") {
+		t.Fatal("被拒的调用尝试不得把工具标成已加载")
+	}
+	if got := c.Loaded(); len(got) != 0 {
+		t.Fatalf("两次被拒不得留下任何已加载痕迹，实得 %v", got)
+	}
+	// 只有 schema 交付事件（宿主 Load）发生后，同名调用才放行。
+	if _, ok := c.Load("alpha_lookup"); !ok {
+		t.Fatal("前置失败：交付应成功")
+	}
 	if err := g.Check("alpha_lookup"); err != nil {
-		t.Fatalf("激活后重试应放行，实得 %v", err)
+		t.Fatalf("交付后重试应放行，实得 %v", err)
 	}
 }
 
@@ -166,7 +180,7 @@ func TestGateErrorMessage(t *testing.T) {
 	}
 }
 
-// TestGateConcurrentCheck 门禁并发判定：同一工具被激活后即放行，不会反复报「未加载」。
+// TestGateConcurrentCheck 门禁并发判定：schema 交付（Load）后即放行，不会反复报「未加载」。
 func TestGateConcurrentCheck(t *testing.T) {
 	c := NewCatalog(tools())
 	g := NewGate(c)
@@ -182,15 +196,12 @@ func TestGateConcurrentCheck(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			switch err := g.Check("gamma_send"); {
-			case err == nil:
-			case errors.Is(err, ErrNotLoaded):
-				mu.Lock()
-				notLoaded++
-				mu.Unlock()
-				if !c.IsLoaded("gamma_send") {
-					t.Error("未加载分支必须留下激活痕迹")
-				}
+				switch err := g.Check("gamma_send"); {
+				case err == nil:
+				case errors.Is(err, ErrNotLoaded):
+					mu.Lock()
+					notLoaded++
+					mu.Unlock()
 			default:
 				mu.Lock()
 				unexpected = append(unexpected, err)
@@ -207,7 +218,7 @@ func TestGateConcurrentCheck(t *testing.T) {
 		t.Fatalf("激活后不应反复报未加载，实得 %d 次", notLoaded)
 	}
 	if got := c.Loaded(); !reflect.DeepEqual(got, []string{"gamma_send"}) {
-		t.Fatalf("已加载集应只含一项，实得 %v", got)
+		t.Fatalf("已加载集应只含交付（Load）时留下的那一项，实得 %v", got)
 	}
 }
 

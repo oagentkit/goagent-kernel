@@ -124,7 +124,7 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 | 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
 | 环节状态流转 | `statemachine` | 纯函数件，79 行，零依赖 |
 | 工具失败分类（可重试/退避/需人工/重发安全） | `toolfail` | 分类是**数据表**，不要散落 if |
-| 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
+| 渐进披露、披露门禁 | `tooldisclose` | 拒绝不激活：交付（`Load`）前同名调用照拒（#286） |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
 | 工具名 → JS 标识符 | `toolname` | **单一真相**，`tooldisclose` 与 `ptc` 共用 |
 | 沙箱内程序化编排 | `ptc` | 程序内 `host.<tool>()` 也要过判定环 |

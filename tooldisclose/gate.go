@@ -9,7 +9,8 @@ import (
 // 门禁哨兵。两者重试性**相反**，混淆的后果是把一次策略否定变成无穷重试。
 var (
 	// ErrNotLoaded 工具在目录内，但 schema 尚未取回。
-	// 可恢复：门禁已把它作为副作用激活，重试即成。
+	// 可恢复：先经检索取回完整 schema（宿主 Load 交付）后重试即成；
+	// 拒绝本身不改任何状态（#286）。
 	ErrNotLoaded = errors.New("工具 schema 尚未取回")
 
 	// ErrNotInCatalog 工具不在目录内，从未可用。
@@ -29,8 +30,11 @@ var (
 type GateError struct {
 	// Name 被拒的工具名。
 	Name string
-	// Activated 门禁是否已把该工具激活为已加载。仅 not-loaded 一路为 true：
-	// 激活是让重试能成功的**副作用**，不改变「这次调用被拒」这个事实。
+	// Activated 门禁是否激活了该工具。
+	//
+	// 恒为 false：激活副作用已随 #286 移除——被拒的调用尝试不是「schema 已交付」，
+	// 拿它当放行判据会让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为绕过检索的最短路径。
+	// 字段保留以维持结构化形状（本包为 Stable 级，删导出字段是 breaking）。
 	Activated bool
 
 	kind      error
@@ -94,11 +98,12 @@ func Retryable(err error) bool {
 //
 // # 为什么门禁必须能对模型说话
 //
-// 本包的机器侧契约一直很完整：哨兵二分、Retryable 自报、Activated 副作用，
+// 本包的机器侧契约一直很完整：哨兵二分、Retryable 自报、放行判据与交付同源，
 // 都在为**程序**决策服务。但模型不是程序——它看到一句「工具 schema 尚未取回」
-// 之后无从判断该重试还是该换工具，只能自己猜。而两类结局要求的行为恰好相反：
-// 未加载时**必须重试**（且已经激活，重试必成），不在目录时**必须停手**。
-// 指引缺位时，模型在第二类上继续重试，就会把一次策略否定拖成一段空转。
+// 之后无从判断该做什么，只能自己猜。而两类结局要求的行为恰好相反：
+// 未加载时**先取回 schema 再调**（占位面与拒绝面必须同一个方向，见 #286），
+// 不在目录时**必须停手**。指引缺位时，模型在第二类上继续重试，
+// 就会把一次策略否定拖成一段空转。
 //
 // # 为什么不是可选能力
 //
@@ -111,9 +116,12 @@ func (e *GateError) Guidance() string {
 	}
 	switch {
 	case errors.Is(e.kind, ErrNotLoaded):
-		// 带出工具名：审计要能回答「哪一次调用被拒」，模型也要知道该重试哪一个。
+		// 带出工具名：审计要能回答「哪一次调用被拒」，模型也要知道该取回哪一个。
+		// 措辞必须与占位面的取回指令同一个方向（先检索拿 schema，再调用）：
+		// 旧文案「已把它激活，请以相同参数直接重新调用」教模型跳过取回，
+		// 让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为最短路径（#286）。
 		return fmt.Sprintf(
-			"工具 %q 在可用目录内，但完整参数说明尚未取回。本次调用已把它激活，请以相同参数直接重新调用同一工具——下一次即可成功。",
+			"工具 %q 在可用目录内，但完整参数说明尚未取回。请先用检索工具按关键词取回本工具的完整 schema，再发起调用。",
 			e.Name)
 	case errors.Is(e.kind, ErrNotInCatalog):
 		return fmt.Sprintf(
@@ -148,9 +156,9 @@ func NewGate(c *Catalog) *Gate { return &Gate{cat: c} }
 // Check 判定一次调用是否放行。三种结局，处置互不代偿：
 //
 //   - 已加载 → nil，可执行；
-//   - 在目录内但未加载 → 返回可重试的 *GateError，并**顺手激活该工具**
-//     （Activated=true）。激活是副作用而非放行：这次调用照样被拒，但重试必成，
-//     免得再让模型为「取 schema」多绕一圈；
+//   - 在目录内但未加载 → 返回可重试的 *GateError，**不产生任何副作用**：
+//     放行判据与「schema 已交付」（Catalog.Load）同源，拒绝不改状态——
+//     交付前同名调用一律照拒，交付后重试即成（#286）；
 //   - 不在目录内 → 返回不可重试的 *GateError，调用方应就地终止，不得退避重试。
 //
 // 空工具名按「不在目录内」处置：门禁不做乐观放行。
@@ -161,10 +169,11 @@ func (g *Gate) Check(name string) error {
 	if !g.cat.Has(name) {
 		return newGateError(name, ErrNotInCatalog, false, false)
 	}
+	// 放行判据只有一条：schema 已交付（Load）。被拒的调用尝试不改变任何状态，
+	// 「同参原样重试」在交付前永远拿不到放行——否则门禁退化成
+	// 「第一次拒绝 + 之后放行」，先取回再调用这道闸从未被强制过（#286）。
 	if g.cat.IsLoaded(name) {
 		return nil
 	}
-	// 目录成员构造后不变，故 Has 为真即 Load 必成，无需再判一次失败。
-	g.cat.Load(name)
-	return newGateError(name, ErrNotLoaded, true, true)
+	return newGateError(name, ErrNotLoaded, true, false)
 }

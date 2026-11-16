@@ -2,7 +2,7 @@ package tooldisclose
 
 // 门禁指引（模型侧）的用例。夹具用合成工具名，不带领域味。
 //
-// 与 gate_test.go 分文件：那里钉的是机器侧契约（哨兵二分 / 重试性 / 激活副作用），
+// 与 gate_test.go 分文件：那里钉的是机器侧契约（哨兵二分 / 重试性 / 放行判据与交付同源），
 // 这里钉的是模型侧契约（拒绝时模型拿到的话能不能指导它做对下一步）。
 // 两组用例都必须存在——机器侧全对而模型侧缺位，是这个包最容易出现的一种半成品。
 
@@ -15,12 +15,13 @@ import (
 	"github.com/oekit/pkg/errors"
 )
 
-// TestGuidanceOrdersModelToRetryOnlyWhenRetryWillSucceed 门禁的两类结局要求模型
-// 做的动作恰好相反，因此指引必须把这件事说死，不能只说「被拒了」。
+// TestGuidanceDirectsRetrievalNotBlindRetry 门禁的两类结局要求模型做的动作恰好相反，
+// 指引必须把这件事说死；且「未加载」的指引必须教**先取回 schema**，不得教跳过取回（#286）。
 //
-// 这条是本组用例的核心：指引若缺位，模型在「不在目录」这一类上继续重试，
-// 就是把一次策略否定拖成一段空转——而退避层对此无能为力（它只看 Retryable）。
-func TestGuidanceOrdersModelToRetryOnlyWhenRetryWillSucceed(t *testing.T) {
+// 旧措辞「本次调用已把它激活，请以相同参数直接重新调用同一工具」与占位面的指令方向相反：
+// 占位面教「先用检索工具取回 schema」，拒绝面却教「原样重试」——模型照拒绝面走，
+// 同一组编造参数第二次就放行，「先取回再调用」这道闸被自己的恢复路径绕开。
+func TestGuidanceDirectsRetrievalNotBlindRetry(t *testing.T) {
 	c := catalogOf("alpha_lookup")
 	g := NewGate(c)
 
@@ -29,8 +30,14 @@ func TestGuidanceOrdersModelToRetryOnlyWhenRetryWillSucceed(t *testing.T) {
 		t.Fatal("未加载的调用必须被拒")
 	}
 	loaded := Guidance(err)
-	if !strings.Contains(loaded, "重新调用同一工具") {
-		t.Fatalf("未加载已激活，指引必须让模型原样重试，实得 %q", loaded)
+	// 指引必须指回「先取回 schema」：与占位面的取回指令同一个方向。
+	if !strings.Contains(loaded, "取回") {
+		t.Fatalf("未加载的指引必须教先取回 schema（与占位面同向），实得 %q", loaded)
+	}
+	// 反向验证：不得出现「以相同参数直接重新调用」这类跳过取回的措辞——
+	// 那正是 #286 的缺陷本身。把文案改回旧措辞，这条必红。
+	if strings.Contains(loaded, "相同参数") || strings.Contains(loaded, "直接重新调用") {
+		t.Fatalf("指引不得教模型跳过 schema 取回（#286），实得 %q", loaded)
 	}
 	if strings.Contains(loaded, "不要重试") {
 		t.Fatalf("可恢复的结局不得出现「不要重试」，实得 %q", loaded)
@@ -43,6 +50,9 @@ func TestGuidanceOrdersModelToRetryOnlyWhenRetryWillSucceed(t *testing.T) {
 	ghost := Guidance(err)
 	if !strings.Contains(ghost, "不要重试") {
 		t.Fatalf("不在目录不可恢复，指引必须明说不要重试，实得 %q", ghost)
+	}
+	if strings.Contains(ghost, "取回") {
+		t.Fatalf("不在目录谈不上取回 schema，指引不得张冠李戴，实得 %q", ghost)
 	}
 
 	// 反证：两句话给出的指令必须真的相反，而不是同一句话换个说法——
@@ -107,8 +117,11 @@ func TestStageReasonCarriesGuidance(t *testing.T) {
 	if !v.Retryable {
 		t.Fatal("未加载结局应标为可重试")
 	}
-	if !strings.Contains(v.Reason, "重新调用同一工具") {
-		t.Fatalf("链上 Reason 应是面向模型的指引，实得 %q", v.Reason)
+	if !strings.Contains(v.Reason, "取回") {
+		t.Fatalf("链上 Reason 应教模型先取回 schema（#286），实得 %q", v.Reason)
+	}
+	if strings.Contains(v.Reason, "相同参数") || strings.Contains(v.Reason, "直接重新调用") {
+		t.Fatalf("链上 Reason 不得教模型跳过取回（#286），实得 %q", v.Reason)
 	}
 	if !strings.Contains(v.Reason, "alpha_lookup") {
 		t.Fatalf("链上 Reason 应保留工具名供留痕，实得 %q", v.Reason)
@@ -126,10 +139,22 @@ func TestStageReasonCarriesGuidance(t *testing.T) {
 		t.Fatalf("不可恢复结局的指引必须明说不要重试，实得 %q", v2.Reason)
 	}
 
-	// 已激活后同一工具必须放行（自愈回归：指引改造不得碰这条既有行为）。
+	// 未交付 schema 前，同一工具的第二次调用仍不得放行（#286 的核心回归）：
+	// 拒绝不激活，放行判据只认交付事件。
 	v3, err := st.Check(context.Background(), invoke.Call{Name: "alpha_lookup"})
-	if err != nil || !v3.Allow {
-		t.Fatalf("首次拒绝已激活该工具，重试必须放行；实得 allow=%v err=%v", v3.Allow, err)
+	if err != nil {
+		t.Fatalf("门禁环不应返回 error，实得 %v", err)
+	}
+	if v3.Allow {
+		t.Fatal("未交付 schema 前第二次调用不得放行（拒绝不得激活，#286）")
+	}
+	// 交付事件（宿主 Load）发生后，同名调用才放行。
+	if _, ok := cat.Load("alpha_lookup"); !ok {
+		t.Fatal("前置失败：交付应成功")
+	}
+	v4, err := st.Check(context.Background(), invoke.Call{Name: "alpha_lookup"})
+	if err != nil || !v4.Allow {
+		t.Fatalf("交付后重试应放行；实得 allow=%v err=%v", v4.Allow, err)
 	}
 }
 
