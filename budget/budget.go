@@ -215,15 +215,28 @@ type Display struct {
 
 // Used 展示值 = min(Input, Cap)。未设上限时返回 Input。
 func (d Display) Used() int {
-	if d.Cap <= 0 {
+	if !capacityKnown(d.Cap) {
 		return d.Input
 	}
 	return min(d.Input, d.Cap)
 }
 
-// Overflow 输入是否已越界（仅在设了上限时有意义）。
+// Overflow 输入是否已越界。
+//
+// # 上限未知时返回 true（与 Classify 同向）
+//
+// 此前实现是 `d.Cap > 0 && d.Input > d.Cap`：Cap<=0 时恒 false，读作
+// 「未越界」；而同一个 capacity<=0 在 Classify 里判 critical（「不知道会不会
+// 溢出」与「不会溢出」行为完全相反）。宿主拿 Overflow 当「要不要处置」的
+// 闸门时，未知上限会恒放行——同一份账两个相反结论。
+//
+// 故未知上限一律判 true：不能证明未越界，就不得声称未越界。已知上限
+// （capacityKnown）仍按 Input > Cap 判，恰好等于上限不算越界。
 func (d Display) Overflow() bool {
-	return d.Cap > 0 && d.Input > d.Cap
+	if !capacityKnown(d.Cap) {
+		return true
+	}
+	return d.Input > d.Cap
 }
 
 // Report 一次计量报告：分段估算、provider 报数、展示口径三者**分列**。

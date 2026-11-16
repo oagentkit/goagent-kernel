@@ -958,8 +958,9 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
 - **分段估算永不回填 provider 报数**。provider 报的是总数，回填到分段等于让
   tokenizer 误差披上分段精确度的外衣，而压实计划恰按段分配裁剪——喂残差等于喂假账。
 - **`MaxInput` 无预留或窗口未知时原样返回 `baseInput`**——扣减纯属内核自作主张。
-- **`Classify` 在 `capacity<=0` 时返回 `PressureCritical`**：
-  「不知道会不会溢出」与「不会溢出」行为完全相反，不得声称余量充足。
+- **`Classify` 与 `Display.Overflow` 在 `capacity<=0` 时同向**：Classify 返回
+  `PressureCritical`，Overflow 返回 `true`——「不知道会不会溢出」与「不会溢出」
+  行为完全相反，不得声称余量充足。两者共用同一份「上限是否已知」派生。
 - **归档必须先于摘要**：摘要失败时原文已落盘可直接重试（重跑归档幂等）；
   反序可能出现「摘要已丢弃原文、摘要本身又没拿到」的净损失。
 - **`Apply` 的三条计划校验全在任何副作用之前**——被拒的调用不得留下任何副作用。

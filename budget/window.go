@@ -136,8 +136,12 @@ func thresholdAt(c, pct int64) int64 {
 //
 // capacity <= 0 说明调用方没给出窗口约束，此时**不能声称余量充足**——
 // 「不知道会不会溢出」和「不会溢出」在行为上完全相反。
+//
+// 「上限是否已知」只由 capacityKnown 派生一次：本函数与 Display.Overflow
+// 共用同一判据，不得各自写一份（issue #311 的教训正是两个判据对同一个
+// capacity<=0 给出了相反方向）。
 func Classify(input, capacity int) Pressure {
-	if capacity <= 0 {
+	if !capacityKnown(capacity) {
 		return PressureCritical
 	}
 	used := int64(input)
@@ -154,3 +158,9 @@ func Classify(input, capacity int) Pressure {
 		return PressureNormal
 	}
 }
+
+// capacityKnown 上限是否已知（唯一派生点）：cap <= 0 = 未知。
+//
+// Classify 与 Display.Overflow 都从这里读，禁止在判据里各写一份
+// `capacity <= 0`——两份派生迟早会漂成相反方向。
+func capacityKnown(capacity int) bool { return capacity > 0 }

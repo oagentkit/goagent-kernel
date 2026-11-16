@@ -221,8 +221,10 @@ func TestDisplayUnknownCap(t *testing.T) {
 	if got := d.Used(); got != 42 {
 		t.Fatalf("未设上限应原样展示，实得 %d", got)
 	}
-	if d.Overflow() {
-		t.Fatal("未设上限不应判越界")
+	// 未知上限必须与 Classify 同向（critical）：不能证明未越界，就不得
+	// 声称未越界。详见 TestUnknownCapacityOverflowMatchesClassify。
+	if !d.Overflow() {
+		t.Fatal("未设上限应判越界（与 Classify 的 critical 同向）")
 	}
 }
 
