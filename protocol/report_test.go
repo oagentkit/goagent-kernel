@@ -299,9 +299,10 @@ func TestScalarCoercion(t *testing.T) {
 	if r.Confidence != "true" {
 		t.Fatalf("标量未归一化: %q", r.Confidence)
 	}
-	// scope 非枚举文本（数字/主机名）→ 规整为 in（有明确检测对象语义）。
-	if r.Scope != "in" {
-		t.Fatalf("scope 应规整为 in: %q", r.Scope)
+	// scope 非字符串形态不是可判定的路由信号：删键（空=未声明），
+	// 不凭空指定 in/out（#321：归一化不得把「读不懂」压成「在范围内」）。
+	if r.Scope != "" {
+		t.Fatalf("scope 非字符串形态应保持未声明（空），实得 %q", r.Scope)
 	}
 	if len(r.ExecutedSteps) != 2 || r.ExecutedSteps[0] != "true" {
 		t.Fatalf("列表内标量应转文本: %v", r.ExecutedSteps)

@@ -20,7 +20,8 @@ import (
 //   - verdicts[].stance："Adopt" → 条目**被静默丢弃**（连 warn 都没有，
 //     事后无法区分「模型没给裁决」与「裁决被大小写吃掉」）；
 //   - scope："OUT" → 被翻成 "in"——**语义反转**：模型说「超出范围、要转人工」，
-//     解析器记成「在范围内」，而它是路由信号；
+//     解析器记成「在范围内」，而它是路由信号；词表外值（"external" / "转出" /
+//     ""）同样曾被兜底成 "in"，现在保持原值交 Validate 裁决；
 //   - needs_followup：["True"] → 留下一条内容为 "True" 的**乱码跟进项**
 //     （跟进项是要人去执行的东西，混进乱码比少一条更坏）。
 //
@@ -130,8 +131,8 @@ func normalizeDecision(m map[string]any, k string, v any) {
 	}
 }
 
-// normalizeScope scope 只认 in|out：枚举保留；其余任意形态（主机名/对象/数组）→ in
-// （模型给出了检测对象）。
+// normalizeScope scope 归一：只把**写法差异**收敛到 in|out 的规范形态；
+// 词表外的字符串保持原值，交给 Validate 的白名单判 critical。
 //
 // # 大小写必须先归一，否则「out」会被翻成「in」
 //
@@ -145,21 +146,30 @@ func normalizeDecision(m map[string]any, k string, v any) {
 //   - Validate 的「scope=out 时 redirect 必填」不再触发——out 形态缺 redirect
 //     会被整份拒（correct），而等价的 "OUT" 形态却畅通无阻（wrong）。
 //
-// 与 decision / action / confidence / stance 同一类错（写法差异不该改变语义），
-// 归一口径一致：ToLower + TrimSpace。
+// # 词表外不得兜底成 "in"
 //
-// 未知的**字符串**取值仍落 "in"（既定设计：模型给了检测对象）。
-// 本函数只收拾「同一个词的写法差异」——"OUT" 是 out，不是未知词。
+// 旧实现的 default 分支把 "external" / "out_of_scope" / "转出" / "" 全部改写成
+// "in"（注释写的是「模型给了检测对象」）——这违反本文件头部的边界：「未知取值
+// **不**被映射成某个已知值（那是判据的事，交给 Validate 的白名单）」。解析面
+// 把「读不懂」压成「最常见的那一档」，方向恰好是更宽松的那一侧：一份「超出范围、
+// 要转人工」的报告被记成「在范围内」。
+//
+// 故 default 保持原值；Validate 的白名单（scope 不在白名单 → critical）与
+// warn 留痕负责裁决。非字符串形态（对象/数组/数字）不是可判定的路由信号：
+// 删键（scope 可选），不凭空指定 in/out，也不让严格 unmarshal 因类型不符炸掉
+// 整份报告。
+//
+// 归一口径与 decision / action / confidence / stance 一致：ToLower + TrimSpace。
 func normalizeScope(m map[string]any, k string, v any) {
 	s, ok := v.(string)
 	if !ok {
-		m[k] = "in" // 非字符串形态（对象/数组/数字）：模型给了检测对象
+		delete(m, k)
 		return
 	}
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "out":
-		m[k] = "out"
+	switch st := strings.ToLower(strings.TrimSpace(s)); st {
+	case "in", "out":
+		m[k] = st
 	default:
-		m[k] = "in"
+		m[k] = s // 词表外：保持原值，判定交给 Validate
 	}
 }

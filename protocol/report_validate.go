@@ -28,6 +28,10 @@ func (r *Report) Validate() ([]string, error) {
 		critical = append(critical, fmt.Sprintf("decision 不在白名单: %q", r.Decision))
 	}
 	if r.Scope != "" && !scopeAll[r.Scope] {
+		// warn 与 critical 同时留痕：归一化面不再把词表外值改写成 "in"，
+		// 宿主必须能在「归一化后仍词表外」这件事上看到信号，而不是只拿到
+		// 一条整份拒绝。
+		warns = append(warns, fmt.Sprintf("scope 不在白名单: %q（保持原值，未归一为 in/out）", r.Scope))
 		critical = append(critical, fmt.Sprintf("scope 不在白名单: %q", r.Scope))
 	}
 	if r.Scope == "out" && strings.TrimSpace(r.Redirect) == "" {
