@@ -33,6 +33,9 @@ type MemoryLedger struct {
 type LedgerOption func(*MemoryLedger)
 
 // WithLedgerClock 注入 Ledger 自己的时钟（存储侧时钟语义见 ClockedLedger）。
+//
+// 注入的回调**不会在持有 MemoryLedger 内部锁时被调用**（issue #317）：回调里
+// 重入本包的 Load/Epoch/List 等接口不会与不可重入的互斥锁相撞。
 func WithLedgerClock(clock func() time.Time) LedgerOption {
 	return func(m *MemoryLedger) {
 		if clock != nil {
@@ -67,10 +70,20 @@ func (m *MemoryLedger) UseClock(clock func() time.Time) {
 }
 
 // Now 存储侧当前时刻（ClockedLedger 的实现；Desk 用它推算截止时刻与过期）。
+//
+// # 为什么先取回调、解锁后再调（issue #317）
+//
+// clock 是宿主注入的装配接缝，回调里重入本包是自然写法；持锁调用它意味着
+// 宿主只要在回调里读一次记录就会永久死锁（不是错误返回，没有超时兜底）。
+// 锁只保护「取哪个回调」（UseClock 可并发替换），**调用**发生在锁外。
 func (m *MemoryLedger) Now(context.Context) (time.Time, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.clock(), nil
+	clock := m.clock
+	m.mu.Unlock()
+	if clock == nil {
+		clock = time.Now // 零值 MemoryLedger 的兜底（构造路径总会填上）
+	}
+	return clock(), nil
 }
 
 // Save 条件写入（语义见 Ledger.Save 的三形态）。

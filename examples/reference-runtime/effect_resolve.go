@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"time"
 
 	"github.com/oekit/pkg/errors"
 
@@ -20,10 +21,11 @@ import (
 // 必须 Resolution.ForceRetryable 的显式决策才放行——「不可重试」是判据，
 // 不是注释。
 func (s *effectStore) ResolveUncertain(_ context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.resolveWithin(act, res, "")
+	return s.resolveWithin(act, res, "", now)
 }
 
 // ResolveUncertainOwned 带对账占用凭据的裁决（OwnedResolveStore）：
@@ -33,15 +35,16 @@ func (s *effectStore) ResolveUncertainOwned(_ context.Context, act sideeffect.Ac
 		return sideeffect.OutcomeContended, sideeffect.Result{}, errors.Wrap(sideeffect.ErrReconcileLost,
 			"空凭据不是任何一次对账认领", "key", string(act.Key))
 	}
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.resolveWithin(act, res, holder)
+	return s.resolveWithin(act, res, holder, now)
 }
 
 // resolveWithin 裁决主体。requiredHolder 非空时先校验对账占用凭据
 // （已完成的重放无害，先于凭据校验——读既有事实不问资格）。
-func (s *effectStore) resolveWithin(act sideeffect.Action, res sideeffect.Resolution, requiredHolder string) (sideeffect.Outcome, sideeffect.Result, error) {
+func (s *effectStore) resolveWithin(act sideeffect.Action, res sideeffect.Resolution, requiredHolder string, now time.Time) (sideeffect.Outcome, sideeffect.Result, error) {
 	rec, err := s.actLocked(act)
 	if err != nil {
 		return sideeffect.OutcomeContended, sideeffect.Result{}, err
@@ -50,7 +53,6 @@ func (s *effectStore) resolveWithin(act sideeffect.Action, res sideeffect.Resolu
 		return sideeffect.OutcomeReplayed, rec.result, nil
 	}
 	if requiredHolder != "" {
-		now := s.clock()
 		if rec.recon == nil || !now.Before(rec.recon.expires) || rec.recon.holder != requiredHolder {
 			return sideeffect.OutcomeContended, sideeffect.Result{}, errors.Wrap(sideeffect.ErrReconcileLost,
 				"出示的对账认领不是当前有效的一份（已过期或已被接管）",

@@ -53,6 +53,9 @@ type registryConfig struct {
 //
 // 生产装配不必注入：到期判定走注册表自己的时钟是契约要求，
 // 多副本下这个「自己的时钟」应当是存储侧时钟（见 Registry 的说明）。
+//
+// 注入的回调**不会在持有 MemRegistry 内部锁时被调用**（issue #317）：回调里
+// 重入本包的 Register/List/Deregister 不会与不可重入的互斥锁相撞。
 func WithRegistryClock(now func() time.Time) RegistryOption {
 	return func(c *registryConfig) {
 		if now != nil {
@@ -92,8 +95,12 @@ func NewMemRegistry(opts ...RegistryOption) *MemRegistry {
 // 编译期契约断言：参考实现必须满足 Registry（缺一个方法就红在这里）。
 var _ Registry = (*MemRegistry)(nil)
 
-// nowLocked 读注册表时钟（持有 m.mu 时调用；nil 时钟退回 time.Now）。
-func (m *MemRegistry) nowLocked() time.Time {
+// nowValue 读注册表时钟（nil 时钟退回 time.Now）。
+//
+// **必须在 m.mu 之外调用**（issue #317）：now 是宿主注入的回调，持锁调用它
+// 会让「回调里重入本包」变成永久死锁。now 字段只在构造期写入，无并发写者，
+// 故读取本身不需要锁。
+func (m *MemRegistry) nowValue() time.Time {
 	if m.now != nil {
 		return m.now()
 	}
@@ -105,13 +112,13 @@ func (m *MemRegistry) Register(_ context.Context, spec Spec) (Registration, erro
 	if err := spec.Validate(); err != nil {
 		return Registration{}, err
 	}
+	now := m.nowValue() // 锁外取时钟（issue #317）
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.recs == nil {
 		m.recs = make(map[string]*memRegistration)
 	}
 	m.seq++
-	now := m.nowLocked()
 	rec := &memRegistration{
 		token:     "reg-" + spec.ID + "-" + strconv.FormatUint(m.seq, 10),
 		labels:    maps.Clone(spec.Labels),
@@ -128,14 +135,15 @@ func (m *MemRegistry) Heartbeat(_ context.Context, id, token string, ttl time.Du
 		return time.Time{}, errors.Wrap(ErrInvalidConfig,
 			"worker: 心跳 TTL 必须为正——不设限的注册会让幽灵永远在线", "id", id)
 	}
+	now := m.nowValue() // 锁外取时钟；一次读取同时用于资格判定与续期（issue #317）
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r, ok := m.recs[id]
-	if !ok || r.token != token || !m.nowLocked().Before(r.expiresAt) {
+	if !ok || r.token != token || !now.Before(r.expiresAt) {
 		return time.Time{}, errors.Wrap(ErrNotRegistered,
 			"worker: 心跳被拒：注册已失效、令牌不匹配或有效期已过", "id", id)
 	}
-	r.expiresAt = m.nowLocked().Add(ttl)
+	r.expiresAt = now.Add(ttl)
 	return r.expiresAt, nil
 }
 
@@ -156,9 +164,9 @@ func (m *MemRegistry) Deregister(_ context.Context, id, token string) error {
 // 过期记录保留并显式 Alive=false（契约允许实现自行清理；这里选择让
 // 幽灵可见：运维看到「有一条过期注册」比「它凭空消失」更容易解释）。
 func (m *MemRegistry) List(_ context.Context) ([]Status, error) {
+	now := m.nowValue() // 锁外取时钟（issue #317）
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	now := m.nowLocked()
 	out := make([]Status, 0, len(m.recs))
 	for id, r := range m.recs {
 		out = append(out, Status{

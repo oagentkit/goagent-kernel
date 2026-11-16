@@ -31,6 +31,7 @@ func (s *effectStore) BeginReconcile(_ context.Context, act sideeffect.Action, t
 			"对账认领时长必须为正（零/负 TTL 造出出生即过期的认领）",
 			"key", string(act.Key))
 	}
+	now := s.clock() // 锁外取存储时钟（issue #317）
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -44,7 +45,6 @@ func (s *effectStore) BeginReconcile(_ context.Context, act sideeffect.Action, t
 	if !rec.uncertain {
 		return sideeffect.Reconcile{}, sideeffect.ErrNotUncertain
 	}
-	now := s.clock()
 	if rec.recon != nil && now.Before(rec.recon.expires) {
 		return sideeffect.Reconcile{}, sideeffect.ErrReconcileTaken
 	}

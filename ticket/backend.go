@@ -112,6 +112,10 @@ func NewMemoryBackend(maxSize int) Backend {
 // 进程内参考实现与跨进程 DB 遵守同一条语义（DB 用存储时钟），测试也能
 // 确定性地推进过期（不靠 sleep）。
 //
+// **本实现不会在持有内部锁时调用该回调**（issue #317）：now 在进入临界区
+// 之前取值，回调里重入本包的 Put/Take/GC/Len 不会撞上不可重入的互斥锁。
+// 宿主可以放心在时钟闭包里读票据数或其他本包接口。
+//
 // maxSize <= 0 ⇒ DefaultMaxEntries；now 为 nil ⇒ time.Now。
 func NewMemoryBackendWithClock(maxSize int, now func() time.Time) Backend {
 	if maxSize <= 0 {
@@ -125,20 +129,25 @@ func NewMemoryBackendWithClock(maxSize int, now func() time.Time) Backend {
 
 // Put 写入；容量已满 ⇒ 显式报错（与旧实现同一口径：满了就说满，不默默淘汰）。
 // expires_at 按**存储时钟** + ttl 计算，返回同一个时刻。
+//
+// 存储时钟在**锁外**取值（issue #317）：时钟是宿主注入的回调，持锁调用它
+// 会让「回调里重入本包」变成永久死锁。
 func (b *memoryBackend) Put(id string, binding Binding, ttl time.Duration) (time.Time, error) {
+	exp := b.now().Add(ttl)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.m) >= b.maxSize {
 		return time.Time{}, fmt.Errorf("票据空间已满（上限 %d 张）", b.maxSize)
 	}
-	exp := b.now().Add(ttl)
 	b.m[id] = entry{binding: binding, expiresAt: exp}
 	return exp, nil
 }
 
 // Take 原子取出并删除（单锁内完成取/删/判过期，顺序与旧 Consume 逐字一致）。
 // 过期比较只读**存储时钟**——节点时钟在接口层面就无法传进来（issue #186）。
+// 时钟回调在锁外调用（issue #317）。
 func (b *memoryBackend) Take(id string) (Binding, bool, error) {
+	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	tk, ok := b.m[id]
@@ -146,17 +155,17 @@ func (b *memoryBackend) Take(id string) (Binding, bool, error) {
 		return Binding{}, false, nil
 	}
 	delete(b.m, id)
-	if b.now().After(tk.expiresAt) {
+	if now.After(tk.expiresAt) {
 		return Binding{}, false, nil
 	}
 	return tk.binding, true, nil
 }
 
-// GC 清掉过期票据（按**存储时钟**判）。
+// GC 清掉过期票据（按**存储时钟**判；时钟回调在锁外调用，issue #317）。
 func (b *memoryBackend) GC() (int, error) {
+	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	now := b.now()
 	n := 0
 	for id, tk := range b.m {
 		if now.After(tk.expiresAt) {
