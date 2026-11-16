@@ -75,6 +75,8 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 		}
 
 		// 3. 执行中：这次尝试还没裁决 ⇒ 不得重新授予执行权。
+		// hasIntent 要求四列齐全；半写行已由 lockAction 的 checkIntentColumns
+		// 拒绝（ErrIntentIncomplete），不会走到下面解引用 NULL 的路径。
 		if a.hasIntent() {
 			if now.Before(*a.intentExpires) {
 				return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, nil
@@ -83,10 +85,7 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 			// 意图与资源持有是同一次尝试的两个投影，同刻到期：作废意图时，
 			// 若资源闸仍是这次尝试的那份，一并作废（没人接管时令牌没变，
 			// 不清的话「尝试已转入未知态」在资源侧看不出来）。
-			irResource, irHolder, irFence := *a.intentResource, "", *a.intentFence
-			if a.intentHolder != nil {
-				irHolder = *a.intentHolder
-			}
+			irResource, irHolder, irFence := *a.intentResource, *a.intentHolder, *a.intentFence
 			a.intentResource, a.intentFence, a.intentHolder, a.intentExpires = nil, nil, nil, nil
 			if irResource == act.Resource && rr.holder != nil && *rr.holder == irHolder && rr.fence == irFence {
 				rr.holder = nil
