@@ -918,14 +918,18 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
 		return nil
 	}
 
-	// ④ 计划是纯计算，无 I/O；三条空操作守卫返回「原因」而非 bool
+	// ④ 计划是纯计算，无 I/O；三条空操作守卫返回「原因」而非 bool。
+	// 条目逐条带 Item.Tokens，Apply 按逐条之和记毛移除量；PlanInput.ItemTokens
+	// 只是宿主没提供逐条量时的兜底估算。
 	plan, err := budget.BuildPlan(budget.PlanInput{Items: len(items), KeepTail: 4})
 	if err != nil {
 		return nil // 条数不够等，本轮不压
 	}
 
+	// 尾部从 plan.Cutoff 起切（= plan.SummarizeItems），不是从
+	// plan.KeepTailItems 起切：后者是「保留几条」，前者才是「从哪里开始」。
 	res, err := budget.Apply(ctx, plan,
-		items[:plan.SummarizeItems], items[plan.KeepTailItems:],
+		items[:plan.Cutoff], items[plan.Cutoff:],
 		blobArchive{}, llmSummarizer{})
 	if err != nil {
 		return err
@@ -940,9 +944,17 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
 
 **坑**
 
+- **`Apply` 的尾部从 `plan.Cutoff` 起切，不是从 `plan.KeepTailItems` 起切**。
+  `Cutoff` 是「截断下标」（尾部起点），`KeepTailItems` 是「保留几条」——两者
+  数值相近、含义不同，抄错会让入参条数与计划不符并撞 `ErrPlanMismatch`。
 - **毛/净移除量必须分开取**。`GrossRemovedTokens` 是扣摘要**之前**的毛量；
   按名字对齐参考实现的同名字段会**静默错账**，方向恰好是「看起来更省了」。
-  要「减掉多少」请直接用 `NetRemovedTokens`（钳位在 0）。
+  要「减掉多少」请直接用 `NetRemovedTokens`（钳位在 0）。`GrossRemovedTokens`
+  优先取被归档条目的逐条 `Tokens` 之和，计划的 `ItemTokens` 只是兜底估算——
+  条目逐条带量时不要指望计划估算兜住。
+- **`Apply` 的毛移除量以逐条 `Item.Tokens` 为准**。只填 `PlanInput.ItemTokens`
+  而条目不带 `Tokens` 时，账会停在兜底估算上；估算与真实量不符（例如计划按
+  25/条、实际 900/条）会让账上少减，而压实是不可逆的逐字丢弃。
 - **分段估算永不回填 provider 报数**。provider 报的是总数，回填到分段等于让
   tokenizer 误差披上分段精确度的外衣，而压实计划恰按段分配裁剪——喂残差等于喂假账。
 - **`MaxInput` 无预留或窗口未知时原样返回 `baseInput`**——扣减纯属内核自作主张。
