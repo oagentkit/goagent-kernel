@@ -90,7 +90,9 @@ func (p *StorePlane) audit(ctx context.Context, operator string, action Action, 
 	if p.aud == nil {
 		return ErrNoAuditor
 	}
-	return p.aud.Append(ctx, AuditEntry{
+	// 与 MemStore 的成功路径共用同一个接缝包装：锁外调用 + panic 隔离，
+	// 两个实现对同一宿主方法的暴露面口径一致（issue #327）。
+	return appendAudit(ctx, p.aud, AuditEntry{
 		Operator: operator,
 		Action:   action,
 		Target:   target,

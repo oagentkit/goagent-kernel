@@ -34,6 +34,8 @@ func (m *MemStore) SeedRun(id RunID, status string, tasks []taskboard.Task) erro
 	if status == "" {
 		status = contract.StatusCreated
 	}
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -69,6 +71,8 @@ func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 	if key == "" {
 		return errors.Wrap(ErrInvalidRequest, "SeedEffect: 效果键为空")
 	}
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -126,6 +130,8 @@ func (m *MemStore) List(_ context.Context) ([]taskboard.Task, error) {
 // 只看 State == claimed 会让持有者崩溃后的任务永久不可接管——与 Board.Claim
 // 的「被别人活着持有」契约及三个参考实现方向相反。
 func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -167,6 +173,8 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 // 契约与 taskboard.Renew 一致：令牌不匹配 / 租约已过期 ⇒ ErrLeaseLost，
 // **不做任何修改**；续期不递增代次、不换令牌。
 func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.ensureLocked()
@@ -204,6 +212,8 @@ func (m *MemStore) Release(_ context.Context, id taskboard.TaskID, token string)
 
 // finish 凭令牌的租约变更（Complete / Release 共用判据）。
 func (m *MemStore) finish(id taskboard.TaskID, token string, to taskboard.State) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mt, ok := m.tasks[id]

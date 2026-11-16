@@ -37,6 +37,12 @@ import (
 // 介入一律拒绝——与 MemPlane 的 fail-closed 口径一致）。
 type MemStore struct {
 	mu sync.Mutex
+	// commitMu 串行化全部**写路径**（三个 Commit* 与运行时的 Seed/Claim/
+	// Complete/Release/Renew）。留痕 Append 在它之下、m.mu 之外执行：
+	// 提交序列仍然单线（版本锚在「校验→留痕→落状态」之间不会被别的写者
+	// 推进），但宿主 Auditor 的回查/慢 I/O 不再占住状态锁——Snapshot*
+	// 查询面照常可读（issue #327）。
+	commitMu sync.Mutex
 
 	aud    Auditor
 	ver    Version
@@ -175,80 +181,108 @@ func (m *MemStore) runTasksLocked(run *memRun) []taskboard.Task {
 }
 
 // ── 提交（版本锚 + 留痕同事务）──
+//
+// 锁次序与原子性（issue #327）：commitMu 串行化写者，m.mu 只护内存状态。
+// 每个 Commit 在 m.mu 内校验版本/存在性后**释放** m.mu，再在 m.mu 外调
+// 宿主 Auditor.Append，最后回 m.mu 落状态。因为写者已被 commitMu 串行化，
+// 校验与落状态之间没有第二个写者能推进版本——「留痕失败 ⇒ 状态一字不动」
+// 的原子性仍成立。宿主 Auditor 回查 Snapshot* 或做慢 I/O 都不会持状态锁
+// （查询面不经过 commitMu）。
 
 // CommitTask 原子提交任务状态 + 留痕。
 func (m *MemStore) CommitTask(ctx context.Context, expect Version, next taskboard.Task, entry AuditEntry) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.ver != expect {
+		m.mu.Unlock()
 		return errors.Wrap(ErrStoreConflict, "任务状态在快照之后已被另一个副本修改")
 	}
 	mt, ok := m.tasks[next.ID]
+	aud := m.aud
+	m.mu.Unlock()
 	if !ok {
 		return errors.Wrap(ErrNotFound, "任务不存在: "+string(next.ID))
 	}
-	if m.aud == nil {
+	if aud == nil {
 		return ErrNoAuditor
 	}
-	// 留痕先落（同一临界区）：失败 ⇒ 状态一字不动。
-	if err := m.aud.Append(ctx, entry); err != nil {
+	// 留痕先落（状态锁之外）：失败 ⇒ 状态一字不动。
+	if err := appendAudit(ctx, aud, entry); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	mt.task = cloneTask(next)
 	if next.Lease.Fence > mt.gen {
 		mt.gen = next.Lease.Fence
 	}
 	m.ver++
+	m.mu.Unlock()
 	return nil
 }
 
 // CommitRun 原子提交运行状态/代次 + 留痕。
 func (m *MemStore) CommitRun(ctx context.Context, expect Version, id RunID, next RunState, entry AuditEntry) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.ver != expect {
+		m.mu.Unlock()
 		return errors.Wrap(ErrStoreConflict, "运行状态在快照之后已被另一个副本修改")
 	}
 	run, ok := m.runs[id]
+	aud := m.aud
+	m.mu.Unlock()
 	if !ok {
 		return errors.Wrap(ErrNotFound, "运行不存在: "+string(id))
 	}
-	if m.aud == nil {
+	if aud == nil {
 		return ErrNoAuditor
 	}
-	if err := m.aud.Append(ctx, entry); err != nil {
+	if err := appendAudit(ctx, aud, entry); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	run.status = next.Status
 	run.gen = next.Gen
 	if next.TaskIDs != nil {
 		run.taskIDs = slices.Clone(next.TaskIDs)
 	}
 	m.ver++
+	m.mu.Unlock()
 	return nil
 }
 
 // CommitEffect 原子提交裁决账 + 留痕。
 func (m *MemStore) CommitEffect(ctx context.Context, expect Version, key string, next EffectState, entry AuditEntry) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.ver != expect {
+		m.mu.Unlock()
 		return errors.Wrap(ErrStoreConflict, "裁决账在快照之后已被另一个副本修改")
 	}
 	eff, ok := m.effects[key]
+	aud := m.aud
+	m.mu.Unlock()
 	if !ok {
 		return errors.Wrap(ErrNotFound, "效果键不存在: "+key)
 	}
-	if m.aud == nil {
+	if aud == nil {
 		return ErrNoAuditor
 	}
-	if err := m.aud.Append(ctx, entry); err != nil {
+	if err := appendAudit(ctx, aud, entry); err != nil {
 		return err
 	}
+	m.mu.Lock()
 	eff.uncertain = next.Uncertain
 	eff.unsafe = next.Unsafe
 	eff.resolved = next.Resolved
 	m.ver++
+	m.mu.Unlock()
 	return nil
 }
 

@@ -50,6 +50,25 @@ type AuditEntry struct {
 // MemAuditor 对不完整的留痕拒收；宿主实现应复用同一判据。
 var ErrInvalidAudit = errors.New("controlplane: 留痕不完整——谁/动作/目标/依据缺一不可")
 
+// ErrAuditorPanic 留痕实现 panic 被内核隔离（issue #327）：状态一字不动，
+// 错误上抛给介入方。宿主留痕面（DB 落盘/审计服务）的异常不得把一次
+// 「尚未提交」的介入变成进程级事故，也不得留下半条状态。
+var ErrAuditorPanic = errors.New("controlplane: 留痕实现 panic（已隔离，状态未变）")
+
+// appendAudit 调宿主留痕面并隔离 panic（issue #327 的统一接缝）。
+//
+// 调用点一律在状态锁之外：MemStore 在 commitMu（写者串行）下、m.mu 外调用；
+// StorePlane 的拒绝路径本来就无锁。宿主 Auditor 可以安全回查 Snapshot*
+// （查询面不经 commitMu），但**不得回调 Commit***——那会重入 commitMu。
+func appendAudit(ctx context.Context, aud Auditor, e AuditEntry) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = errors.Wrap(ErrAuditorPanic, "留痕实现 panic")
+		}
+	}()
+	return aud.Append(ctx, e)
+}
+
 // Auditor 留痕契约：**只增不改**（append-only）。
 //
 // 实现方必须保证：
@@ -59,6 +78,17 @@ var ErrInvalidAudit = errors.New("controlplane: 留痕不完整——谁/动作/
 //   - 收到零值 At 时补实现侧当前时刻；
 //   - 对缺 Operator / Action / Target / Basis 的条目拒绝（ErrInvalidAudit），
 //     不静默补空。
+//
+// # 调用面（issue #327）
+//
+// Append 在**状态锁之外**被调用：MemStore 在 commitMu（写者串行）下、m.mu 外
+// 调用；StorePlane 的拒绝路径本来就无锁。宿主实现因此可以安全回查 MemStore
+// 的 Snapshot*（查询面不经 commitMu），但有两条硬约束：
+//
+//   - **不得回调 Commit***：会重入 commitMu（同 goroutine 死锁）；
+//   - **不得阻塞**：提交序列串行等待它（查询面不受影响，但写者会排队）。
+//
+// 实现 panic 由内核隔离为上抛的 ErrAuditorPanic，状态一字不动。
 //
 // 持久化形态归宿主（表 / 文件 / 只读副本皆可）；MemAuditor 是进程内参考实现。
 type Auditor interface {

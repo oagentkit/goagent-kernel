@@ -55,29 +55,7 @@ func (l *Loop) heartbeat(
 		// 任务租约续期：快照在本拍内固定，逐条独立处置（一条失败不阻断
 		// 同拍的其它任务——与「两个故障域互不阻断」同一条纪律）。
 		for _, cur := range set.snapshot() {
-			cur.renewLocked(func() {
-				_, rErr := l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
-				switch {
-				case rErr == nil:
-					cur.renewFails = 0
-				case errors.Is(rErr, taskboard.ErrLeaseLost):
-					// 资格没了：取消**这一条**在途执行（施加之前封口），并留痕。
-					cur.renewFails = 0
-					l.notifyLeaseLost(cur.id, LeaseLostTakenOver)
-					cur.cancel()
-				default:
-					// 其它续期错误：下一拍重试（阈值内租约尚未到期，仍有出路）；
-					// 连续失败跨过阈值 = 无法确认持有资格——与新持有者重复施加
-					// 的是同一种危险，封口并停止领取。
-					cur.renewFails++
-					if cur.renewFails >= l.cfg.RenewFailMax && ctx.Err() == nil {
-						*unconfirmed = true
-						l.notifyLeaseLost(cur.id, LeaseLostUnconfirmed)
-						claimCancel() // 停止领取：答不出「谁在持」就不发起新的副作用
-						cur.cancel()  // 在途封口
-					}
-				}
-			})
+			l.renewOne(ctx, claimCancel, cur, unconfirmed)
 		}
 
 		// 注册心跳：身份的资格检查。非身份类失败（含 ctx 取消的抖动）
@@ -94,5 +72,35 @@ func (l *Loop) heartbeat(
 			}
 			// 存储抖动：下一拍重试（只影响身份，不影响上面的续期）。
 		}
+	}
+}
+
+// renewOne 续期一条在途租约并执行锁外动作（issue #326）。
+//
+// 锁内只做 Renew 判定与失败计数（与本任务的收场互斥）；宿主可见动作
+// ——OnLeaseLost 通知、取消在途 ctx、停止领取——全部在锁外：宿主回调
+// 回查本包不会二次抢锁死锁，回调 panic 也不会掀翻心跳协程。
+//
+// 失败分类（与既有语义逐条一致）：
+//   - ErrLeaseLost：资格没了，只取消**这一条**在途执行并留痕；
+//   - 其它错误：累加该任务计数；连续失败达到阈值且外层 ctx 未取消 ⇒
+//     无法确认持有资格，留痕 + 停止领取 + 在途封口。
+func (l *Loop) renewOne(ctx context.Context, claimCancel context.CancelFunc, cur *claimed, unconfirmed *bool) {
+	verdict := cur.renew(func() (taskboard.Task, error) {
+		return l.board.Renew(ctx, cur.id, cur.token, taskboard.ClaimRequest{TTL: l.cfg.TTL})
+	}, l.cfg.RenewFailMax)
+
+	switch verdict {
+	case renewTakenOver:
+		l.notifyLeaseLost(cur.id, LeaseLostTakenOver)
+		cur.cancel()
+	case renewUnconfirmed:
+		if ctx.Err() != nil {
+			return // 外层已在停机：不把续期失败升级成「资格无法确认」
+		}
+		*unconfirmed = true
+		l.notifyLeaseLost(cur.id, LeaseLostUnconfirmed)
+		claimCancel() // 停止领取：答不出「谁在持」就不发起新的副作用
+		cur.cancel()  // 在途封口
 	}
 }

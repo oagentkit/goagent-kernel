@@ -10,7 +10,11 @@
 // 真被封口、收场有没有被拒，宿主必须有信号可看（@@Config.OnLeaseLost@@）。
 package worker
 
-import "github.com/yi-nology/goagent-kernel/taskboard"
+import (
+	"github.com/oekit/concurrency/async"
+
+	"github.com/yi-nology/goagent-kernel/taskboard"
+)
 
 // LeaseLostCause 在途租约失去资格的原因（@@Config.OnLeaseLost@@ 的判别面）。
 type LeaseLostCause int
@@ -41,8 +45,19 @@ func (c LeaseLostCause) String() string {
 }
 
 // notifyLeaseLost 租约失去资格的可观测信号（nil 钩子静默跳过）。
+//
+// panic 隔离与 invokeHandler（execute.go，issue #196）同款：宿主留痕钩子
+// 的异常不得掀翻心跳协程——一次 panic 逃出 heartbeat 就是全部在途租约
+// 停止续期、他副本接管、非幂等副作用双份（issue #326）。上报走同一个
+// async.ReportPanic 观测面，宿主注入的 panic handler 不会漏接。
 func (l *Loop) notifyLeaseLost(id taskboard.TaskID, cause LeaseLostCause) {
-	if l.cfg.OnLeaseLost != nil {
-		l.cfg.OnLeaseLost(id, cause)
+	if l.cfg.OnLeaseLost == nil {
+		return
 	}
+	defer func() {
+		if r := recover(); r != nil {
+			async.ReportPanic(r)
+		}
+	}()
+	l.cfg.OnLeaseLost(id, cause)
 }

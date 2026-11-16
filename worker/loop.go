@@ -100,8 +100,13 @@ type Config struct {
 	// （Complete/Release）被 @@taskboard.ErrLeaseLost@@ 拒（结果作废）。
 	// 三个都是「本次执行的结果已作废」的事实，不是成功路径——宿主据此
 	// 计数/留痕/告警，静默吞掉它们下游的非幂等副作用就可能双份（issue
-	// #179 的触发序列）。回调在心跳协程/收场路径上同步调用：快返回，
-	// 别在里面做重活。
+	// #179 的触发序列）。
+	//
+	// 回调在心跳协程/收场路径上同步调用，但**不在 claimed.mu 内**（issue
+	// #326）：续期判定与收场互斥，通知一律在锁外——宿主回调回查本包的
+	// 任务板/注册表不会二次抢锁死锁。回调 panic 被隔离（与 invokeHandler
+	// 同款）：留痕钩子的异常不得掀翻心跳面，否则全部在途租约停止续期。
+	// 仍然要求快返回，别在里面做重活。
 	OnLeaseLost func(task taskboard.TaskID, cause LeaseLostCause)
 }
 
@@ -172,21 +177,52 @@ type claimed struct {
 	renewFails int  // 连续续期失败计数（心跳协程在 mu 下读写）
 }
 
-// renewLocked 在「本任务尚未进入收场」时执行一次续期判定。
-// 返回 false = 已进入收场，心跳应跳过本任务。
+// renewVerdict 一次续期判定的结论（锁内只判定，后续动作一律锁外执行）。
+type renewVerdict int
+
+const (
+	// renewOK 续期成功（连续失败计数清零）。
+	renewOK renewVerdict = iota
+	// renewSkipped 本任务已进入收场，心跳跳过（不得再 Renew）。
+	renewSkipped
+	// renewRetry 非资格类失败，计数递增但未到阈值（下一拍重试）。
+	renewRetry
+	// renewTakenOver 租约已易主（ErrLeaseLost）：取消在途执行并留痕。
+	renewTakenOver
+	// renewUnconfirmed 连续失败达到阈值：无法确认持有资格。
+	renewUnconfirmed
+)
+
+// renew 在「本任务尚未进入收场」时执行一次续期判定。
 //
-// 回调在 mu 内执行：续期与本任务的收场互斥，跨任务互不阻塞。
-func (c *claimed) renewLocked(renew func()) bool {
+// 只有**判定与计数**在 mu 内：续期调用本身与本任务的收场互斥（issue #196
+// 的事件串行化），但通知/取消等宿主可见动作由调用方在 mu **外**执行。
+// 此前整个闭包（含宿主 OnLeaseLost 回调）都在锁内，回调回查本包即二次
+// 抢锁死锁、panic 则掀翻心跳协程（issue #326）。
+func (c *claimed) renew(renew func() (taskboard.Task, error), failMax int) renewVerdict {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.finalizing {
-		return false
+		return renewSkipped
 	}
-	renew()
-	return true
+	_, err := renew()
+	switch {
+	case err == nil:
+		c.renewFails = 0
+		return renewOK
+	case errors.Is(err, taskboard.ErrLeaseLost):
+		c.renewFails = 0
+		return renewTakenOver
+	default:
+		c.renewFails++
+		if c.renewFails >= failMax {
+			return renewUnconfirmed
+		}
+		return renewRetry
+	}
 }
 
-// beginFinalize 标记本任务进入收场（幂等）。与 renewLocked 互斥：
+// beginFinalize 标记本任务进入收场（幂等）。与 renew 互斥：
 // 返回时不会再有本任务的 Renew 在途。
 func (c *claimed) beginFinalize() {
 	c.mu.Lock()
