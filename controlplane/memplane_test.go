@@ -329,7 +329,9 @@ func TestInterventionsFailClosedOnAuditFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TaskView: %v", err)
 	}
-	eff0 := m.effects["effect-1"]
+	m.store.mu.Lock()
+	eff0 := *m.store.effects["effect-1"]
+	m.store.mu.Unlock()
 
 	cases := []struct {
 		name string
@@ -367,9 +369,9 @@ func TestInterventionsFailClosedOnAuditFailure(t *testing.T) {
 				tv.Task.Lease.Token != tv0.Task.Lease.Token || tv.Task.Seq != tv0.Task.Seq {
 				t.Fatalf("失败的介入不得改任务状态： %+v → %+v", tv0.Task, tv.Task)
 			}
-			m.mu.Lock()
-			eff := m.effects["effect-1"]
-			m.mu.Unlock()
+			m.store.mu.Lock()
+			eff := *m.store.effects["effect-1"]
+			m.store.mu.Unlock()
 			if eff.uncertain != eff0.uncertain || eff.resolved != eff0.resolved {
 				t.Fatalf("失败的介入不得改裁决账： %+v → %+v", eff0, eff)
 			}
