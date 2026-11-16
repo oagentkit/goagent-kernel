@@ -350,8 +350,8 @@ func (s *fakeStore) ResolveUncertain(_ context.Context, act Action, res Resoluti
 		// 未知标记原样保留（仍被硬阻塞），放行必须显式签字。
 		return OutcomeUncertain, Result{}, ErrUnsafeNotRetryable
 	}
-	delete(s.uncertain, act.Key)
-	return OutcomeContended, Result{}, nil
+	delete(s.uncertain, act.Key) // 契约第 2 条：裁决成功且门已打开 ⇒ OutcomeApplied（不是 OutcomeContended）。
+	return OutcomeApplied, Result{}, nil
 }
 
 func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.Duration) (Lease, error) {
@@ -366,6 +366,10 @@ func (s *fakeStore) Renew(_ context.Context, act Action, lease Lease, ttl time.D
 	}
 	now := s.clockLocked()
 	cur := s.holders[act.Resource]
+	// 过期即资格终止（无论是否已被接管）：放行过期续期等于允许 GC 停顿超 TTL 的持有者复活一段已作废的租约。
+	if !now.Before(cur.expires) {
+		return Lease{}, errors.Wrap(ErrFenceStale, "租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）", "key", string(act.Key), "resource", act.Resource)
+	}
 	cur.expires = now.Add(ttl)
 	cur.lease.TTL = ttl
 	s.holders[act.Resource] = cur

@@ -356,3 +356,36 @@ type renewFailStore struct {
 func (r renewFailStore) Renew(context.Context, Action, Lease, time.Duration) (Lease, error) {
 	return Lease{}, r.err
 }
+
+// TestRenewAfterExpiryWithoutTakeoverRejected 钉住 #217：租约**已过期且无人
+// 接管**时，原持有者的续期同样必须被拒（过期即资格终止）。
+//
+// 与 TestRenewAfterTakeoverRejected 的区别：那条是「令牌变了」，这条是
+// 「令牌没变、身份没变，只有时间走完了」——只比令牌与身份的实现对它无感，
+// 于是 GC 停顿超 TTL 的持有者回来一续就复活了一段已作废的租约。
+func TestRenewAfterExpiryWithoutTakeoverRejected(t *testing.T) {
+	st := newFakeStore()
+	ctx := context.Background()
+	a := act("k1", "res-a")
+
+	_, lease, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("Acquire 失败: %v", err)
+	}
+	st.advance(2 * time.Minute) // 时间走完，且**不发生任何新的 Acquire**（无人接管）
+
+	if _, err := st.Renew(ctx, a, lease, time.Minute); !errors.Is(err, ErrFenceStale) {
+		t.Fatalf("过期且无人接管时续期必须被拒为 ErrFenceStale，实得 %v", err)
+	}
+
+	// 没有被续命：同 Key 再 Acquire 必须走过期路径转入未知态，而不是 contended。
+	// （若上面的 Renew 把意图续上了，这里会拿到 contended——这层断言抓的正是
+	// 「续期写成功了」这种坏实现。）
+	outcome, _, _, err := st.Acquire(ctx, a, time.Minute)
+	if err != nil {
+		t.Fatalf("过期后的 Acquire 失败: %v", err)
+	}
+	if outcome != OutcomeUncertain {
+		t.Fatalf("过期未裁决的尝试应转未知态（续期不得续活它），实得 %v", outcome)
+	}
+}

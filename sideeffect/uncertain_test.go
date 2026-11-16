@@ -210,8 +210,8 @@ func TestReconcileNotAppliedAllowsRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("对账不该失败: %v", err)
 	}
-	if outcome != OutcomeContended {
-		t.Fatalf("裁决「未生效」应返回 contended（可再抢闸），实得 %v", outcome)
+	if outcome != OutcomeApplied {
+		t.Fatalf("裁决「未生效」应返回 OutcomeApplied（裁决成功且门已打开），实得 %v", outcome)
 	}
 
 	calls := 0
