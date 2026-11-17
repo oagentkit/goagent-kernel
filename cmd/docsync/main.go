@@ -174,13 +174,23 @@ func run() error {
 	}
 	problems = append(problems, docProblems...)
 
+	// ── README 职责列里的判定词表（issue #384）──
+	//
+	// 三张手抄的判定词表（trajectory 配对态 / watchdog 缺口 reason / finalize
+	// 四分路由终态）此前零判据：代码侧新增一个取值，README 继续对外声明一份
+	// 过时的词表，而没有任何信号。取值从代码的导出常量派生（门禁自己不再抄
+	// 一份字面量——那会让门禁自己也会漂）。
+	wordProblems, wordChecked := checkWordTables(rows)
+	problems = append(problems, wordProblems...)
+
 	if len(problems) > 0 {
 		return fmt.Errorf("README 与仓库实际状态不一致（%d 项）：\n  - %s\n"+
 			"修法：包表按各包 *.go（不含 _test.go）重算行数与外部依赖；"+
 			"工程底座表按报错里给的三条命令重算，改 README；"+
 			"USAGE.md 的机器口径块按报错里给的三个数改（包数 / policy 登记数 / 安装行版本）；"+
 			"ADR 索引 / README 速览表按 docs/adr/ADR-*.md 实际编号与文件名补齐（链接必须可解析），"+
-			"README 文档一览按 docs/*.md 实际清单补齐。\n"+
+			"README 文档一览按 docs/*.md 实际清单补齐；"+
+			"职责列里的判定词表按报错里列出的取值补齐/删掉（取值以代码的导出常量为准）。\n"+
 			"两套口径别混：包表行数按 %.0f%% 相对容差判（容差内的逐行涨落不报），"+
 			"工程底座的三项是确定性量，**判相等**。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
@@ -189,12 +199,26 @@ func run() error {
 
 	if present {
 		actual, _ := measureBaseline()
-		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件；ADR %d 条 / docs %d 篇已登记）%s✓\n",
-			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles, adrCount, docCount, usageNote(usageChecked))
+		fmt.Printf("README 与仓库一致（%d 个包；工程底座 %d 行 / %d 文件 / %d 个测试文件；ADR %d 条 / docs %d 篇已登记）%s%s✓\n",
+			len(rows), actual.prodLines, actual.prodFiles, actual.testFiles, adrCount, docCount,
+			usageNote(usageChecked), wordTableNote(wordChecked))
 		return nil
 	}
-	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）%s✓\n", len(rows), usageNote(usageChecked))
+	fmt.Printf("README 包表与仓库一致（%d 个包；无工程底座表）%s%s✓\n",
+		len(rows), usageNote(usageChecked), wordTableNote(wordChecked))
 	return nil
+}
+
+// wordTableNote 说明判定词表是否参与本次判定。
+//
+// 为什么要在成功输出里也说明：判据被跳过（README 包表里没有那三个包）时，
+// **静默跳过**与「判过了」在日志里长得一样——一旦判据面被误删，看到「✓」的
+// 人不会想到「其实那段没判」。
+func wordTableNote(checked int) string {
+	if checked > 0 {
+		return fmt.Sprintf("；判定词表 %d 张已判", checked)
+	}
+	return "；判定词表未判（README 包表里没有那三个包）"
 }
 
 // usageNote 说明 USAGE 口径校验是否参与本次判定。
