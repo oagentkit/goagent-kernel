@@ -52,23 +52,11 @@ func TestRouteFourWaySplit(t *testing.T) {
 	}
 }
 
-// TestRouteTimedOutBeatsShutdown 会话超时必须**先于**停机分支：超时 ctx 同样
-// ctx.Err() != nil，次序反了该落 timed_out 的会话会被判成停机、不落终态
-// 留给恢复循环——路由表的次序是语义本体，不是实现细节。
-//
-// 让墙钟**真的到期**（预设 Cause 只在到期时生效，手动 cancel() 是普通取消
-// ——与宿主 WithTimeoutCause 的接线一致：超时由墙钟触发，不靠人按）。
-func TestRouteTimedOutBeatsShutdown(t *testing.T) {
-	ctx, cancel := context.WithTimeoutCause(context.Background(), time.Millisecond, finalize.ErrSessionDeadline)
-	t.Cleanup(cancel)
-	<-ctx.Done()
-	if ctx.Err() == nil {
-		t.Fatal("前置条件失败：超时 ctx 应有 ctx.Err()（正是它会落进停机分支）")
-	}
-	if got := finalize.Route(ctx); got != finalize.ActionTimedOut {
-		t.Fatalf("Route = %v, want timed_out——超时分支必须先于停机分支", got)
-	}
-}
+// 臂序纪律（timed_out 必须先于停机）的**唯一断言在 deadline**：
+// deadline.TestRouteDeadlineArmBeatsShutdownArm 用「已取消 + cause=
+// ErrSessionDeadline」的 ctx 钉住臂序。本包是 Outcome→Action 投影，不再
+// 复制一份臂序断言（issue #355 验收 3：次序判据只存在于一份判据里）；
+// 两包同 ctx 同结论由 route_cross_test.go 的交叉断言保证。
 
 // TestRoutePlainDeadlineIsShutdown 裸 deadline（未带 ErrSessionDeadline Cause）
 // 归停机臂：会话超时必须 WithTimeoutCause 携带哨兵，否则超时会被误判成

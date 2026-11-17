@@ -43,8 +43,9 @@
 //     把「接下来落不落」交给本包）。
 //   - vs steer：**接管臂（ErrSteered）的载荷与续跑语义在 steer**（摘要构建、
 //     回 created、队列续跑、空队列失败收敛），本包只管路由到那一臂。
-//     依赖方向 **finalize → steer**（消费 steer.ErrSteered），单向不许环；
-//     两边包头互指：finalize 管「往哪收」，steer 管「怎么收与怎么续」。
+//     依赖方向 **finalize → deadline → steer**（cause 判定单源在 deadline，
+//     它消费 steer.ErrSteered；本包只消费 deadline.Outcome），单向不许环；
+//     包头互指：finalize 管「往哪收」，steer 管「怎么收与怎么续」。
 //
 // # 留宿主的回调
 //
@@ -57,10 +58,9 @@ import (
 	"context"
 
 	"github.com/oekit/logx"
-	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/steer"
+	"github.com/yi-nology/goagent-kernel/deadline"
 )
 
 // log 收尾留痕（logx.Delegating 懒解析宿主后端）。
@@ -69,7 +69,11 @@ var log = logx.Delegating("finalize")
 // ErrUserCancelled 用户经取消 API 触发的取消 Cause（WithCancelCause 携带）：
 // 与进程停机的裸 ctx 取消**可区分**——取消落 cancelled 终态，停机不落终态
 // 留给恢复循环。
-var ErrUserCancelled = errors.New("会话被用户取消")
+//
+// 身份来自 contract.ErrUserCancelled（issue #355）：本变量是**别名**而不是
+// 第二份 errors.New——deadline 与 finalize 的收尾路由必须指向同一个值，
+// 否则同一 ctx 在一侧判 cancelled、另一侧判停机。
+var ErrUserCancelled = contract.ErrUserCancelled
 
 // ErrSessionDeadline 会话级墙钟超时的 Cause（WithTimeoutCause 携带）：
 // 收尾按 timed_out 终态强制收敛，且判定**必须先于停机分支**（停机不落
@@ -139,31 +143,32 @@ func (a Action) Status() string {
 	}
 }
 
-// Route Cause→终态四分路由（纯函数；移植自宿主 FinalizeTaskError 的路由表）：
+// Route Cause→终态路由（纯函数；判据单源在 deadline.Route，本函数只做
+// Outcome→Action 投影，issue #355）：
 //
-//	接管（不落终态回 created）/ 用户取消（cancelled 终态）/ 会话超时
-//	（timed_out 终态，**先于**停机分支）/ 进程停机（不落终态留给恢复循环）/
-//	其余 failed。
+//	接管（不落终态回 created）/ 用户取消（cancelled 终态）/
+//	会话超时（timed_out 终态，**先于**停机分支）/ 进程停机（不落终态留给
+//	恢复循环）/ 其余 failed。
 //
-// 判定走 errors.Is（可判包装链）；Cause 由宿主经 WithCancelCause 注入
-// （可注入哨兵形态——contract 未下发 Cause 哨兵，故用户取消/超时的哨兵
-// 在本包、接管哨兵在 steer，本包消费）。
+// **路由表与臂序不在这里第二遍**：接管/取消/超时/停机的 cause 判定与
+// 「timed_out 先于停机」的次序纪律都在 deadline.Route 唯一一份；本包若再写
+// 一遍，两处会无声分叉（#355 的实测形态：接管的同一 ctx，deadline 判
+// shutdown、finalize 判 takeover）。userCancel 是宿主自有取消哨兵的透传口。
 //
 // 接管臂只判 Cause 不判队列：「有排队条目才回 created、否则按失败收敛」
 // 是 steer.Decide 的队列感知（归接管臂载荷，见包头划界）。
-func Route(ctx context.Context) Action {
-	switch {
-	case errors.Is(context.Cause(ctx), steer.ErrSteered):
+func Route(ctx context.Context, userCancel ...error) Action {
+	switch deadline.Route(ctx, userCancel...) {
+	case deadline.OutcomeTakeover:
 		return ActionTakeover
-	case errors.Is(context.Cause(ctx), ErrUserCancelled):
+	case deadline.OutcomeCancelled:
 		return ActionCancelled
-	case errors.Is(context.Cause(ctx), ErrSessionDeadline):
-		// 必须先于 ctx.Err() != nil（停机）分支：超时的 ctx 同样有 ctx.Err()，
-		// 但停机不落终态、超时要落终态——次序是路由表的语义本体。
+	case deadline.OutcomeTimedOut:
 		return ActionTimedOut
-	case ctx.Err() != nil:
+	case deadline.OutcomeShutdown:
 		return ActionShutdown
 	default:
+		// OutcomeNone：没有取消类 cause；收尾漏斗的缺省结局是 failed。
 		return ActionFailed
 	}
 }

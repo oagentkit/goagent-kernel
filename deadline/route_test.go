@@ -8,6 +8,7 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/steer"
 )
 
 // 收尾三分路由的契约判据（issue #170）：超时 / 用户取消 / 进程停机可区分，
@@ -37,6 +38,24 @@ func TestRouteThreeWaySplit(t *testing.T) {
 		t.Fatalf("cancelled 应落 contract.StatusCancelled, got %q", got)
 	}
 
+	// ②' 契约哨兵（contract.ErrUserCancelled）缺省即认：宿主不必再传参。
+	cctx, ccancel := context.WithCancelCause(context.Background())
+	ccancel(contract.ErrUserCancelled)
+	if got := Route(cctx); got != OutcomeCancelled {
+		t.Fatalf("契约用户取消哨兵应判 cancelled, got %s", got)
+	}
+
+	// ②'' 接管（steer.ErrSteered）→ takeover：不落终态回 created。
+	// 这是 issue #355 的实测分叉点（此前 deadline 判 shutdown、finalize 判 takeover）。
+	sctx, scancel := context.WithCancelCause(context.Background())
+	scancel(steer.ErrSteered)
+	if got := Route(sctx); got != OutcomeTakeover {
+		t.Fatalf("接管应判 takeover, got %s", got)
+	}
+	if got := Route(sctx).Status(); got != contract.StatusCreated {
+		t.Fatalf("takeover 应回迁 contract.StatusCreated, got %q", got)
+	}
+
 	// ③ 进程停机（父 ctx 取消传播）→ 不落终态（留给恢复循环）。
 	pctx, pcancel := context.WithCancel(context.Background())
 	child, childCancel := context.WithCancel(pctx) // 轮 ctx 挂在关停链上
@@ -55,10 +74,10 @@ func TestRouteThreeWaySplit(t *testing.T) {
 		t.Fatalf("未取消应判 none, got %s (%q)", got, got.Status())
 	}
 
-	// 不给 userCancel 哨兵时，非本包 cause 的取消一律判停机
-	//（裸 cancel 与停机在 Cause 上不可分——三分的前提是各有 cause）。
+	// 宿主自有哨兵不传进 userCancel 时，它与停机在 Cause 上不可分——
+	// 仍判停机。要区分必须显式传哨兵，或改用契约哨兵 contract.ErrUserCancelled。
 	if got := Route(uctx); got != OutcomeShutdown {
-		t.Fatalf("未声明用户取消哨兵时应保守判停机, got %s", got)
+		t.Fatalf("未声明的宿主自有哨兵应保守判停机, got %s", got)
 	}
 }
 

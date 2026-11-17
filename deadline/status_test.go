@@ -17,10 +17,11 @@ func TestStatusMappingInjection(t *testing.T) {
 		o    Outcome
 		want string
 	}{
-		{"none 不落终态", OutcomeNone, ""},
+		{"none 不写状态", OutcomeNone, ""},
 		{"timed_out 消费 contract 词表", OutcomeTimedOut, contract.StatusTimedOut},
 		{"cancelled 消费 contract 词表", OutcomeCancelled, contract.StatusCancelled},
 		{"shutdown 不落终态", OutcomeShutdown, ""},
+		{"takeover 回迁 created", OutcomeTakeover, contract.StatusCreated},
 	}
 	for _, tc := range defaults {
 		t.Run("默认/"+tc.name, func(t *testing.T) {
@@ -36,8 +37,8 @@ func TestStatusMappingInjection(t *testing.T) {
 		})
 	}
 
-	// ② 注入宿主词表：四档各给不同的词，证明映射钩子拿到的是**原始结论**
-	// （不落终态的两档不会被默认实现先吞成空串）。
+	// ② 注入宿主词表：五档各给不同的词，证明映射钩子拿到的是**原始结论**
+	// （不写状态的两档不会被默认实现先吞成空串）。
 	host := StatusOf(func(o Outcome) string {
 		switch o {
 		case OutcomeTimedOut:
@@ -46,6 +47,8 @@ func TestStatusMappingInjection(t *testing.T) {
 			return "aborted"
 		case OutcomeShutdown:
 			return "unfinished"
+		case OutcomeTakeover:
+			return "requeued"
 		case OutcomeNone:
 			return "running"
 		default:
@@ -60,6 +63,7 @@ func TestStatusMappingInjection(t *testing.T) {
 		{OutcomeTimedOut, "expired"},
 		{OutcomeCancelled, "aborted"},
 		{OutcomeShutdown, "unfinished"},
+		{OutcomeTakeover, "requeued"},
 	}
 	for _, tc := range hostWords {
 		t.Run("注入/"+tc.o.String(), func(t *testing.T) {

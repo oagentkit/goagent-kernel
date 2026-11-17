@@ -12,28 +12,35 @@
 //
 //   - **锚点只写一次**：首轮认领成功后写 deadline_at（FirstClaimAt + Timeout）；
 //   - **续跑轮沿用同一锚点**（shared 模式）：轮内 ctx 只拿锚点的**剩余**时长；
-//   - **轮内 ctx 携带专属 cause**（ErrSessionDeadline）：与用户取消、进程停机三分；
+//   - **轮内 ctx 携带专属 cause**（ErrSessionDeadline）：与用户取消、接管、
+//     进程停机可区分（收尾路由见 Route）；
 //   - **过期锚点立即收敛**：认领排队窗口把余量耗完的续跑轮，认领迁移成功后
 //     立即按 timed_out 收敛，**不进编排**（进去了也只是白跑一段）。
 //
 // 时限是**会话生命周期**的轴：进程活得好好的也会到点。
 //
-// # 三分与次序纪律（硬约束，Route 的测试钉住）
+// # 五路收尾路由与次序纪律（硬约束，Route 的测试钉住）
 //
 //	原因值                      结论        落什么
+//	steer.ErrSteered            takeover    不落终态回 created（由 steer.Run 续跑）
 //	ErrSessionDeadline          timed_out   终态（deny-by-default：超时的产出不可信）
-//	宿主的用户取消哨兵          cancelled   终态
-//	其余 ctx 已取消（进程停机） 不落终态    留给恢复循环/启动对账
+//	契约/宿主的用户取消哨兵      cancelled   终态
+//	其余 ctx 已取消（进程停机）  shutdown    不落终态，留给恢复循环/启动对账
+//	ctx 未取消                   none       无收敛动作
 //
 // **timed_out 臂必须先于「ctx.Err() != nil（进程停机）」臂。** 停机臂的条件是
 // 「ctx 已取消」，而墙钟到点的 ctx 同样已取消（DeadlineExceeded）——次序写反，
 // 每次会话超时都会被判成停机、**不落终态**，会话永久滞留 running。
-// 这条次序由 finalize/收尾侧的路由表保证，本包的 Route 是它的内核侧判据面，
-// 两边各写一句、各钉一条用例。
+//
+// **这条路由表只有一份**（issue #355）：finalize.Route 是它的 Outcome→Action
+// 投影，不再另写一遍 cause 判定与臂序。此前两包各写一份、零交叉断言，接管的
+// 同一 ctx 在 deadline 判 shutdown（不落终态）、在 finalize 判 takeover
+// （落 created）——两个相反结论取决于调用哪个包。
 //
 // 父 ctx 取消时子 ctx 的 Cause 传播父原因，故「用户取消/停机」不会被墙钟
-// 装饰吃掉——三分的前提是三者各有自己的 cause（用户取消请用
-// context.WithCancelCause 表达，裸 cancel 与停机在 Cause 上不可分）。
+// 装饰吃掉——五路的前提是各有自己的 cause（用户取消请用
+// context.WithCancelCause(contract.ErrUserCancelled) 表达，裸 cancel 与停机
+// 在 Cause 上不可分）。
 //
 // # 与同域包的划界（各占一根轴，互不改判据）
 //
@@ -42,7 +49,10 @@
 //     也不把时限塞进 budget。
 //   - **vs drain**：drain 是**进程**生命周期的在途轮收敛（停机排水）；本包是
 //     **会话**生命周期的总时限。drain.ErrDeadline 与本包 ErrSessionDeadline
-//     是两个 Cause，三分路由归收尾侧（Route 只认本包的哨兵）。
+//     是两个 Cause，收尾路由（Route）只认本包的哨兵，不认排水预算。
+//   - **vs finalize**：finalize 是收尾**动作**漏斗（Converge 多起点收敛 /
+//     AdjudicateRetry 排队裁决）；它的 Route 只做本包 Outcome→Action 投影，
+//     cause 判定与臂序（timed_out 先于停机）不在那边第二遍（issue #355）。
 //   - **vs watchdog**：监视不变量，不做时限强制。
 //   - **vs contract**：contract 给了 StatusTimedOut 词表（本包的 Outcome.Status
 //     缺省消费它），没有时限机制——本包补机制不改词表；宿主自有状态词表经
