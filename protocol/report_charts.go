@@ -58,28 +58,6 @@ type ChartEvent struct {
 	Desc   string `json:"desc,omitempty"`
 }
 
-// 状态词白名单（实弹模型词形：healthy/down/error/正常/宕机…）。
-var (
-	chartStatusOK   = map[string]bool{"ok": true, "healthy": true, "health": true, "normal": true, "up": true, "running": true, "online": true, "active": true, "green": true, "pass": true, "good": true, "正常": true, "健康": true, "在线": true}
-	chartStatusWarn = map[string]bool{"warn": true, "warning": true, "degraded": true, "pending": true, "yellow": true, "slow": true, "busy": true, "警告": true, "降级": true, "缓慢": true}
-	chartStatusDown = map[string]bool{"down": true, "error": true, "critical": true, "crit": true, "failed": true, "fail": true, "crash": true, "crashed": true, "offline": true, "dead": true, "red": true, "unreachable": true, "stopped": true, "宕机": true, "故障": true, "异常": true, "失败": true, "停止": true, "离线": true}
-)
-
-// chartStatus 状态词归一为 ok|warn|down|空；未识别词保持空（前端按未知态渲染，不臆断）。
-func chartStatus(s string) string {
-	t := strings.ToLower(strings.TrimSpace(s))
-	switch {
-	case t == "":
-	case chartStatusOK[t]:
-		return "ok"
-	case chartStatusWarn[t]:
-		return "warn"
-	case chartStatusDown[t]:
-		return "down"
-	}
-	return ""
-}
-
 // chartNodes 节点容错解码：id/label 互相回退（只写 name 时 id=label=name）、
 // 状态词归一、group 键回退；无 id 且无 label 的垃圾元素丢弃。
 func chartNodes(raw []map[string]any) []ChartNode {
