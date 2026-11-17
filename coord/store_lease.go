@@ -121,33 +121,41 @@ func (s *StoreAdapter) Abandon(ctx context.Context, act sideeffect.Action, lease
 // Renew 续期并确认持有资格：闸已易主、尝试已失效**或租约已过期**则拒绝
 // 续期（假续期延长的是别人的闸——重复施加的入口）。
 func (s *StoreAdapter) Renew(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
+	renewed, _, err := s.RenewWithVerdict(ctx, act, lease, ttl)
+	return renewed, err
+}
+
+// RenewWithVerdict 同 Renew，并返回判定—提交窗口的观测事实（issue #271）。
+// 原子后端（AtomicDecision）窗口 0；非原子后端按误差预算降级并留下
+// 窗口内过期/超预算的可解释事实。
+func (s *StoreAdapter) RenewWithVerdict(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, LeaseVerdict, error) {
 	ak, rk := actKeyPrefix+string(act.Key), resKeyPrefix+act.Resource
-	return casLoop(ctx, s.b, []string{ak, rk},
-		func(snap map[string]Entry) (sideeffect.Lease, []Assert, []Mutation, error) {
+	s.mu.Lock()
+	injected := s.now
+	s.mu.Unlock()
+	return renewWithVerdict(ctx, s.b, injected, []string{ak, rk},
+		func(now time.Time, snap map[string]Entry) (sideeffect.Lease, time.Time, []Assert, []Mutation, error) {
 			a, err := decodeAct(snap[ak])
 			if err != nil {
-				return sideeffect.Lease{}, nil, nil, err
+				return sideeffect.Lease{}, time.Time{}, nil, nil, err
 			}
 			rr, err := decodeRes(snap[rk])
 			if err != nil {
-				return sideeffect.Lease{}, nil, nil, err
+				return sideeffect.Lease{}, time.Time{}, nil, nil, err
 			}
 			if err := holdOwnerErr(act, lease, rr); err != nil {
-				return sideeffect.Lease{}, nil, nil, err
+				return sideeffect.Lease{}, time.Time{}, nil, nil, err
 			}
 			if err := intentOwnerErr(act, lease, a); err != nil {
-				return sideeffect.Lease{}, nil, nil, err
+				return sideeffect.Lease{}, time.Time{}, nil, nil, err
 			}
 			// 判定时刻取存储时钟（issue #194，时间权威次序见 resolveNow）。
-			now, nerr := s.nowAt(ctx)
-			if nerr != nil {
-				return sideeffect.Lease{}, nil, nil, errors.Wrap(nerr, "coord: Renew 取存储时钟失败")
-			}
+			oldUntil := rr.Until
 			// 过期即资格终止（Store.Renew 契约）：租约已过期而无人接管时，
 			// 旧持有者不得复活它——否则过期那次尝试绕开「先对账」直接继续
 			// 推进。判定在写入之前，被拒的续期不留任何状态。
 			if !rr.Until.After(now) {
-				return sideeffect.Lease{}, nil, nil, errors.Wrap(sideeffect.ErrFenceStale,
+				return sideeffect.Lease{}, oldUntil, nil, nil, errors.Wrap(sideeffect.ErrFenceStale,
 					"租约已过期且无人接管——到期即资格终止（要继续做请重新 Acquire）",
 					"key", string(act.Key), "resource", act.Resource)
 			}
@@ -155,14 +163,14 @@ func (s *StoreAdapter) Renew(ctx context.Context, act sideeffect.Action, lease s
 			a.Intent.Expires = now.Add(ttl)
 			am, merr := actMutation(act.Key, a)
 			if merr != nil {
-				return sideeffect.Lease{}, nil, nil, merr
+				return sideeffect.Lease{}, oldUntil, nil, nil, merr
 			}
 			rm, rerr := resMutation(act.Resource, rr)
 			if rerr != nil {
-				return sideeffect.Lease{}, nil, nil, rerr
+				return sideeffect.Lease{}, oldUntil, nil, nil, rerr
 			}
 			return sideeffect.Lease{Resource: act.Resource, Fence: lease.Fence, Holder: lease.Holder, TTL: ttl},
-				assertsFrom(snap), []Mutation{am, rm}, nil
+				oldUntil, assertsFrom(snap), []Mutation{am, rm}, nil
 		})
 }
 
