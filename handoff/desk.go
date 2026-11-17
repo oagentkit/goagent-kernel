@@ -41,6 +41,15 @@ type DeskOption func(*Desk)
 //
 // 注意：跨进程部署时**不要**用进程本地时钟代替存储时钟——截止时刻是
 // 存储侧的事实。注入只用于确定性测试；生产路径应实现 ClockedLedger。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取本台时钟的判定路径（会递归）；
+//     只读回查是安全的（Desk 自身无锁，回调在判定路径上调）。
+//   - **不得阻塞**：回调在每次截止时刻推算前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
 func WithClock(clock func() time.Time) DeskOption {
 	return func(d *Desk) {
 		if clock != nil {

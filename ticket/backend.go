@@ -116,6 +116,15 @@ func NewMemoryBackend(maxSize int) Backend {
 // 之前取值，回调里重入本包的 Put/Take/GC/Len 不会撞上不可重入的互斥锁。
 // 宿主可以放心在时钟闭包里读票据数或其他本包接口。
 //
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取后端时钟的写路径（会递归）；
+//     只读回查是安全的（时钟在 b.mu 之外被调用，issue #317）。
+//   - **不得阻塞**：回调在每次过期判定前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
+//
 // maxSize <= 0 ⇒ DefaultMaxEntries；now 为 nil ⇒ time.Now。
 func NewMemoryBackendWithClock(maxSize int, now func() time.Time) Backend {
 	if maxSize <= 0 {

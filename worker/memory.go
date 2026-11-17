@@ -56,6 +56,15 @@ type registryConfig struct {
 //
 // 注入的回调**不会在持有 MemRegistry 内部锁时被调用**（issue #317）：回调里
 // 重入本包的 Register/List/Deregister 不会与不可重入的互斥锁相撞。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取注册表时钟的写路径（会递归）；
+//     只读回查是安全的（时钟在 m.mu 之外被调用）。
+//   - **不得阻塞**：回调在每次到期判定前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
 func WithRegistryClock(now func() time.Time) RegistryOption {
 	return func(c *registryConfig) {
 		if now != nil {
