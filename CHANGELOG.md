@@ -2,6 +2,916 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.43.0] — 2026-11-17
+
+**下游要做什么（BREAKING）**：
+
+1. **实现 `scheduling.QuotaStore` 的宿主要补三个方法**（编译期即红；该包定级
+   Experimental，不违反 Stable 承诺，但实现方必须改代码）：
+   - `ReserveLease(ctx, QuotaRequest) (QuotaLease, error)`——带归属与有效期的预占；
+   - `Reclaim(ctx, QuotaLease) error`——凭令牌回收悬挂预占，三条判据（已到期 + 任务
+     租约经 `TaskLeaseOracle` 确认失效 + 有判定面），宿主判定面在存储锁外调用；
+   - `SweepExpired(ctx) (int, error)`——扫描全部到期预占并逐条按 Reclaim 判据回收，
+     返回实际回收条数（租约仍有效 / 未到期 / 已归还的不计）。
+
+   **只调用不实现的宿主不受影响**；`MemQuotaStore` 参考实现已补齐，可直接跑。
+
+2. **用 `finalize.Route` 判终态的宿主**：路由表已收口为 `deadline.Route` 唯一一份
+   （#355）——**宿主自有取消哨兵须显式传入**：`finalize.Route(ctx, mySentinel)`。
+   否则用户取消仍判成 `ActionShutdown`（不落终态、留给恢复循环）而不是
+   `ActionCancelled`。沿用 `contract.ErrUserCancelled` 作 cancel cause 的写法
+   **无需改动**。
+
+3. **错误哨兵身份统一（#333）**：`finalize.ErrUserCancelled` /
+   `finalize.ErrSessionDeadline` / `deadline.ErrSessionDeadline` 现在都是
+   `contract.ErrUserCancelled` / `contract.ErrSessionDeadline` 的别名——跨包
+   `errors.Is` 互相命中（此前是不同实例）。用 `==` 严格比较哨兵的调用点要复核；
+   `errors.Is` 写法不受影响，只是命中面变宽。
+
+4. **无需 `go mod tidy`**——本版区间内无 go.mod/go.sum 改动，依赖地板未变。
+
+
+### 新增：词表枚举出口 + 三态边界单源（清偿 #356 / #363）
+
+清偿剩余两条 issue：
+- **#356** 词表零枚举出口 —— 七张判定词表各得导出枚举出口，出口与判定读**同一张 map**
+  （`contract.AllStatuses()` / `statemachine.AllStepStatuses()` / `AllStepTypes()` /
+  `taskboard.AllStates()` / `protocol.AllChartStatuses()` / `ChartStatusWords(bucket)` /
+  `AllChartStatusWords()`）；
+- **#363** 「什么算词表外」这条边界只有一份 —— `contract.ClassifyStatus()` + `StatusClass`，
+  `checkpoint` 与 `controlplane` 各删掉自己那份逐字同构的分类器，改调统一判定面。
+新增四条判据并逐条做**反向验证**（注入坏实现确认真会红，共 8 条）。
+附带修掉 `deadline` 全仓扫描不跳过点目录导致的一处门禁假红。
+逐条对应见 `docs/DISTRIBUTED-EVOLUTION-20261117.md` 第 15 节「第六轮台账」。
+
+### 新增(ownership)：跨区域所有权权威（Ownership Epoch + 转移确认）(#273)
+
+* feat(ownership): 跨区域所有权权威与两阶段转移确认(#273)
+问题：跨域原语只有 handoff 的 Epoch（管交接单代次）与 coord 的时间
+权威（管租约到期由存储算），都没有回答「网络分区后哪个区域有权提交
+这个任务域」——旧区域可以凭从未失效的 owner 身份继续提交，造成双主。
+本包给契约与判据，不给共享权威的落库/选主：
+- RegionMap：任务域 → 权威区域的映射，可校验、可查、枚举确定；
+- Authority / Fencer：权威管理面与提交路径唯一接缝（可插拔）；
+- 两阶段转移：BeginTransfer 只记录候选代次（= 当前 + 1）与回执令牌，
+  不改变当前权威；ConfirmTransfer 由目标区域凭回执令牌确认，换代
+  （代次提升 + 区域切换 + 令牌重铸）在一次原子操作里完成；
+- Judge 纯判据（次序：回退 → 未确认 → 区域 → 令牌），MemoryAuthority
+  与 Local 共用同一份；旧代提交 ErrStaleEpoch、确认前候选代次
+  ErrEpochUnconfirmed；
+- 不造第二份租约：无 TTL / 到期 / 续期，任务租约仍归 taskboard/handoff；
+- 单区域退化 Local：本区域即权威，转移显式 ErrSingleRegion。
+先红后绿：用例先以「包不存在」编译失败，再实现转绿（覆盖率 97.9%）。
+反向验证覆盖：分区旧代提交被拒（双主）、缺确认不可用、提案取代与
+回执重放、并发提案确认恰好一个赢家、epoch 数值比较（9 vs 10）、
+单区域退化与只读 Fence（不因提交铸造授权）。
+* docs(ownership): 接入文档与门禁口径同步(#273)
+- api-lifecycle.yaml 登记 ownership（Experimental, v0.43.0）；
+- architecture-policy.yaml 增模块与依赖方向（只依赖 oekit/pkg），
+  scan_roots 纳入结构阈值扫描；
+- docs/error-semantics.md 登记 10 个错误哨兵与处置口径；
+- docs/USAGE.md 增 §3.14（何时需要 / 两阶段转移片段 / 关键符号 / 坑），
+  包数与生命周期登记口径同步 52/59/60；
+- README 包表增 ownership 行、特性段补「跨区域只有一个权威」，
+  工程底座按实测对齐（61,130 行 / 324 文件 / 388 测试文件）。
+
+### 新增：租户隔离落到持久化面 + PG 参考面补齐 + 部署能力清单 (#275 #278 #277)
+
+* feat(sideeffect,pgstore): 租户维度落到副作用/事件持久化面 (#275)
+- sideeffect.Action 加法支持 Tenant/Scope；NewActionKeyBuilderFor 成为
+  租户+作用域段进键的唯一入口，worker 受管执行器改走该入口并回填身份字段
+- pgstore effect/资源/下游/事件表补 tenant 列与 (tenant, 业务键) 复合主键，
+  EnsureSchema 增加 vN+1 幂等迁移（旧行归入 tenant ''）
+- 事件面每租户一条独立 ID 空间与水位行（订阅侧按租户取流即隔离，单租户流
+  仍满足 TailStore 无空洞契约）
+- 新增租户作用域构造器 NewTenantEffectStore/NewTenantEventStore/
+  NewTenantDownstream：缺租户 ctx 拒绝（tenant.ErrNoContext），声明与 ctx
+  不一致拒绝（ErrTenantMismatch）
+- 真 PG 用例：跨租户同 TaskID 不重放/不串资源、同租户不同 Run 不串、
+  事件不串流、缺租户 fail-closed、旧库迁移幂等；反向用例钉住去掉租户
+  维度后的跨租户静默重放
+* feat(pgstore): controlplane.Store 持久化实现——控制面与任务板同表 (#278)
+- 新增 ControlStore：三个 Snapshot* 在 REPEATABLE READ 只读事务取一致快照；
+  三个 Commit* 在 pgref_control_version 单行版本锚上「校验→留痕→写状态→
+  推进版本」同事务提交，留痕失败状态一字不动、缺留痕面 ErrNoAuditor
+- 任务状态只落 pgref_board_task（与 taskboard.Board 同一张可写表），运行成员
+  由该表 run_id 单源表达，pgref_run 不复制任务清单；CommitTask 后 Board.List
+  立即看到同一份状态
+- ControlStore/BoardStore 实现 TaskSource，来源标识由 pool/schema 派生：
+  同 schema 装配通过，不同 schema NewAuthoritativeStorePlane 报
+  ErrAuthorityMismatch（#268）
+- 事件面沿用 #264 的 Outbox/水位线读法与 TailCursorStore，并落在每租户独立
+  水位行（#275）；同事务回滚不留孤儿事件由既有真 PG 用例继续覆盖
+- 真 PG 用例：快照/版本锚/并发单赢家、留痕失败、Run/Effect 面、同表可见、
+  同源装配、权威强释后旧令牌被同一张任务板拒收
+- 按 400 行结构阈值拆分 identity.go / effect_rows.go / control_seed.go
+* feat(deploy): 场景化部署配方固化为可执行的能力清单 (#277)
+- 新增 docs/DEPLOY-MATRIX.yaml：6 个目标场景 × 20 项能力，每条能力挂
+  contract 符号 / gate 目标 / issue 单号 / doc 路径；state 由证据形态推导
+  （available/partial/missing），场景 readiness = 必需能力最坏状态
+- 新增 cmd/deploymatrix（make deploycheck）：go/ast 校验契约符号真实声明、
+  Makefile 目标存在、issue 在 docs/CHANGELOG 有落点、未知字段/重复/失效引用
+  即红；USAGE 的 deploy-matrix 机器口径块与清单逐行比对（场景 id/存储/
+  Worker 模式/状态不一致即红）
+- docs/USAGE.md 增 3.14 部署配方节 + 机器口径块；README 登记清单与门禁；
+  architecture-policy 登记 cmd/deploymatrix
+- 装配期可判的接缝在清单里直接指向契约：租户作用域（NewTenant*）、
+  时间权威（数据库时钟）、存储中立性/权威唯一（NewAuthoritativeStorePlane）
+- 用例覆盖：合法清单通过 + state 谎报/符号失效/单号失效/门禁目标失效/
+  readiness 不符/未登记引用/USAGE 缺失或不一致/未知字段 均必红
+* fix(pgstore): 尾随游标按租户隔离，避免多租户共用一条游标 (#275 #278)
+- 新增 NewTenantTailCursorStore：读写从 ctx 取租户（缺租户 ErrNoContext），
+  物理键由 tenant 长度前缀 + consumer 派生（单射），同一 consumer 名在两个
+  租户下是两条游标，跨租户不会互相推进
+- 真 PG 用例：同 consumer 跨租户互相不可见、保存互不推进、缺租户 fail-closed
+- rebase 后同步 README 工程底座统计（62014 行 / 326 文件 / 388 测试文件）
+
+### 新增(coord/reconcile/faultmatrix)：租约窗口误差预算 + 终态 Outbox + 故障矩阵 8 类(#271 #272 #274)
+
+* feat(coord): 租约判定—提交窗口的原子判定接缝与误差预算(#271)
+Backend 新增可选 AtomicDecision（事务内取存储时刻+快照+判定+提交）与 LeaseBudget；Board/Store 适配器新增 LeasePrecision()/RenewWithVerdict()：原子后端窗口 0，非原子后端显式标记 Degraded、按 250ms 存储时钟预算给出窗口内过期/超预算的可解释事实。装配期时间权威检查保持不变。
+* fix(reconcile): 终态写入与终态事件同事务 + Outbox 幂等补做(#272)
+先复现：旧 Store 路径 ConvergeCAS 成功后 Pub 失败 ⇒ 会话已终态、事件永久缺失（TestSettlementEventSplitReproduced 钉住，结论坐实）。修法：可选 FinalizeStore.Finalize 原子写终态+Outbox 行；FlushFinalizeOutbox 投递成功才标记，失败保留并跨重启补做；FinalizeEvent.ID 稳定，重放不重复生效。旧路径保留并由 FinalizeGuarantee 显式报告降级。
+* test(faultmatrix): 故障矩阵扩 8 类真实分布式场景(#274)
+扩行不另起炉灶：新增 K8s API 响应丢失、跨租户碰撞、长任务租约失效、DB 主备切换、事件乱序提交、配额悬挂、控制面并发介入、NetworkPolicy 8 类。requiredMatrixCells 登记不可删除的格与最小用例数（删任一新用例即红）；requiresEnv 真环境格必须带 localFact，Skip 前仍判进程内事实。补矩阵自检的反向验证（缺 localFact/缺格/重复名/未知模式/未登记类）。
+* chore: 门禁收尾（README 数字对齐 + 结构阈值拆分 + 夹具词面）
+README 工程底座/coord/reconcile 规模与新增能力同步；board 续期入口拆到 board_renew.go、reconcile/finalize 与 faultmatrix 自检用例按判据一侧拆文件，恢复 400 行阈值；测试夹具去掉门禁禁止的运维词面。docsync/apilifecheck/architecture-check/lint/vet 全绿。
+* fix(reconcile): 恢复循环每轮自动补做终态事件 Outbox(#272)
+RecoverBootOrphans/RecoverInterrupted 开始时先 FlushFinalizeOutbox：进程重启或上轮 Finalize 已提交但投递未完成时，无需宿主额外接线即可补做；稳定 Event.ID 保证重放不重复。补 TestRecoveryLoopAutoFlushesOutbox 与 README 数字。
+
+### 修复(#411 #412 #413)：三条已关闭单的残留清偿——用例尺子、链条面接缝、仓库卫生门禁
+
+清掉 #411 / #412 / #413 三条**已关闭**单里的三处残留（PR #414 关单时只落地了一部分）。
+## 三处残留
+| 单 | 残留 | 本 PR 的偿法 |
+|---|---|---|
+| #411 | 用例不再抓得住它为之存在的那个回归（续期退回串行全量扫描仍 PASS）| 拆成两条**尺子与机器快慢无关**的断言：规模面判并发计数（峰值 ∈ [2, RenewConcurrency]）、到期面判续期时刻 |
+| #412 | 单跳判定面接了 `URLResolver`，**链条面没接** ⇒ 仍有 13 处依赖真实外网 DNS | 新增 `CheckChainWithResolver`（additive），用例全部迁到接缝上；`.localhost` 后缀族那条断言在 windows 上从「跳过」变成「验过」 |
+| #413 | 二进制已移出版本库，但**复发形态没有机器尺子**（issue 建议第 3 条未落地）| 新增 `cmd/hygiene`：判被跟踪 + 判文件头魔数，接进 `make check` 与 `make unit` |
+## 反向验证（全部实跑注入坏实现并确认转红）
+- 续期并发上限退回 1 ⇒ `续期峰值并发应大于 1（实得 1）——串行全量扫描会退化成这个形状`
+- 判定层忽略注入的解析器 ⇒ `注入的公网地址应放行: 出站目标解析失败: lookup public.example: no such host`
+- 链条**起始跳**忽略注入 ⇒ `起始跳单判: 红点应是「解析成功但目标已拒绝」（实得 出站第 1 跳被拒（https://private.example/start）: 出站目标解析失败: lookup private.example: no such host）`
+- 链条**后续跳**忽略注入 ⇒ `逐跳: 红点应是「解析成功但目标已拒绝」（实得 出站第 2 跳被拒（http://private.example/x）: 出站目标解析失败: lookup private.example: no such host）`
+- 把二进制重新 `git add` 进索引 ⇒ `仓库跟踪了 1 个编译产物二进制：` / `docsync-rv（Mach-O 64 位）`（`go run` 退出码 1）
+## 门禁
+`make check` 全绿；CI 7 个 job 全绿（含 **windows 真跑测试**——`.localhost` 后缀族那条断言在 windows 上首次真跑）。
+policy 登记：`dependency_direction.ignore_dirs` 增 `cmd/hygiene`；`egress_paths` 增
+`cmd/hygiene/main.go:gitOut`（unrestricted，事实登记；子进程环境走 `procx.ChildEnv`，
+不继承全量 environ）。
+## 台账
+`docs/DISTRIBUTED-EVOLUTION-20261117.md` §16 记了三条残留各自的复核过程与这一轮新学的
+两个形态：(a) **判据的尺子必须与被测机制同维度**——尺子换了维度，判据就变成测环境；
+(b) **关单是结论，不是核对**。
+
+### 修复(ci)：续期压力用例负载无关 + netguard 解析器接缝 + 移除跟踪的 docsync 二进制（#411 #412 #413）
+
+- #411: TestLoopHighConcurrencyRenewalBeforeExpiry 的 200×100ms 墙钟预算逼近 TTL，
+  机器一忙计数代理断言就测机器；缩到 64×50ms 并改等条件（上界 1s << TTL），
+  lost/failed 两条强断言不变。
+- #412: netguard 新增 URLResolver 接缝与 CheckURLWithResolver（nil=DefaultResolver），
+  TestCheckURL 注入假解析器，判定面不再依赖真实外网 DNS。
+- #413: 根目录 3.5MB 编译产物 docsync 移出版本库并入 .gitignore。
+- seamcheck 基线随新接缝 -update（评审入基线）。
+
+### 修复：宿主接缝锁内调用/panic 隔离 + 接缝契约与门禁（#366 #367 #368 #369 #370）
+
+* fix(scheduling): 宿主时钟回调移出配额存储锁，避免回调重入死锁 (#366)
+MemQuotaStore 的 3 处 m.now()（ReserveLease / Reclaim / SweepExpired）
+都在持有 m.mu 时调用宿主注入的时钟回调；回调回查 Usage 即二次抢锁，
+sync.Mutex 不可重入 ⇒ 永久静默挂起。
+- ReserveLease：TTL>0 时先在锁外算出 Until，锁内只落账；
+- Reclaim：锁内只取租约快照与 oracle，时钟/Oracle 都在锁外调用；
+- SweepExpired：now 在加锁前取。
+WithQuotaClock 补齐接缝契约（no-reentry / no-blocking / panic-caller）。
+三条调用路径各配一条 3s 重入死锁用例；修复前三条均实测 DEADLOCK（红），
+修复后全绿。
+* docs: 工程底座按 rebase 后实际树重算
+* fix(worker): 批量续期路径 panic 隔离，与并发路径同口径 (#368)
+宿主任务板 panic 在两条续期路径上归属相反：并发路径每条 async.GoSafe
+（隔离），批量路径直接调 RenewBatch → panic 逃出 heartbeat 被 GoSafe
+吞掉 ⇒ 心跳协程死亡、全部在途租约停止续期。
+- 新增 renewBatchCall：recover + async.ReportPanic，整批按基础设施失败
+  处理（逐条记一次 renewFails），心跳下一拍照常重试；
+- taskboard.RenewingBoard / BatchRenewingBoard 契约补齐
+  不得重入 / 不得阻塞 / panic 已隔离 三条；
+- 用例钉住「panic 后多轮续期调用次数持续增长」与批量/并发同口径
+  （修复前批量路径 mustNotPanic 实测红；并发路径为对照面）。
+* docs(seams): 时钟接缝契约三条写齐 + 统一模板文档 (#369)
+时钟族 20 个接缝条目里此前 0 个写齐「不得重入 / 不得阻塞 / panic 由谁兜」；
+写齐的 3 处恰好是 #317 被逼着修过的。把三条提炼成固定模板：
+  @seam: no-reentry no-blocking panic-isolated|panic-caller
+- 13 个导出时钟接缝声明点全部补齐标记与契约正文：coord×2、handoff×3、
+  reconcile、sidetest、boardtest、ticket×2、worker（scheduling/controlplane
+  已在 #366/#367 提交里补齐）；
+- panic 处置区分 panic-isolated（内核隔离）与 panic-caller（调用方兜，
+  显式第三态），不许不写；
+- 新增 docs/SEAM-CONTRACT.md：标记语法、枚举面口径（13 个声明点 vs #369
+  的 20 个条目）、实现者检查清单、与 issue 的对应；
+- README 文档一览登记新文档。
+* feat(archcheck): 接缝门禁三形态——契约标记 / 锁内调用 / panic 外溢 (#370)
+现有 rules 段全是文本级判据，两条时钟死锁与一条心跳停摆都能全绿通过。
+新增 seams 段与三条内置规则：
+- harness-seam-contract（error，形态 B）：AST 枚举导出时钟接缝声明点
+  （导出函数/方法/接口方法/结构体字段），要求 @seam 三件套齐全；
+  min_declarations 防判定面静默漂移到 0；
+- harness-seam-lock-held（warn，形态 A）：时钟访问器在互斥锁区内被调
+  的只读扫描；文件头写明闭包 / 多出口 / helper / 接口自实现 / 非 mutex
+  五类漏判，只输出疑似清单，不阻断；
+- harness-seam-panic-escape（error，形态 C）：登记调用（当前 RenewBatch）
+  必须位于 subhub.Do/async.GoSafe 回调内或所在函数带 defer recover。
+配套：policy 严格解析 + 自校验（子门禁开启但判定面为空即红）、
+builtinrules 登记（例外可精确豁免）、seams_test.go 正反用例 +
+真实仓 13 个接缝清单覆盖 + Run 级 HasBlocking（退出码 1）断言。
+* fix(worker): panic 错误内联，避免未导出哨兵进入错误登记口径
+apilifecheck 要求所有 errors.New 哨兵登记进 docs/error-semantics.md；
+批量续期的 panic 错误只用于逐条计数，不是宿主可见的契约错误，故内联，
+不新增登记项。
+* docs(readme): 工程底座与门禁清单对齐（64233 行 / 337 文件 / 403 测试 / 12 条 AST 规则）
+docsync 判相等：新增接缝文档与三个门禁实现后的实测值。
+* docs: 工程底座与 eventbus 依赖行按 rebase 后实际树对齐
+* docs: 工程底座按 rebase 后实际树重算
+* docs: 工程底座按 rebase 后实际树重算
+* fix(controlplane): 解决 rebase 冲突并重算工程底座（#366/#367 与 #360 Claimable 并存）
+* fix(archcheck,handoff): 结构阈值清偿——seam 自检拆出 selfcheck、Offer 拆出 desk，工程底座重算
+* style: gofmt 拆分后的新文件
+* docs: 工程底座行数按 CI 口径修正（66027）
+
+### 修复：归因/配对/metrics 词表单源 + DurablePublisher panic 隔离 + 接缝成文率基线（#391 #392 #395 #399 #400）
+
+* fix(eventbus/watchdog/reconcile): closed_by 词表下沉 eventbus 单源（#391）
+生产方 reconcile 的 recovery:dead-owner / recovery:dead-lease 不在 watchdog
+缺省表里，合法归因被报成 turn_end_unattributed（假红）。
+- eventbus 新增 ClosedBy* + ClosedByDefaults()：closed_by 唯一词表；
+- reconcile.By* / watchdog.ClosedBy* 全部引用同一组常量；
+- 补三组一致性断言（eventbus 常量↔缺省表、reconcile 常量必须引用词表、
+  watchdog 缺省表 ⊇ reconcile 全部归因值）+ 四路归因的静默行为用例。
+反向验证：给 reconcile 加字面量归因 ⇒ AST 用例红；删缺省表一项 ⇒
+watchdog 用例红并复现 turn_end_unattributed。
+* fix(watchdog): 配对缺口 reason 引用 trajectory.Pairing 单源（#392）
+watchdog 的 reason 词表与 trajectory.Pairing 是同一事实两份实现，且
+declared_not_executed 与 missing_result 是同一事实两个 token，聚合面
+静默拆桶。
+- 三条同名 reason 直接引用 trajectory.Pairing 导出常量；
+- declared_not_executed 在 eventbus 登记为 missing_result 的别名
+  （CanonicalPairingReason / IsPairingReasonAlias，线路值不变）；
+- 补跨包逐值断言 + 线路字面量承诺 + AST 单源断言（生产源码出现配对
+  取值字面量即红）。
+反向验证：reason 常量改回字面量 ⇒ AST 用例红；trajectory 单方改名
+unpaired_result → result_without_call ⇒ 逐值用例红。
+* test(metrics): 补 exec.status / lease.outcome 跨包取值域恒等断言（#395）
+harness.exec.status 手抄 trajectory.SpanStatus 三值、harness.lease.outcome
+手抄 sideeffect.Outcome 两态，都没有跨包断言——上游加值/改名只能等到
+「标签越界」才暴露。
+- TestExecStatusAlignsWithTrajectorySpanStatus：AST 枚举 trajectory 全部
+  SpanStatus 常量与标签取值域做集合恒等（加第四个状态即红）；
+- TestLeaseOutcomeAlignsWithSideEffectOutcome：比对 int 枚举的 String()；
+- TestSameSourceWhyHasAlignmentTest：Why 声明「同源/逐字对齐/须两边同步/
+  对齐」的维度必须有真实存在的对齐用例（删用例/删登记即红）。
+反向验证：+SpanStatus、ExecStatusError→"failure"、OutcomeContended→"busy"、
+重命名对齐用例，四种改法均实测转红。
+* fix(eventbus): DurablePublisher 的 Store.Insert 移出锁并隔离 panic（#399）
+发布临界区持 p.mu 裸调宿主 Insert：宿主存储 panic 直接逃出 Publish，
+既没有 error 也不走 drop 留痕；同包 onDrop 却已由 subhub.Do 隔离，
+两个宿主接缝口径相反。
+- 锁内只留判定：mu 只保护领号/轮次/广播簿记，Insert 在锁外调用；
+  串行由 ticket + sync.Cond 保证，广播序 == 游标序不变量不变；
+- insertStore 把 Insert panic recover 成 error，走「不广播 + onDrop」；
+- Store 契约补「panic 由内核隔离」一条。
+回归用例：panic 不逃出 Publish、转 error、不广播、drop 留痕、轮次不遗留；
+白盒探测 Insert 执行时发布锁未持有。
+反向验证：去掉 recover ⇒ panic 逃出用例红；Insert 移回 mu 内 ⇒ 锁外用例红。
+eventbus -race 全绿。
+* feat(seamcheck): 接缝契约成文率可执行基线与棘轮（#400）
+「接缝声明 / 调用点 / 三条约束（不得重入/不得阻塞/panic 隔离）写齐数」，
+并以基线清单做棘轮。
+- cmd/seamcheck：导出 interface + 回调函数类型为接缝；go/types 数调用点；
+  文档（含 interface 方法注释）判三条约束成文；
+- seam-baseline.json：92 声明 / 429 调用点 / 写齐 5（机器生成；集合逐条
+  相等，少一条/多一条都红；每接缝已写约束只增，写齐总数只升）；
+- -update 拒绝棘轮回退（-force 才允许）；接入 make check；
+- 关键接缝补三条约束注释：eventbus.Store / eventbus.TailStore /
+  reconcile.Store / reconcile.Pub / watchdog.Pub（非零基线）。
+口径说明：本条扫描器只认「导出 interface + 回调函数类型、排除 main」，
+与 issue 里外部类型感知脚本的 214/562（含跨包/方法级展开）范围不同；
+两套数字不可直接比较，基线以本工具输出为准。
+反向验证：基线删一条接缝 ⇒ 红；去掉一条约束注释 ⇒ 棘轮报成文回退。
+* chore: lint 收口与 docsync 行数对齐（#399 #400）
+- errcheck：seamcheck 的报告输出统一走 reportf（显式丢弃写错误）；
+- staticcheck ST1008：publishSafely 的 error 改为最后一个返回值；
+- docsync：README 生产代码行数随新增文件重算（63455）。
+* fix(docsync): 词表派生支持单源选择器（#392）
+的 reason 改成 eventbus/trajectory 的导出常量引用后，门禁报「不是字符串
+字面量，无法派生」——单源化不应让判据退化。
+- constResolver 支持 pkg.Const 选择器与 string(x) 转换（仅本仓模块内）；
+- 递归解析被引用包的常量字面量，环保护 + 缓存；
+- 补单源引用的正向/漏列用例；
+- README 生产代码行数重算（63984）。
+* ci: seamcheck 接入 make unit（#400）
+CI 的 unit job 跑 make unit，而 seamcheck 此前只挂在 make check——
+本地全量门禁会判、CI 不判等于「推送后才说话」的反面。接进 unit，
+与 architecture-check/docsync/apilifecheck 同一条静态门禁路径。
+* chore: rebase 到 dfa5951 后重算工程底座与接缝调用点（#400）
+- README：64258 行 / 339 文件 / 407 测试文件（docsync 判相等）；
+- seam-baseline：调用点 429 → 435（#403 新增 eventbus.Bus Clone 面等），
+  接缝集合与三条成文数不变（92 / 5）。
+* fix(ci): 墙钟清理误判 job_not_found 的竞态 + seamcheck 校验快路径
+CI unit 上 TestK8sExecWallClockTimeout 稳定复现：墙钟 watcher 先删 Job
+再 cancel，并发中的 await GET 先看到 not-found，收场被报成
+job_not_found（本地负载低时不触发）。
+- watcher 改为先 cancel 再删 Job（cleanup 用外层 ctx，删除照常完成）；
+- await 在 not-found 分支先看 ctx.Err()：已取消 ⇒ 走等待取消路径，
+  由 Exec 归入 wall_clock；真 404 仍报 job_not_found；
+- seamcheck 校验模式先读基线再扫描（缺基线不再跑整仓类型检查），
+  端到端用例相应减少重复扫描（CI 上该测试 28s → 更短，降低并行负载）；
+- README 生产代码行数重算（64273，docsync 判相等）。
+* chore: 对齐 5ddbfa4 后的工程底座与接缝调用点（#400）
+README：64736 行 / 339 文件 / 419 测试文件；eventbus 包行数 1034 → 1410
+（#403/#404/#405 合入后的实际值，docsync 判相等）；seam-baseline 调用点
+435 → 437（接缝集合与三条成文数不变）。
+* docs: 工程底座按 rebase 后实际树重算
+
+### 修复：别名共享与护栏用例簇 10 单（#386 #387 #388 #389 #390 #393 #394 #396 #397 #398）
+
+* fix(archcheck): examples 分支覆盖按祖先固定判据补齐（#386）
+门禁 examples 此前只钉住每条正则的第一个分支：词表型规则把全部备选词
+包在一个捕获组里，按顶层 | 切分只看到「整个组」一支；regexp/syntax 还会
+做公因子分解，把某一支单独匹配也会被兄弟分支顺带命中。两种近似判定都会
+假绿。
+改为沿语法树枚举每个 OpAlternate 的每一支，并把从根到它的全部祖先选择
+一起固定，再用真实判定核问「有没有 want: hit 的样例还能命中这条路径」。
+没有 ⇒ 报「分支无样例钉住」。policy 侧按分支补齐 9 条规则的样例（19 词 /
+15 词 / 2 域 / 2 域×3 仓×2 结尾 / 4 回调名 / errors 两支）。
+反向验证：删掉 single-errors 第二支、删掉词表里的运维、以及新增一条无
+样例分支，门禁均转红且红点落在对应规则。
+* test(worktree): #225 回归用例改用下标写并断言元素值（#387）
+原用例用 append 改写 len==cap 的切片：append 必然重新分配，写的是一个
+全新数组，与计划本体零关联——去掉 Workspaces() 的深拷贝整包仍绿，
+断言结构上不可失败。
+改为原地下标赋值，并补一条内容断言（坏实现改穿的是元素值不是长度）。
+反向验证：删掉 Workspaces() 的两处 slices.Clone，该用例转红。
+* fix(worktree): New 深拷贝 ReadOnly/Writable（#397）
+出口方向（Workspaces）已由 #225 深拷贝交付，构造方向仍在：New 原样
+存调用方的 Workspace，ReadOnly/Writable 底层数组与入参共享。宿主复用
+同一份声明切片时，计划里的分区会变，New 的重叠自检与 Conflicts 的结论
+随之建立在改后的事实上。
+按与出口方向同一把尺子克隆两个切片，并补 TestNewClonesWorkspaceSlices；
+反向验证：去掉 New 里的 clone 后该用例转红。
+* test(trajectory,controlplane,handoff): 补返回拷贝契约守护用例（#388 #396）
+#388：原 TestSideEffectRowsHaveNoDelivery 拿一份当场 new 出来的字面量切片
+再复制一份，两边按构造就分属两个数组——断言的 Rows() 契约与被测对象无关，
+去掉 slices.Clone 整包仍绿。改为真的构造投影器、下调返回的行再重读，
+并给 Issues() 补同形状用例。
+#396：cloneTask 的 Deps、cloneRecord 的 Payload、cloneReceipt 的
+Artifacts 三处「返回拷贝」契约此前零守护。各补一条双方向用例，断言落在
+元素值上。
+反向验证：逐处去掉拷贝，对应用例均转红。
+* fix(ptc): RunEnv 在 WithEnv/EnvOf 两侧各做一次快照（#389）
+RunEnv 按值传但 Table 是切片：结构体被拷贝、底层数组仍与注入方共享。
+工具表是「本环节模型可达」的绑定面，注入方复用/改写同一份表会让快照变成
+活句柄，两个方向都能改穿。
+两侧各 slices.Clone 一次（func 值不可变，浅拷贝足够），并补双方向用例；
+反向验证：分别去掉注入侧/取出侧 clone，对应的方向各转红。
+* fix(hookengine): New 深拷贝 Hook.Args（#390）
+New 把 Hook 按值存进 Engine，但 Args 的切片头被复制、底层数组仍由调用方
+持有。hook 是检查层，参数变了等于检查内容变了；Blocking hook 的裁决直接
+决定放行/拒绝，而宿主复用同一份配置模板是常见写法。
+构造期 slices.Clone(h.Args)，并补用例断言 Runner 收到的仍是声明值；
+反向验证：去掉 clone 后该用例转红（Runner 收到改后的 beta）。
+* fix(memorypipe): Build 深拷贝 Entry.Tags（#394）
+Entry 自称「值类型」，但 Tags 是切片：按值放进 Piece 只复制切片头，底层
+数组仍与调用方入参共享。标签是 AND 匹配的判据，两个方向都能改穿，匹配
+结果随之改变。
+产出 Piece 前 slices.Clone(e.Tags)，并补双方向用例；反向验证：去掉
+clone 后该用例转红。
+* test(checkpoint): NoAlias 用例改断言类型兼容且真被传入的源（#393）
+两条用例断言的源对象在 Go 类型层面就不可能与结果切片共享底层数组：
+deps_test 拿 []StepDef 比 []string；resume_test 的 ids 从未传给 BuildPlan
+（graph(ids...) 逐个转成新的 StepDef 值）。断言结构上不可失败。
+改为断言真正的别名面：结果切片与快照 Done（[]string）之间、Skip 与 Run
+互相之间，并比较两者底层数组地址。反向验证：skip := snap.Done[:0] 与
+run := skip[:0] 两种变异均让用例转红。
+* fix(ptc): NewSubprocessProvider 快照 Bindings/Stages（#398）
+opts 按值存但 Bindings/Stages 是切片，底层数组仍由调用方持有。Bindings 是
+模型可调用工具集的绑定面、Stages 是每次绑定调用前的判定环——宿主复用同一
+份装配配置再生成别的后端时，活 provider 的可调用工具集/判定环会跟着变。
+构造期各 slices.Clone 一次，并补用例断言绑定名与判定环不被写穿；反向验证：
+分别去掉两处 clone，对应的断言各转红。
+* docs(readme): 按 docsync 口径重算工程底座数字
+生产代码 63,136 → 63,313 行；测试文件 399 → 402（本轮新增用例与
+archcheck 分支覆盖判据）。make docsync 复跑通过。
+* docs: 工程底座与 eventbus 依赖行按 rebase 后实际树对齐
+* docs: 工程底座按 rebase 后实际树重算
+
+### 修复(contract/statemachine/deadline/finalize/delegate/handoff)：状态词表统一簇——终态判据、收尾路由与回执词表单源 (#354 #355 #357 #358)
+
+* fix(contract/statemachine): 状态词表单源化与终态判据统一 (#354 #357)
+contract 成为内核状态词表的唯一定义处：会话 7 值 + 环节独有 6 值；statemachine 的 12 个状态常量全部改为 contract 同值常量的别名（标注 Deprecated）。
+IsTerminalStatus 收敛为会话/环节共用的一份终态判据：failed 在两根轴上都是终态（failed→rolled_back 是补偿迁移，不是自行前进），rejected/expired/interrupted/rolled_back/skipped 一并纳入；statemachine.IsTerminal 只做类型转换。CanTransition 用 IsTerminal 守卫终态出边，使其成为 IsTerminal 的生产调用点而不是死 API。
+新增表驱动用例：12 个环节状态 + 会话独有的 timed_out 逐条断言两包结论一致；AST 判据钉住 12 个常量必须是 contract 别名、重叠集合大小恒为 6。steer 的环节成功判定改用 contract.StatusSucceeded。
+* fix(deadline/finalize): 收尾路由单一判据与接管臂对齐 (#355)
+deadline.Route 成为收尾 cause 路由的唯一判据：五路（接管/超时/用户取消/停机/未取消），接管臂认识 steer.ErrSteered（此前落到 shutdown 兜底臂）；timed_out 先于停机臂的次序纪律只此一份。finalize.Route 改为 Outcome→Action 纯投影，不再另写 cause 判定与臂序。
+用户取消哨兵身份收敛到 contract.ErrUserCancelled（finalize 保留同值别名）：两包判同一 ctx 不再出现 cancelled vs shutdown 的相反结论。
+新增交叉断言：接管/超时/用户取消/裸停机/正常五组 ctx 同时喂给两包，逐条断言结论一致；deadline 新增生产消费方判据（≥1 个非测试 import，当前即 finalize.Route）。臂序断言只保留在 deadline 一处。
+* fix(delegate/handoff): 回执词表单源与参考实现去手抄 (#358)
+handoff.ReceiptStatus 改为 delegate.Status 的类型别名，三值词表只有一份；完成态字面量统一为 completed（历史 ReceiptDone 保留为同值别名并标注 Deprecated，新增 ReceiptCompleted）。delegate.Status.Valid 导出并新增 AllStatuses()，宿主不再手抄合法值集合。
+examples/reference-runtime 的终态闸直接注入 contract.IsTerminalStatus，删除手抄的 isTerminalStatus；新增 AST 判据：参考实现必须直接注入导出判据，且 examples/ 全目录不得存在本地手抄的终态判定函数（返回 bool、switch 里列 ≥2 个 contract.Status* 取值）。
+* chore(docs): 状态词表/收尾路由单源的门禁与文档对齐 (#354 #355 #357 #358)
+architecture-policy：statemachine 依赖 contract（词表/终态判据单源）、deadline 依赖 steer（接管臂）、finalize 依赖 deadline（不再直接消费 steer/不重写路由表）、handoff 依赖 delegate（回执词表别名）；steer 不再直接依赖 statemachine。
+docs/error-semantics：登记 contract.ErrUserCancelled（#355 唯一身份），finalize 同名变量为别名；deadline 的 Route 标为收尾路由唯一判据。README/USAGE 同步词表主人、终态判据、五路路由与回执三值口径；工程底座数字按实测重算（62903 行 / 332 文件 / 398 测试文件）。
+* docs(contract/statemachine): 对齐 rebase 后的终态口径与统计 (#354 #374)
+main 已合入 #374（IsTerminal 从转移表派生）：本分支把 failed→rolled_back 移入独立补偿表，使 failed 仍是终态且与 contract.IsTerminalStatus 逐条一致；同步 contract/README/USAGE 的措辞（IsTerminal 是环节侧派生入口，不是对 contract 的直接委托），并按实测重算工程底座（63302 行 / 333 文件 / 405 测试文件）。
+* fix(contract/statemachine): 终态判据写法归一与跨包变体断言 (#354)
+statemachine 的 Valid/CanTransition/IsTerminal 已按 #373 归一（大小写/空白），contract.IsTerminalStatus 此前仍精确匹配——同一 'FAILED' 在两包会得到相反结论。现在 contract 同口径归一（词表外仍 false），跨包表驱动用例对 12 个状态的规范值与写法变体逐条断言一致。工程底座按实测重算（63306 行）。
+* docs: 工程底座与 eventbus 依赖行按 rebase 后实际树对齐
+* docs: 工程底座按 rebase 后实际树重算
+
+### 修复(handoff/taskboard/protocol/ptc)：词表外值写路径 fail-closed + ErrorKind 词表单源（#359 #360 #361 #362 #364 #365）
+
+* fix(handoff): 写路径对词表外状态 fail-closed，落库面同闸（#359）
+handoff 的体检面 Check 报 CodeUnknownState，但写路径一个都不消费：
+Take 只判 == accepted 与 Terminal()，mystery 两条都不命中 ⇒ 照常铸造
+领取令牌并把状态改写成 accepted；内核在自己读不懂的记录上发放执行权。
+- State.valid() 导出为 State.Valid()（对齐 taskboard.State.Valid）
+- Take / Reply / Cancel / Offer 在读路径显式消费 Valid()，词表外一律
+  ErrUnknownState，不铸令牌、不改写状态
+- MemoryLedger.Save 落库前同闸（新建与同代更新两条形态都拒）
+- Store.Take/Reply/Cancel 与 Ledger.Save 契约文本补 ErrUnknownState
+- docs/error-semantics.md 登记 ErrUnknownState
+用例覆盖 Take/Reply/Cancel/Offer/Save 五条路径并断言「不铸令牌、状态
+不变」，且与 Check 的 CodeUnknownState 同向；五处闸均已做反向验证
+（去掉闸 ⇒ 对应用例转红）。
+Fixes #359
+* fix(taskboard): Claim 契约必报 ErrUnknownState，全部实现共用 Claimable（#360）
+#323 只修了 coord.BoardAdapter 一个实现：契约文本没有把 ErrUnknownState
+列为 Claim 的必报错，于是 controlplane.MemStore、examples/pgstore、
+examples/reference-runtime（另发现 examples/sqlitestore 同缺）继续放行
+词表外状态——脏状态任务照常领到租约、铸令牌并改写成 claimed。
+- 新增 State.Claimable() error：词表外 → ErrUnknownState，终态 →
+  ErrTerminal，其余 nil（与 Valid/Terminal 同一判据面）
+- Board.Claim 契约文本补第五条必报错 ErrUnknownState，并写明这是契约
+  义务、实现应调用 Claimable
+- 五个实现（coord / controlplane / pgstore / reference-runtime /
+  sqlitestore）改调 Claimable，删掉各自的 Terminal()/StateDone 特判
+- boardtest 新增「词表外状态不得认领」场景：断言 ErrUnknownState、
+  不铸令牌/代次、状态与租约原样不变（全部实现共用）
+- 新增 AST 判据：扫全仓 Board.Claim 方法指纹，全部须调用 Claimable；
+  controlplane 运行时面 Claim 单列一条；契约注释须出现 ErrUnknownState
+  与 Claimable（反向验证：去掉任一闸或契约文本 ⇒ 用例转红）
+Fixes #360
+* fix(protocol): 判据面与归一化面统一走 Is*Valid 谓词（#362）
+IsDecisionValid / IsScopeValid 从交付起零生产消费——Validate 与归一化面
+仍直读私有 map，导出一个真相、判另一套真相，必然漂移。
+- report_validate.go 五处白名单检查（confidence/stance/decision/scope/
+  action）改调对应谓词
+- report_normalize.go 的 decision 白名单、scope 收敛、severity 归一改调
+  谓词（不再出现 decisionAll/scopeAll/severityAll 下标访问）
+- report_types.go 的 Verdicts 宽容解码改调 IsStanceValid
+- 新增 AST 判据：判据/归一化面不得直读六个私有 map；报告枚举谓词必须有
+  生产调用点且落在判据/归一化/解码面（反向验证：改回直读 map ⇒ 转红；
+  删掉 IsScopeValid 的两个生产调用 ⇒ 转红）
+Fixes #362
+* fix(protocol): 词表外 decision/stance 不得静默改写或消失（#361）
+归一化面把「读不懂」写成零值，恰好 disarm 同包 Validate 的两条 fail-closed
+红线：词表外 decision 被抹成 ""（= 无决策）后白名单检查看不到它；词表外
+stance 的整条裁决被静默丢弃——一条「否决」可以凭空消失。
+- normalizeDecision：词表外字符串保留原值交 Validate 判 critical
+  （空/纯空白仍视为未声明；pending 缩写归一不变）
+- decision=pending_approval 而 requires_approval 不为真：与
+  fixRecommendationContradiction 同向补严（有 recommendation 补
+  requires_approval=true；缺失时保留 decision 由 Validate 报 critical），
+  不再删决策这条更严的一半
+- Verdicts.UnmarshalJSON：词表外 stance 保留原值（空串仍按「缺裁决」丢），
+  由 Validate 报 critical；大小写/空白归一不变
+- 新增方向表驱动用例：decision/scope/action/confidence/severity 五个枚举位
+  词表外一律保留原值，且 Validate 给出 critical（severity 为 warn 留痕）
+- 更新历史用例：TestDecisionOutOfVocabPreserved / TestDecisionEnumPreserved /
+  TestDecisionSynonymAndFullWidth / TestVerdictsTolerantDecode 按新契约断言
+- 三处闸均做反向验证（default 改回 ""、pending 改回删决策、stance 改回
+  continue ⇒ 对应用例转红）
+Fixes #361
+* fix(ptc): 失败分类幂等透传 toolfail 词表，9 分类不再落 unknown（#364）
+kindForErrorKind 的 case 只覆盖本地诊断词表 + permission_denied，宿主绑定
+用 toolfail.New 表态的失败（rejectionKindOf 已把 f.Class 原样带进
+Result.ErrorKind）在最后一跳被降成 unknown：transient / rate_limited /
+self_reported 从「可重试」变「不可重试」，permanent / authentication /
+not_found / invalid_argument 的归因与处置文案全部丢失。
+- kindForErrorKind 先判 toolfail.AllClasses()：命中即原样返回，未命中再走
+  本地诊断词表（syntax/deadline 等映射不变）
+- 表驱动断言 9 个分类逐个幂等透传，且 Retryable/NeedsOperator 语义不变
+- 端到端：宿主绑定抛 ClassTransient ⇒ Result.ErrorKind=transient、
+  映射后仍 transient、PolicyOf 读出 Retryable=true
+- 反向验证：去掉透传循环 ⇒ 两组断言转红
+Fixes #364
+* fix(ptc): ErrorKind 词表单源，分类与建议共用一张表（#365）
+此前「失败属于哪一类」有两个消费者各写一份手写 switch：kindForErrorKind
+与 suggestionsFor，覆盖面互不相等且都不等于本包实际产出的 ErrorKind 全集
+（unmanaged 两份都落 default、binding_signature / permission_denied 只有
+分类没有建议、host_panic 只有建议没有分类）；ErrorKind 本身还是散落各文件
+的字符串字面量。
+- 新增 14 个导出 ErrorKind 常量 + AllErrorKinds()；生产代码全部改为引用
+  常量（ptc.go / execute.go / binding.go / child_run.go / rejection.go）
+- errorKindTable 成为单一真相：每个取值同时携带 toolfail 分类与模型建议，
+  kindForErrorKind 与 suggestionsFor 都从这张表读取
+- 补齐缺口：unmanaged → permanent（与 stage_failed 的 unknown 分开归因），
+  host_panic → permanent；binding_signature / permission_denied / unmanaged
+  补建议；stage_failed 保持显式 unknown（issue #65 的保守侧）
+- 新增判据：AllErrorKinds() 每个取值在分类与建议两侧都有明确归属；
+  AST 扫生产代码的 ErrorKind 常量集与注册表逐字一致（新增常量不登记 ⇒ 红；
+  表里出现幽灵取值 ⇒ 红）；建议返回独立切片
+- 反向验证：新增未登记常量 ⇒ 常量判据红；删 unmanaged 建议 ⇒ 覆盖判据红
+Fixes #365
+* test(protocol): 夹具措辞去掉领域词面（architecture-check harness-test-fixture-domain-vocabulary）
+* docs(readme): docsync 工程底座口径按 rebase 后实际树重算（63429 行 / 333 文件 / 405 测试文件）
+* docs: 工程底座按 rebase 后实际树重算（docsync）
+* docs: eventbus 依赖行对齐实际（concurrency/logx）
+
+### 修复：六处不可变契约被引用字段改穿（#376 #377 #378 #379 #380 #385）
+
+* fix(tenant): Context.Scopes 在注入与提取两侧克隆，堵越权改穿（#376）
+- WithContext 注入时 slices.Clone，注入后宿主改写原切片不改穿授权面
+- From 交出前 slices.Clone，改写副本元素不再改穿 ctx（Require 随之安全）
+- 修掉假绿用例：append 在 len==cap 时必然重分配，改下标赋值
+- 新增 TestImmutableScopesCannotEscalate：覆盖入口侧/出口侧/Require 返回值
+  三条改穿路径，均断言 Require(admin) 保持 ErrUnauthorized
+- 反向验证：注释掉 From 的 clone，两条用例转红（已实测）
+* fix(skilldisclose): New/Disclose 两向深拷贝，目录不再留存宿主切片（#377）
+- cloneSkill 逐个克隆 Resources/Tags（两层引用都覆盖）
+- New 入口克隆一次：构造后改写宿主原变量不改穿目录
+- Disclose 出口克隆：Scored 与 Skills 各自独立于目录，也不彼此共享
+- Catalog 注释写明「副本口径（全覆盖）」，与 tooldisclose 对齐
+- 新增入口/出口两条用例；反向验证：分别去掉入口或出口 clone，
+  对应用例各自转红（已实测）
+* fix(eventbus): 载荷在发布/返回/每订阅方/落库四向独立（#378）
+- 新增 Event.Clone：Payload map 与 StepID 指针深拷贝，nil 保持 nil
+- Bus 自建扇出（bus.go）：每个订阅方各 Clone 一次，跨订阅方污染与发布方
+  复用 map 的竞争同时消除；缓冲 64/非阻塞丢帧/ctx 取消关闭 channel 语义不变
+- Bus.Publish 入口 Clone；DurablePublisher 入口 Clone，且落库与广播各拿一份
+- MemoryStore.Insert 入口 Clone（参考实现演示「落库是独立数据」）
+- Hub.deliverLocked 逐订阅方 Clone，Relay 外发也拿独立副本
+- eventbus 依赖登记补 ext:github.com/oekit/concurrency（async.GoWithContext）
+- 拆出 bus.go 以满足 400 行结构阈值
+- 新增 7 条用例（含跨订阅方污染、落库三向、-race 复用 map）；
+  反向验证：去掉入口/逐订阅方/存储 clone ⇒ 5 条断言红 + race 报出（已实测）
+* fix(taskboard): Task 注释如实声明引用字段 + Clone 收口 Deps 拷贝义务（#379）
+- Task 类型注释删除「值类型，可安全复制与比较」：Deps 是切片，按值复制
+  共享底层数组，且含 slice 的 struct 不可用 == 比较（语言事实）
+- 新增 Task.Clone 深拷贝 Deps，作为跨边界交出的单一口径
+- Board 契约新增：List/Claim 返回的 Task 不得与实现内部共享 Deps 底层数组
+- boardtest 套件新增「快照不共享 Deps 底层数组」判据（List 与 Claim 两个出口）
+- 该判据当场抓出两处真实共享：套件自证 memBoard 的 Claim、reference-runtime
+  的 Claim/Renew 直接返回内部任务；均已改用 Task.Clone
+- 新增 TestTaskCloneDeepCopiesDeps + 注释措辞扫描
+- 反向验证：Clone 去拷贝 ⇒ 单测红；memstore.cloneTask 去拷贝 ⇒ 套件红（已实测）
+* fix(checkpoint): Reconcile 返回值与入参不再共享三个切片（#380）
+- 入口 clonePlan：Skip / Run / Anomalies 各克隆一份，后续 addAnomaly 的
+  append 只落在副本上（入参留有余量时不再写穿底层数组）
+- Reconcile 注释把「无副作用」落到字面：入参切片不被写出，返回值独立
+- 新增 TestReconcileDoesNotAliasInputSlices：三个切片逐项断言独立性，
+  并用 cap 窗口直接观察 append 是否写进入参底层数组
+- 反向验证：去掉 clonePlan 调用 ⇒ 用例转红（已实测）
+* fix(cmdpolicy): 活策略与入参/快照双向隔离，堵 forbidden→allow（#385）
+- cloneRule 深拷贝 Prefix（逐段，两层）、Match、NotMatch
+- New 入口克隆一次：构造后改写宿主入参不再改穿活策略
+- Rules 出口克隆一次：快照原地改写不再改穿活策略，也不污染二次快照
+- Policy/Rules 注释写明副本口径
+- 新增 4 条用例：入口改写、快照改写、两个 -race 并发形态
+- 反向验证（成对）：cloneRule 直接 return r ⇒ 两条顺序用例红 + 两个 race
+  用例报 DATA RACE；单独去掉 New clone ⇒ 仅入口用例红；单独去掉 Rules
+  clone ⇒ 仅快照用例红（已实测）
+* docs(readme): 对齐六个改动包的行数与 eventbus 依赖面
+- eventbus 依赖 oagentkit/runtime → oekit/concurrency（自建扇出改用 async.GoWithContext）
+- tenant/skilldisclose/eventbus/taskboard/checkpoint/cmdpolicy 行数按实际重算
+- 工程底座 63012 行 / 333 文件 / 393 测试文件
+- make docsync 判据：README 与仓库一致（52 包）
+* fix(eventbus): Hub 投递改回非阻塞 select（并发发布下预判可能失效）
+deliverLocked 在读锁下被多个 Publish/Inject 并发调用，len/cap 预判与
+发送之间别的发布者可能填满缓冲——预判会把「不阻塞发布方」变成阻塞。
+改为 select + default 丢帧计数，Clone 仍在每个订阅方的送达值上做。
+README 行数随之对齐（63015 / eventbus 1254）。
+
+### 修复：枚举判定单源 + 终态/注释对齐 + README 词表机器判据（8 单）
+
+* fix(protocol): 枚举写法归一半源——五个谓词与解析面/校验面同一口径 (#371)
+- 新增 normalizeEnum/validEnum：ToLower+TrimSpace 只定义一次；IsStanceValid /
+  IsActionValid / IsConfidenceValid / IsDecisionValid / IsScopeValid 与
+  IsSeverityValid 同形（先归一后查表）。
+- Validate 改走谓词；scope=out 红线、action 免审、decision=pending 的一致性判定
+  也走同一归一（action="NONE" 不再被当成执行类动作）。
+- 解析面 normalizeAction/Confidence/Severity/Decision/Scope 复用谓词/归一函数。
+- 新用例：六个词表的全部合法值 × 写法变体（谓词 + 解析 vs 直构），词表外仍拒。
+* fix(protocol): scope 词表三处单源 + 导出 ScopeIn/ScopeOut 常量 (#382)
+- 新增 ScopeIn/ScopeOut：宿主可构造 scope 取值，不必手抄字面量。
+- scopeAll 改为引用常量；normalizeScope 的 case 清单删除，接受集直接问
+  IsScopeValid（词表扩展时归一面自动跟随）。
+- Validate 的 scope=out → redirect 必填红线改用 ScopeOut（归一后比较）。
+- 新用例：常量 ↔ AllScopes ↔ scopeAll 同一集合；每个词表值的写法变体都能
+  归一；redirect 红线对 OUT/out 同结论；词表外保持原值。
+* test(protocol): 九个枚举出口接入声明面清单，新增词表/出口漏断言即红 (#383)
+- 九张判定词表集中为 vocabularyCases（表名 + All* + 私有词表 + 谓词），
+  原有「枚举集合 == 词表键集 / 非空去重排序 / 返回副本」双向断言保留。
+- 新增 AST 清单判据：包内任何 map[string]bool 必须是登记词表，或在
+  nonVocabularyMaps 里写明「为什么不是词表」；未配套 All*()/断言即红。
+- 新增出口清单判据：包内每个 All*() 都必须出现在断言表里（漏一个即红）。
+- 反向验证：AllScopes 接错表 → 转红；注入第十张 map → 转红。
+* fix(statemachine): StepStatus 与 StepType 同形归一，大小写变体不再误诊为「读不懂」 (#373)
+- StepStatus 新增 normalized()（ToLower+TrimSpace），Valid() 归一后判定；
+  CanTransition 两边也归一，写法变体与规范形态走同一张转移表。
+- 真词表外仍报 ErrUnknownStatus；词表内非法迁移仍报 ErrIllegalTransition。
+- 新用例：StepStatus/StepType 同一组大小写与空白变体结论一致；
+  RUNNING → succeeded 可迁移，RUNNING → APPROVED 仍是非法迁移。
+* fix(statemachine): IsTerminal 直接从转移表派生终态集 (#374)
+- 删除硬编码 7 值清单：无出边即终态，IsTerminal 每次读 transitions，
+  注释「词表以转移表为准」与实际实现对齐；写法变体先归一，词表外不是终态。
+- 新用例：接受集 == 转移表无出边集合（含写法变体）；反向验证常驻——
+  临时给 succeeded 加出边，IsTerminal 必须立即跟随，恢复后回到终态。
+* fix(taskboard): StateFailed 注释改为「非终态」，与 Terminal() 逐字对齐 (#375)
+- 常量注释去掉「终态」表述，明写非终态、允许重新认领；Terminal() 注释点明
+  failed 非终态是刻意口径。
+- check.go 两处行为补注释：failed 不报 CodeTerminalClaimed、failed 依赖不算
+  已完成。
+- 新用例用 AST 读常量注释：声明「终态」必须 Terminal()=true，声明「非终态」
+  必须为 false；另有表驱动断言只有 done 是终态。
+* fix(controlplane): 介入动作词表单源并导出，契约指向正确那份 (#372)
+- 私有 actions/knownAction 升格为 AllInterventionActions()（返回副本）+
+  IsKnownInterventionAction()；MemAuditor.Append 复用同一判据。
+- AuditEntry.Action 注释删除「词表见 Action* 常量」（那份含 ActionQuery、比
+  留痕面宽），改为指向 AllInterventionActions() 并写明查询动作不经留痕；
+  Auditor 契约补上「词表外动作同样拒绝（ErrInvalidAudit）」。
+- 新用例：导出词表与 Append 接受集逐字一致（4 个常量 + 3 个词表外值）、
+  返回副本、契约注释指向导出词表。反向验证：把 query 塞回词表 → 转红；
+  注释改回「Action* 常量」→ 转红。
+* feat(docsync): README 职责列三张手抄词表接进机器判据 (#384)
+- 声明表（wordtables.go）：trajectory ↔ Pairing*、watchdog ↔ 工具级 Reason*
+  （排除 ReasonTurn*）、finalize ↔ contract.Status{四值}。词表取值从代码 AST
+  派生，门禁不抄字面量。
+- 双向判据：词表每个非空取值必须出现在职责列抽取区域（漏列即红）；抽取区域
+  里的同族词必须在词表内（多列即红）。抽取点失效也响亮报错。
+- 正向/反向用例：一致时静默；漏值/多值/常量改值/抽取点失效各自转红；
+  端到端起一条证明 run() 接线。
+- 同步工程底座声明：63,136 行 / 333 文件 / 399 测试文件。
+- 反向验证：README 删 no_call_id → 报 trajectory 漏列；duplicate_call 改成
+  duplicate_calls → trajectory 与 watchdog 两处都报漏列+多列。
+
+### 修复(pii/preset/lock/deadline/k8s)：尾批 7 单（#296 #297 #303 #304 #317 #318 #276）
+
+* fix(pii): 订阅快照可读 + 数字形态归一化 (#296 #297)
+#296：Policy 字段全非导出且无方法，订阅回调拿到的是哑值，只能转身读
+包级访问器（可能已换代），与包头/示例「收到即所见」的承诺矛盾。
+- 加只读访问方法 Gen/Enabled/Surfaces/SurfaceEnabled/Strategy/DigestKeyed，
+  无 setter，CurrentPolicy 仍值返回；
+- 每个订阅者加单调投递门：旧代丢弃、并发变更合并为最新一代，回调锁外执行，
+  回调内 SetStrategy/Subscribe 不自锁；非单调实现下压测实测回退（反向验证）。
+#297：识别只认 ASCII 连续数字，全角/零宽/分组分隔漏检。
+- 新增加归一化层 normalize.go：全角→半角、删零宽、按可识别长度折叠数字间
+  分组分隔符，并把归一化偏移映射回原串；
+- 打码与 hash 摘要共用归一化（同一值不同书写形态同形态/同摘要）；
+- 已知边界（阿拉伯-印度数字、字母夹数字、`+` 等）在 USAGE 与包头声明；
+- 反向验证：归一化前用例全红；既有 12/13/19 位防误命中用例仍绿。
+* fix(preset): 出口名单深拷贝 + 语义键按兑现维度收敛并转义 (#303 #304)
+#303：Preset 值类型只挡字段替换，Egress.Allow/Bypass 的切片头仍与集合共享
+底层数组，宿主改原变量 / Resolve 副本 / All 快照都能改穿集合（并发共享承
+诺当场失效）。
+- 新增 clonePreset，构造、Resolve、All 三个边界都深拷贝名单；
+- 并发 Resolve + 改写副本用例在 -race 下通过；反向验证（改回浅拷贝）四条
+  用例全红。
+#304：Key 无条件编入 proxy/allow/bypass（非代理模式下这些维度不参与兑现），
+又用不转义的逗号拼接名单（["a,b"] 与 ["a","b"] 撞键误拒）。
+- 非代理模式（unrestricted/denied）不再编惰性维度，有效约束相同的预设
+  按撞名拒收；
+- 名单逐元素 strconv.Quote 可逆转义，逗号元素不再撞键；
+- 反向验证（退回无条件编入 / 去转义）对应用例全红。
+* fix(ticket/handoff/worker): 宿主时钟回调移出临界区 (#317)
+三个进程内参考实现都在持锁期间调用宿主注入的时钟回调，回调重入本包
+（票据数 / 读记录 / 注销）即永久死锁——实测复现（3s 超时判红）。
+- ticket.MemoryBackend：Put/Take/GC 先在锁外取 now，再进临界区；
+- handoff.MemoryLedger.Now：锁内只取回调、锁外调用（UseClock 并入同一口径）；
+- worker.MemRegistry：Register/Heartbeat/List 改为锁外 nowValue（去掉
+  nowLocked），Heartbeat 一次读数同时用于资格判定与续期；
+- 顺带对齐 examples/reference-runtime 的 board_store/effect_store：
+  clock() 改为取回调后锁外调用，Claim/Renew/Acquire/BeginReconcile/
+  ResolveUncertain 等调用点移到加锁前。
+新增带超时保护的死锁用例（ticket×3 / handoff×2 / worker×3），
+-race 下通过；反向验证（Put 改回锁内调用）用例即红。
+构造器/选项注释写明「不会在持有内部锁时调用该回调」。
+* fix(deadline): Begin 改为三态 Constraint，关闭直通不再与受约束同值 (#318)
+Begin 用单个 bool 表达本轮时限状态，把「关闭直通（Timeout<=0，本轮无限跑）」
+与「本轮受约束（ctx 带 Deadline）」塌缩成同一个 expired=false，调用方无法
+从返回值判断本轮是否有墙钟保护，只能猜 ctx.Deadline()（父 ctx 的 deadline
+会污染信号）。
+- 新增 Constraint（Off/Active/Expired）与 Constrained()/Expired()/String()；
+  Begin 返回 (ctx, release, Constraint)，包内锚点三态判定结果直接投影；
+- 文档注释按四种输入逐条写明返回值，并明确「不要用 ctx.Deadline() 推断」；
+- 新增四输入区分用例（Off vs Active 必须不同）；反向验证（Off 塌缩成 Active）
+  用例即红；既有用例同步迁移，deadline 覆盖率 89.6%。
+* fix(containerbackend): K8s Job 清理带 UID 前置条件 (#276)
+清理此前只按名字 DELETE。Job 被删后同名可被重建（稳定 ExecutionID 命名下
+名字可预测、可重复），一次延迟清理会删掉后来者的对象。
+- Exec 记录本次对象的 metadata.uid：创建应答解析、对账命中读取、409 竞态
+  后补读；
+- 删除改用 DeleteOptions.preconditions.uid（K8s 原生同一次请求校验身份），
+  409 UID 不符按「不删」处理；404 仍幂等；
+- UID 未知（应答读不出/补读失败）时不发删除，交给 ttlSecondsAfterFinished
+  兜底——宁可不清理，也不按名字误删；
+- 墙钟 watcher 与 defer 清理共用同一 UID；
+- fake apiserver 记录 DELETE 请求体并按 precondition 回 409；
+- 用例：正常删除带 uid / UID 不符拒删且对象仍在 / UID 未知不删但 NP 照删。
+  反向验证（去掉 preconditions）前两条用例即红。
+* chore: 收尾门禁对齐（README 统计 + K8s 清理自由函数 + lint）
+- README 工程底座统计按 docsync 重算（59624 行 / 314 文件 / 371 测试文件），
+  pii 包表行数与描述同步；
+- cleanupJob 改为自由函数 cleanupJobWithUID，避免 K8sJob 实质方法数越过
+  archcheck 的 god object 阈值（25）；
+- handoff 重入用例去掉「声明后赋值」写法（staticcheck S1021）。
+
+### 修复(executor/controlplane)：执行器与控制面簇 11 单（#266 #267 #268 #270 #326 #327 #328 #329 #333 #334 #335；#269 已由 #340 修复）
+
+* fix(eventbus,backend): onDrop 锁外 panic 隔离 / 登记簿宿主方法锁外快照
+- #328: onDrop 移出发布临界区，panic 经 subhub.Do 隔离；事件失败路径仍返回
+  insert 错误且不广播
+- #329: Register/Candidates 不再持锁调用宿主 ID()/Isolation()；登记时缓存 ID
+  快照，选路对快照在锁外判定与排序；Resolve 不再无锁读 r.list
+#269 已被上游 #340（commit 1d5663e）并发修复：本分支 rebase 到 origin/main
+后发现 eventbus 的 found=false 分支已按契约先回退显式起点并落盘，本提交
+因此不再包含 #269 的实现与用例。
+反向验证：#328 把 onDrop 挪回锁内、#329 把宿主方法挪回锁内，两组新用例
+均转红。
+* fix(contract,deadline,finalize,controlplane): 墙钟哨兵单源 / 终态三态判据 / Claim 租约到期可接管
+- #333: 会话墙钟哨兵收敛为 contract.ErrSessionDeadline，deadline/finalize 均为
+  别名（errors.Is 一条链）；新增 archcheck 门禁扫「同文案 errors.New 多次出现」
+  的自检用例
+- #334: controlplane.Terminate 改用三态 runStatusClass（已知终态/已知过程态/
+  词表外）；词表外拒绝终止并返回 ErrUnknownRunStatus，状态与代次一字不动、
+  审计留拒绝原因；checkpoint.isTerminal 改消费 contract.IsTerminalStatus
+- #335: 新增 taskboard.LeaseHeld 单点判据；MemStore.Claim 判「状态 + 租约存活」
+  并支持 UseClock；新增 List/Renew 使参考实现可被 boardtest 契约套件直接跑；
+  coord / reference-runtime / sqlitestore 的重复判据全部收敛到 LeaseHeld
+反向验证：#333 恢复各写一份哨兵、#334 词表外按非终态放行、#335 改回只看
+State，三组新用例（含 boardtest 过期接管场景）均转红。
+* fix(worker,controlplane): OnLeaseLost 移出 claimed.mu 并隔离 panic / MemStore 留痕移出状态锁
+- #326: claimed.renew 只保留续期判定与失败计数；通知/取消/停止领取在
+  renewOne 中锁外执行；notifyLeaseLost 与 invokeHandler 同款 recover +
+  async.ReportPanic（panic 不得掀翻心跳协程）
+- #327: MemStore 增 commitMu 串行化写路径；三个 Commit* 在 m.mu 内校验后
+  释放状态锁，锁外调 Auditor.Append，再回状态锁落账；appendAudit 统一做
+  panic 隔离（ErrAuditorPanic），StorePlane 拒绝路径共用同一接缝；
+  Auditor 契约补齐「可回查 Snapshot*、不得回调 Commit*、不得阻塞」口径
+反向验证：#326 把通知挪回锁内并去掉 recover ⇒ 重入用例死锁、panic 后
+续期次数停滞；#327 把 Append 挪回 m.mu ⇒ 回查死锁、慢留痕阻塞 Snapshot。
+两组用例均转红。
+* fix(handoff,scheduling): 分布式交接台强制存储时钟 / 配额悬挂预占可安全回收
+- #270: 新增 NewDistributedDesk：Ledger 未实现 ClockedLedger 即装配失败
+  （ErrNoStoreClock，不回退进程本地时钟）；NewDesk 明确为单机语义，
+  NewLocalDesk 行为不变；补分区/旧代迟到/超时/恢复四类交接用例
+- #267: QuotaLease 增 TaskID/Owner/Until；QuotaStore 增 ReserveLease /
+  Reclaim / SweepExpired 回收协议；Reclaim 三条判据（已到期 + 任务租约
+  经 TaskLeaseOracle 确认失效 + 有判定面），宿主判定面在存储锁外调用；
+  回收后迟到 Release 走 ErrOverRelease，不二次归还/不出现负余额
+反向验证：#270 去掉构造校验 ⇒ 装配失败用例转红；#267 让 Reclaim 不落账
+⇒ 悬挂回收与扫描用例转红（余额不归零）。
+* fix(worker,taskboard): 续期按到期调度 + 批量面 + 有界并发/单条超时（#266）
+- taskboard: 新增 RenewRequest/Renewal/BatchRenewingBoard 批量续期契约
+  （逐条独立判定、结果与请求同序等长；顶层 error 只表示整批基础设施失败）
+- worker: claimed 增 nextRenew（本地时钟）与 renewTimeouts；心跳改为
+  「定时器按最近到期点唤醒 + due 集合续期」，新增任务经 inflight.wake 重排
+- 批量优先：实现 BatchRenewingBoard 时每批至多 100 条一次往返；否则按
+  RenewConcurrency（缺省 8）有界并发逐条续期；每条/每批独立 RenewTimeout
+- 超时与普通失败分开计数，成功清零；连续失败（含超时）达 RenewFailMax
+  仍按 ErrLeaseUnconfirmed 停止领取并封口
+- Config 新增 RenewMargin（缺省 TTL/3，必须 < TTL）/RenewConcurrency/
+  RenewTimeout（缺省 TTL/4），装配期校验
+- 既有测试夹具显式设置 renewEveryTickMargin（新调度下维持原续期节拍），
+  faultmatrix 分区用例同口径改造
+反向验证：把批量面/并发改成串行、续期改回每拍全量 ⇒ 批量往返用例
+（0 次往返）与 200×100ms×TTL15s 压测（10 次过期拒绝）均转红。
+* fix(controlplane): 权威控制面——强制释放走运行时任务板 / 裁决走副作用闸同一份状态（#268）
+- 新增 TaskAuthority / EffectAuthority 两个权威面，以及
+  NewAuthoritativeStorePlane 构造器：任务快照与 ForceRelease 直接调用运行时
+  同一份 taskboard.Board.Release（令牌/代次同处判定），Adjudicate 调用
+  sideeffect.Store 的 ResolveUncertain（闸读到的就是裁决后的同一份状态）；
+  权威模式不再调用 Store.CommitTask/CommitEffect，结构上不存在第二份
+  可写任务/效果状态
+- SideEffectAuthority 参考适配器（EffectKey → sideeffect.Action 由宿主映射）
+- 装配期同源判据：TaskSourceID 双方实现且不一致 ⇒ ErrAuthorityMismatch；
+  缺任务权威面 ⇒ 装配失败；缺效果权威面 ⇒ 裁决 fail-closed
+  ErrNoEffectAuthority
+- 并发语义：ForceRelease 与 Worker Complete 凭同一令牌竞争，输家得到
+  taskboard.ErrLeaseLost；控制面重读重判后留痕「已不在认领态」
+反向验证：把夹具改回 NewStorePlane（控制面接另一份存储）⇒ 并发单赢家、
+旧令牌失效、裁决同源三条用例全红（任务不存在 / 闸状态未更新）。
+* chore: 拆超长文件 / 登记新哨兵 / 同步 README 与 USAGE 机器口径
+- worker/loop.go 顶到 400 行阈值 → loop.go（生命周期）+ inflight.go（认领/
+  续期调度），守住 max_file_lines 门禁
+- memplane_test / durable_test / worker_test 的超长用例拆到独立文件；
+  eventbus/tail.go 的 reportGap 拆到 tail_gap.go
+- docs/error-semantics.md 登记 ErrSessionDeadline（contract 单源，deadline/
+  finalize 为别名）、controlplane 四个新哨兵、handoff.ErrNoStoreClock、
+  scheduling 三个回收哨兵；architecture-policy 登记 contract → oekit/pkg 依赖
+- README 包表行数/依赖与工程底座三项、USAGE 依赖描述按 docsync 实测更新
+  （rebase 到 #344 后重算：58537 行 / 312 文件 / 360 测试文件）
+- 测试夹具里的领域词面改为合成词；清理新测试的 embedded field 选择器
+  （golangci-lint 2.14 QF1008）
+make 门禁：docsync ✓ apilifecheck ✓ architecture-check ✓ lint ✓
+
+### 修复：计量簇与报告词表簇 12 单收口 (#307-#312 #320-#325)
+
+* fix(cost): 聚合改饱和加法，配额判据对溢出/负总额 fail-closed (#307)
+* fix(budget): Apply 毛移除量以逐条 Item.Tokens 为真相，计划估算降级为兜底 (#308)
+* docs(budget): 修正 USAGE Apply 尾部切片下标并纳入可执行夹具 (#309)
+* fix(cost): 分组键改长度前缀编码，维度含 NUL 不再跨组串账 (#310)
+* fix(budget): 未知上限时 Overflow 与 Classify 同向（fail-closed），派生只留一处 (#311)
+* fix(metering): Meter.Reset 删动态段键，Ledger 补 Reset 并缩短出账持锁 (#312)
+* feat(protocol): 10 张判定词表补齐导出枚举出口与 4 个 Is*Valid 谓词 (#320)
+* fix(protocol): scope 词表外取值保持原值，不再静默改写为 in (#321)
+* fix(statemachine): StepType.Valid + RequiresApproval 词表外走保守侧 (#322)
+* fix(taskboard): 导出 State.Valid，Claim 拒绝词表外状态且不铸租约 (#323)
+* fix(protocol): severity 大小写归一，未评估与读不懂分档且聚合保守侧 (#324)
+* fix(statemachine): MustTransition 区分未知状态与非法迁移，补 StepStatus.Valid (#325)
+* docs(gates): 登记 #307-#325 新增哨兵并同步 README/USAGE 机器口径
+
+- 文档(readme)：下游升级须知补 v0.43.0 行（QuotaStore 接口扩容 / finalize.Route 行为面 / 哨兵身份统一）
+
+本仓的「下游升级须知」表记的是**破坏性变更**（不是每个版本都记）。v0.42.0 → v0.43.0
+区间内经逐面审计，命中一条编译期变更与两条行为面变更，表里补一行：
+- `scheduling.QuotaStore` 新增 `ReserveLease` / `Reclaim` / `SweepExpired` 三个方法
+  （该包定级 Experimental，不违反 Stable 承诺，但实现方编译期即红）；
+- `finalize.Route` 改为委托 `deadline.Route`（唯一判据单源，#355），宿主自有取消哨兵
+  须显式传入才判 cancelled；
+- `finalize.ErrUserCancelled` / `finalize.ErrSessionDeadline` / `deadline.ErrSessionDeadline`
+  现在是 `contract.ErrUserCancelled` / `contract.ErrSessionDeadline` 的别名（跨包
+  `errors.Is` 互相命中）。
+依赖地板无变化（区间内无 go.mod/go.sum 改动）⇒ 下游无需 `go mod tidy`。
+行内写明「下游要做什么」三件：实现方补三方法、判终态方传取消哨兵、用 `==` 严格比较
+哨兵的调用点要复核。
+
+- 文档(evolution)：第五轮台账（19 条开单 + 六面落点 + 五个新形态）
+
+本轮按第 13 节末尾的五条候选面逐面审计，并加审一个自选面（门禁自身的反向验证覆盖），共落单 19 条（#382–#400）。台账记录五个新形态与本轮复核手段。缺陷单全部保持 open（待办，不是已修项）。
+
+- 文档(evolution)：第四轮台账（27 条开单 + 五面落点 + 五个新形态）
+
+按总纲 #279 的第四阶段五条候选面逐面审计，落单 27 条（#354–#380），
+台账落在 docs/DISTRIBUTED-EVOLUTION-20261117.md 第 13 节。
+面 → 单 → 坐实方式：
+- 接缝契约成文 + 机判：#366 #367 #368 #369 #370（2 条死锁已实测复现）
+- 同包两套判据收口：#364 #365 #371 #372 #373 #374 #375
+- 未知态方向判据：#359 #360 #361 #362 #363
+- 深拷贝到字段：#376 #377 #378 #379 #380（tenant 越权已实测复现）
+- 词表单一来源：#354 #356 #357 #358
+这一轮新出现的五个形态记在第 13 节：
+(a) 接缝契约可以完全不存在而不被当成缺陷；
+(b) 越权可以由「拷贝不安全」造成，不需要任何逻辑错误；
+(c) 修好一条通路会让下游的旧缺口第一次变成活缺口；
+(d) 契约指向宽松的那份、实现按严格的那份判；
+(e)「声明了但做不到」与「根本没声明」是同一种病，成本差一个量级。
+另有一条子代理发现经查已被 #363 覆盖，未重复开单（避免污染台账计数）。
+本次仅改文档；27 条 issue 均保持 open（待办，不是已修项）。
+
+- 文档(evolution)：三阶段收口的账实对齐（总纲路线表标完成态 + 台账状态列 + 第 12 节）
+
+第一轮 18 条单（#261–#278）已全部合入主干并关闭，但**文档还停在基线时刻**：
+读者打开总纲 #279 看到的是一张只列单号的路线表，会把已做事项误读为待办。
+本 PR 是**账实对齐**，不新增功能、不改代码。
+## 改了什么
+**总纲 #279**（正文已更新 + 回链评论）：
+- 路线表加「状态 + 落地位置」两列，三阶段标 ✅ 已达成；
+- 「三条硬事实」改为「基线判断 + 现在事实」双层写法——三条都已被本轮成果推翻，
+  但保留原判断作为「判断是怎么形成的」的证据；
+- 补 #272 的坐实结论（旧路径 Pub 是 fire-and-forget ⇒ 终态事件永久缺失）；
+- 新增「第四阶段候选面」一节。
+**台账文档 `docs/DISTRIBUTED-EVOLUTION-20261117.md`**：
+- 第 3 节：三条硬事实 → 「当时判断 + 现在事实」；
+- 第 4 节：每条路线改动加「落地位置」列；新增第四阶段候选面；
+- 第 5 节：8 个场景加「落地状态」列，逐条指到用例文件名；
+- 第 6 节：「当前缺口」列标注为**基线快照**，当前状态改由 `docs/DEPLOY-MATRIX.yaml` 判定；
+- 第 9 节：台账加「状态」列（#261–#278 逐条标落地 PR），#272 判据形态改为坐实后的判据；
+- 第 12 节（新增）：收口核对——列出本次核出的五处账实差异与处置。
+**`docs/AI-GUIDE.md` §3.2.1**：
+- 「六类故障每类至少一条用例」→ 矩阵已扩到 **14 类**（#274），补齐新增 8 行；
+- 故障类清单改为**指向代码为唯一真相源**（`Class*` 常量 + `requiredMatrixCells`），
+  不再手抄数字——这正是 AGENTS.md「文档里的数字要么被机器判，要么旁边写明」
+  在这一条上失效的地方。
+## 核验
+- `make docsync` / `make architecture-check` / `make deploycheck` / `make apilifecheck` 全绿；
+- `go test ./...` 全绿；
+- 文档内每个断言均回查代码面：pgstore **11** 张表（`schema.go` 的 `CREATE TABLE` 逐条数）、
+  矩阵 **14** 类（`matrix_test.go` 类常量逐条数）、8 个新用例文件逐个核对存在、
+  落地路径逐个 `test -e` 核对、符号逐个 `git grep` 核对。
+## 一条纪律
+本轮发现的是一种**机器判据管不到**的漂移：issue 一关，文档里的「当时判断」就永远留在那里，
+而它会被下一位读者当成现状。判据能管数字漂移，管不了叙述过期——
+后者只能靠**在事实变化时主动回写**。处置口径是：凡因本轮成果而失效的「当时判断」，
+一律**保留原判断 + 标注「当时」+ 追加「现在」**，而不是直接删掉
+（删掉会丢掉证据链，留着不标会被误读）。
+
+- 文档：ADR 索引死链修复 + 速览表补齐 + 文档一览补登 + docsync 加三表机器判据(#314,#315)
+
+- docs/adr/README.md ADR-0009 链接指向 ADR-0008 文件名（真相源自带死链）→ 修正
+- README ADR 速览表把 0009 的结论挂在 0008 编号上（死链）+ 漏抄 0006/0007/0008/0009 → 补齐九条
+- README 文档一览漏登记 docs/BENCH-BASELINE-20261113.md（性能基线唯一口径来源）→ 补登
+- docsync 新增 checkDocIndex：ADR 编号全覆盖/链接可解析/docs/*.md 被登记 三类漂移提交即红
+- 工程底座统计按实测重算（59,742 行 / 315 文件 / 372 测试文件）
+
 ## [v0.42.0] — 2026-11-17
 
 ### 修复(worker)：受管执行器租约会话与动作身份作用域（#265 / #261）
