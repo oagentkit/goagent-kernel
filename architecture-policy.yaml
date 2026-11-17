@@ -1765,7 +1765,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, internal/gosrc, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
