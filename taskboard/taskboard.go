@@ -131,11 +131,13 @@ func (s State) Terminal() bool { return s == StateDone }
 // 所以写路径必须显式消费 Valid()（或 Claimable()），不能靠 Terminal() 反推。
 // 接口契约已把 ErrUnknownState 列为 Claim 的必报错（issue #360）。
 func (s State) Valid() bool {
-	switch s {
-	case StateOpen, StateClaimed, StateDone, StateFailed:
-		return true
-	}
-	return false
+	// 判定读 taskStateAll（state.go）——与 AllStates 出口**同一张表**，
+	// 不另写一份清单（issue #356）。
+	//
+	// 口径：任务状态**不做大小写/空白归一**（与环节状态不同）——状态是
+	// 本包写路径落库的取值，写入与判定必须逐字一致；归一会让「宿主写的
+	// 值」与「内核认的值」悄悄分叉。
+	return taskStateAll[s]
 }
 
 // Claimable 报告该状态是否**可被认领**，返回契约规定的哨兵：
