@@ -79,6 +79,7 @@
 | 哨兵 | 触发条件 | 调用方处置 |
 |---|---|---|
 | `ErrSessionDeadline` | 会话级墙钟到点（`deadline.WithCause` 装饰的轮 ctx 携带的 cause；`finalize` 用同一值做收尾路由） | 收敛 timed_out 终态（deny-by-default：超时的产出不可信）；**必须先于停机臂判定**（次序纪律，见 `deadline.Route`/`finalize.Route`）。与 `drain.ErrDeadline` 是两个 Cause，不要互相代入。deadline/finalize 都是本哨兵的别名（issue #333） |
+| `ErrUserCancelled` | 用户经取消 API 触发的协作中止（宿主 `context.WithCancelCause(contract.ErrUserCancelled)` 携带；`deadline.Route` 缺省即认） | 收敛 cancelled 终态；与裸 ctx 取消（进程停机，不落终态）及 `steer.ErrSteered`（接管，回 created）三分可辨。finalize 的 `ErrUserCancelled` 是本哨兵的别名（issue #355） |
 
 ### controlplane
 
@@ -121,7 +122,9 @@
 | `ErrNoStore` | 未注入锚点持久化接缝（`Store`）就要读/写 shared 锚点 | 修声明：shared 模式必须注入 Store——静默跳过会让总时限被续跑轮重置，且没有任何信号 |
 
 > `ErrSessionDeadline` 的身份来自 `contract`（issue #333）：本包变量是别名，与
-> 收尾侧 `finalize` 共享同一个 error 值（`errors.Is` 一条链）。
+> 收尾侧 `finalize` 共享同一个 error 值（`errors.Is` 一条链）。`Route` 是收尾
+> 路由的**唯一判据**（接管/超时/用户取消/停机/未取消），`finalize.Route` 只做
+> `Outcome`→`Action` 投影（issue #355）。
 
 ### delegate
 
@@ -156,8 +159,9 @@
 |---|---|---|
 | `ErrUserCancelled` | 用户经取消 API 触发协作中止的 Cause（`Route` 据此落 cancelled 终态） | 按取消收敛；与停机（裸 ctx 取消）/ 接管（`steer.ErrSteered`）三分可辨——宿主用 `WithCancelCause` 携带 |
 
-> `ErrSessionDeadline` 的身份来自 `contract`（issue #333）：本包变量是别名，
-> 与 `deadline` 包装的 ctx 共享同一个 error 值；裸 deadline 仍归停机臂、不落终态。
+> `ErrSessionDeadline` 的身份来自 `contract`（issue #333），`ErrUserCancelled`
+> 的身份也来自 `contract`（issue #355）：本包两个变量都是别名，与 `deadline`
+> 收尾路由共享同一个 error 值；裸 deadline 仍归停机臂、不落终态。
 
 ### gatecheck
 

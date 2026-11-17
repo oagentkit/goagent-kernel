@@ -71,10 +71,10 @@ modules:
 
   - id: statemachine
     roots: [statemachine]
-    requires: ["ext:github.com/oekit/pkg"] # 哨兵/判定走全仓统一 errors（issue #325）
+    requires: [contract, "ext:github.com/oekit/pkg"] # 状态词表/终态判据单源引用 contract（issue #354/#357）；哨兵/判定走全仓统一 errors（issue #325）
     owner: harness
     managed: true
-    notes: 环节状态机：条件迁移的纯函数件，只依赖 pkg/errors（错误哨兵与判定），无编排依赖
+    notes: 环节状态机：条件迁移的纯函数件。状态常量全部是 contract 同值常量的别名、IsTerminal 委托 contract.IsTerminalStatus——词表不设第二份，只保留转移表与环节谓词；无编排依赖
 
   - id: eventbus
     roots: [eventbus]
@@ -768,7 +768,7 @@ modules:
 
   - id: handoff
     roots: [handoff]
-    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [delegate, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 回执状态词表单源引用 delegate.Status（issue #358）
     owner: harness
     managed: true
     notes: |
@@ -777,7 +777,9 @@ modules:
       幂等键（同 Key 重放返回原单；重新交接 = 新一代，代次与令牌同源——
       taskboard 的 Fence 口径）、回执寻址（ReplyTo 必填 + 只有 To 能领取 +
       回执凭存储铸造的令牌）、超时（一条时限线覆盖领取与回执，无时限交接
-      契约禁止；迟到的领取与回执一律拒收）。回执状态三值与 delegate 同纪律。
+      契约禁止；迟到的领取与回执一律拒收）。回执状态三值（completed /
+      failed / refused）与 delegate.Status **同一份词表**：ReceiptStatus 是
+      delegate.Status 的类型别名，不再各写一份字面量（issue #358）。
       进程内参考实现 LocalDesk 只证契约可满足，不做跨进程承诺。
 
   # 2026-11-17 新增（issue #273，分布式演进 L3）：跨区域所有权权威。
@@ -913,14 +915,17 @@ modules:
 
   - id: deadline
     roots: [deadline]
-    requires: [contract, "ext:github.com/oekit/pkg"]
+    requires: [contract, steer, "ext:github.com/oekit/pkg"] # 收尾路由消费 steer.ErrSteered 接管臂（issue #355）
     owner: harness
     managed: true
     notes: |
       会话级墙钟时限（issue #170）：锚点三态（未写/有效/过期）纯函数、
-      轮 ctx 装饰（WithTimeoutCause 携带专属 ErrSessionDeadline）、三分路由
-      （timed_out 先于停机臂）、锚点持久化注入接口（首轮写一次、续跑轮读）。
-      消费 contract.StatusTimedOut 词表；与 drain.ErrDeadline 是两个 Cause。
+      轮 ctx 装饰（WithTimeoutCause 携带专属 ErrSessionDeadline）、五路收尾
+      路由（接管 / timed_out 先于停机臂 / 用户取消 / 停机 / 未取消）、锚点
+      持久化注入接口（首轮写一次、续跑轮读）。**路由表唯一一份**（issue #355）：
+      finalize.Route 只做 Outcome→Action 投影，不再另写 cause 判定与臂序。
+      消费 contract.StatusTimedOut 词表与 contract.ErrUserCancelled 哨兵；
+      与 drain.ErrDeadline 是两个 Cause。
 
   - id: worker-runtime-ref
     roots: [examples/worker-runtime]
@@ -951,17 +956,19 @@ modules:
   # 不开空轮）+ 条件迁移单协程执行（无双跑窗口）。判据只依赖可注入事实
   # （完成环节清单 / 队列非空与否 / 条件迁移结果），零领域词。
   #
-  # 两包依赖方向是**单向**的：finalize → steer（消费 ErrSteered 哨兵），
-  # steer 不得 import finalize——接管臂的 Cause 由 steer 产出、由 finalize
-  # 路由消费，反向成环即门禁红。
+  # 两包依赖方向是**单向**的：finalize → deadline → steer（cause 判定单源在
+  # deadline，它消费 ErrSteered 哨兵；finalize 只做 Outcome→Action 投影），
+  # steer 不得 import finalize/deadline——接管臂的 Cause 由 steer 产出、由
+  # deadline 路由消费、由 finalize 投影，反向成环即门禁红。
   - id: finalize
     roots: [finalize]
-    requires: [contract, steer, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 路由目标词表来自 contract；接管 Cause 哨兵在 steer（消费方，单向不环）；留痕走 logx.Delegating；哨兵/判定用 pkg/errors
+    requires: [contract, deadline, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 路由目标词表来自 contract；cause 判定/臂序单源在 deadline（issue #355）；留痕走 logx.Delegating；哨兵/判定用 pkg/errors
     owner: harness
     managed: true
     notes: |
-      收尾漏斗（issue #167）：Route（Cause→四分 + 其余 failed 的纯函数路由表）
-      + Converge（多起点条件迁移 + 零行判定 + 0 行回读补发不谎报）+
+      收尾漏斗（issue #167）：Route（**投影 deadline.Route** 的 Outcome→Action，
+      路由表与臂序不在本包第二遍）+ Converge（多起点条件迁移 + 零行判定 +
+      0 行回读补发不谎报）+
       AdjudicateRetry（失败臂排队重试裁决）+ Detached（脱离 ctx 派生）。
       三条并发纪律是包级不变量（写进包头与用例）：① 终态写一律走脱离 ctx——
       编排 ctx 已取消时存储直查中止 ⇒ 会话滞留 running 而事件谎报；② 条件
@@ -973,7 +980,7 @@ modules:
       载荷与续跑语义在 steer，本包只管路由到那一臂。
   - id: steer
     roots: [steer]
-    requires: [contract, statemachine, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 回迁目标词表 contract；「环节成功」判定词表 statemachine；队列读失败留痕走 logx；哨兵/判定用 pkg/errors
+    requires: [contract, "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # 回迁目标与「环节成功」判定词表统一消费 contract（statemachine 常量是别名，issue #357）；队列读失败留痕走 logx；哨兵/判定用 pkg/errors
     owner: harness
     managed: true
     notes: |

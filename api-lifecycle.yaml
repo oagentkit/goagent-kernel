@@ -272,7 +272,7 @@ packages:
   - pkg: deadline
     level: Experimental
     since: v0.38.0
-    reason: 会话墙钟机制（issue #170）刚下沉——锚点形态与三分路由要随 finalize/恢复语义的对接反馈调整。
+    reason: 会话墙钟机制（issue #170）刚下沉——锚点形态与五路收尾路由（接管/超时/取消/停机/未取消，issue #355 起为唯一判据）要随 finalize/恢复语义的对接反馈调整。
   # ── 2026-11-15 新增（issue #165 #166）──
   - pkg: reconcile
     level: Experimental
