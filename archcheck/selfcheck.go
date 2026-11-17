@@ -223,6 +223,23 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// ── seams 段：判据面不能为空（issue #369/#370）──
+	//
+	// 与 rules 段「有执行体但 scope 为空」同一条纪律：接入判据的声明面若
+	// 没有可判的条目，它仍是 severity: error、仍计入规则数，却一条都不判。
+	// 这类失效只有门禁自己老实报出来才看得见。
+	if pol.Seams != nil && pol.Seams.on() {
+		if ls := pol.Seams.lockScan(); subRuleEnabled(ls.Enabled) && len(ls.Accessors) == 0 {
+			add(policyPath, 0, "seams.lock_scan 已启用但 accessors 为空：锁内调用扫描一条都不判")
+		}
+		if ps := pol.Seams.panicScan(); subRuleEnabled(ps.Enabled) && len(ps.GuardedCalls) == 0 {
+			add(policyPath, 0, "seams.panic_scan 已启用但 guarded_calls 为空：panic 外溢检测一条都不判")
+		}
+		if pol.Seams.MinDeclarations < 0 {
+			add(policyPath, 0, "seams.min_declarations 不能为负")
+		}
+	}
+
 	// ── 阈值判定面必须覆盖所有登记在 modules 段的包 ──
 	//
 	// 漏一个包，该包对「超长文件」「god object」两条阈值门禁**完全隐形**：

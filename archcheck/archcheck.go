@@ -251,6 +251,10 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	if err := appendSeamViolations(res, root, pol); err != nil {
+		return nil, err
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
@@ -284,6 +288,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		sevOf[egressPathRuleID] = sevOrError(egPaths.Severity)
 	}
 	tenantGateSeverities(pol.TenantGate, sevOf)
+	seamSeverities(pol, sevOf)
 	// 未受管逃逸门禁恒为 error：它是 PTC 安全默认（缺判定环即拒）的配套护栏——
 	// 逃逸口若能在生产代码里随手写，它就从「显式声明」退化成「默认路径」。
 	sevOf[unmanagedEscapeRuleID] = "error"
@@ -363,6 +368,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		})
 	}
 	res.Rules = append(res.Rules, tenantGateRuleInfos(pol.TenantGate)...)
+	res.Rules = append(res.Rules, seamRuleInfos(pol)...)
 	// 未受管逃逸门禁恒开（无 policy 段）：它判的是本仓 API 的既定事实
 	// （PTC 缺判定环即拒），不是各仓可自选的策略。
 	res.Rules = append(res.Rules, RuleInfo{
