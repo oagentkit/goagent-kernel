@@ -315,7 +315,7 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 # 单测一条命令跑完，本地改完代码先跑它。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync apilifecheck modreplace modwork cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck modreplace modwork cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
