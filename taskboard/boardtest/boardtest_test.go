@@ -58,8 +58,8 @@ func (m *memBoard) Seed(tasks ...taskboard.Task) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, tk := range tasks {
-		cp := tk
-		cp.Deps = append([]taskboard.TaskID(nil), tk.Deps...)
+		// Task.Clone 收口「Deps 不外借」这条契约（issue #379）。
+		cp := tk.Clone()
 		m.tasks[tk.ID] = &cp
 	}
 }
@@ -69,9 +69,7 @@ func (m *memBoard) List(_ context.Context) ([]taskboard.Task, error) {
 	defer m.mu.Unlock()
 	out := make([]taskboard.Task, 0, len(m.tasks))
 	for _, t := range m.tasks {
-		cp := *t
-		cp.Deps = append([]taskboard.TaskID(nil), t.Deps...)
-		out = append(out, cp)
+		out = append(out, t.Clone())
 	}
 	return out, nil
 }
@@ -108,7 +106,7 @@ func (m *memBoard) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	t.Owner = agent
 	t.Lease = lease
 	t.Seq++
-	return *t, nil
+	return t.Clone(), nil
 }
 
 func (m *memBoard) Release(_ context.Context, id taskboard.TaskID, token string) error {

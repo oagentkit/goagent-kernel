@@ -53,6 +53,13 @@ type Skill struct {
 }
 
 // Catalog 已登记的技能集合。
+//
+// # 副本口径（全覆盖）
+//
+// Skill.Resources 与 Skill.Tags 是引用类型。构造期从宿主入参深拷贝一次；
+// Disclose 交出 Scored / Skills 前再深拷贝一次（cloneSkill）。调用方拿到的
+// 都是自己的副本——构造后改写宿主原变量、或原地改写披露结果，都改不动目录
+// （与 tooldisclose 的副本口径同源，issue #377）。
 type Catalog struct {
 	skills []entry
 	byName map[string]Skill
@@ -77,6 +84,16 @@ type entry struct {
 	lowerDesc      string
 	lowerTags      []string
 	lowerResources []string
+}
+
+// cloneSkill 深拷贝 Skill 的引用字段（Resources / Tags）。
+//
+// 只有这两处是引用类型（其余是 string，值语义天然安全），故拷贝点集中在这里：
+// New 入口一次、Disclose 出口两处（Scored 与 Skills）。见 Catalog 的副本口径。
+func cloneSkill(s Skill) Skill {
+	s.Resources = slices.Clone(s.Resources)
+	s.Tags = slices.Clone(s.Tags)
+	return s
 }
 
 // New 建目录并做**加载期自检**。
@@ -105,6 +122,9 @@ func New(skills []Skill) (*Catalog, error) {
 			}
 		}
 		s.Name = name
+		// 入口侧深拷贝：目录不得留存调用方的切片（宿主在 New 之后改写原变量
+		// 是常见写法，issue #377）。
+		s = cloneSkill(s)
 		c.skills = append(c.skills, entry{
 			skill:          s,
 			lowerName:      strings.ToLower(name),
@@ -208,7 +228,8 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		if score == 0 {
 			continue
 		}
-		scored = append(scored, Scored{Skill: e.skill, Score: score})
+		// 出口侧深拷贝：Scored 是宿主可见的披露出口，不得与目录共享切片。
+		scored = append(scored, Scored{Skill: cloneSkill(e.skill), Score: score})
 	}
 	slices.SortStableFunc(scored, func(a, b Scored) int {
 		if c := cmp.Compare(b.Score, a.Score); c != 0 {
@@ -278,7 +299,9 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		}
 	}
 	for _, sc := range picked {
-		res.Skills = append(res.Skills, sc.Skill)
+		// 第二个出口也拷一次：Skills 与 Scored 是宿主会各自改写的两份视图，
+		// 彼此之间也不共享（副本口径「全覆盖」）。
+		res.Skills = append(res.Skills, cloneSkill(sc.Skill))
 	}
 	return res, nil
 }

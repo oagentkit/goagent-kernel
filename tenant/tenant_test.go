@@ -56,16 +56,56 @@ func TestContextPassing(t *testing.T) {
 	if got := From(ctx); got.Tenant != "acme" || got.Subject != "op-1" {
 		t.Fatalf("注入/提取往返漂移： %+v", got)
 	}
-	// 不可变值：改写提取出的副本不牵动已注入的上下文
+	// 不可变值：改写提取出的副本**元素**不牵动已注入的上下文。
+	//
+	// 必须用下标赋值而不是 append：Scopes 为 len==cap==1 时 append 必然
+	// 重新分配，共享与克隆两种实现下都绿——它证明不了「不共享底层数组」。
 	got := From(ctx)
-	got.Scopes = append(got.Scopes, scopeOperate)
+	got.Scopes[0] = scopeOperate
 	got.Tenant = "改写"
-	if again := From(ctx); again.Tenant != "acme" || len(again.Scopes) != 1 {
+	if again := From(ctx); again.Tenant != "acme" || again.Scopes[0] != scopeRead {
 		t.Fatalf("上下文被改写： %+v", again)
 	}
 	// 未注入：读路径宽容（零值，不报错）
 	if (From(context.Background())).Present() {
 		t.Fatal("未注入应返回零值")
+	}
+}
+
+// TestImmutableScopesCannotEscalate 钉住 #376：Context 的「不可变值」承诺
+// 必须对**引用字段的元素**成立——改写副本的 Scopes[0] 不得改穿回 ctx，
+// 更不得把授权判定从「拒绝」变成「放行」。
+func TestImmutableScopesCannotEscalate(t *testing.T) {
+	scopes := []string{scopeRead}
+	ctx := WithContext(context.Background(), Context{Tenant: "acme", Scopes: scopes})
+
+	// 入口侧：注入后宿主改写自己的原切片，机制面不得看到变化。
+	scopes[0] = "admin"
+	if got := From(ctx); got.Scopes[0] != scopeRead {
+		t.Fatalf("注入后改写宿主原切片改穿了上下文： %+v", got.Scopes)
+	}
+	if _, err := Require(ctx, "admin"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("宿主原切片改穿后 Require(admin) 必须仍拒绝，got %v", err)
+	}
+
+	// 出口侧（issue 的触发路径）：改写提取副本的元素（下标赋值，不是 append）。
+	got := From(ctx)
+	got.Scopes[0] = "admin"
+	if again := From(ctx); again.Scopes[0] != scopeRead {
+		t.Fatalf("改写 From 副本的元素改穿了上下文： %+v", again.Scopes)
+	}
+	if _, err := Require(ctx, "admin"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("改写副本后 Require(admin) 必须仍拒绝（越权放行），got %v", err)
+	}
+
+	// Require 返回的副本同样不得与 ctx 共享底层数组。
+	c, err := Require(ctx, scopeRead)
+	if err != nil {
+		t.Fatalf("正常授权应通过： %v", err)
+	}
+	c.Scopes[0] = "admin"
+	if _, err := Require(ctx, "admin"); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("改写 Require 返回值改穿了上下文（越权放行），got %v", err)
 	}
 }
 
