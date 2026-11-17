@@ -147,6 +147,19 @@ type Status struct {
 //     顶替者已在位，原持有者的心跳延长的却是别人的注册）；
 //   - 心跳凭 Token 认人，不匹配报 @@ErrNotRegistered@@（不静默成功）；
 //   - ExpiresAt 由**存储自己的时钟**推算（调用方时钟与存储时钟不可假设一致）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：注册 / 心跳 / 注销在**不持内核锁**的位置被调用（心跳协程
+// 上，在途集合的锁不参与）。
+// no-blocking：宿主实现内不得无界等待——心跳按 HeartbeatInterval 拍调用，
+// 阻塞会推迟资格检查；身份心跳与任务租约续期互不阻断（issue #179）。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（心跳路径直接
+// 调它）：panic 会逃出心跳协程，被 async.GoSafe 收住但**心跳就此死亡** ⇒
+// 全部在途租约停止续期（issue #368 的同款形态），宿主实现须自行保证不 panic。
 type Registry interface {
 	// Register 注册一个 worker（同 ID 顶替旧注册并铸新令牌）。
 	Register(ctx context.Context, spec Spec) (Registration, error)

@@ -56,6 +56,18 @@ type registryConfig struct {
 //
 // 注入的回调**不会在持有 MemRegistry 内部锁时被调用**（issue #317）：回调里
 // 重入本包的 Register/List/Deregister 不会与不可重入的互斥锁相撞。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：注入的回调内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：回调在**不持 MemRegistry 内部锁**的位置被调用（nowValue：
+// m.now 字段只在构造期写入，读取本身不加锁，issue #317）。
+// no-blocking：注入的回调内不得无界等待——它在注册 / 心跳 / 注销的锁外
+// 路径上同步被调用，阻塞会拖住整个注册面。
+// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（nowValue 直接
+// 调它），注入方须自行保证不 panic。
 func WithRegistryClock(now func() time.Time) RegistryOption {
 	return func(c *registryConfig) {
 		if now != nil {

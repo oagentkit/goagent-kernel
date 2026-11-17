@@ -177,7 +177,7 @@ func (l *Loop) renewBatch(ctx context.Context, batch taskboard.BatchRenewingBoar
 	if l.cfg.RenewTimeout > 0 {
 		rctx, cancel = context.WithTimeout(ctx, l.cfg.RenewTimeout)
 	}
-	results, err := batch.RenewBatch(rctx, reqs)
+	results, err := renewBatchCall(rctx, batch, reqs)
 	timedOut := rctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded)
 	cancel()
 
@@ -199,6 +199,33 @@ func (l *Loop) renewBatch(ctx context.Context, batch taskboard.BatchRenewingBoar
 		outcomes = append(outcomes, renewOutcome{cur: cur, verdict: verdict})
 	}
 	return outcomes
+}
+
+// renewBatchCall 调宿主的批量续期面，并把宿主 panic **隔离**在本次调用内。
+//
+// # 为什么批量路径也要隔离（issue #368）
+//
+// 同一个宿主接缝（任务板续期）在两条续期路径上的口径此前**相反**：
+//
+//   - 并发路径：每条走 async.GoSafe ⇒ 宿主任务板 panic 只掀翻那一条；
+//   - 批量路径：此前**直接调** ⇒ panic 逃出 renewBatch → 逃出 heartbeat →
+//     被 worker/loop.go 的 async.GoSafe 吞掉 ⇒ **心跳协程就此死亡**。
+//
+// 心跳死亡一次即全部在途租约停止续期 ⇒ 他副本接管 ⇒ 非幂等副作用双份。
+// 而失效形态是**绿的**：驱动继续领新任务，没有任何错误返回。
+//
+// 隔离后按「整批失败」处置（逐条结果不可信），续期计数照常推进，心跳继续。
+// 上报走 async.ReportPanic——与并发路径（async.GoSafe）**同一个观测面**，
+// 宿主注入的 panic handler 不会漏接。
+func renewBatchCall(ctx context.Context, batch taskboard.BatchRenewingBoard, reqs []taskboard.RenewRequest) (results []taskboard.Renewal, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			async.ReportPanic(r)
+			results = nil
+			err = errors.New("worker: 宿主批量续期 panic（已隔离，按整批失败计）")
+		}
+	}()
+	return batch.RenewBatch(ctx, reqs)
 }
 
 // renewOne 续期一条在途租约并执行锁外动作（单条路径；issue #326 的用例

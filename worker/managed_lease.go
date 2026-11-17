@@ -60,6 +60,20 @@ import (
 //     最新代并推后到期；被 @@taskboard.ErrLeaseLost@@ 拒即失格（此后恒败）；
 //   - Close 停止续期并等待协程退出；**不**归还租约（归还归编排面——
 //     收口与释放的处置各不相同，会话不替调用方选）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// 本接口当前**无宿主实现**（NewLeaseSession 只返回内核自己的 leaseSession）
+// ⇒ 下面是「将来开放宿主实现时」的前置约定；内核侧不隔离其 panic
+// （managed_lease.go 无 recover），宿主实现须自行保证不 panic。
+//
+// no-reentry：实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。内核侧
+// 兑现：会话方法在续期协程与执行协程上被调用，调用点不持内核锁。
+// no-blocking：实现内不得无界等待——AssertOwned 在关键步之前同步被调用，
+// 阻塞会推迟施加（易主封口也随之推迟）。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口实现的 panic。
 type LeaseSession interface {
 	// Context 会话作用域的 ctx：租约易主或 Close 后取消。
 	Context() context.Context

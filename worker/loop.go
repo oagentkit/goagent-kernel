@@ -59,6 +59,19 @@ const renewBatchLimit = 100
 // Execute 收到的 ctx 在「租约易主」「外层停机」时被取消：**施加副作用之前**
 // 应检查它。返回 nil ⇒ 驱动 Complete 任务；返回 err ⇒ 驱动 Release 任务
 // （任务可被重做）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主执行体内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：执行体在**不持任何内核锁**的位置被调用（claimed.mu 只护
+// 续期判定与收场互斥，执行体不在其内）。
+// no-blocking：宿主执行体内不得无界等待——它跑在会话 ctx 上（租约易主或
+// 外层停机即取消），内核不设执行超时，阻塞多久由宿主自己管。
+// panic-isolated：**内核侧兑现**——invokeHandler 用 recover 收编为一次普通
+// 失败（上报走 async.ReportPanic），本任务按失败收场，同池其它任务继续
+// 推进（issue #196）。
 type Handler interface {
 	Execute(ctx context.Context, task taskboard.Task) error
 }
@@ -94,6 +107,17 @@ type Config struct {
 	// Pick 可选的挑选钩子：从候选任务里挑一个认领。缺省按 ID 序取第一个
 	// 可认领的（确定性——不依赖任务板返回顺序）。优先级/公平性等挑选策略
 	// 由宿主在此接线（判据面见 scheduling 包；本驱动不内嵌第二份）。
+	//
+	// # 接缝契约（issue #370 形态 B）
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：挑选钩子内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+	// 内核侧兑现：钩子在领取环里**不持任何内核锁**的位置被调用。
+	// no-blocking：挑选钩子内不得无界等待——它在领取环上同步被调用，阻塞
+	// 会拖住整个领取环（含停机响应与后续领取）。
+	// panic-isolated：**宿主侧兑现**——内核不隔离本钩子的 panic（claimNext
+	// 直接调它），宿主实现须自行保证不 panic 或自行 recover。
 	Pick func(candidates []taskboard.Task) (taskboard.TaskID, bool)
 	// RenewFailMax 在途租约的连续续期失败阈值：连续失败达到它（且外层
 	// ctx 未取消）＝ 无法确认持有资格，驱动取消在途执行的 ctx 并停止
@@ -127,6 +151,18 @@ type Config struct {
 	// 任务板/注册表不会二次抢锁死锁。回调 panic 被隔离（与 invokeHandler
 	// 同款）：留痕钩子的异常不得掀翻心跳面，否则全部在途租约停止续期。
 	// 仍然要求快返回，别在里面做重活。
+	//
+	// # 接缝契约（issue #370 形态 B）
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：通知钩子内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+	// 内核侧兑现：通知一律在**锁外**发出（claimed.mu 只护续期判定与收场
+	// 互斥，issue #326），宿主回查任务板 / 注册表不会二次抢锁。
+	// no-blocking：通知钩子内不得无界等待——它在心跳协程上同步被调用，
+	// 阻塞会推迟后续续期（续期节拍因此落后，资格容忍窗随之被吃掉）。
+	// panic-isolated：**内核侧兑现**——notifyLeaseLost 用 recover 收编并
+	// 上报（与 invokeHandler 同款），心跳协程不掀翻。
 	OnLeaseLost func(task taskboard.TaskID, cause LeaseLostCause)
 }
 

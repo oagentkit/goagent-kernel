@@ -76,41 +76,9 @@ import (
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
-// EffectRunner 受管执行器依赖的副作用编排面（*sideeffect.Runner 满足）。
-//
-// 收成接口而不是直接收 *sideeffect.Runner：执行器的用例要能精确构造
-// 「Applied / Replayed / Contended / Uncertain」四种结论，而这两种结论的
-// 真实构造需要完整的存储替身；接口让编排判据与存储实现解耦（生产构造
-// 仍只接受 *sideeffect.Runner 的实现，见 NewManagedExecutor）。
-type EffectRunner interface {
-	// ExecuteWith 抢闸 → 准备 → 持有资格检查 → 施加 → 记账（语义见
-	// sideeffect.Runner.ExecuteWith）。
-	ExecuteWith(ctx context.Context, act sideeffect.Action, eff sideeffect.Effect) (sideeffect.Outcome, sideeffect.Result, error)
-	// Reconcile 对账裁决结果未知的 Key（语义见 sideeffect.Runner.Reconcile）。
-	Reconcile(ctx context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error)
-}
-
-// Progress 进度快照的提交面（*checkpoint.Committer 满足）。
-//
-// 只收 Commit 一个方法：单调判定（SaveIfNewer + 进程内闸）在 Committer /
-// StoreCAS 里，本执行器不重写。
-type Progress interface {
-	Commit(ctx context.Context, s checkpoint.Snapshot) error
-}
-
-// LeasedProgress 带**持有凭据**的进度提交面（*checkpoint.Committer 满足，
-// 经 CommitFenced）。
-//
-// 进度实现了它时，执行器把本次认领的接管代次（@@LeaseSession.Fence@@）
-// 一并交给存储：陈旧代次的迟到提交由**存储侧**拒绝（check-then-act 的
-// 窗口靠这个关，调用前的资格确认关不住它，见 checkpoint.FencedStoreCAS）。
-// 未实现时退回普通 Commit——资格确认仍在（提交前 AssertOwned），但
-// 「确认通过之后、写入落地之前」的窗口只剩 TTL 量级的兜底，宿主要严格
-// 一致的状态提交必须装配支持栅栏判据的存储。
-type LeasedProgress interface {
-	// CommitFenced 带接管代次的条件提交（语义见 checkpoint.FencedStoreCAS）。
-	CommitFenced(ctx context.Context, s checkpoint.Snapshot, fence uint64) error
-}
+// 受管执行器的三张宿主侧接缝面（EffectRunner / Progress / LeasedProgress）
+// 见 managed_ports.go——它们是宿主实现的回调契约，与本文件的编排逻辑分
+// 文件，两者的读者不同。
 
 // ManagedConfig 执行器配置（零值不可用；NewManagedExecutor 做装配期校验）。
 type ManagedConfig struct {
@@ -179,6 +147,18 @@ type ManagedWork struct {
 	// 返回 false 表示「这次任务没有进度可记」（不是错误，也不阻塞 Complete）。
 	// 配置了 Snapshot 但没有装配 Progress ⇒ 装配期之外的显式错误，不会
 	// 静默跳过（静默跳过会让宿主以为进度落了库）。
+	//
+	// # 接缝契约（issue #370 形态 B）
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：快照构造函数内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+	// 内核侧兑现：它在**不持内核锁**的位置被调用（资格确认之后、进度提交
+	// 之前）。
+	// no-blocking：构造函数内不得无界等待——它跑在会话 ctx 上，阻塞会推迟
+	// 进度提交与收口；收口前的资格确认被拒即本次结果作废。
+	// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（managed.go
+	// 无 recover），宿主实现须自行保证不 panic。
 	Snapshot func(task taskboard.Task, res sideeffect.Result) (checkpoint.Snapshot, bool, error)
 }
 
