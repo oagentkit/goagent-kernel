@@ -120,12 +120,24 @@ func normalizeNeedsFollowupScalar(m map[string]any) {
 }
 
 // normalizeDecision decision 归一：字符串 → 小写化；白名单（pending_approval/approved/
-// rejected）保留；**其余任意值一律归空串（无决策）**。对象/数组形态（模型自造结构）→
-// 删除键。2026-09-25 两轮 215 实弹（target_scope_mismatch_no_action/redirect）证明
-// 逐词收录同义族是打地鼠——真模型持续自造诚实信号词（目标不匹配/转出/无判读对象…），
-// 每个漏网词都让整份专项报告被拦、巡检聚合缺域。decision 本无治理语义（真正闸门在
-// action+requires_approval，09-10 已裁定），未知值收敛为无决策零成本；Validate 的
-// 白名单检查保留作直构报告后备防线。
+// rejected）保留；**词表外字符串保持原值**（issue #361）。对象/数组形态（模型自造结构）→
+// 删除键。
+//
+// # 为什么词表外不再归空串
+//
+// 旧实现把「读不懂的 decision」改写成 ""（= 无决策），而 Validate 的护栏是
+// `Decision != "" && !IsDecisionValid(...)`——归一化面恰好把未知值变成护栏
+// 看不见的零值，两条 fail-closed 红线在解析路径上被 disarm。归一出错的方向
+// 必须是「保留原值 + 判据报 critical」，与 scope / action / confidence 同向：
+// 信号不能被抹掉，只能被标记。
+//
+// # pending_approval 的矛盾修复往严处补
+//
+// decision=pending_approval 而 requires_approval 不为真时，旧实现删掉
+// decision（往松处删），Validate 的「pending 必须要求审批」红线成为死条文。
+// 现在与 fixRecommendationContradiction 同向补严：有 recommendation 就补
+// requires_approval=true；没有 recommendation 时保留 decision，让 Validate
+// 报 critical——自相矛盾不得被伪装成「没写决策」。
 func normalizeDecision(m map[string]any, k string, v any) {
 	switch v.(type) {
 	case map[string]any, []any:
@@ -138,19 +150,20 @@ func normalizeDecision(m map[string]any, k string, v any) {
 				m[k] = sd
 			case sd == "pending": // 常见缩写（实弹：模型输出 "pending"）→ 规范枚举
 				m[k] = DecisionPending
+			case sd == "":
+				// 空/纯空白 = 未声明（不是「一个读不懂的决策」）。
+				m[k] = ""
 			default:
-				// 同义"无决策"词（hold/info/platform_mismatch…）与散文化表述、未知枚举形
-				// ASCII 词同待遇：一律无决策（历史词族清单见 2026-09-09/10 实弹记录）。
-				m[k] = ""
+				// 词表外：保持原值，交 Validate 判 critical（issue #361）。
+				m[k] = s
 			}
-			// 实弹 2026-09-10（macOS 只读检查）：模型把 pending_approval 当"待处理"用，
-			// 而报告无审批语义（requires_approval 缺失）→ 撞 Validate 一致性红线，
-			// 整份诚实的检查报告被拦。decision 本无治理语义（真正闸门在
-			// action+requires_approval）：pending_approval 而无 requires_approval
-			// 真值时归一为无决策，与自造枚举同待遇。Validate 的红线检查保留作
-			// 直构报告的后备防线。
+			// pending_approval 而无 requires_approval 真值：补严而不是删决策
+			// （与 fixRecommendationContradiction 同向）。recommendation 缺失/
+			// 形态不可修时不臆造结构，保留 decision 由 Validate 报错。
 			if m[k] == DecisionPending && !rawRequiresApproval(m["recommendation"]) {
-				m[k] = ""
+				if rec, ok := m["recommendation"].(map[string]any); ok {
+					rec["requires_approval"] = true
+				}
 			}
 		}
 	}

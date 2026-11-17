@@ -32,76 +32,39 @@ func TestConclusionListTolerance(t *testing.T) {
 	}
 }
 
-// T28 decision="info"（实弹 2026-09-09：巡检 agent 用 info 表达"仅告知"）→ 归一空串放行。
-func TestDecisionInfoSynonym(t *testing.T) {
-	r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
-		`"decision":"info","recommendation":{"action":"none","requires_approval":false}}`)
-	if err != nil {
-		t.Fatalf("info 应归一为无决策: %v", err)
-	}
-	if _, verr := r.Validate(); verr != nil {
-		t.Fatalf("归一后应通过白名单校验: %v", verr)
-	}
-	if r.Decision != "" {
-		t.Fatalf("decision 应为空串: %q", r.Decision)
-	}
-}
-
-// T29 decision 环境受限自造枚举（实弹 2026-09-09 复盘：专家在目标机不可达/平台不匹配时
-// 自述无法给出决策，曾被全量拦截成 5 连违约）→ 归一空串放行；散文化取值（中文句子）同归；
-// 枚举空间的未知 ASCII 词仍拦截（T7 语义不变）。
-func TestDecisionEnvironmentSynonyms(t *testing.T) {
-	for _, d := range []string{"host_unreachable", "platform_mismatch_stop", "degraded",
-		"awaiting_input", "clarification_needed", "采集受限，需人工检查"} {
-		r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
-			`"decision":"` + d + `","recommendation":{"action":"none","requires_approval":false}}`)
-		if err != nil {
-			t.Fatalf("decision=%q 应归一为无决策: %v", d, err)
-		}
-		if r.Decision != "" {
-			t.Fatalf("decision=%q 应为空串: %q", d, r.Decision)
-		}
-		if _, verr := r.Validate(); verr != nil {
-			t.Fatalf("decision=%q 归一后应通过校验: %v", d, verr)
-		}
+// T28/T29/T31 词表外 decision 的沉默方向（issue #361 起）：保留原值，
+// 由 Validate 的白名单判 critical——不得再改写成空串（=「无决策」）后放行。
+//
+// 覆盖历史实弹词族：info（仅告知）、环境受限自造枚举（host_unreachable /
+// platform_mismatch_stop / degraded / awaiting_input / clarification_needed /
+// 中文散文化）、escalate（转人工）、未知枚举形（target_scope_mismatch_* /
+// redirect / banana / HOLD）。
+func TestDecisionOutOfVocabPreserved(t *testing.T) {
+	for _, d := range []string{
+		"info", "escalate", "HOLD", "banana",
+		"host_unreachable", "platform_mismatch_stop", "degraded",
+		"awaiting_input", "clarification_needed", "采集受限，需人工检查",
+		"target_scope_mismatch_no_action", "redirect", "target_scope_mismatch",
+	} {
+		t.Run(d, func(t *testing.T) {
+			r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
+				`"decision":"` + d + `","recommendation":{"action":"none","requires_approval":false}}`)
+			if err != nil {
+				t.Fatalf("decision=%q 解析失败: %v", d, err)
+			}
+			if r.Decision != d {
+				t.Fatalf("词表外 decision 必须保留原值 %q，实得 %q（被抹成零值 = 信号消失）", d, r.Decision)
+			}
+			if _, verr := r.Validate(); verr == nil {
+				t.Fatalf("decision=%q 必须被 Validate 判 critical", d)
+			}
+		})
 	}
 }
 
-// T29 decision="escalate"（实弹 2026-09-10：平台无工具可用时模型表达"转人工"）→ 归一空串。
-func TestDecisionEscalateSynonym(t *testing.T) {
-	r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
-		`"decision":"escalate","recommendation":{"action":"none","requires_approval":false}}`)
-	if err != nil {
-		t.Fatalf("escalate 应归一为无决策: %v", err)
-	}
-	if _, verr := r.Validate(); verr != nil {
-		t.Fatalf("归一后应通过白名单校验: %v", verr)
-	}
-}
-
-// T31 未知枚举形 decision 一律归"无决策"（2026-09-25 215 两轮实弹结构收敛）：
-// target_scope_mismatch_no_action（安全专家报 Alpine 容器无判读对象）与 redirect
-// （k8s 专家表达本域转出）是连续两轮各出现一枚的新词形——逐词收录同义族是打地鼠，
-// 真模型持续自造诚实信号词，每个漏网词都让整份专项报告被拦、巡检聚合缺域。
-// decision 无治理语义（真正闸门在 action+requires_approval），未知值归空零成本。
-func TestDecisionUnknownEnumNormalized(t *testing.T) {
-	for _, d := range []string{"target_scope_mismatch_no_action", "redirect", "target_scope_mismatch"} {
-		r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
-			`"decision":"` + d + `","recommendation":{"action":"none","requires_approval":false}}`)
-		if err != nil {
-			t.Fatalf("decision=%q 应归一为无决策: %v", d, err)
-		}
-		if r.Decision != "" {
-			t.Fatalf("decision=%q 应为空串: %q", d, r.Decision)
-		}
-		if _, verr := r.Validate(); verr != nil {
-			t.Fatalf("decision=%q 归一后应通过校验: %v", d, verr)
-		}
-	}
-}
-
-// T30 合议 verdicts 宽容解码：非法 stance/缺 agent 条目解码期丢弃、报告不炸；
-// 合法枚举兜底——手工构造的非法 stance 必须被 Validate 拦截。
+// T30 合议 verdicts 宽容解码：agent 为空 / stance 缺失的条目丢弃、报告不炸；
+// **词表外 stance 保留原值**交 Validate 判 critical（issue #361：静默丢会让
+// 一条否决裁决凭空消失）。
 func TestVerdictsTolerantDecode(t *testing.T) {
 	raw := `{"agent_name":"workflow/verdict-judge","confidence":"medium",
 		"verdicts":[{"agent":"specialists/memory-analysis","stance":"adopt","reason":"证据自洽"},
@@ -111,11 +74,15 @@ func TestVerdictsTolerantDecode(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
 		t.Fatalf("宽容解码不得报错: %v", err)
 	}
-	if len(r.Verdicts) != 2 {
-		t.Fatalf("非法 stance/缺 agent 条目应丢弃, got %d: %+v", len(r.Verdicts), r.Verdicts)
+	if len(r.Verdicts) != 3 {
+		t.Fatalf("缺 agent/缺 stance 条目应丢弃、词表外 stance 应保留, got %d: %+v", len(r.Verdicts), r.Verdicts)
 	}
-	if r.Verdicts[0].Stance != VerdictAdopt || r.Verdicts[1].Stance != VerdictReject {
+	if r.Verdicts[0].Stance != VerdictAdopt || r.Verdicts[1].Stance != "maybe" || r.Verdicts[2].Stance != VerdictReject {
 		t.Fatalf("stance 解析错误: %+v", r.Verdicts)
+	}
+	// 词表外 stance 不再静默丢弃：Validate 必须报 critical（信号被标记而非抹掉）。
+	if _, err := r.Validate(); err == nil || !strings.Contains(err.Error(), "maybe") {
+		t.Fatalf("词表外 stance 必须被 Validate 拦截，实得 %v", err)
 	}
 	// 合法枚举兜底：手工构造的非法 stance 必须被 Validate 拦截
 	bad := Report{AgentName: "a", Confidence: ConfidenceHigh,

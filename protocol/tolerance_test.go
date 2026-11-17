@@ -5,6 +5,7 @@ package protocol
 import (
 	"encoding/json"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -101,7 +102,8 @@ func TestWalkNormalizeDeep(t *testing.T) {
 
 // C5 决策枚举保留：合法 decision 且带审批语义（requires_approval=true）时原样保留；
 // pending_approval 而无审批语义（实弹 2026-09-10 macOS 只读检查把枚举当"待处理"用）
-// 归一为无决策——不撞 Validate 一致性红线，诚实报告不再被整份拦截。
+// 自 issue #361 起**保留 decision**并让 Validate 报矛盾（不得静默清空）：
+// 归一化只做写法收敛，矛盾必须留信号。
 func TestDecisionEnumPreserved(t *testing.T) {
 	raw := `{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s","scope":"in",` +
 		`"recommendation":{"action":"tune","steps":["uptime"],"requires_execution":true,"requires_approval":true},` +
@@ -119,8 +121,12 @@ func TestDecisionEnumPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r2.Decision != "" {
-		t.Fatalf("pending_approval 无审批语义应归一为无决策: %q", r2.Decision)
+	if r2.Decision != DecisionPending {
+		t.Fatalf("pending_approval 不得被静默清空（issue #361），实得 %q", r2.Decision)
+	}
+	if _, verr := r2.Validate(); verr == nil ||
+		!strings.Contains(verr.Error(), "requires_approval 必须为 true") {
+		t.Fatalf("无 recommendation 时矛盾必须由 Validate 报出，实得 %v", verr)
 	}
 	// requires_approval 为字符串 "true"（标量容错归一前形态）同样视为有审批语义。
 	strForm := `{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s","scope":"in",` +
@@ -166,26 +172,29 @@ func TestParseReportObjectStringField(t *testing.T) {
 	}
 }
 
-// C8 实弹容错（2026-09-08）：decision 自造枚举（"hold"）→ 归一为空；全角标点结构位修复。
+// C8 实弹容错（2026-09-08）：词表外 decision 自 issue #361 起保留原值交 Validate
+// 判 critical（不再归一为空）；全角标点结构位修复不变。
 func TestDecisionSynonymAndFullWidth(t *testing.T) {
 	r, err := ParseReport(`{"agent_name":"X","confidence":"low","conclusion":"c","summary":"s","decision":"HOLD"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Decision != "" {
-		t.Fatalf("hold 同义词应归一为空: %q", r.Decision)
+	if r.Decision != "HOLD" {
+		t.Fatalf("词表外 decision 必须保留原值，实得 %q", r.Decision)
 	}
-	// 未知自造枚举 → 一律归空（2026-09-25 结构收敛：打地鼠不可持续，decision 无治理语义；
-	// Validate 的白名单检查仅作直构报告后备——见 report_test.go TestDecisionWhitelist）。
+	if _, verr := r.Validate(); verr == nil {
+		t.Fatal("词表外 decision 必须被 Validate 判 critical")
+	}
+	// 未知自造枚举同样保留原值（#361：信号被标记而非抹掉）。
 	r2, err := ParseReport(`{"agent_name":"X","confidence":"low","conclusion":"c","summary":"s","decision":"banana"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r2.Decision != "" {
-		t.Fatalf("未知枚举应归一为空: %q", r2.Decision)
+	if r2.Decision != "banana" {
+		t.Fatalf("未知枚举必须保留原值，实得 %q", r2.Decision)
 	}
-	if _, verr := r2.Validate(); verr != nil {
-		t.Fatalf("归一后不应再被拦截: %v", verr)
+	if _, verr := r2.Validate(); verr == nil {
+		t.Fatal("未知枚举必须被 Validate 判 critical")
 	}
 	// 全角标点（结构位）：，：混入 JSON 骨架 → 修复通道救回；字符串内部全角原样保留。
 	raw := `{"agent_name":"X"，"confidence":"low"，"conclusion":"内存不足，需处置"，"summary":"s"}`
