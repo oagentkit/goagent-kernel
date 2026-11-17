@@ -2,6 +2,7 @@ package cmdpolicy_test
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/oekit/pkg/shellx"
@@ -242,6 +243,131 @@ func TestRulesSnapshotSorted(t *testing.T) {
 	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
 		t.Fatalf("快照应按名字排序，got %+v", got)
 	}
+}
+
+// TestNewCopiesCallerRule 入口方向（issue #385）：New 之后改写宿主入参的
+// Prefix/Match/NotMatch，活策略的裁决不得变化，Rules 报告也不得跟着变。
+func TestNewCopiesCallerRule(t *testing.T) {
+	rules := []cmdpolicy.Rule{{
+		Name:     "wipe",
+		Prefix:   cmdpolicy.Prefix{{"wipe"}, {"--now"}},
+		Decision: cmdpolicy.DecisionForbidden,
+		Match:    []string{"wipe --now"},
+		NotMatch: []string{"wipe --later"},
+	}}
+	p := mustPolicy(t, rules...)
+
+	before := p.Decide([]string{"wipe", "--now"})
+	if before.Decision != cmdpolicy.DecisionForbidden || before.Rule != "wipe" {
+		t.Fatalf("基线裁决应是 forbidden/wipe，got %+v", before)
+	}
+
+	// 改写入参：Prefix 是两层切片，两层都改；Match/NotMatch 同款。
+	rules[0].Prefix[0][0] = "allow"
+	rules[0].Prefix[1][0] = "--later"
+	rules[0].Match[0] = "mutated-match"
+	rules[0].NotMatch[0] = "mutated-notmatch"
+
+	after := p.Decide([]string{"wipe", "--now"})
+	if after.Decision != before.Decision || after.Rule != before.Rule {
+		t.Fatalf("New 留存入参切片：裁决从 %+v 变成 %+v（fail-open）", before, after)
+	}
+	snap := p.Rules()
+	if snap[0].Prefix[0][0] != "wipe" || snap[0].Prefix[1][0] != "--now" ||
+		snap[0].Match[0] != "wipe --now" || snap[0].NotMatch[0] != "wipe --later" {
+		t.Fatalf("Rules 报告反映了入参改写：%+v", snap[0])
+	}
+}
+
+// TestRulesSnapshotIndependent 出口方向（issue #385）：Rules 返回的是**独立
+// 快照**，原地改写它不得改穿活策略或下一次快照。
+func TestRulesSnapshotIndependent(t *testing.T) {
+	p := mustPolicy(t, cmdpolicy.Rule{
+		Name:     "wipe",
+		Prefix:   cmdpolicy.Prefix{{"wipe"}, {"--now"}},
+		Decision: cmdpolicy.DecisionForbidden,
+		Match:    []string{"wipe --now"},
+		NotMatch: []string{"wipe --later"},
+	})
+
+	snap := p.Rules()
+	snap[0].Prefix[0][0] = "allow"
+	snap[0].Prefix[1][0] = "--later"
+	snap[0].Match[0] = "mutated-match"
+	snap[0].NotMatch[0] = "mutated-notmatch"
+
+	if got := p.Decide([]string{"wipe", "--now"}); got.Decision != cmdpolicy.DecisionForbidden || got.Rule != "wipe" {
+		t.Fatalf("改写快照改穿了活策略（fail-open）：got %+v", got)
+	}
+	again := p.Rules()
+	if again[0].Prefix[0][0] != "wipe" || again[0].Prefix[1][0] != "--now" ||
+		again[0].Match[0] != "wipe --now" || again[0].NotMatch[0] != "wipe --later" {
+		t.Fatalf("二次快照受上一次改写污染：%+v", again[0])
+	}
+}
+
+// TestRulesSnapshotNoRace -race 形态：宿主经 Rules 快照原地改写与 Decide
+// 并发，不得出现数据竞争（无 -race 时只验不死锁）。
+func TestRulesSnapshotNoRace(t *testing.T) {
+	p := mustPolicy(t, cmdpolicy.Rule{
+		Name:     "wipe",
+		Prefix:   cmdpolicy.Prefix{{"wipe"}},
+		Decision: cmdpolicy.DecisionForbidden,
+		Match:    []string{"wipe --now"},
+	})
+	snap := p.Rules()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // 宿主：原地改写「快照」
+		defer wg.Done()
+		<-start
+		for i := 0; i < 5000; i++ {
+			snap[0].Prefix[0][0] = "mutated"
+		}
+	}()
+	go func() { // 内核：判定读活策略
+		defer wg.Done()
+		<-start
+		for i := 0; i < 5000; i++ {
+			_ = p.Decide([]string{"wipe", "--now"})
+		}
+	}()
+	close(start)
+	wg.Wait()
+}
+
+// TestNewInputNoRace -race 形态：宿主复用/改写构造入参与 Decide 并发，
+// 不得出现数据竞争（New 必须把入参拷成自己的）。
+func TestNewInputNoRace(t *testing.T) {
+	rules := []cmdpolicy.Rule{{
+		Name:     "wipe",
+		Prefix:   cmdpolicy.Prefix{{"wipe"}},
+		Decision: cmdpolicy.DecisionForbidden,
+		Match:    []string{"wipe --now"},
+	}}
+	p := mustPolicy(t, rules...)
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { // 宿主：改写自己的入参
+		defer wg.Done()
+		<-start
+		for i := 0; i < 5000; i++ {
+			rules[0].Prefix[0][0] = "mutated"
+		}
+	}()
+	go func() { // 内核：判定读活策略
+		defer wg.Done()
+		<-start
+		for i := 0; i < 5000; i++ {
+			_ = p.Decide([]string{"wipe", "--now"})
+		}
+	}()
+	close(start)
+	wg.Wait()
 }
 
 func TestExplain(t *testing.T) {
