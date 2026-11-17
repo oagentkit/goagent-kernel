@@ -36,6 +36,7 @@
 > | [docs/GAP-ANALYSIS-20261106.md](docs/GAP-ANALYSIS-20261106.md) | 同一对标的**刷新**（2026-11-06 重拉五家）：Coze 已停更、DSH 219→400 叶子包、缺口从「可撤销性」移到「判定面的宽度」| 活文档 |
 > | [docs/GAP-ANALYSIS-20261107.md](docs/GAP-ANALYSIS-20261107.md) | 第三次刷新（2026-11-07 重拉五家）：**参照系这轮没长出新机制面**；唯一开着的 P0 是出口强制件的**两端都空**（无代理 + 无 `Enforcer` 实现）| 活文档 |
 > | [docs/DISTRIBUTED-EVOLUTION-20261117.md](docs/DISTRIBUTED-EVOLUTION-20261117.md) | **分布式演进方向**：外部评审逐条核验台账 + L1/L2/L3 三阶段路线 + 场景化部署配方的当前缺口 | 活文档（评审核验，2026-11-17）|
+> | [docs/DEPLOY-MATRIX.yaml](docs/DEPLOY-MATRIX.yaml) | **部署配方能力清单（机器可查）**：场景 → 必需能力 → 证据（契约符号 / 门禁 / issue）→ 当前状态；`make deploycheck` 判证据可解析、状态由证据推导、与 USAGE 口径一致（issue #277） | 活文档（机器判定）|
 > | [docs/CROSS-ENV-VERIFY-20261021.md](docs/CROSS-ENV-VERIFY-20261021.md) | 跨环境验证：平台相关的机制怎么在「CI 绿但其实跳过」的情况下真验（实测环境矩阵 + 交叉编译流程）| 活文档 |
 > | [docs/CHECKPOINT.md](docs/CHECKPOINT.md) | 续跑契约的设计推导、三条不变量与跨进程闸 | 活文档 |
 > | [docs/BENCH-BASELINE-20261113.md](docs/BENCH-BASELINE-20261113.md) | **性能基线数字的唯一口径来源**：五个基准包的口径 / 采集方法 / 演进纪律（`make bench` 两处引用） | 活文档（机器判定）|
@@ -228,7 +229,7 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 | 测试 | 384 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 9 条规则（`rules` 段）+ 9 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 58 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |
+| 门禁 | 9 条规则（`rules` 段）+ 9 条 `go/ast` 结构规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 58 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |
 | 例外登记 | **0** |
 
 > **上表分两类：前两行有机器判定，其余仍是散文**（issue #31）。

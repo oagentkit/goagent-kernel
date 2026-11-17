@@ -100,7 +100,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync releasecheck integration bench site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -360,6 +360,13 @@ apilifecheck: ## API 生命周期门禁（清单 ↔ 包注释 ↔ 生产包覆�
 	@# 在本仓的 Makefile 里，推送后才说话的门禁等于没有门禁。
 	$(EXPORT) $(GOENV) go run ./cmd/apilifecheck
 
+deploycheck: ## 部署配方能力清单门禁（docs/DEPLOY-MATRIX.yaml ↔ USAGE / 契约 / issue / 门禁，issue #277）
+	@# 清单里的每条能力都要有可查事实：contract 走 go/ast 判符号声明，gate 判
+	@# Makefile 目标存在，issue 判单号在 docs/*.md 或 CHANGELOG 有落点；state /
+	@# readiness 由证据推导（手写结论与证据不符即红）。USAGE 的机器口径块与
+	@# 清单逐行比对——口径不一致时这条判据先响。
+	$(EXPORT) $(GOENV) go run ./cmd/deploymatrix
+
 site: ## 构建 VuePress 文档站到 site/docs/.vuepress/dist（gen.mjs 先生成机器事实页，解析失败即退出）
 	cd site && (test -d node_modules || npm ci --no-audit --no-fund) && npm run docs:build
 
@@ -431,7 +438,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck releasecheck modreplace modwork
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck deploycheck releasecheck modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
