@@ -44,6 +44,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/goagent-kernel/internal/subhub"
 )
 
@@ -60,6 +61,10 @@ import (
 //   - **不得重入**：Insert 不得回调 DurablePublisher.Publish——发布全程
 //     持锁（见 DurablePublisher 的并发序说明），重入即死锁；与 Hub.Relay
 //     的「不得回流」同款红线。
+//   - **panic 由内核隔离**：Insert 内部 panic（驱动、连接池、序列化代码都可能
+//     panic）不得掀翻发布面——内核把它隔离成 ErrStorePanic，走 drop 路径留痕、
+//     不广播。与 onDrop 钩子的隔离口径同款（issue #399）：同一包的两个宿主
+//     接缝不许一个隔离一个不隔离。
 //
 // # 与尾随读侧的配对（issue #264）
 //
@@ -71,12 +76,35 @@ import (
 // 句柄归宿主、本包零 DB 依赖：宿主在自己的业务事务内调存储的事务内写入
 // 入口，提交后再广播（广播在事务外，回滚后的幻影帧由此排除）。参考实现见
 // examples/pgstore 的 EventStore（PublishInTx / Insert / TailStore 三张接缝）。
+//
+// 接缝契约（宿主实现；内核在 DurablePublisher 的**发布临界区内**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。发布全程持一把锁（见 DurablePublisher 的并发序
+// 说明），Insert 是在**锁内**被调用的：宿主实现不得回调 DurablePublisher.Publish
+// 或本包的其它接缝——内核正持锁等着它返回，回查即死锁（与 Hub.Relay 的
+// 「不得回流」同款红线）。
+// no-blocking：**宿主侧兑现**。落库可能要走网络，「不阻塞」在此处的准确含义
+// 是「**有界**」：必须承接 ctx 的取消/超时并在期限内返回，不得无限等待、
+// 不得在持存储内部锁时等待别的回调。落库慢 ⇒ 全体发布排队等它——这是次序
+// 保证的固有代价，写明不藏。
+// panic-isolated：**内核侧兑现**。DurablePublisher.insert 用 internal/subhub.Do
+// 隔离（issue #399），panic 转成 ErrStorePanic ⇒ 走 drop 路径留痕、不广播，
+// 次序不变量（失败不广播）不变。
 type Store interface {
 	// Insert 持久化一条事件并返回权威游标 ID（语义同 SQL 的
 	// INSERT ... RETURNING id）。ctx 的超时/取消由实现自判（超时 ⇒ error，
 	// 走 drop 路径）。
 	Insert(ctx context.Context, ev Event) (uint64, error)
 }
+
+// ErrStorePanic 宿主存储接缝 panic 被隔离成的错误（issue #399）。
+//
+// 存储接缝的 panic 不得掀翻发布面：panic 路径下既没有 error 也没有 drop 留痕，
+// 一次「已确定的失败」被升级成进程级事故。内核把这类 panic 隔离成 error ⇒
+// 走 drop 路径留痕 ⇒ 次序不变量（失败不广播）不变。
+var ErrStorePanic = errors.New("eventbus: 存储接缝 panic（已隔离为失败，不广播）")
 
 // MemoryStore 进程内参考实现（并发安全）：自增游标 + 内存留痕。
 //
@@ -98,7 +126,8 @@ func (s *MemoryStore) Insert(_ context.Context, ev Event) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
-	row := ev
+	// 落库的是**快照**：调用方改自己的 map 不影响已落的行（issue #378）。
+	row := ev.Clone()
 	row.ID = s.seq
 	s.evs = append(s.evs, row)
 	return s.seq, nil
@@ -149,6 +178,18 @@ type DurableOption func(*DurablePublisher)
 // 失败时递归 onDrop。panic 已由本包隔离（与 internal/subhub 的回调纪律同款）
 // ——宿主留痕钩子的异常不得掀翻发布面。本包不重试——重试会把「失败不广播」
 // 变成「失败晚广播」，次序不变量就破了；重试/死信/告警是留痕钩子宿主侧的事。
+//
+// 接缝契约（宿主注入的留痕钩子；内核在发布失败路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**（调用点在发布临界区**之外**，见 drop 的注释），
+// 故回调里可以安全地查询发布面；但仍不得回调 Publish / Insert——那会再走
+// 一次落库，失败时递归 onDrop。
+// no-blocking：**宿主侧兑现**。回调在 Publish 的返回路径上被同步等待，不得
+// 无界等待（不得做长耗时 I/O、不得等其它回调）。
+// panic-isolated：**内核侧兑现**。drop 用 internal/subhub.Do 隔离，与存储接缝
+// 的隔离口径同款（issue #399：同一包的两个宿主接缝不许一个隔离一个不隔离）。
 func WithOnDrop(fn func(ev Event, cause error)) DurableOption {
 	return func(p *DurablePublisher) { p.onDrop = fn }
 }
@@ -175,6 +216,9 @@ func NewDurablePublisher(b *Bus, store Store, opts ...DurableOption) *DurablePub
 // Publish 落库并广播一条事件：成功 ⇒ 返回广播帧（ID=权威游标，含零值归一），
 // 供调用方直接用作 SSE 游标；失败 ⇒ 零值事件 + insert 错误，不广播
 // （onDrop 已留痕）。
+//
+// 宿主存储接缝的 panic 也算失败：内核把它隔离成 ErrStorePanic（issue #399），
+// 与「落库失败」同一条路径——返回 error、不广播、onDrop 留痕。
 //
 // 字段口径（归一发生在 Insert 之前，落库行与广播帧同一内容）：
 //   - ev.ID 输入侧一律**清零忽略**——游标由存储铸造（Store 契约），
@@ -206,13 +250,44 @@ func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, 
 		ev.OccurredAt = time.Now()
 	}
 
-	id, err := p.store.Insert(ctx, ev)
+	// 载荷拷三份（issue #378）：调用方入参 / 落库行 / 广播帧互不共享。
+	// 落库接缝拿到的是它自己的一份——宿主存储即便就地改写或长期留存，也污染
+	// 不到广播帧与返回帧。
+	ev = ev.Clone()      // 与调用方脱钩（这一份作为返回帧）
+	stored := ev.Clone() // 落库一份
+
+	id, err := p.insert(ctx, stored)
 	if err != nil {
 		return ev, err
 	}
 	ev.ID = id
-	p.bus.Broadcast(ev)
+	p.bus.Broadcast(ev.Clone()) // 广播帧一份
 	return ev, nil
+}
+
+// insert 调宿主存储接缝并隔离它的 panic（issue #399）。
+//
+// 口径与 onDrop 完全同款（internal/subhub.Do）：宿主存储的 panic 不得掀翻
+// 发布面——panic 逃逸时既没有 error 也没有 drop 留痕，一次「已确定的失败」
+// 被升级成进程级事故。隔离后转成 ErrStorePanic ⇒ 走 drop 路径留痕 ⇒ 次序
+// 不变量（失败不广播）不变，且 p.mu 由 publishLocked 的 defer 正常释放。
+//
+// returned 判「Insert 是否正常返回」：subhub.Do 吞掉 panic，闭包里的
+// returned 不会被置位——据此把 panic 与「Insert 正常返回一个错误」区分开。
+func (p *DurablePublisher) insert(ctx context.Context, ev Event) (uint64, error) {
+	var (
+		id       uint64
+		err      error
+		returned bool
+	)
+	subhub.Do(func() {
+		id, err = p.store.Insert(ctx, ev)
+		returned = true
+	})
+	if !returned {
+		return 0, ErrStorePanic
+	}
+	return id, err
 }
 
 // drop 落库失败留痕（nil 钩子静默跳过）。panic 隔离与 internal/subhub 的

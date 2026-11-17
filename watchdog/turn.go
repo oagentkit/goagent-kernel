@@ -35,19 +35,38 @@ import (
 
 // 闭合归因（closed_by）缺省词表。宿主可在 Config.ClosedBy 里扩充，
 // 内核只判「有没有（在册的）归因」，不判归因语义。
+//
+// token 归 eventbus 单源（issue #391）：生产方 reconcile 与消费方本包各写一份
+// ⇒ 内核自己漏写就变成假红。
 const (
 	// ClosedByLoop 收尾漏斗正常出口（宿主编排循环自己闭合）。
-	ClosedByLoop = "loop"
+	ClosedByLoop = eventbus.ClosedByLoop
 	// ClosedByRecovery 恢复循环归因（中断会话的统一收敛体）。
-	ClosedByRecovery = "recovery"
+	ClosedByRecovery = eventbus.ClosedByRecovery
 	// ClosedByBootReconcile 启动对账归因（发版重启后的孤儿回收）。
-	ClosedByBootReconcile = "boot-reconcile"
+	ClosedByBootReconcile = eventbus.ClosedByBootReconcile
 	// ClosedByPanic 编排 panic 归因（recoverPanic 就地收口）。
-	ClosedByPanic = "panic"
+	ClosedByPanic = eventbus.ClosedByPanic
 )
 
-// defaultClosedBy 缺省归因词表（issue #171 的 bianque 四值）。
-var defaultClosedBy = []string{ClosedByLoop, ClosedByRecovery, ClosedByBootReconcile, ClosedByPanic}
+// defaultClosedBy 缺省归因词表（issue #391）。
+//
+// 六个值 = 宿主收尾四值（loop / recovery / boot-reconcile / panic）+ reconcile
+// 生产的两条死主回收归因（recovery:dead-owner / recovery:dead-lease）。此前只列
+// 了宿主那四值 ⇒ 内核自己漏写 ⇒ **有归因的正常收敛路径**（他副本死主回收）
+// 被判成「无归因」（假红，issue #391）。
+//
+// 显式列出而不是直接引用 eventbus.AllClosedBy()：这张表是**判定面**——它必须
+// 显式呈现「内核认哪些归因」；全量引用会让「少认一个」在代码里看不见，也就没有
+// 用例能判它（对齐用例比对本表与 eventbus.AllClosedBy()，少一项即红）。
+var defaultClosedBy = []string{
+	eventbus.ClosedByLoop,
+	eventbus.ClosedByRecovery,
+	eventbus.ClosedByBootReconcile,
+	eventbus.ClosedByPanic,
+	eventbus.ClosedByDeadOwner,
+	eventbus.ClosedByDeadLease,
+}
 
 // 轮括号告警 reason 词表（EventTurnBracketViolation 的 payload["reason"]）。
 const (
@@ -66,8 +85,8 @@ const (
 // Config INV3 轮括号的可选配置。零值 = 缺省语义（New 即零值配置）。
 type Config struct {
 	// ClosedBy 宿主注册的闭合归因词表。缺省（空）时使用 defaultClosedBy；
-	// 填了则在缺省词表基础上**扩充**（不是替换）——缺省四值是所有宿主共有的
-	// 收尾路径，只增不减才能避免「宿主少写一个值就把合法归因判成红」。
+	// 填了则在缺省词表基础上**扩充**（不是替换）——缺省六值是内核与所有宿主
+	// 共有的收尾路径，只增不减才能避免「宿主少写一个值就把合法归因判成红」。
 	ClosedBy []string
 	// OpenTTL 开放括号的泄漏判定阈值；缺省（<=0）复用 openIdleTTL。
 	OpenTTL time.Duration

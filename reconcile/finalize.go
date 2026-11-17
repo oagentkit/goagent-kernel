@@ -71,6 +71,21 @@ type FinalizeEvent struct {
 //
 // 不实现本接口的 Store 仍可用：Reconciler 走旧路径，FinalizeGuarantee
 // 报降级。
+//
+// 接缝契约（宿主实现本接口；内核的终态收敛与 Outbox 补做路径**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**（Reconciler 无
+// 共享可变状态），故内核侧无锁可指：宿主实现不得在方法内回调本包的其它
+// 接缝——内核正同步等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。这些方法落在会话状态与 Outbox 行的持久化
+// 路径上，被收敛路径**同步**等待：「不阻塞」在此处的准确含义是「**有界**」
+// ——必须承接 ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储
+// 内部锁时等待别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Reconciler 直接调它），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error。
 type FinalizeStore interface {
 	Store
 	Finalize(ctx context.Context, sessionID, from, to string, cause Cause, ev FinalizeEvent) (bool, error)

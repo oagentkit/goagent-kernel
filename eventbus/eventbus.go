@@ -29,6 +29,7 @@ package eventbus
 
 import (
 	"context"
+	"maps"
 	"sync/atomic"
 	"time"
 
@@ -80,7 +81,9 @@ const (
 	// 释放」纪律）：turn_started 在会话认领成功后立即落库，turn_ended 在收尾漏斗出口
 	// 落库——「有 start 无 end」的残留=中断轮的可检测孤儿态（发版重启/进程死亡不再依赖
 	// 事件静默启发式定性，时间线与诊断大脑可直接读出轮边界与中断点）。停机路径不落
-	// turn_ended（轮括号留给恢复循环/启动对账以 closed_by=recovery|boot-reconcile 关闭，
+	// turn_ended（轮括号留给恢复循环/启动对账以 closed_by 归因关闭——归因词表见
+	// vocabulary.go 的 ClosedBy*（recovery|boot-reconcile|recovery:dead-owner|
+	// recovery:dead-lease 等），
 	// 谎报「正常收尾」比留开放括号更伤审计）。
 	EventTurnStarted = "turn_started"
 	EventTurnEnded   = "turn_ended"
@@ -325,21 +328,26 @@ func (b *Bus) Broadcast(e Event) {
 }
 
 // Publish 赋 ID/时间戳后广播（未落库的临时序号；生产路径改用 DurablePublisher）。
+//
+// **载荷与环节号在广播前拷一次**（issue #378）：发布方、返回帧与订阅方不得共享
+// 同一张 map——发布方复用 map 写下一条事件会让订阅方看到下一条的值（顺序
+// 污染），与订阅方读载荷并发还是一次数据竞争。环节号是指针，同理另起一份。
 func (b *Bus) Publish(sessionID, caseID string, stepID *uint64, typ, level string, payload map[string]any) Event {
 	e := Event{
 		ID:         b.seq.Add(1),
 		SessionID:  sessionID,
 		CaseID:     caseID,
-		StepID:     stepID,
+		StepID:     cloneStepID(stepID),
 		Type:       typ,
 		Level:      level,
-		Payload:    payload,
+		Payload:    maps.Clone(payload),
 		OccurredAt: time.Now(),
 	}
 	if e.Level == "" {
 		e.Level = "info"
 	}
-	b.inner.Publish(e)
+	// 广播帧与返回帧各持一份载荷：订阅方改写载荷不得污染返回帧。
+	b.inner.Publish(e.Clone())
 	return e
 }
 

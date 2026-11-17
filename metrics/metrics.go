@@ -269,7 +269,7 @@ var specs = []Metric{
 			{
 				Key:    LabelLeaseOutcome,
 				Values: []string{LeaseOutcomeContended, LeaseOutcomeUncertain},
-				Why:    "拒绝形态对齐 sideeffect.Outcome 的 Contended / Uncertain 二值",
+				Why:    "逐字对齐 sideeffect.Outcome 的 Contended / Uncertain 二值（比对 String()，它不是常量枚举）",
 			},
 		},
 	},

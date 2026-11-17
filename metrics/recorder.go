@@ -42,6 +42,20 @@ type Labels = map[string]string
 //
 // 实现纪律：**非阻塞、不 panic、不返回错误**。指标是旁路观测，投递层的任何
 // 故障都不该反噬执行路径（buffer 满了就丢——丢了是观测损失，堵住是可用性事故）。
+//
+// 接缝契约（宿主实现，内核在埋点处同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在 Count / Observe / Set 里再调本包的
+//     埋点入口）——否则埋点递归；实现也不得改写传入的 Labels（那是内核
+//     的事实）。内核调用宿主实现时**不持锁**：包级入口先经 Default() 取到
+//     后端快照并放锁，再调它。
+//   - no-blocking：投递面**不得阻塞**（buffer 满了就丢，不得等）——指标在
+//     执行路径上，堵住的投递器会把观测损失变成可用性事故。
+//   - panic-isolated：**宿主侧兑现**——本包**不做 recover**（旁路投递的
+//     失败不该反噬执行路径，但当前实现未在内核侧兜底），故「不 panic」是
+//     宿主实现的硬要求：panic 会沿埋点调用点上抛到内核执行路径。
 type Recorder interface {
 	// Count 计数器加 delta（NameRetryTotal / NameLeaseContended / NameRecoveryTotal）。
 	Count(name string, delta int64, labels Labels)

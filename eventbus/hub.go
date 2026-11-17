@@ -55,6 +55,20 @@ type Hub struct {
 //   - 实现**可以回调** Hub.Inject（收到远端事件注回本地）——Publish 在
 //     解锁后才调 Relay，回调不会死锁；但不得经 Relay 再次外发同一条事件
 //     （回流即环，外发的去重是实现的责任）。
+//
+// 接缝契约（宿主实现；内核在**解锁之后**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**（调用点在 Hub.Publish 的解锁之后，见该方法的
+// 顺序说明）——实现可以安全地回调 Hub.Inject，不会自锁；但**不得经 Relay
+// 再次外发同一条事件**（回流即环，外发的去重是实现的责任）。
+// no-blocking：**宿主侧兑现**。实现不得阻塞发布热路径（编排热路径不可被
+// 跨实例投递拖住）；需要缓冲/重试的形态在实现内部做。「不阻塞」在此处的
+// 准确含义是「有界」：不得无限等待、不得等其它回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接缝的 panic（Hub.Publish
+// 直接调它，本包无 recover），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error；否则 panic 会掀翻调用方（编排热路径）。
 type Relay interface {
 	// Publish 一条事件离开本进程（只在本地分发之后调用）。
 	Publish(ev Event)

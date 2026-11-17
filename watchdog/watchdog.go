@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // Pub 告警发布（与调度器 pub 同一落库广播路径：repo.InsertEvent + Bus.Broadcast）。
@@ -37,18 +38,24 @@ type Pub func(sessionID, caseID string, stepID *uint64, typ, level string, paylo
 
 // 工具调用级告警 reason 词表（EventToolPairingLeak 的 payload["reason"]）。
 //
-// 与 trajectory 的 Pairing 词表对应：unpaired_result / duplicate_result /
-// duplicate_call 逐字同名；declared_not_executed 是 trajectory 的
-// missing_result 在监视器侧的既有名称（同一事实：声明了、始终没等到结果）。
+// **与 trajectory 的 Pairing 词表同一事实**（issue #392）：投影面（trajectory）
+// 与监视面（本包）此前各写一份，三个 token 逐字同名、第四个
+// （declared_not_executed vs missing_result）是同一事实的两个 token——宿主按
+// 投影面的词表筛本包的告警会漏掉 declared_not_executed 这一类。
+//
+// 处置：三个同名 token 直接**引用 trajectory 的导出常量**（不是抄一份）；
+// declared_not_executed 是 trajectory.PairingMissingResult 的**注册别名**
+// （登记在 eventbus.PairingReasonAliases）——与规范 token 不逐字相同是登记
+// 事实，不是两份实现。
 const (
 	// ReasonDeclaredNotExecuted 会话收口 / TTL 过期仍未配对的调用声明。
-	ReasonDeclaredNotExecuted = "declared_not_executed"
+	ReasonDeclaredNotExecuted = eventbus.PairingReasonDeclaredNotExecuted
 	// ReasonUnpairedResult 结果没有任何调用声明（幽灵结果）。
-	ReasonUnpairedResult = "unpaired_result"
+	ReasonUnpairedResult = string(trajectory.PairingUnpairedResult)
 	// ReasonDuplicateResult 同一 call_id 的第二个及以后结果（第一次观测是真相）。
-	ReasonDuplicateResult = "duplicate_result"
+	ReasonDuplicateResult = string(trajectory.PairingDuplicateResult)
 	// ReasonDuplicateCall 同一 call_id 的第二个及以后声明（第一次观测是真相）。
-	ReasonDuplicateCall = "duplicate_call"
+	ReasonDuplicateCall = string(trajectory.PairingDuplicateCall)
 )
 
 // 残留清扫参数：事件总线对慢订阅丢帧/会话未收口的异常流会让部分 session 条目
@@ -84,7 +91,8 @@ type Watcher struct {
 
 // New 构造（pub 必填；nil 时告警静默丢弃——不阻塞事件流）。
 //
-// 缺省配置：closed_by 四值（loop|recovery|boot-reconcile|panic）+ 2h 开放 TTL。
+// 缺省配置：closed_by 六值（loop|recovery|boot-reconcile|panic|recovery:dead-owner|
+// recovery:dead-lease，见 turn.go）+ 2h 开放 TTL。
 func New(pub Pub) *Watcher {
 	return NewWithConfig(pub, Config{})
 }

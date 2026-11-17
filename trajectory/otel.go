@@ -138,6 +138,19 @@ const (
 	SpanStatusError SpanStatus = "error"
 )
 
+// SpanStatusValues 返回 span 状态的**全部取值**（新副本：三值词表是封闭的）。
+//
+// 取值域要有出口：消费面（metrics 的 harness.exec.status 标签域、宿主的
+// 看板查询）要拿它做**集合比对**才有意义——手抄一份常量只能比对「已知的几个
+// 值」，真源加了第四个状态时抄写方不会知道自己漏了（issue #395）。
+func SpanStatusValues() []string {
+	return []string{
+		string(SpanStatusUnset),
+		string(SpanStatusOK),
+		string(SpanStatusError),
+	}
+}
+
 // Span 一行轨迹的 span 表达（不含 exporter 相关字段：那是投递侧的事）。
 type Span struct {
 	// Name span 名（低基数，取值域见 Kind）。

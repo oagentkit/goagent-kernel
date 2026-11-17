@@ -36,6 +36,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Kind 轨迹行的类目。
@@ -85,18 +87,36 @@ const (
 	PairingPaired Pairing = "paired"
 	// PairingMissingResult 尚未观察到结果。可能仍在途；投影收口后仍如此，
 	// 即确认为「等了也没等到」。
-	PairingMissingResult Pairing = "missing_result"
+	//
+	// 缺口四类的 token 归 eventbus 单源（issue #392）：本包的 Pairing 词表与
+	// watchdog 的告警 reason 词表是**同一事实**，两边各写一份必然漂。
+	PairingMissingResult Pairing = Pairing(eventbus.PairingMissingResult)
 	// PairingDuplicateResult 同一 call_id 收到第二个及以后的结果。
-	PairingDuplicateResult Pairing = "duplicate_result"
+	PairingDuplicateResult Pairing = Pairing(eventbus.PairingDuplicateResult)
 	// PairingUnpairedResult 结果没有对应的调用。
-	PairingUnpairedResult Pairing = "unpaired_result"
+	PairingUnpairedResult Pairing = Pairing(eventbus.PairingUnpairedResult)
 	// PairingDuplicateCall 同一 call_id 收到第二个调用声明。
-	PairingDuplicateCall Pairing = "duplicate_call"
+	PairingDuplicateCall Pairing = Pairing(eventbus.PairingDuplicateCall)
 	// PairingNoCallID 事件未携带配对键（call_id 为空）：调用方未提供标识，
 	// 无从配对——**不是缺口**。「没有 call_id」与「call_id 找不到对应调用」
 	// 是两件事（issue #306）。
 	PairingNoCallID Pairing = "no_call_id"
 )
+
+// PairingGapValues 返回配对缺口的全部取值（**新副本**：调用方改不动本包的事实）。
+//
+// 缺口四类（missing_result / duplicate_result / unpaired_result /
+// duplicate_call）是**缺口**的封闭词表，与「行状态」（paired / no_call_id）
+// 不是一回事。消费面（watchdog 的告警 reason 词表）按这份清单对齐：投影面
+// 加了第五类缺口而消费面没跟，对齐用例当场红（issue #392）。
+func PairingGapValues() []string {
+	return []string{
+		string(PairingMissingResult),
+		string(PairingDuplicateResult),
+		string(PairingUnpairedResult),
+		string(PairingDuplicateCall),
+	}
+}
 
 // Row 轨迹行：一轮 turn 里的一段有起止的过程。
 //
@@ -219,6 +239,18 @@ type Options struct {
 	// 快照），可以回查 Rows()/Len()、可做 I/O；慢钩子只阻塞当前 Apply 的
 	// 返回，不阻塞其他生产者。钩子 panic 的归属是宿主：被 recover，该行退回
 	// 默认摘要，投影路径继续可用。
+	//
+	// 接缝契约（宿主注入的摘要钩子）：
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：钩子内不得回查本包的**锁内路径**（Apply 等写路径）。内核侧
+	// 兑现「调用点不持锁」：钩子在投影器锁**外**执行（issue #302），入参是行值
+	// 拷贝，故只读回查（Rows()/Len()）安全、不会自锁——与本类型既有说明一致。
+	// no-blocking：钩子同步执行，慢钩子只拖住**当前** Apply 的返回（不拖住其它
+	// 生产者）；不得无界等待。
+	// panic-isolated：**内核侧兑现**——callSummarize 里 defer recover：panic 被
+	// 吞，该行退回默认摘要，投影路径继续可用（issue #302）。
 	Summarize func(Row) string
 }
 

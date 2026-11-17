@@ -105,20 +105,35 @@ package reconcile
 import (
 	"context"
 	"time"
+
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // 归因标识（Cause.By；宿主 turn 括号的 closed_by 与事件载荷按此分辨收敛路径）。
 // 四条路各一个标识——审计靠它分辨「发版重启的正常收割」与「死主回收」。
+//
+// token 归 eventbus 单源（issue #391）：消费方 watchdog 判「归因在不在册」，
+// 两包各写一份 ⇒ 内核自己漏写就变成假红（有归因的正常收敛路径被判成
+// 「无归因」）。
 const (
 	// ByBootReconcile 启动锚点路（进程启动对账收割的孤儿）。
-	ByBootReconcile = "boot-reconcile"
+	ByBootReconcile = eventbus.ClosedByBootReconcile
 	// ByRecovery 常规路·本副本/无主会话的事件静默收敛。
-	ByRecovery = "recovery"
+	ByRecovery = eventbus.ClosedByRecovery
 	// ByDeadOwner 常规路·他副本、无心跳行回落事件静默的收敛。
-	ByDeadOwner = "recovery:dead-owner"
+	ByDeadOwner = eventbus.ClosedByDeadOwner
 	// ByDeadLease 常规路·他副本心跳租约过期的立即回收。
-	ByDeadLease = "recovery:dead-lease"
+	ByDeadLease = eventbus.ClosedByDeadLease
 )
+
+// AttributionValues 返回本包生产的全部归因值（**新副本**）。
+//
+// 生产方与消费方（watchdog 判归因在不在册）必须对同一份词表——两边各写一份
+// ⇒ 内核自己漏写就变成假红（issue #391）。本函数是「生产值集合」的可枚举出口：
+// 消费面的对齐用例按它逐值比对，生产方加了归因而消费面没跟上时当场红。
+func AttributionValues() []string {
+	return []string{ByBootReconcile, ByRecovery, ByDeadOwner, ByDeadLease}
+}
 
 // Session 在途会话的判定所需最小面（宿主 running 行的投影；领域字段不进本包）。
 type Session struct {
@@ -166,6 +181,22 @@ type Cause struct {
 //     内核**并入聚合错误带出留痕**（issue #184：签名吞错误连「失败了」都
 //     表达不了，宿主拿到错误才能补偿修复）；session_finished 照发——终态
 //     事实已由 ConvergeCAS 成立，事件驱动收尾的下游不因审计面故障停摆。
+//
+// 接缝契约（宿主实现本接口；内核的对账扫描与收敛路径**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**（Reconciler 无
+// 共享可变状态），故内核侧无锁可指：宿主实现不得在方法内回调本包的其它
+// 接缝（不得回调 Store / FinalizeStore）——内核正同步等着它返回，回查即互相
+// 等待。
+// no-blocking：**宿主侧兑现**。这些方法落在会话状态的持久化路径上，被对账
+// 扫描**同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须承接
+// ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时等待
+// 别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Reconciler 直接调它），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error。
 type Store interface {
 	// ListRunning 列出 running 态会话（owner 语义见上）。
 	ListRunning(ctx context.Context, owner string) ([]Session, error)
@@ -249,6 +280,18 @@ func New(store Store, pub Pub, cfg Config) *Reconciler {
 //
 // store / pub / InstanceID 任一缺失即 panic：装配期 fail fast，不留到运行时
 // （没有存储的对账无从判定，没有 InstanceID 会把他副本名下判成反面）。
+//
+// 接缝契约（宿主注入的时钟回调；内核在租约过期/静默超阈的判定路径上调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。该回调由 Reconciler 在扫描路径上**不持任何内核
+// 锁**的位置调用（Reconciler 无共享可变状态）——回查本包不会自锁。但不得
+// 等待正在进行的对账扫描完成。
+// no-blocking：**宿主侧兑现**。回调在过期判定路径上被**高频**同步调用
+// （每次重判都重取时刻），必须廉价有界：不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本回调的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 func NewWithClock(store Store, pub Pub, cfg Config, now func() time.Time) *Reconciler {
 	if store == nil {
 		panic("reconcile: 需要 Store（判定与收敛的事实全在存储接缝之后）")

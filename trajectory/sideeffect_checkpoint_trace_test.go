@@ -287,20 +287,25 @@ func TestSideEffectPayloadJSONRoundTrip(t *testing.T) {
 // TestSideEffectRowsHaveNoDelivery 本包边界：只出映射，不做投递。
 // 钉法：投影产物是纯数据（Row/Span），没有任何导出器或发送路径——
 // 新增行类目若引入投递依赖，这里的 import 面就变了，构建即红。
+//
+// 拷贝契约（issue #388）：用例**真的持有投影器**——改 Rows() 拿到的行，
+// 投影器内部状态不受影响。旧实现改的是当场 new 出来的字面量切片（还先自己
+// 拷了一份），断言按构造就不可能为真：删掉生产代码里的拷贝，整包仍全绿。
 func TestSideEffectRowsHaveNoDelivery(t *testing.T) {
-	// Row 与 Span 都是纯数据结构；把它们各拷一份并改动，互不影响。
-	rows := p99SampleRows()
-	cp := append([]Row(nil), rows...)
-	cp[0].SideEffectKey = "mutated"
-	if rows[0].SideEffectKey == "mutated" {
+	p := NewProjector(Options{})
+	p.ApplyAll([]eventbus.Event{
+		seEv(eventbus.EventSideEffectGranted, 100, "act-a", "res-a", "", 1, nil),
+	})
+	rows := p.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("应投影出 1 行，实得 %d", len(rows))
+	}
+	rows[0].SideEffectKey = "mutated"
+	again := p.Rows()
+	if again[0].SideEffectKey == "mutated" {
 		t.Fatal("Rows() 必须返回拷贝：调用方改动不得影响投影器内部状态")
 	}
-}
-
-func p99SampleRows() []Row {
-	return []Row{{
-		Seq: 1, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1,
-		SideEffectKey: "act-a", SideEffectPhase: SideEffectGranted,
-		StartAt: at(0), Status: StatusOpen,
-	}}
+	if again[0].SideEffectKey != "act-a" {
+		t.Fatalf("投影器内部状态被调用方改穿：%q", again[0].SideEffectKey)
+	}
 }

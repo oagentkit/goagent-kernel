@@ -121,6 +121,9 @@ func TestDurablePublishPersistsThenBroadcasts(t *testing.T) {
 		} else if !out.OccurredAt.Equal(tc.wantOcc) {
 			t.Fatalf("用例 %q 显式 OccurredAt 不应被覆盖: want %v, got %v", tc.name, tc.wantOcc, out.OccurredAt)
 		}
+		// **读侧**透传断言：拷贝不改变载荷的内容（值相等）。
+		// 「写入侧不共享」是另一条契约——发布方不得与返回帧/广播帧/落库行共享
+		// 同一张 map，由 payload_clone_test.go 钉住（issue #378）。
 		if !reflect.DeepEqual(out.Payload, tc.in.Payload) {
 			t.Fatalf("用例 %q payload 应原样透传: in=%v out=%v", tc.name, tc.in.Payload, out.Payload)
 		}
