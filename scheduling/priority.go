@@ -26,6 +26,17 @@ type Priority int
 // 两次出现，标识已经不唯一），本函数不替它纠偏。
 //
 // prioFunc 为 nil 视为全部 Priority(0)——只有一组时次序由 key 决定。
+//
+// 接缝契约（宿主注入的两个取值回调；一条接缝覆盖两者）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：取值回调内不得回查本包（不得再调 Order/TopK）。内核侧兑现
+// 「调用点不持锁」：排序判据全程无锁、无共享状态，回查不会自锁。
+// no-blocking：取值回调在排序的**比较路径**上被同步调用（每个元素一次），
+// 慢回调直接拖慢整次排序——须廉价返回，不得无界等待。
+// panic-isolated：**宿主侧兑现**——本函数不做 recover：取值回调 panic 会穿到
+// 调用方（宿主实现须自行保证不 panic）。
 func Order[T any](items []T, keyFunc func(T) string, prioFunc func(T) Priority) []T {
 	if len(items) == 0 {
 		return nil
@@ -61,6 +72,15 @@ func Order[T any](items []T, keyFunc func(T) string, prioFunc func(T) Priority) 
 //
 // n<=0 返回空——「要 0 个」是合法请求，不是错误；负值同样按 0 处理
 // （调用方算错了配额，不该由排序判据替它 panic）。
+//
+// 接缝契约（宿主注入的两个取值回调）：约束与 Order **逐字相同**——TopK 委托
+// Order，调用点、锁形态、panic 归属都同一份。
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：取值回调内不得回查本包。内核侧兑现「调用点不持锁」（排序判据无锁）。
+// no-blocking：同步取值，须廉价返回（TopK 先整表排序再截取）。
+// panic-isolated：**宿主侧兑现**——本函数不做 recover：panic 穿到调用方。
 func TopK[T any](items []T, keyFunc func(T) string, prioFunc func(T) Priority, n int) []T {
 	if n <= 0 {
 		return nil
