@@ -83,7 +83,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 |---|---|---|---|
 | `protocol` | 2341 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
 | `scheduling` | 793 | oekit/pkg | Agent 调度的**判据面**（优先级 / 加权公平 / 资源配额 / 背压，issue #108）：归属结论见 ADR-0008——上游 `oagentkit/agent/dispatch` 的全部判定面是 allow 矩阵 + 深度 + 自派发三条（证据见 ADR 的「证据」节），四样判据上游确实没有，落本仓**纯函数面**：优先级排序**平局有名字层裁决且不依赖输入次序**（一次无关的配置重排不得换掉执行次序）、加权公平按 `served_i/w_i` 欠账最小者先服务（同状态重建选择序列逐字相同）、配额账本**整单占用不做部分占用 + 超释放显式拒**（钳位会把重复释放吞成静默）、背压裁决**拒绝必须带机器可判的原因**且在途满优先于队列满（容量问题的处置是扩容/收敛，拥塞问题的处置是退避，先报哪条决定宿主去找谁）。**不做队列不做执行**（宿主的活）、**不判可达性**（dispatch 门面的活）——不与上游并存第二份实现；上游若收编某样，对应判据转门面（ADR-0008 写明后续动作）。**多副本全局配额原语 `QuotaStore`**（issue #189）：Reserve/Release 在存储侧原子扣减、凭租约全额归账（重复释放显式拒，余额不虚增）；`MemQuotaStore` 是进程内参考实现，跨进程落库归宿主 |
-| `eventbus` | 1034 | oagentkit/runtime、oekit/logx | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）；可选 event-tail 补灌面 `Tailer` 收口「初始化 MaxID → 轮询 id>游标 → 回灌 Hub → 推进」（#166，读侧对偶，TailStore 契约含「ID 序 == 提交可见序」的**无空洞推进硬要求**（#183，DB 序列下迟到提交的小 ID 不得被跳过）、读失败游标不动幂等补读、可选 `CursorStore` 游标持久化接缝（重启从上次停点续随，停机窗口内事件仍被补灌）与 `WithTailOnGap` 空洞哨兵（跳号从静默丢帧变响亮告警）；**scope:replica 每副本一条，不套 leader 门**——套了非 leader 副本就收不到他副本事件；重复帧不归它去重，归订阅侧游标）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
+| `eventbus` | 1034 | oekit/concurrency、oekit/logx | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）；可选 event-tail 补灌面 `Tailer` 收口「初始化 MaxID → 轮询 id>游标 → 回灌 Hub → 推进」（#166，读侧对偶，TailStore 契约含「ID 序 == 提交可见序」的**无空洞推进硬要求**（#183，DB 序列下迟到提交的小 ID 不得被跳过）、读失败游标不动幂等补读、可选 `CursorStore` 游标持久化接缝（重启从上次停点续随，停机窗口内事件仍被补灌）与 `WithTailOnGap` 空洞哨兵（跳号从静默丢帧变响亮告警）；**scope:replica 每副本一条，不套 leader 门**——套了非 leader 副本就收不到他副本事件；重复帧不归它去重，归订阅侧游标）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
 | `dispatch` | 380 | oagentkit/guardx、oagentkit/toolgate | 改派失败面（issue #169）：三档分类词表（transient 可跨域兜底 / fatal 换谁白跑直接终态 / other 仅同域重试）+ **两级判定**（第一级消费上游 `toolgate/policy.Disposition` 单源——toolfail 链 → MCP 协议层，零文本匹配；链与协议层都 Unknown 才落文本兜底，状态码判定带 `\b` 词边界：「省略中段 4032 字节」不得被裸 `Contains("403")` 命中）+ 改派环骨架（同域 N 次 → 瞬态跨域兜底一次 → fatal 直接终态；候选枚举 `FailoverCandidates(slug, tried, sameDomain)` 与执行步 `Attempt` 经回调注入，与宿主注册表/能力画像无关）+ 四级数据化策略解析（条目 > 表级 > conf > 代码缺省，指针区分「未声明」与「显式 0/false」）。**判定面只读首次失败的原始错误**——改派说明 `%w（已同域改派 X 仍失败）` 只进事件与最终消息。回答的是第四问「失败后还能不能再派、派给谁」：不碰可达性（上游 allow 矩阵/深度/自派发）、不做队列（`scheduling`）、不答「要不要原样重发」（`toolfail`） |
 | `spill` | 341 | oekit/pkg | 输出预算溢出：提示契约 / 取回（分页**rune 无损**，#199——页边界不切坏多字节字符，逐页拼接与原文逐字节相等）/ 按龄清理 |
 | `pii` | 1336 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验 + 全角/零宽/分组分隔归一化）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，快照只读可断言、代次单调不回退 |
@@ -235,8 +235,8 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 64,233 行 / 337 文件（不含 `_test.go`）|
-| 测试 | 403 个测试文件 |
+| 生产代码 | 64,495 行 / 338 文件（不含 `_test.go`）|
+| 测试 | 404 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 9 条规则（`rules` 段）+ **12 条 `go/ast` 结构规则**（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 59 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |
