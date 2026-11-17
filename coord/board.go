@@ -218,12 +218,11 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		// 词表外状态是「内核读不懂」，不是「可再被认领」：Terminal() 对
 		// 未知状态返回 false，只看它会让一条脏状态行照常领到租约并发副作用。
 		// 与 taskboard.Check 的 CodeUnknownState 同向（写路径 fail-closed）。
-		if !cur.State.Valid() {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrUnknownState,
-				"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(cur.State))
-		}
-		if cur.State.Terminal() {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+		// 判据收在 taskboard.State.Claimable（issue #360）：全部 Claim 实现
+		// 共用一份，避免第二份判据漂移。
+		if cerr := cur.State.Claimable(); cerr != nil {
+			return taskboard.Task{}, errors.Wrap(cerr,
+				"任务状态不可认领", "task", string(id), "state", string(cur.State))
 		}
 		// 依赖键动态展开：清单与当前快照键集不一致 ⇒ 重取快照（带依赖键）。
 		need := claimKeySet(scope, id, cur.Deps)

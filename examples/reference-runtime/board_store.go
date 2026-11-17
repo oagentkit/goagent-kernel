@@ -114,8 +114,12 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 	}
-	if t.State.Terminal() {
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+	// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
+	// 词表外 → ErrUnknownState，终态 → ErrTerminal；只判 Terminal() 会让
+	// 词表外状态被当成「可领」。
+	if cerr := t.State.Claimable(); cerr != nil {
+		return taskboard.Task{}, errors.Wrap(cerr, "任务状态不可认领",
+			"task", string(id), "state", string(t.State))
 	}
 	for _, dep := range t.Deps {
 		d, ok := s.tasks[dep]

@@ -128,13 +128,41 @@ func (s State) Terminal() bool { return s == StateDone }
 // 「状态合法且非终态」与「状态不在词表内」——Valid() 就是这个判据。
 //
 // Terminal() 对词表外状态仍返回 false（不能把「读不懂」说成「终态」），
-// 所以写路径必须显式消费 Valid()，不能靠 Terminal() 反推。
+// 所以写路径必须显式消费 Valid()（或 Claimable()），不能靠 Terminal() 反推。
+// 接口契约已把 ErrUnknownState 列为 Claim 的必报错（issue #360）。
 func (s State) Valid() bool {
 	switch s {
 	case StateOpen, StateClaimed, StateDone, StateFailed:
 		return true
 	}
 	return false
+}
+
+// Claimable 报告该状态是否**可被认领**，返回契约规定的哨兵：
+//
+//   - 词表外 → ErrUnknownState（读不懂 ⇒ 写路径拒绝，不认领）；
+//   - 终态（done）→ ErrTerminal；
+//   - 其余（open / claimed / failed）→ nil。
+//
+// # 为什么把判定收成一个导出函数（issue #360）
+//
+// #323 的修法落在 coord.BoardAdapter 一个实现里，契约文本与另外三个参考
+// 实现都没跟上（controlplane.MemStore、examples/pgstore、examples/reference-runtime）。
+// 判据一旦各写一份，第二份必然漂移——本条把「状态能不能领」收成单点：
+//
+//	Valid() 区分「读不懂」与「可再领」；Terminal() 负责终态；
+//	Claimable() 把两者折成调用方需要的那个哨兵。
+//
+// 存储实现的 Claim 必须调用本函数（AST 判据见 claim_gate_test.go），
+// 不得只判 Terminal()：未知状态不是终态，只看终态会让脏状态行照常领到租约。
+func (s State) Claimable() error {
+	if !s.Valid() {
+		return ErrUnknownState
+	}
+	if s.Terminal() {
+		return ErrTerminal
+	}
+	return nil
 }
 
 // Lease 一次认领的凭证。
@@ -273,7 +301,13 @@ type Board interface {
 	// 调用方只给「要多长的租约」（ClaimRequest），不给令牌。
 	//
 	// 以下情形必须报错而不是「尽力而为」：不存在（ErrNotFound）/
-	// 被别人活着持有（ErrTaken）/ 依赖未完成（ErrBlocked）/ 已是终态（ErrTerminal）。
+	// 被别人活着持有（ErrTaken）/ 依赖未完成（ErrBlocked）/ 已是终态
+	// （ErrTerminal）/ 状态不在词表内（ErrUnknownState）。
+	//
+	// ErrUnknownState 是**契约义务**，不是某个实现的可选加固：内核读不懂
+	// 的状态不得被认领（读不懂 ⇒ 写路径拒绝），否则一条脏状态行会让副作用
+	// 照常施加。实现应调用 taskboard.State.Claimable 取这份判据，不要各写
+	// 一份（issue #360）。
 	Claim(ctx context.Context, id TaskID, agent AgentID, req ClaimRequest) (Task, error)
 	// Release 归还认领（凭 token）。
 	Release(ctx context.Context, id TaskID, token string) error

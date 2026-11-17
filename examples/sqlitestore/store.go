@@ -214,8 +214,11 @@ func (s *Store) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.Ag
 			return nil, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
 		}
 		now := s.now()
-		if rec.Task.State == taskboard.StateDone {
-			return nil, oerrors.Wrap(taskboard.ErrTerminal, "sqlitestore: 任务已是终态", "task", string(id))
+		// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
+		// 词表外 → ErrUnknownState，终态 → ErrTerminal。
+		if cerr := rec.Task.State.Claimable(); cerr != nil {
+			return nil, oerrors.Wrap(cerr, "sqlitestore: 任务状态不可认领",
+				"task", string(id), "state", string(rec.Task.State))
 		}
 		for _, dep := range rec.Task.Deps {
 			depRec, ok := state[dep]

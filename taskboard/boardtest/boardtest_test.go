@@ -81,8 +81,9 @@ func (m *memBoard) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, string(id))
 	}
-	if t.State.Terminal() {
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, string(id))
+	// 词表外状态不得认领（issue #360 的契约义务）：与生产实现同一判据。
+	if err := t.State.Claimable(); err != nil {
+		return taskboard.Task{}, errors.Wrap(err, string(id))
 	}
 	if t.State == taskboard.StateClaimed && !leaseExpired(t.Lease, m.clockLocked()) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, string(id))
