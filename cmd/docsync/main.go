@@ -1,7 +1,8 @@
-// Command docsync 校验 README 的两张声明表与仓库实际状态一致：
+// Command docsync 校验 README 的声明面与仓库实际状态一致：
 //
 //   - 包清单表：包名 / 生产行数（相对容差）/ 外部依赖（见 pkgtable.go）
 //   - 「工程底座」表：生产行数、生产文件数、测试文件数（**判相等**，见 baseline.go）
+//   - 职责列里手抄的三张判定词表：与代码导出常量逐值一致（见 wordtables.go）
 //
 // # 为什么要有这个命令
 //
@@ -35,8 +36,9 @@ import (
 // row 解析出来的一行包表记录。
 //
 // 只有 pkg / loc / deps 参与机械校验。职责列是散文（「协议 + 五级容错解析 +
-// 白名单校验」这类描述），**刻意不比对**——把代码事实写成散文再拿去和散文
-// 比，测的是措辞不是实现。能机械判定的只有一件事：不能是空的（见 run）。
+// 白名单校验」这类描述），**刻意不比对措辞**——把代码事实写成散文再拿去和
+// 散文比，测的是措辞不是实现。能机械判定的有两件事：不能是空的（见 run）；
+// 声明表里登记的三张判定词表逐值比对（见 wordtables.go，issue #384）。
 type row struct {
 	pkg  string
 	loc  int
@@ -103,7 +105,8 @@ func run() error {
 		}
 		seen[r.pkg] = true
 
-		// 职责列散文不比对内容，但空列是机械可判的：整列被误删或截断时拦下。
+		// 职责列散文不比对措辞，但空列是机械可判的：整列被误删或截断时拦下。
+		// 其中登记的三张判定词表另行逐值比对（见下方的 checkWordTables）。
 		if strings.TrimSpace(r.desc) == "" {
 			problems = append(problems, fmt.Sprintf("%s: 职责列为空", r.pkg))
 		}
@@ -136,6 +139,17 @@ func run() error {
 				"%s: 仓里有该包，README 包表未收录", p))
 		}
 	}
+
+	// ── 职责列里手抄的判定词表（issue #384）──
+	//
+	// README 的包表只有前三列有机器判据；trajectory / watchdog / finalize
+	// 三行的职责列里各手抄了一张判定词表，代码侧都有导出常量。词表取值从
+	// 代码 AST 派生（门禁不抄字面量），双向判漏列/多列。
+	wordProblems, werr := checkWordTables(rows)
+	if werr != nil {
+		return werr
+	}
+	problems = append(problems, wordProblems...)
 
 	// ── 工程底座表（issue #31）：确定性量直接判相等 ──
 	//
@@ -180,7 +194,8 @@ func run() error {
 			"工程底座表按报错里给的三条命令重算，改 README；"+
 			"USAGE.md 的机器口径块按报错里给的三个数改（包数 / policy 登记数 / 安装行版本）；"+
 			"ADR 索引 / README 速览表按 docs/adr/ADR-*.md 实际编号与文件名补齐（链接必须可解析），"+
-			"README 文档一览按 docs/*.md 实际清单补齐。\n"+
+			"README 文档一览按 docs/*.md 实际清单补齐；"+
+			"职责列里登记的词表按代码导出常量逐值补齐（漏列/多列都报，取值来源见 cmd/docsync/wordtables.go）。\n"+
 			"两套口径别混：包表行数按 %.0f%% 相对容差判（容差内的逐行涨落不报），"+
 			"工程底座的三项是确定性量，**判相等**。\n"+
 			"本门禁不自动改文档——改表是要人判断的动作。",
