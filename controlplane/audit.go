@@ -36,7 +36,9 @@ type AuditEntry struct {
 	At time.Time
 	// Operator 谁在介入（必填）。
 	Operator string
-	// Action 动作种类（必填，词表见 Action* 常量）。
+	// Action 动作种类（必填）。留痕面只接受 AllInterventionActions() 内的
+	// 介入动作；查询动作 ActionQuery 不经留痕（它不是一次介入），传给
+	// MemAuditor 会被 ErrInvalidAudit 拒绝。
 	Action Action
 	// Target 目标（任务 id / 效果键 / run id，必填）。
 	Target string
@@ -46,9 +48,11 @@ type AuditEntry struct {
 	Detail string
 }
 
-// ErrInvalidAudit 留痕不完整（谁 / 动作 / 目标 / 依据缺一不可）。
-// MemAuditor 对不完整的留痕拒收；宿主实现应复用同一判据。
-var ErrInvalidAudit = errors.New("controlplane: 留痕不完整——谁/动作/目标/依据缺一不可")
+// ErrInvalidAudit 留痕不完整，或动作不在介入词表内（谁 / 动作 / 目标 / 依据
+// 缺一不可；查询动作与词表外动作同样拒收）。
+// MemAuditor 对不完整/词表外的留痕拒收；宿主实现应复用同一判据
+// （IsKnownInterventionAction）。
+var ErrInvalidAudit = errors.New("controlplane: 留痕不完整——谁/动作/目标/依据缺一不可，动作须在介入词表内")
 
 // ErrAuditorPanic 留痕实现 panic 被内核隔离（issue #327）：状态一字不动，
 // 错误上抛给介入方。宿主留痕面（DB 落盘/审计服务）的异常不得把一次
@@ -77,7 +81,9 @@ func appendAudit(ctx context.Context, aud Auditor, e AuditEntry) (err error) {
 //     可改写的留痕不是留痕）；
 //   - 收到零值 At 时补实现侧当前时刻；
 //   - 对缺 Operator / Action / Target / Basis 的条目拒绝（ErrInvalidAudit），
-//     不静默补空。
+//     不静默补空；**词表外动作同样拒绝**——宿主用
+//     IsKnownInterventionAction 复用与内核参考实现逐字相同的接受集，不要
+//     自己手抄一份。
 //
 // # 调用面（issue #327）
 //
@@ -106,7 +112,7 @@ type MemAuditor struct {
 
 // Append 追加留痕（先判完整性与动作词表，再补时刻，再落账）。
 func (a *MemAuditor) Append(_ context.Context, e AuditEntry) error {
-	if e.Operator == "" || e.Target == "" || e.Basis == "" || !knownAction(e.Action) {
+	if e.Operator == "" || e.Target == "" || e.Basis == "" || !IsKnownInterventionAction(e.Action) {
 		return ErrInvalidAudit
 	}
 	if e.At.IsZero() {
@@ -132,8 +138,27 @@ func (a *MemAuditor) Entries(_ context.Context, target string) ([]AuditEntry, er
 	return out, nil
 }
 
-// actions 介入动作的词表（MemAuditor 校验用；查询动作不经留痕）。
-var actions = []Action{ActionForceRelease, ActionAdjudicate, ActionTerminate}
+// interventionActions 介入动作词表（唯一来源；查询动作 ActionQuery 不经留痕，
+// 不在本表）。
+//
+// 私有切片 + 导出只读入口：宿主拿到的是副本，改不动内核判定面；新增介入动作
+// 只改这一处，AllInterventionActions / IsKnownInterventionAction / MemAuditor
+// 三处自动跟随。
+var interventionActions = []Action{ActionForceRelease, ActionAdjudicate, ActionTerminate}
 
-// knownAction 报告动作是否在介入词表内。
-func knownAction(a Action) bool { return slices.Contains(actions, a) }
+// AllInterventionActions 返回全部介入动作（排序后的副本）。
+//
+// 这是**留痕面**的词表，不是 Action* 常量的全集：ActionQuery（查询）不在
+// 其中——查询不改变运行状态，不是一次介入。宿主实现 Auditor 时应以本函数
+// 为准，不要手抄 Action* 常量（那份含 query，比留痕面宽）。
+func AllInterventionActions() []Action {
+	return slices.Clone(interventionActions)
+}
+
+// IsKnownInterventionAction 报告动作是否在介入词表内。
+//
+// 与 MemAuditor.Append 的接受集逐字一致；宿主实现留痕面时复用本判据即可。
+// 查询动作 ActionQuery 与任何词表外动作都返回 false。
+func IsKnownInterventionAction(a Action) bool {
+	return slices.Contains(interventionActions, a)
+}
