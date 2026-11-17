@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 92,
-  "callsites": 437,
+  "declarations": 93,
+  "callsites": 438,
   "fully_written": 5,
   "seams": [
     {
@@ -302,6 +302,11 @@
       "callsites": 3
     },
     {
+      "id": "netguard.URLResolver",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
       "id": "offload.Store",
       "kind": "interface",
       "callsites": 1
@@ -384,7 +389,11 @@
     {
       "id": "sidetest.ClockedStore",
       "kind": "interface",
-      "callsites": 1
+      "callsites": 1,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
     },
     {
       "id": "sidetest.Factory",
@@ -409,7 +418,11 @@
     {
       "id": "taskboard.BatchRenewingBoard",
       "kind": "interface",
-      "callsites": 1
+      "callsites": 1,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
     },
     {
       "id": "taskboard.Board",
@@ -424,12 +437,20 @@
     {
       "id": "taskboard.RenewingBoard",
       "kind": "interface",
-      "callsites": 19
+      "callsites": 19,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
     },
     {
       "id": "taskboard/boardtest.ClockedBoard",
       "kind": "interface",
-      "callsites": 2
+      "callsites": 2,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
     },
     {
       "id": "taskboard/boardtest.Factory",

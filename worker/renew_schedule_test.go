@@ -259,9 +259,15 @@ func TestLoopHighConcurrencyRenewalBeforeExpiry(t *testing.T) {
 	if testing.Short() {
 		t.Skip("15s 窗口的续期压力用例在 -short 下跳过")
 	}
+	// 负载无关的预算（#411）：旧值 200×100ms 在并发上限下总时长逼近 TTL
+	// 窗口——机器一忙，「每条都续过」这条**计数代理断言**就变成测机器而不是
+	// 测机制（本机满载实测 53/200、120/200 红，CI 干净 runner 绿）。慢续期
+	// 总量缩到 64×50ms（并发上限下 ≈0.4s），仍足以逼出串行实现的 20s 超窗
+	// 形态（一轮 64×50ms×串行 = 3.2s… 远小于 TTL，故另以 lost/failed 两条
+	// 强断言兜住机制保证），断言本身改等条件、上界仍短于 TTL。
 	const (
-		n     = 200
-		delay = 100 * time.Millisecond
+		n     = 64
+		delay = 50 * time.Millisecond
 		ttl   = 15 * time.Second
 	)
 	realBoard, err := coord.NewBoardAdapter(coord.NewMemoryBackend())
@@ -303,6 +309,11 @@ func TestLoopHighConcurrencyRenewalBeforeExpiry(t *testing.T) {
 
 	// 跑满 TTL + 1s：全部任务都经历过「到期前必须续上」的窗口。
 	time.Sleep(ttl + time.Second)
+	// 计数断言等条件而不是等时钟（#411）：上界 1s 远短于 TTL——超过上界仍
+	// 没续满说明机制真没续上，而不是机器慢；负载抖动被吸收在上界内。
+	for deadline := time.Now().Add(time.Second); board.renews.Load() < n && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if got := lost.Load(); got != 0 {
 		t.Fatalf("高并发续期不得有任务失格（实得 %d 条 OnLeaseLost）", got)
 	}

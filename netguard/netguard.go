@@ -113,6 +113,23 @@ func CheckURLWith(rawURL string, allow Allow) error {
 // 无 ctx 的 LookupIP 会把整个 Policy.Check 无期限挂住）。ctx 为 nil 时
 // 等价 CheckURLWith（带 10s 上限）。
 func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
+	return CheckURLWithResolver(ctx, rawURL, allow, nil)
+}
+
+// URLResolver 是 CheckURL 族的解析器接缝（#412）：nil 时用 net.DefaultResolver。
+//
+// 加这个接缝的直接原因是**判定路径依赖真实外网 DNS**：用例断言「外网 https 放行」
+// 时只能靠真解析成立，本机负载下解析器超时/丢包就假红（30s 后 no such host），
+// 而 CI 干净 runner 绿——判据变成测网络而不是测判定。名字层与 IP 层的时序保证
+// （BlockedNameError 必须先于解析错误出现）也只有在解析器可控时才能稳定验证。
+// 生产调用方无需使用本函数：CheckURL/CheckURLWith 的行为不变。
+type URLResolver interface {
+	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
+}
+
+// CheckURLWithResolver 是 CheckURLWithCtx 的解析器接缝形态；r == nil 等价
+// net.DefaultResolver。除解析来源外与 CheckURLWithCtx 完全同序（名字层先于解析）。
+func CheckURLWithResolver(ctx context.Context, rawURL string, allow Allow, r URLResolver) error {
 	if ctx == nil {
 		// nil ctx = 调用方选了无取消形态：仍给 10s 上限，对齐拨号层的
 		// dialTimeout——无上限的一次卡住解析会挂住整个 Check。
@@ -139,7 +156,7 @@ func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
 	ips := []net.IP{}
 	if ip := net.ParseIP(host); ip != nil {
 		ips = append(ips, ip)
-	} else if resolved, err := net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
+	} else if resolved, err := lookupIP(ctx, host, r); err != nil {
 		return errors.Wrap(err, "出站目标解析失败", "host", host)
 	} else {
 		ips = resolved
@@ -270,4 +287,12 @@ func isLoopbackSuffix(suffix string) bool {
 		}
 	}
 	return false
+}
+
+// lookupIP 统一解析入口：注入解析器优先，nil 回退 net.DefaultResolver。
+func lookupIP(ctx context.Context, host string, r URLResolver) ([]net.IP, error) {
+	if r != nil {
+		return r.LookupIP(ctx, "ip", host)
+	}
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
