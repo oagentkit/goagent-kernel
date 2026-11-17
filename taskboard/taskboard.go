@@ -80,6 +80,7 @@ package taskboard
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/oekit/pkg/errors"
@@ -205,7 +206,12 @@ type ClaimRequest struct {
 	TTL time.Duration
 }
 
-// Task 一个子任务（值类型，可安全复制与比较）。
+// Task 一个子任务。
+//
+// **不是可安全复制的值类型**：Deps 是切片，`t2 := t1` 只复制切片头，改写
+// t2.Deps 的元素会改穿 t1（也不能用 == 比较——含切片的 struct 在 Go 里
+// 不可比较）。跨边界交出前必须 Clone（等价于深拷贝 Deps）；Board 实现
+// 返回快照时的拷贝义务写进了 Board 契约（issue #379）。
 type Task struct {
 	// Tenant 租户标识（开放键：内核不解释语义，只把非空值当作作用域）。
 	//
@@ -229,6 +235,17 @@ type Task struct {
 	Seq uint64
 }
 
+// Clone 返回任务的深拷贝：Deps 换一份底层数组，其余字段值语义直接复制。
+//
+// 用途是跨边界交出（Board 实现返回 List/Claim 快照、宿主把任务传出自己的
+// 存储层）：仓库内三个实现各自手写了同款 `slices.Clone(t.Deps)`/等价的
+// 逐条 append，这里给出**单一口径**，契约不再依赖每个实现各自记得写
+// （issue #379）。
+func (t Task) Clone() Task {
+	t.Deps = slices.Clone(t.Deps)
+	return t
+}
+
 // Board 协调面的存储中立契约。
 //
 // 实现方必须保证：
@@ -236,7 +253,11 @@ type Task struct {
 //   - @@Claim@@ **原子**：读-判-写不可分割（并发认领同一任务只能有一个赢家）；
 //   - @@Release@@ / @@Complete@@ **只认 token**，且 token 不匹配时报
 //     @@ErrLeaseLost@@（不许静默成功——静默成功会让输家以为自己的释放生效了）；
-//   - @@List@@ 返回**一致快照**（不是边改边读的流）。
+//   - @@List@@ 返回**一致快照**（不是边改边读的流）；
+//   - @@List@@ / @@Claim@@ 返回的 @@Task@@ **不得与实现内部共享 Deps 的
+//     底层数组**（与 checkpoint.Snapshot.Clone 同款拷贝义务）：Task 含
+//     切片字段，按值返回只复制切片头，宿主照契约字面实现时改写返回值元素
+//     会改穿存储内部的任务拓扑。实现可用 @@Task.Clone()@@ 收口这一义务。
 //
 // 支持多租户的实现还必须满足租户条款（见包文档「多租户」）：键按 ctx 的
 // 租户作用域生成；他租户任务不可见、不可领、不可收场（一律 ErrNotFound）；

@@ -132,6 +132,7 @@ func RunConfig(t *testing.T, factory Factory, cfg Config) {
 	t.Run("接管代次严格递增", func(t *testing.T) { runTakeoverFenceIncrements(t, factory) })
 	t.Run("长任务续期后可继续持有", func(t *testing.T) { runRenewKeepsLongTask(t, factory) })
 	t.Run("旧令牌续期被拒", func(t *testing.T) { runRenewRejectsStaleToken(t, factory) })
+	t.Run("快照不共享 Deps 底层数组", func(t *testing.T) { runSnapshotDepsIsolated(t, factory) })
 }
 
 // ── 并发认领（判据 taskboard.ConcurrentClaim 的套件接线）────────────────
@@ -229,6 +230,69 @@ func runFailedTaskReclaimable(t *testing.T, factory Factory) {
 	// 失败不是终态：一次失败不能把子任务永久钉死，否则补救路径静默失效。
 	if _, err := b.Claim(context.Background(), "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute}); err != nil {
 		t.Fatalf("失败的任务必须能重做（实得 %v）", err)
+	}
+}
+
+// runSnapshotDepsIsolated List / Claim 返回的 Task 不得与实现内部共享
+// Deps 底层数组（issue #379：Task 含切片，按值返回只复制切片头）。
+func runSnapshotDepsIsolated(t *testing.T, factory Factory) {
+	t.Helper()
+	b, _ := newBoard(t, factory)
+	seed(t, b,
+		taskboard.Task{ID: "t1", State: taskboard.StateOpen},
+		taskboard.Task{ID: "t2", State: taskboard.StateOpen, Deps: []taskboard.TaskID{"t1"}},
+	)
+	ctx := context.Background()
+
+	taskOf := func(tasks []taskboard.Task, id taskboard.TaskID) *taskboard.Task {
+		for i := range tasks {
+			if tasks[i].ID == id {
+				return &tasks[i]
+			}
+		}
+		return nil
+	}
+
+	// List 出口：改写返回快照的元素，板内依赖不得变化。
+	listed, err := b.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := taskOf(listed, "t2")
+	if got == nil || len(got.Deps) != 1 || got.Deps[0] != "t1" {
+		t.Fatalf("List 快照应带 t2.Deps=[t1]，实得 %+v", got)
+	}
+	got.Deps[0] = "MUTATED_BY_LIST"
+	again, err := b.List(ctx)
+	if err != nil {
+		t.Fatalf("List(二次): %v", err)
+	}
+	if t2 := taskOf(again, "t2"); t2 == nil || len(t2.Deps) != 1 || t2.Deps[0] != "t1" {
+		t.Fatalf("List 快照与存储共享 Deps：板内依赖被改成 %+v", t2)
+	}
+
+	// Claim 出口同款：先完成 t1 解锁 t2，再改写 Claim 返回值的 Deps。
+	t1, err := b.Claim(ctx, "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("认领 t1: %v", err)
+	}
+	if err := b.Complete(ctx, "t1", t1.Lease.Token); err != nil {
+		t.Fatalf("完成 t1: %v", err)
+	}
+	claimed, err := b.Claim(ctx, "t2", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("认领 t2: %v", err)
+	}
+	if len(claimed.Deps) != 1 {
+		t.Fatalf("Claim 返回值应带 t2.Deps=[t1]，实得 %+v", claimed.Deps)
+	}
+	claimed.Deps[0] = "MUTATED_BY_CLAIM"
+	after, err := b.List(ctx)
+	if err != nil {
+		t.Fatalf("List(三次): %v", err)
+	}
+	if t2 := taskOf(after, "t2"); t2 == nil || len(t2.Deps) != 1 || t2.Deps[0] != "t1" {
+		t.Fatalf("Claim 返回值与存储共享 Deps：板内依赖被改成 %+v", t2)
 	}
 }
 

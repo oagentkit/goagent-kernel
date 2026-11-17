@@ -5,6 +5,8 @@
 package taskboard
 
 import (
+	"bytes"
+	"os"
 	"testing"
 	"time"
 )
@@ -179,5 +181,33 @@ func TestStateValid(t *testing.T) {
 	// 词表外状态的 Terminal() 是 false（不是终态），写路径必须靠 Valid() 拦。
 	if State("weird_state").Terminal() {
 		t.Fatal("词表外状态不得被判终态（那会掩盖读不懂的事实）")
+	}
+}
+
+// TestTaskCloneDeepCopiesDeps 钉住 #379 的类型面：Task 含切片，按值复制
+// 不安全；跨边界交出必须走 Clone，Clone 后改写副本元素不得改穿原值。
+func TestTaskCloneDeepCopiesDeps(t *testing.T) {
+	t1 := Task{Tenant: "acme", ID: "t1", State: StateOpen, Deps: []TaskID{"d1"}}
+	t2 := t1.Clone()
+	t2.Deps[0] = "MUTATED"
+	if t1.Deps[0] != "d1" {
+		t.Fatalf("Clone 共享 Deps 底层数组：原值被改成 %q", t1.Deps[0])
+	}
+
+	// 非空洞前提：Clone 必须真的复制 Deps，而不是把 nil 当作「没有依赖」
+	// 混过去——空依赖任务克隆后仍为空。
+	if got := (Task{ID: "t2"}).Clone().Deps; got != nil {
+		t.Fatalf("nil Deps 克隆后应保持 nil，got %v", got)
+	}
+	// 类型注释不得再出现与语言事实冲突的「可安全复制与比较」承诺（issue #379）。
+	// 注释扫描是廉价兜底：含切片的 struct 不可比较是语言事实，不是风格偏好。
+	src, err := os.ReadFile("taskboard.go")
+	if err != nil {
+		t.Fatalf("读 taskboard.go: %v", err)
+	}
+	for _, forbidden := range []string{"可安全复制与比较", "值类型，可安全复制"} {
+		if bytes.Contains(src, []byte(forbidden)) {
+			t.Fatalf("Task 注释仍承诺 %q，与「含 slice 的结构体不可比较」冲突", forbidden)
+		}
 	}
 }

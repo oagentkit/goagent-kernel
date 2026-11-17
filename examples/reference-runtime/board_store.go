@@ -84,7 +84,8 @@ func (s *boardStore) Seed(tasks ...taskboard.Task) {
 			continue
 		}
 		t.Seq++
-		s.tasks[t.ID] = t
+		// Clone 收口 Board 契约的「快照不共享 Deps 底层数组」（issue #379）。
+		s.tasks[t.ID] = t.Clone()
 	}
 }
 
@@ -95,8 +96,7 @@ func (s *boardStore) List(_ context.Context) ([]taskboard.Task, error) {
 
 	out := make([]taskboard.Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
-		t.Deps = append([]taskboard.TaskID(nil), t.Deps...)
-		out = append(out, t)
+		out = append(out, t.Clone())
 	}
 	slices.SortFunc(out, func(a, b taskboard.Task) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
@@ -143,7 +143,7 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 	t.Lease = lease
 	t.Seq++
 	s.tasks[id] = t
-	return t, nil
+	return t.Clone(), nil
 }
 
 // Release 归还认领（凭令牌）：非持有者释放一律被拒，不许静默成功。
@@ -212,5 +212,5 @@ func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string,
 	}
 	t.Seq++
 	s.tasks[id] = t
-	return t, nil
+	return t.Clone(), nil
 }
