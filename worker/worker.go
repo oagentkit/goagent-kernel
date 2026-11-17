@@ -85,6 +85,12 @@ var ErrNotRegistered = errors.New("worker: 注册已失效（令牌不匹配或�
 // 与新持有者的双份。
 var ErrLeaseUnconfirmed = errors.New("worker: 任务租约无法确认持有资格（连续续期失败跨过 TTL）")
 
+// errBoardPanic 宿主任务板续期调用 panic（已由内核隔离，issue #368）。
+//
+// 不导出：它只是逐条续期失败的判据来源（记一次普通失败），宿主可见的信号
+// 是续期失败与租约失去资格，不是一个内部 panic 值。
+var errBoardPanic = errors.New("worker: 宿主任务板续期 panic（已隔离）")
+
 // Spec 注册声明：worker 是谁、要多久的心跳周期。
 type Spec struct {
 	// ID worker 标识（宿主词表；空串非法）。允许重复注册：后到者顶替
