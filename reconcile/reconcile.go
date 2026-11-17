@@ -151,7 +151,7 @@ type Cause struct {
 // Store 存储接缝（宿主实现；形态与 taskboard/eventbus 的接缝同风格：
 // 判定留包内、状态归存储、包零 DB 依赖）。
 //
-// 契约五条：
+// 契约八条（五条语义 + #400 的三条接缝约束）：
 //   - **ListRunning 是扫描面提示，不是判定权威**：owner=="" 列出全部 running
 //     会话（常规路要判他副本，必须看全量）；owner==instanceID 可收窄到该实例
 //     名下（启动路的优化面），但**不得漏 Owner 为空的行**（无主行归任何实例
@@ -173,6 +173,12 @@ type Cause struct {
 //     内核**并入聚合错误带出留痕**（issue #184：签名吞错误连「失败了」都
 //     表达不了，宿主拿到错误才能补偿修复）；session_finished 照发——终态
 //     事实已由 ConvergeCAS 成立，事件驱动收尾的下游不因审计面故障停摆。
+//   - **不得重入**：实现不得回调 Reconciler 的 Recover*（收敛互斥由
+//     ConvergeCAS 条件迁移保证；重入只会制造同会话的重复收尾动作）。
+//   - **不得阻塞**：五个方法都在扫描/收敛路径上同步调用；实现须遵守 ctx
+//     的超时/取消并自设上界，不得无限等待（一个会话卡住会拖住整轮扫描）。
+//   - **panic 隔离**：本包不 recover 宿主实现——实现不得 panic（panic 会
+//     掀翻调用方的对账协程）；失败一律经 error 返回，由内核聚合留痕。
 type Store interface {
 	// ListRunning 列出 running 态会话（owner 语义见上）。
 	ListRunning(ctx context.Context, owner string) ([]Session, error)
@@ -195,6 +201,14 @@ type Store interface {
 //
 // 本包经它发 session_finished（turn_ended 归 CloseBracket，见 Store 注释）。
 // 事件词表用 eventbus 的既有常量，不另立事件模型。
+//
+// 接缝约束三条（#400）：
+//   - 不得重入：不得回调 Reconciler 的 Recover*（收尾只属于赢下 CAS 的那一次，
+//     重入会制造同会话的重复收尾）。
+//   - 不得阻塞：发布在收敛路径上同步调用；实现须自行设超时/上界，不得无限
+//     等待（终态事实已成立，发布慢只应慢自己，不该拖住对账协程）。
+//   - panic 隔离：本包不 recover Pub——实现不得 panic（panic 会掀翻调用方的
+//     对账协程）；失败请经返回值/自有留痕处理。
 type Pub func(sessionID, caseID string, stepID *uint64, typ, level string, payload map[string]any)
 
 // Config 装配配置（构造时定值；阈值 0=取包内缺省，与宿主 conf 旋钮同语义）。

@@ -34,6 +34,14 @@ import (
 )
 
 // Pub 告警发布（与调度器 pub 同一落库广播路径：repo.InsertEvent + Bus.Broadcast）。
+//
+// 接缝约束三条（#400）：
+//   - 不得重入：不得回调 Watcher.Run/observe（本包按「单协程消费事件流」
+//     设计，重入会打乱配对表与轮括号状态）。
+//   - 不得阻塞：告警在事件消费循环里同步发出；实现须自行设超时/上界，
+//     不得无限等待（慢发布会拖住后续事件的配对判定）。
+//   - panic 隔离：本包不 recover Pub——实现不得 panic（panic 会掀翻 Run 的
+//     事件消费协程）；留痕失败请自行处理。
 type Pub func(sessionID, caseID string, stepID *uint64, typ, level string, payload map[string]any)
 
 // 工具调用级告警 reason 词表（EventToolPairingLeak 的 payload["reason"]）。

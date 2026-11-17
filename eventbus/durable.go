@@ -51,7 +51,7 @@ import (
 // Store 持久化存储接缝（宿主实现；issue #160，形态与 #145 的
 // commitgate.Store / ticket.Backend 同风格）。
 //
-// 契约三条：
+// 契约五条（含 #400 要求的三条接缝约束）：
 //   - **游标由存储铸造**：Insert 返回的 uint64 是权威游标 ID（bq_event 式
 //     自增/序列），单调唯一由实现保证；传入事件的 ev.ID 是输入侧遗留值，
 //     一律忽略（DurablePublisher 在入口已清零，防御陈旧游标流入）。
@@ -61,10 +61,13 @@ import (
 //   - **不得重入**：Insert 不得回调 DurablePublisher.Publish——发布按 ticket
 //     串行（见 DurablePublisher 的并发序说明），重入等价于排在自身之后等待，
 //     即自死锁；与 Hub.Relay 的「不得回流」同款红线。
-//   - **panic 由内核隔离**：Insert 的 panic 会被内核 recover 并转成 error
-//     （走「不广播 + onDrop」路径），宿主驱动/连接池/序列化异常不得掀翻
-//     调用方的发布路径；实现仍应以事务性保证 error/panic 时不留半行
-//     （与上一条「error 不得仍写入行」同一要求）。
+//   - **不得阻塞**：Insert 在发布轮次内同步调用；实现须遵守 ctx 的超时/取消
+//     并自行设上界，不得无限等待——发布面按 ticket 串行，一次挂起会拖住
+//     后续全部发布（慢存储的代价已被显式接受，无上界的阻塞不被接受）。
+//   - **panic 隔离**：Insert 的 panic 由内核 recover 成 error（走「不广播 +
+//     onDrop」路径），宿主驱动/连接池/序列化异常不得掀翻调用方；实现仍应
+//     以事务性保证 error/panic 时不留半行（与上一条「error 不得仍写入行」
+//     同一要求）。
 //
 // # 与尾随读侧的配对（issue #264）
 //

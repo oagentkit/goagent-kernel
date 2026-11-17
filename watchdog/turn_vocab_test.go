@@ -69,7 +69,7 @@ func TestTurnBracketAcceptsReconcileAttributions(t *testing.T) {
 			w.observe(turnStarted("s1"))
 			w.observe(turnEnded("s1", "succeeded", tc.closedBy))
 			if n := r.count(); n != 0 {
-				t.Fatalf("closed_by=%q 是 reconcile 的合法归因，不应告警: %v", tc.closedBy, reasons(r, eventbus.EventTurnBracketViolation))
+				t.Fatalf("closed_by=%q 是 reconcile 的合法归因，不应产生 turn_bracket_violation: %v", tc.closedBy, reasons(r, eventbus.EventTurnBracketViolation))
 			}
 		})
 	}
