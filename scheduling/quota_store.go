@@ -163,6 +163,11 @@ type QuotaStore interface {
 type QuotaStoreOption func(*MemQuotaStore)
 
 // WithQuotaClock 注入存储时钟（到期判定按它；缺省 time.Now）。
+// # 接缝契约（issue #369）
+// @seam: no-reentry no-blocking panic-caller
+//
+// 不得重入（回调内不再触发读时钟的写路径；只读回查安全——时钟在 m.mu 外调用，issue #366）、
+// 不得阻塞（每次到期判定前调用，必须立即返回）、panic 由调用方兜（内核不 recover）。
 func WithQuotaClock(clock func() time.Time) QuotaStoreOption {
 	return func(m *MemQuotaStore) {
 		if clock != nil {
@@ -222,7 +227,8 @@ func NewMemQuotaStore(limits map[string]int64, opts ...QuotaStoreOption) (*MemQu
 	return m, nil
 }
 
-// now 存储侧当前时刻。
+// now 存储侧当前时刻。**必须在 m.mu 之外调用**：clock 是宿主回调，持锁调用
+// 会让回调回查本包时二次抢锁（sync.Mutex 不可重入）⇒ 永久死锁（issue #366）。
 func (m *MemQuotaStore) now() time.Time { return m.clock() }
 
 // Reserve 原子预占（整单：余额不足一个都不占）。
@@ -242,6 +248,10 @@ func (m *MemQuotaStore) ReserveLease(_ context.Context, req QuotaRequest) (Quota
 	if req.TTL < 0 {
 		return QuotaLease{}, errors.Wrap(ErrInvalidConfig, "scheduling: 预占有效期不能为负")
 	}
+	var until time.Time
+	if req.TTL > 0 {
+		until = m.now().Add(req.TTL)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	limit := m.limits[req.Resource] // 未登记 = 0（fail-closed）
@@ -259,9 +269,7 @@ func (m *MemQuotaStore) ReserveLease(_ context.Context, req QuotaRequest) (Quota
 		Token:    "quota-" + strconv.FormatUint(m.seq, 10),
 		TaskID:   req.TaskID,
 		Owner:    req.Owner,
-	}
-	if req.TTL > 0 {
-		lease.Until = m.now().Add(req.TTL)
+		Until:    until,
 	}
 	m.used[req.Resource] = used + req.Amount
 	m.leases[lease.Token] = lease
@@ -292,25 +300,24 @@ func (m *MemQuotaStore) Release(_ context.Context, lease QuotaLease) error {
 //     任务租约仍有效 ⇒ ErrLeaseStillHeld（旧任务可能还在真跑）；
 //   - 未注入 Oracle 且租约带 TaskID ⇒ ErrNoLeaseOracle（判不了就拒绝）。
 //
-// 宿主判定面（Oracle）在存储锁**外**调用：回查任务板不会与配额账本互锁。
+// 宿主判定面（Oracle）与存储时钟都在存储锁**外**调用（issue #316/#366）。
 func (m *MemQuotaStore) Reclaim(ctx context.Context, lease QuotaLease) error {
 	if lease.Token == "" {
 		return errors.Wrap(ErrInvalidConfig, "scheduling: 配额回收缺租约令牌")
 	}
 	m.mu.Lock()
 	stored, ok := m.leases[lease.Token]
+	oracle := m.oracle
+	m.mu.Unlock()
 	if !ok {
-		m.mu.Unlock()
 		return errors.Wrap(ErrOverRelease, "scheduling: 租约令牌未知或已归还/已回收")
 	}
-	if stored.Until.IsZero() || m.now().Before(stored.Until) {
-		m.mu.Unlock()
+	now := m.now()
+	if stored.Until.IsZero() || now.Before(stored.Until) {
 		return errors.Wrap(ErrLeaseNotExpired,
 			"scheduling: 预占尚未到期，不得回收（Worker 可能还在真跑）")
 	}
-	oracle := m.oracle
 	taskID := stored.TaskID
-	m.mu.Unlock()
 
 	if taskID != "" {
 		if oracle == nil {
@@ -343,8 +350,8 @@ func (m *MemQuotaStore) Reclaim(ctx context.Context, lease QuotaLease) error {
 // 租约仍有效/未到期/已被归还的条目跳过（不计数）；判定面故障向上传播
 // （Reconciler 需要知道这轮没扫干净）。
 func (m *MemQuotaStore) SweepExpired(ctx context.Context) (int, error) {
+	now := m.now() // 锁外取时钟（issue #366）
 	m.mu.Lock()
-	now := m.now()
 	candidates := make([]QuotaLease, 0, len(m.leases))
 	for _, lease := range m.leases {
 		if !lease.Until.IsZero() && !now.Before(lease.Until) {
