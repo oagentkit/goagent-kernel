@@ -38,6 +38,10 @@ import (
 // 一个实例绑定一个 schema（全部表在其中）；并发安全。
 type EffectStore struct {
 	pool *pgxpool.Pool
+	// tenantScoped 装配期声明（issue #275）：true ⇒ 每个入口从 ctx 取租户，
+	// 缺租户拒绝（fail-closed）。false ⇒ 旧布局，租户取 Action.Tenant
+	// （空 = ''），不强制上下文。
+	tenantScoped bool
 
 	// mu 保护 now：UseClock 与各方法的时钟读取互斥（套件在测试里注入时钟）。
 	mu  sync.Mutex
@@ -56,6 +60,31 @@ func NewEffectStore(pool *pgxpool.Pool) *EffectStore {
 	// A 仍在执行的资源（评审第三轮 P0）。注入（sidetest 契约套件）时
 	// 用注入值——套件的过期推进语义不变。
 	return &EffectStore{pool: pool, now: nil}
+}
+
+// NewTenantEffectStore 构造**租户作用域**的副作用闸存储（issue #275）。
+//
+// 与 coord.NewTenantBoardAdapter 同款装配期声明：所有方法从 ctx 取租户
+// （tenant.Require），缺租户 ⇒ tenant.ErrNoContext，写入被拒；Action.Tenant
+// 可与 ctx 一致（推荐显式带上，便于排障），不一致 ⇒ ErrTenantMismatch。
+//
+// 存储键是 (tenant, key) / (tenant, resource)：跨租户同 Key 互不命中。
+func NewTenantEffectStore(pool *pgxpool.Pool) *EffectStore {
+	return &EffectStore{pool: pool, tenantScoped: true}
+}
+
+// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
+func (s *EffectStore) TenantScoped() bool { return s.tenantScoped }
+
+// prepareAction 入口处的租户解析：把作用域结论落回 Action.Tenant，后续
+// 全部 SQL 用 act.Tenant 做联合定位（解析只在入口发生一次）。
+func (s *EffectStore) prepareAction(ctx context.Context, act sideeffect.Action) (sideeffect.Action, error) {
+	t, err := resolveTenant(ctx, s.tenantScoped, act.Tenant)
+	if err != nil {
+		return act, err
+	}
+	act.Tenant = t
+	return act, nil
 }
 
 // UseClock 注入时钟（sidetest 契约套件用）。
@@ -163,9 +192,9 @@ func ensureActionRow(ctx context.Context, tx pgx.Tx, act sideeffect.Action) erro
 	// 不更新：身份以先到者的登记为准，后到的不一致者由 lockAction 内的
 	// ensureIdentity 拒掉（ErrActionConflict）。
 	_, err := tx.Exec(ctx,
-		`INSERT INTO pgref_effect_action (key, id_resource, id_safety, id_payload_hash)
-		VALUES ($1, $2, $3, $4) ON CONFLICT (key) DO NOTHING`,
-		string(act.Key), act.Resource, int16(act.RetrySafety), sideeffect.HashPayload(act.Payload))
+		`INSERT INTO pgref_effect_action (tenant, key, id_resource, id_safety, id_payload_hash)
+		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (tenant, key) DO NOTHING`,
+		act.Tenant, string(act.Key), act.Resource, int16(act.RetrySafety), sideeffect.HashPayload(act.Payload))
 	if err != nil {
 		return errors.Wrap(err, "pgstore: 登记动作行失败", "key", string(act.Key))
 	}
@@ -184,9 +213,9 @@ func ensureIdentity(ctx context.Context, tx pgx.Tx, a *actionRow, act sideeffect
 		safety := int16(act.RetrySafety)
 		hash := sideeffect.HashPayload(act.Payload)
 		if _, err := tx.Exec(ctx,
-			`UPDATE pgref_effect_action SET id_resource = $2, id_safety = $3, id_payload_hash = $4
-			  WHERE key = $1 AND id_resource IS NULL`,
-			string(act.Key), res, safety, hash); err != nil {
+			`UPDATE pgref_effect_action SET id_resource = $3, id_safety = $4, id_payload_hash = $5
+			  WHERE tenant = $1 AND key = $2 AND id_resource IS NULL`,
+			act.Tenant, string(act.Key), res, safety, hash); err != nil {
 			return errors.Wrap(err, "pgstore: 登记动作身份失败", "key", string(act.Key))
 		}
 		a.idResource, a.idSafety, a.idPayloadHash = &res, &safety, &hash
@@ -203,10 +232,11 @@ func ensureIdentity(ctx context.Context, tx pgx.Tx, a *actionRow, act sideeffect
 	return nil
 }
 
-func ensureResourceRow(ctx context.Context, tx pgx.Tx, resource string) error {
+func ensureResourceRow(ctx context.Context, tx pgx.Tx, tenant, resource string) error {
 	_, err := tx.Exec(ctx,
-		`INSERT INTO pgref_effect_resource (resource) VALUES ($1) ON CONFLICT (resource) DO NOTHING`,
-		resource)
+		`INSERT INTO pgref_effect_resource (tenant, resource) VALUES ($1, $2)
+		 ON CONFLICT (tenant, resource) DO NOTHING`,
+		tenant, resource)
 	if err != nil {
 		return errors.Wrap(err, "pgstore: 登记资源行失败", "resource", resource)
 	}
@@ -289,7 +319,8 @@ func lockAction(ctx context.Context, tx pgx.Tx, act sideeffect.Action) (*actionR
 		        id_resource, id_safety, id_payload_hash,
 		        intent_resource, intent_fence, intent_holder, intent_expires,
 		        recon_holder, recon_expires
-		   FROM pgref_effect_action WHERE key = $1 FOR UPDATE`, string(act.Key))
+		   FROM pgref_effect_action WHERE tenant = $1 AND key = $2 FOR UPDATE`,
+		act.Tenant, string(act.Key))
 	var r actionRow
 	if err := row.Scan(&r.done, &r.result, &r.uncertain, &r.reason,
 		&r.idResource, &r.idSafety, &r.idPayloadHash,
@@ -321,10 +352,11 @@ func (r *resourceRow) held(now time.Time) bool {
 }
 
 // lockResource 锁住并读取资源级状态行（调用前必须 ensureResourceRow）。
-func lockResource(ctx context.Context, tx pgx.Tx, resource string) (*resourceRow, error) {
+func lockResource(ctx context.Context, tx pgx.Tx, tenant, resource string) (*resourceRow, error) {
 	row := tx.QueryRow(ctx,
-		`SELECT fence, holder, until FROM pgref_effect_resource WHERE resource = $1 FOR UPDATE`,
-		resource)
+		`SELECT fence, holder, until FROM pgref_effect_resource
+		  WHERE tenant = $1 AND resource = $2 FOR UPDATE`,
+		tenant, resource)
 	var r resourceRow
 	if err := row.Scan(&r.fence, &r.holder, &r.until); err != nil {
 		return nil, errors.Wrap(err, "pgstore: 读资源行失败", "resource", resource)

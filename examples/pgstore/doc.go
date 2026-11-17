@@ -43,6 +43,23 @@
 //     尾随游标经 TailCursorStore（pgref_tail_cursor）持久化——实现
 //     eventbus.CursorStore，崩溃/停机后从上次停点续读（#264）。
 //
+// # 租户作用域（issue #275）
+//
+// effect / 资源 / 下游 / 事件四张表都带 tenant 列，键按 (tenant, 业务键)
+// 联合定位：跨租户同名任务与同 Key 动作互不命中。装配期两种形态：
+//
+//   - 默认（NewEffectStore / NewEventStore / NewDownstream）：旧布局，
+//     tenant 取动作 / 事件自带值（空 = ”）；单租户部署逐字不变。
+//   - 租户作用域（NewTenantEffectStore / NewTenantEventStore /
+//     NewTenantDownstream）：每次调用从 ctx 取租户（tenant.Require），
+//     缺租户 ⇒ tenant.ErrNoContext（写入被拒，fail-closed）；声明与 ctx
+//     不一致 ⇒ ErrTenantMismatch。
+//
+// 事件面每个租户一条独立 ID 空间与水位行（pgref_event_watermark 主键
+// tenant）：订阅侧用租户作用域实例取流即按租户过滤，单租户流仍满足
+// TailStore 的「无空洞推进」——过滤共享 ID 空间会产生永久空洞。
+// 旧库由 EnsureSchema 的 vN+1 迁移补齐租户列 / 复合主键（旧行归入 ”）。
+//
 // # 时钟
 //
 // 过期判定的时间源（v0.33.0 后修正）：**缺省读数据库的 clock_timestamp**

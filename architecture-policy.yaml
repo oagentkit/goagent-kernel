@@ -623,7 +623,7 @@ modules:
   # oekit/pkg——多引一个机制包就红。
   - id: pgrefstore
     roots: [examples/pgstore, examples/pgstore/cmd/pgsmoke]
-    requires: [checkpoint, eventbus, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [checkpoint, controlplane, eventbus, sideeffect, taskboard, tenant, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |

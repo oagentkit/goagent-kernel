@@ -40,14 +40,18 @@ func (r *actionRow) intentCompleteErr(key sideeffect.Key) error {
 // 时刻）随授予一并落库。三者分开写就等于没写：中间死掉 ⇒ 意图悬空或没写，
 // 重复施加的入口重新打开。
 func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
+	act, err := s.prepareAction(ctx, act)
+	if err != nil {
+		return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
+	}
 	return withinTx3(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Outcome, sideeffect.Lease, sideeffect.Result, error) {
-		if err := ensureResourceRow(ctx, tx, act.Resource); err != nil {
+		if err := ensureResourceRow(ctx, tx, act.Tenant, act.Resource); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
 		if err := ensureActionRow(ctx, tx, act); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
-		rr, err := lockResource(ctx, tx, act.Resource)
+		rr, err := lockResource(ctx, tx, act.Tenant, act.Resource)
 		if err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
@@ -83,7 +87,7 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 				return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
 			}
 			a.reconHolder, a.reconExpires = nil, nil
-			if err := writeAction(ctx, tx, act.Key, a); err != nil {
+			if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 				return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 			}
 		}
@@ -110,14 +114,14 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 			a.intentResource, a.intentFence, a.intentHolder, a.intentExpires = nil, nil, nil, nil
 			if irResource == act.Resource && rr.holder != nil && *rr.holder == irHolder && rr.fence == irFence {
 				rr.holder = nil
-				if err := writeResource(ctx, tx, act.Resource, rr); err != nil {
+				if err := writeResource(ctx, tx, act.Tenant, act.Resource, rr); err != nil {
 					return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 				}
 			}
 			if act.RetrySafety != sideeffect.RetrySafetySafe {
 				a.uncertain = true
 				a.reason = "上一次尝试的租约已过期，结果未知"
-				if err := writeAction(ctx, tx, act.Key, a); err != nil {
+				if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 					return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 				}
 				return sideeffect.OutcomeUncertain, sideeffect.Lease{}, sideeffect.Result{}, nil
@@ -135,7 +139,7 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 		rr.holder = &holder
 		until := now.Add(ttl)
 		rr.until = &until
-		if err := writeResource(ctx, tx, act.Resource, rr); err != nil {
+		if err := writeResource(ctx, tx, act.Tenant, act.Resource, rr); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
 		intentResource := act.Resource
@@ -144,7 +148,7 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 		a.intentFence = &intentFence
 		a.intentHolder = &holder
 		a.intentExpires = &until
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Lease{}, sideeffect.Result{}, err
 		}
 		return sideeffect.OutcomeApplied,
@@ -154,10 +158,11 @@ func (s *EffectStore) Acquire(ctx context.Context, act sideeffect.Action, ttl ti
 }
 
 // writeResource 把资源级状态写回（调用方持行锁，无条件写即可）。
-func writeResource(ctx context.Context, tx pgx.Tx, resource string, rr *resourceRow) error {
+func writeResource(ctx context.Context, tx pgx.Tx, tenant, resource string, rr *resourceRow) error {
 	_, err := tx.Exec(ctx,
-		`UPDATE pgref_effect_resource SET fence = $2, holder = $3, until = $4 WHERE resource = $1`,
-		resource, rr.fence, rr.holder, rr.until)
+		`UPDATE pgref_effect_resource SET fence = $3, holder = $4, until = $5
+		  WHERE tenant = $1 AND resource = $2`,
+		tenant, resource, rr.fence, rr.holder, rr.until)
 	if err != nil {
 		return errors.Wrap(err, "pgstore: 写资源行失败", "resource", resource)
 	}
@@ -165,14 +170,14 @@ func writeResource(ctx context.Context, tx pgx.Tx, resource string, rr *resource
 }
 
 // writeAction 把 Key 级状态写回（调用方持行锁，无条件写即可）。
-func writeAction(ctx context.Context, tx pgx.Tx, key sideeffect.Key, a *actionRow) error {
+func writeAction(ctx context.Context, tx pgx.Tx, tenant string, key sideeffect.Key, a *actionRow) error {
 	_, err := tx.Exec(ctx,
 		`UPDATE pgref_effect_action
-		    SET done = $2, result = $3, uncertain = $4, reason = $5,
-		        intent_resource = $6, intent_fence = $7, intent_holder = $8, intent_expires = $9,
-		        recon_holder = $10, recon_expires = $11
-		  WHERE key = $1`,
-		string(key), a.done, a.result, a.uncertain, a.reason,
+		    SET done = $3, result = $4, uncertain = $5, reason = $6,
+		        intent_resource = $7, intent_fence = $8, intent_holder = $9, intent_expires = $10,
+		        recon_holder = $11, recon_expires = $12
+		  WHERE tenant = $1 AND key = $2`,
+		tenant, string(key), a.done, a.result, a.uncertain, a.reason,
 		a.intentResource, a.intentFence, a.intentHolder, a.intentExpires,
 		a.reconHolder, a.reconExpires)
 	if err != nil {

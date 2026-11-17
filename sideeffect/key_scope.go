@@ -52,6 +52,29 @@ func NewActionKeyBuilder(scopes ...string) *ActionKeyBuilder {
 	return &ActionKeyBuilder{scopes: scopes}
 }
 
+// NewActionKeyBuilderFor 以**动作身份**（Tenant + Scope）构造统一的键拼装器。
+//
+// 这是「租户 / 运行等作用域段怎么进键」的唯一入口（issue #275）：Tenant
+// 排第一段、Scope 按给出顺序随后，空段跳过。宿主不要自己拼前缀——拼法
+// 分散就是口径漂移的开始（与 #261 同一条纪律）。
+func NewActionKeyBuilderFor(tenant string, scope ...string) *ActionKeyBuilder {
+	return NewActionKeyBuilder(Action{Tenant: tenant, Scope: scope}.Scopes()...)
+}
+
+// Scopes 动作身份的作用域段：Tenant 在前（非空时），Scope 依次随后。
+//
+// 返回新切片（不把 Action.Scope 的底层数组外借）；空段跳过。它与
+// NewActionKeyBuilderFor 共享同一段顺序——键拼装与存储身份判断读的是
+// 同一组段。
+func (a Action) Scopes() []string {
+	out := make([]string, 0, len(a.Scope)+1)
+	if a.Tenant != "" {
+		out = append(out, a.Tenant)
+	}
+	out = append(out, a.Scope...)
+	return out
+}
+
 // Key 拼装幂等键：非空作用域段（转义）/ 叶段（转义）。
 //
 // actionID 标识「作用域根下的哪个逻辑动作」（如任务的某个步骤）。同一

@@ -49,7 +49,7 @@ func TestPGE2EKillInsideTransactionLeavesNoHalfState(t *testing.T) {
 	// 预置动作行：子进程的 Acquire 要在这一行上等锁（行不存在时它会直接插入，
 	// 插完就往下走 ⇒ 就没有「卡在未提交事务里」这个状态了）。
 	if _, err := e.pool.Exec(ctx,
-		`INSERT INTO pgref_effect_action (key) VALUES ($1) ON CONFLICT (key) DO NOTHING`,
+		`INSERT INTO pgref_effect_action (key) VALUES ($1) ON CONFLICT (tenant, key) DO NOTHING`,
 		e.key); err != nil {
 		t.Fatalf("预置动作行失败: %v", err)
 	}

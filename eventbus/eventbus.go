@@ -45,6 +45,13 @@ type Event struct {
 	Level      string         `json:"level"` // info|warn|error
 	Payload    map[string]any `json:"payload,omitempty"`
 	OccurredAt time.Time      `json:"occurred_at"`
+	// Tenant 事件所属租户（可选；空串 = 未声明 / 单租户命名空间）。
+	//
+	// 词汇归宿主（本包不解释租户体系）。持久化实现把它作为**事件流的
+	// 分区维度**（issue #275）：租户作用域的事件存储给每个租户一条独立
+	// 的 ID 空间与水位线，订阅侧按流取用即按租户过滤——不靠载荷自筛
+	// （共享 ID 空间做过滤会产生永久空洞，违反 TailStore 的无空洞契约）。
+	Tenant string `json:"tenant,omitempty"`
 }
 
 // 事件类型词表（bq_event.type 同源）。

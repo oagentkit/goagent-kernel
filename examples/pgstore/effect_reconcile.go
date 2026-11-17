@@ -23,6 +23,10 @@ import (
 // 必须 Resolution.ForceRetryable 的显式决策才放行——「不可重试」是判据，
 // 不是注释。
 func (s *EffectStore) ResolveUncertain(ctx context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return sideeffect.OutcomeContended, sideeffect.Result{}, perr
+	}
 	return withinTx2(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Outcome, sideeffect.Result, error) {
 		return s.resolveBody(ctx, tx, act, res, "")
 	})
@@ -37,6 +41,10 @@ func (s *EffectStore) ResolveUncertainOwned(ctx context.Context, act sideeffect.
 	if holder == "" {
 		return sideeffect.OutcomeContended, sideeffect.Result{}, errors.Wrap(sideeffect.ErrReconcileLost,
 			"空凭据不是任何一次对账认领", "key", string(act.Key))
+	}
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return sideeffect.OutcomeContended, sideeffect.Result{}, perr
 	}
 	return withinTx2(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Outcome, sideeffect.Result, error) {
 		return s.resolveBody(ctx, tx, act, res, holder)
@@ -85,7 +93,7 @@ func (s *EffectStore) resolveBody(ctx context.Context, tx pgx.Tx, act sideeffect
 		a.done = true
 		a.uncertain = false
 		a.result = &payload
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Result{}, err
 		}
 		return sideeffect.OutcomeReplayed, res.Result, nil
@@ -94,13 +102,13 @@ func (s *EffectStore) resolveBody(ctx context.Context, tx pgx.Tx, act sideeffect
 		// 「不可重试」的动作，一句来自对账的「未生效」不足以重新开门：
 		// 那句结论来自宿主的一次查询，查询可能出错，查错的代价是重复施加。
 		// 未知标记**原样保留**（这个 Key 仍被硬阻塞），放行必须显式签字。
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.OutcomeContended, sideeffect.Result{}, err
 		}
 		return sideeffect.OutcomeUncertain, sideeffect.Result{}, sideeffect.ErrUnsafeNotRetryable
 	}
 	a.uncertain = false
-	if err := writeAction(ctx, tx, act.Key, a); err != nil {
+	if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 		return sideeffect.OutcomeContended, sideeffect.Result{}, err
 	}
 	return sideeffect.OutcomeApplied, sideeffect.Result{}, nil
@@ -115,6 +123,10 @@ func (s *EffectStore) BeginReconcile(ctx context.Context, act sideeffect.Action,
 		return sideeffect.Reconcile{}, errors.Wrap(sideeffect.ErrInvalidTTL,
 			"对账认领时长必须为正（零/负 TTL 造出出生即过期的认领）",
 			"key", string(act.Key))
+	}
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return sideeffect.Reconcile{}, perr
 	}
 	return withinTx(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Reconcile, error) {
 		if err := ensureActionRow(ctx, tx, act); err != nil {
@@ -139,7 +151,7 @@ func (s *EffectStore) BeginReconcile(ctx context.Context, act sideeffect.Action,
 		expires := now.Add(ttl)
 		a.reconHolder = &holder
 		a.reconExpires = &expires
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.Reconcile{}, err
 		}
 		return sideeffect.Reconcile{Holder: holder, ExpiresAt: expires}, nil

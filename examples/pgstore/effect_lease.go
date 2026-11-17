@@ -19,13 +19,13 @@ import (
 
 // lockPair 一次事务的行读取：资源行在前、动作行在后（锁序恒定）。
 func lockPair(ctx context.Context, tx pgx.Tx, act sideeffect.Action) (*resourceRow, *actionRow, error) {
-	if err := ensureResourceRow(ctx, tx, act.Resource); err != nil {
+	if err := ensureResourceRow(ctx, tx, act.Tenant, act.Resource); err != nil {
 		return nil, nil, err
 	}
 	if err := ensureActionRow(ctx, tx, act); err != nil {
 		return nil, nil, err
 	}
-	rr, err := lockResource(ctx, tx, act.Resource)
+	rr, err := lockResource(ctx, tx, act.Tenant, act.Resource)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -40,6 +40,10 @@ func lockPair(ctx context.Context, tx pgx.Tx, act sideeffect.Action) (*resourceR
 //
 // 幂等：同一 Key 重复 Complete 不报错，返回首次记录的结果（后到者不覆盖）。
 func (s *EffectStore) Complete(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, res sideeffect.Result) (sideeffect.Result, error) {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return sideeffect.Result{}, perr
+	}
 	return withinTx(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Result, error) {
 		rr, a, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -64,12 +68,12 @@ func (s *EffectStore) Complete(ctx context.Context, act sideeffect.Action, lease
 		a.done = true
 		a.result = &payload
 		a.intentResource, a.intentFence, a.intentHolder, a.intentExpires = nil, nil, nil, nil
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.Result{}, err
 		}
 		// 动作已完成 ⇒ 资源闸释放（否则后来者会被「资源正忙」挡住）。
 		rr.holder = nil
-		if err := writeResource(ctx, tx, act.Resource, rr); err != nil {
+		if err := writeResource(ctx, tx, act.Tenant, act.Resource, rr); err != nil {
 			return sideeffect.Result{}, err
 		}
 		return res, nil
@@ -82,6 +86,10 @@ func (s *EffectStore) Complete(ctx context.Context, act sideeffect.Action, lease
 // 之前」会被下一次 Acquire 变成重复施加。两条出口（Abandon / Release）
 // 不可互相替代，见 Store.Release 的契约注释。
 func (s *EffectStore) Release(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease) error {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return perr
+	}
 	_, err := withinTx(ctx, s.pool, func(tx pgx.Tx) (bool, error) {
 		rr, _, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -91,7 +99,7 @@ func (s *EffectStore) Release(ctx context.Context, act sideeffect.Action, lease 
 			return false, err
 		}
 		rr.holder = nil
-		return false, writeResource(ctx, tx, act.Resource, rr)
+		return false, writeResource(ctx, tx, act.Tenant, act.Resource, rr)
 	})
 	return err
 }
@@ -100,6 +108,10 @@ func (s *EffectStore) Release(ctx context.Context, act sideeffect.Action, lease 
 //
 // 资源闸只在仍是自己的时才放——易主了就不碰（那是新持有者的闸）。
 func (s *EffectStore) Abandon(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, _ string) error {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return perr
+	}
 	_, err := withinTx(ctx, s.pool, func(tx pgx.Tx) (bool, error) {
 		rr, a, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -109,12 +121,12 @@ func (s *EffectStore) Abandon(ctx context.Context, act sideeffect.Action, lease 
 			return false, err
 		}
 		a.intentResource, a.intentFence, a.intentHolder, a.intentExpires = nil, nil, nil, nil
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return false, err
 		}
 		if holdOwnerErr(act, lease, rr) == nil {
 			rr.holder = nil
-			if err := writeResource(ctx, tx, act.Resource, rr); err != nil {
+			if err := writeResource(ctx, tx, act.Tenant, act.Resource, rr); err != nil {
 				return false, err
 			}
 		}
@@ -126,6 +138,10 @@ func (s *EffectStore) Abandon(ctx context.Context, act sideeffect.Action, lease 
 // Renew 续期并**同时确认持有资格**：闸已易主、尝试已失效**或租约已过期**
 // 则拒绝续期（假续期是重复施加的入口）。
 func (s *EffectStore) Renew(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, ttl time.Duration) (sideeffect.Lease, error) {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return sideeffect.Lease{}, perr
+	}
 	return withinTx(ctx, s.pool, func(tx pgx.Tx) (sideeffect.Lease, error) {
 		rr, a, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -152,11 +168,11 @@ func (s *EffectStore) Renew(ctx context.Context, act sideeffect.Action, lease si
 		}
 		until := now.Add(ttl)
 		rr.until = &until
-		if err := writeResource(ctx, tx, act.Resource, rr); err != nil {
+		if err := writeResource(ctx, tx, act.Tenant, act.Resource, rr); err != nil {
 			return sideeffect.Lease{}, err
 		}
 		a.intentExpires = &until
-		if err := writeAction(ctx, tx, act.Key, a); err != nil {
+		if err := writeAction(ctx, tx, act.Tenant, act.Key, a); err != nil {
 			return sideeffect.Lease{}, err
 		}
 		return sideeffect.Lease{Resource: act.Resource, Fence: lease.Fence, Holder: lease.Holder, TTL: ttl}, nil
@@ -175,6 +191,10 @@ func (s *EffectStore) Renew(ctx context.Context, act sideeffect.Action, lease si
 // 标记成功后意图一并撤销（这次尝试已有结论：未知），但**闸不自动释放**
 // ——调用方还要显式调 Release 只放资源。
 func (s *EffectStore) MarkUncertain(ctx context.Context, act sideeffect.Action, lease sideeffect.Lease, reason string) error {
+	act, perr := s.prepareAction(ctx, act)
+	if perr != nil {
+		return perr
+	}
 	_, err := withinTx(ctx, s.pool, func(tx pgx.Tx) (bool, error) {
 		rr, a, err := lockPair(ctx, tx, act)
 		if err != nil {
@@ -189,7 +209,7 @@ func (s *EffectStore) MarkUncertain(ctx context.Context, act sideeffect.Action, 
 		a.uncertain = true
 		a.reason = reason
 		a.intentResource, a.intentFence, a.intentHolder, a.intentExpires = nil, nil, nil, nil
-		return false, writeAction(ctx, tx, act.Key, a)
+		return false, writeAction(ctx, tx, act.Tenant, act.Key, a)
 	})
 	return err
 }
