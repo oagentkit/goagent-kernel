@@ -90,6 +90,10 @@ type Context struct {
 	//
 	// 判定按精确子集（Can）。刻意不排序、不去重、不校验词形——规范化
 	// 即第二份口径，词表归宿主。
+	//
+	// 是引用类型，但**不共享**：WithContext 注入时克隆一次、From / Require
+	// 交出时再克隆一次（issue #376）。故注入后改写宿主原切片、或改写提取
+	// 副本的元素，都改不动机制面随后读到的授权面。
 	Scopes []string
 }
 
@@ -121,7 +125,11 @@ var (
 type ctxKey struct{}
 
 // WithContext 把租户上下文注入 request context（机制间传递的唯一通道）。
+//
+// Scopes 是切片：注入时克隆一次，注入后宿主再改写自己的原切片不会改穿
+// 已注入的授权面（「授权面在注入时定死」是 fail-closed 的前提）。
 func WithContext(ctx context.Context, c Context) context.Context {
+	c.Scopes = slices.Clone(c.Scopes)
 	return context.WithValue(ctx, ctxKey{}, c)
 }
 
@@ -134,6 +142,9 @@ func From(ctx context.Context) Context {
 		return Context{}
 	}
 	c, _ := ctx.Value(ctxKey{}).(Context)
+	// 交出克隆：按值提取只复制切片头，调用方改写副本元素会改穿 ctx 里那份
+	// 授权面（issue #376 —— 越权放行的根因）。
+	c.Scopes = slices.Clone(c.Scopes)
 	return c
 }
 
