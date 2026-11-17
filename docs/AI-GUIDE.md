@@ -234,13 +234,17 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 - 新判据的**失败形态是变红还是变绿**？变绿 = 没生效（最贵的形态）。
 - 判据涉及**计数/代次/序号**吗？是 → 检查是不是只有**一个真相**。
 
-### 3.2.1 任务 B2：新增分布式能力必须补故障矩阵（issue #193）
+### 3.2.1 任务 B2：新增分布式能力必须补故障矩阵（issue #193 / #274）
 
 跨进程/跨副本的正确性（认领、续期、租约接管、事件发布、副作用对账）不能只靠
 零散用例。矩阵的**唯一声明面**在 `worker/faultmatrix/matrix_test.go` 的
 `deploymentMatrix`：每条声明故障类、适用部署模式（Embedded / Standalone /
-Cluster）和执行函数；`TestFaultDeploymentMatrix` 先自检「六类故障每类至少一条
+Cluster）和执行函数；`TestFaultDeploymentMatrix` 先自检「**每个已登记故障类**每类至少一条
 用例、模式合法、执行函数非空」，再逐格执行。**漏一类或删一条 = 门禁红**。
+
+> **故障类清单不要手抄**：以 `worker/faultmatrix/matrix_test.go` 的类常量
+> （`Class*`）与 `requiredMatrixCells` 为唯一真相源。下表是**给人读的说明**，
+> 增删类时以代码为准（#274 已把矩阵从 6 类扩到 14 类）。
 
 | 故障类 | 落在哪一格 | 判据 |
 |---|---|---|
@@ -250,7 +254,14 @@ Cluster）和执行函数；`TestFaultDeploymentMatrix` 先自检「六类故障
 | 多 Worker 时钟偏移 | Standalone / Cluster | 到期只由存储时钟判；节点本地时钟快/慢不改变接管结论，接管代次严格递增 |
 | 网络分区与租约接管 | Cluster | 续期不可达 ⇒ 存储时钟越过 TTL 后 `worker.Recover` 可接管；旧持有者只被取消、迟到收场被拒，副作用恰好一次 |
 | Pod 强删与副作用对账 | Cluster | 过期执行意图 ⇒ `OutcomeUncertain`；外部事实裁决后只重放结果，不重复施加 |
-
+| K8s API 响应丢失 | Cluster（+真集群） | 作业已建但创建响应丢失；重试按**稳定执行标识**对账返回既有结果，不重跑一份 |
+| 跨租户任务碰撞 | Standalone / Cluster | 同一 TaskID 在两租户下互不可见/不覆盖/令牌互不认；缺租户上下文 fail-closed |
+| 长任务租约失效 | Cluster | 执行超 TTL、续期中断后他副本按过期认领接管；旧持有者的 Renew/Complete 被拒，代次严格递增 |
+| 数据库主备切换 | Standalone（+真 PG） | 主库提交在备库可见；主库故障期写面显式失败、不半写；promote 后旧主被 fence（不产生双主） |
+| 事件乱序提交 | Standalone / Cluster | 先拿号后提交，尾随器取**已提交水位线**（非裸 max(id)），不得越过 2 跳过 1；1 提交后按序补达 |
+| 配额悬挂 | Cluster | 预占不能凭「心跳消失」就归还：须先确认预占过期**且**任务租约已失效；迟到的 Release 不得二次归还 |
+| 控制面并发介入 | Cluster | 强制释放与 Worker 完成并发时恰好一方生效，输家得可观测 `ErrLeaseLost`，任务只有一次有效状态转换 |
+| 真实 NetworkPolicy 验证 | Cluster（+真集群） | 声明面：策略开启 + CNI 能力事实 + 出站探测三者齐备才自报 `EgressDenied`，缺一降级 |
 **怎么跑**：
 
 ```bash
