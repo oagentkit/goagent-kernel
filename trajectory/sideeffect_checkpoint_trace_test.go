@@ -283,24 +283,3 @@ func TestSideEffectPayloadJSONRoundTrip(t *testing.T) {
 		t.Fatalf("fence=0 时不写令牌属性，行标识仍取自然键：%+v", rows[1])
 	}
 }
-
-// TestSideEffectRowsHaveNoDelivery 本包边界：只出映射，不做投递。
-// 钉法：投影产物是纯数据（Row/Span），没有任何导出器或发送路径——
-// 新增行类目若引入投递依赖，这里的 import 面就变了，构建即红。
-func TestSideEffectRowsHaveNoDelivery(t *testing.T) {
-	// Row 与 Span 都是纯数据结构；把它们各拷一份并改动，互不影响。
-	rows := p99SampleRows()
-	cp := append([]Row(nil), rows...)
-	cp[0].SideEffectKey = "mutated"
-	if rows[0].SideEffectKey == "mutated" {
-		t.Fatal("Rows() 必须返回拷贝：调用方改动不得影响投影器内部状态")
-	}
-}
-
-func p99SampleRows() []Row {
-	return []Row{{
-		Seq: 1, Kind: KindSideEffect, ID: "sideeffect#act-a", Turn: 1,
-		SideEffectKey: "act-a", SideEffectPhase: SideEffectGranted,
-		StartAt: at(0), Status: StatusOpen,
-	}}
-}

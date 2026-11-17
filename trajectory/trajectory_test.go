@@ -341,3 +341,49 @@ func TestSummarizeHookOverridesDefault(t *testing.T) {
 		t.Fatalf("宿主注入的摘要应生效，得到 %q", rows[0].Summary)
 	}
 }
+
+// TestRowsReturnsDefensiveCopy 调用方改写 Rows() 返回值不得写穿投影器。
+//
+// 守护用例必须真的持有投影器：拿一份当场 new 出来的字面量切片再复制一份，
+// 两边按构造就分属两个数组，断言恒真、区分力为零（issue #388）。
+func TestRowsReturnsDefensiveCopy(t *testing.T) {
+	p := NewProjector(Options{})
+	p.Apply(seEv(eventbus.EventSideEffectGranted, 10, "act-a", "res-a", "", 0, nil))
+
+	rows := p.Rows()
+	if len(rows) == 0 {
+		t.Fatal("投影器应产出一行")
+	}
+	rows[0].SideEffectKey = "mutated"
+
+	again := p.Rows()
+	if len(again) == 0 {
+		t.Fatal("投影器应仍有一行")
+	}
+	if again[0].SideEffectKey != "act-a" {
+		t.Fatalf("Rows() 必须返回拷贝：调用方改动写穿了投影器内部状态: %q", again[0].SideEffectKey)
+	}
+}
+
+// TestIssuesReturnsDefensiveCopy 调用方改写 Issues() 返回值不得写穿缺口清单。
+//
+// 缺口清单是审计事实（配对缺口），被调用方改穿会让「有没有缺口」不可信。
+func TestIssuesReturnsDefensiveCopy(t *testing.T) {
+	p := NewProjector(Options{})
+	p.Apply(toolEv(eventbus.EventToolCall, 100, 1, "c1", "alpha_fn"))
+	p.Finalize()
+
+	issues := p.Issues()
+	if len(issues) == 0 {
+		t.Fatal("收口后应有 missing_result 缺口")
+	}
+	issues[0].CallID = "mutated"
+
+	again := p.Issues()
+	if len(again) == 0 {
+		t.Fatal("缺口清单不该被调用方改空")
+	}
+	if again[0].CallID != "c1" {
+		t.Fatalf("Issues() 必须返回拷贝：调用方改动写穿了缺口清单: %q", again[0].CallID)
+	}
+}
