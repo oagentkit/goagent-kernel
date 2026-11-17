@@ -38,11 +38,25 @@ func TestCheckURL(t *testing.T) {
 		{"缺 host 拒绝", "http:///path", true, false, true},
 	}
 	for _, tc := range cases {
-		err := CheckURLWith(tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop})
+		// 注入假解析器（#412）：判定路径不再依赖真实外网 DNS——本机负载下解析器
+		// 超时/丢包曾让「外网放行」两条假红 30s；判定面与解析来源解耦后用例只测
+		// 判据本身。名字/IP 策略用例本就不走到解析。
+		err := CheckURLWithResolver(t.Context(), tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, fakeResolver{})
 		if (err != nil) != tc.wantErr {
-			t.Errorf("%s: CheckURLWith(%q, %+v) err=%v wantErr=%v", tc.name, tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, err, tc.wantErr)
+			t.Errorf("%s: CheckURLWithResolver(%q, %+v) err=%v wantErr=%v", tc.name, tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, err, tc.wantErr)
 		}
 	}
+}
+
+// fakeResolver 是固定映射的测试解析器：公网名字一律回落到文档保留公网地址，
+// 既不需要外网 DNS，也不会命中私网/回环/元数据名单。
+type fakeResolver struct{}
+
+func (fakeResolver) LookupIP(_ context.Context, _, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		return []net.IP{ip}, nil
+	}
+	return []net.IP{net.ParseIP("93.184.216.34")}, nil
 }
 
 // TestCheckURLBlockedNameBeforeDNS 名字层必须在 DNS 之前判。
