@@ -3,7 +3,7 @@ package steer
 import (
 	"strings"
 
-	"github.com/yi-nology/goagent-kernel/statemachine"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // 摘要正文的机械骨架（文案头由宿主注入，正文不带任何领域词）。
@@ -26,14 +26,15 @@ const (
 
 // DoneStep 一个环节的注入事实（宿主从环节行取；本包不读库）。
 //
-// Status 是**环节状态**，词表以 statemachine 为准（BuildSummary 只计
-// statemachine.StatusSucceeded）——skipped / rolled_back / rejected / failed
-// 无有效产出，失败环节留给下一轮重新评估。宿主的环节状态词表若不同，
-// 在注入边界上映射，不要改本包的判定词。
+// Status 是**环节状态**，词表以 contract 为准（BuildSummary 只计
+// contract.StatusSucceeded；statemachine 的状态常量是同一批值的别名，
+// issue #354/#357）——skipped / rolled_back / rejected / failed 无有效产出，
+// 失败环节留给下一轮重新评估。宿主的环节状态词表若不同，在注入边界上映射，
+// 不要改本包的判定词。
 type DoneStep struct {
 	Slug    string // 环节标识
 	Summary string // 环节产出摘要（宿主从环节报告提取；畸形报告按空处理）
-	Status  string // 环节状态（statemachine 词表）
+	Status  string // 环节状态（contract 词表；statemachine 同值别名）
 }
 
 // Caps 摘要截断上限（零值取缺省；负值 = 不截断）。
@@ -70,7 +71,7 @@ func BuildSummary(steps []DoneStep, caps Caps) string {
 	b.WriteByte('\n')
 	n := 0
 	for _, st := range steps {
-		if st.Status != statemachine.StatusSucceeded {
+		if st.Status != contract.StatusSucceeded {
 			continue
 		}
 		b.WriteString("\n- ")

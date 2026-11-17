@@ -13,7 +13,6 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/statemachine"
 	"github.com/yi-nology/goagent-kernel/steer"
 )
 
@@ -26,7 +25,7 @@ func TestRunSingleWinnerConcurrent(t *testing.T) {
 		status: contract.StatusRunning,
 		queue:  true,
 		steps: []steer.DoneStep{
-			{Slug: "step-a", Summary: "合成产出 A", Status: statemachine.StatusSucceeded},
+			{Slug: "step-a", Summary: "合成产出 A", Status: contract.StatusSucceeded},
 		},
 	}
 	const n = 8
