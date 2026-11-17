@@ -235,11 +235,11 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 66,346 行 / 348 文件（不含 `_test.go`）|
-| 测试 | 434 个测试文件 |
+| 生产代码 | 66,600 行 / 349 文件（不含 `_test.go`）|
+| 测试 | 437 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 9 条规则（`rules` 段）+ **12 条 `go/ast` 结构规则**（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 59 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |
+| 门禁 | 9 条规则（`rules` 段）+ **12 条 `go/ast` 结构规则**（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 59 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** + **仓库卫生（`hygiene`：被跟踪的编译产物二进制不得入库，按文件头魔数判，#413）** |
 | 例外登记 | **0** |
 
 > **上表分两类：前两行有机器判定，其余仍是散文**（issue #31）。
