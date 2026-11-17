@@ -780,6 +780,30 @@ modules:
       契约禁止；迟到的领取与回执一律拒收）。回执状态三值与 delegate 同纪律。
       进程内参考实现 LocalDesk 只证契约可满足，不做跨进程承诺。
 
+  # 2026-11-17 新增（issue #273，分布式演进 L3）：跨区域所有权权威。
+  # 为什么单独成包而不是并进 handoff：Handoff 的 Epoch 管的是**交接单**
+  # 的代次（同一 Key 重新挂出 = 新一代），不是**任务域所有权**的权威——
+  # 分区后「哪个区域有权提交这个任务域」此前没有判据。本包只给契约与判据，
+  # 共享权威的持久化/选主归宿主（与 taskboard「不给存储实现」同一条分工）。
+  - id: ownership
+    roots: [ownership]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      跨区域任务所有权权威的契约面（issue #273）：任务域 → 权威区域的映射是
+      可配置、可校验、可查的事实（RegionMap / Authority.Mapping / Owner）；
+      每个任务域在任一时刻恰好一个权威区域，所有权带区域与代次（Epoch）。
+      跨区域转移走两阶段：BeginTransfer 只记录候选代次（= 当前 + 1）与回执
+      令牌，**不改变**当前权威；ConfirmTransfer 由目标区域凭回执令牌确认，
+      成功后换代是一次原子操作（代次提升 + 区域切换 + 令牌重铸），旧代
+      提交一律 ErrStaleEpoch、候选代次在确认前一律 ErrEpochUnconfirmed。
+      提交路径只依赖 Fencer 接缝：任何错误（含权威不可达）都必须拒绝，
+      fail-closed。判据 Judge 是纯函数，MemoryAuthority / Local 共用同一份。
+      不新增 TTL/租约面（所有权不是租约，任务租约仍归 taskboard/handoff）；
+      单区域部署退化为 NewLocal（本区域即权威，转移显式 ErrSingleRegion）。
+      MemoryAuthority 是进程内参考实现，不承诺跨进程原子性。
+
   - id: eval
     roots: [eval]
     requires: [eventbus, trajectory, "ext:github.com/oekit/pkg"]
@@ -1628,7 +1652,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
