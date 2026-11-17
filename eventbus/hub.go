@@ -132,11 +132,14 @@ func (h *Hub) Inject(ev Event) {
 // Payload 不得改穿其它连接与发布方（与 Bus.Broadcast 同一口径，issue #378）。
 func (h *Hub) deliverLocked(ev Event) {
 	for ch := range h.subs[ev.SessionID] {
-		if len(ch) == cap(ch) {
+		// 必须用非阻塞 select 而不是 len/cap 预判：deliverLocked 在读锁下被
+		// 多个 Publish/Inject 并发调用，预判与发送之间别的发布者可能填满缓冲
+		// ——那会把「不阻塞发布方」变成阻塞。
+		select {
+		case ch <- ev.Clone():
+		default:
 			h.dropped.Add(1)
-			continue
 		}
-		ch <- ev.Clone()
 	}
 }
 
