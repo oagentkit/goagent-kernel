@@ -21,7 +21,7 @@
 | `sideeffect.FencedSink.WriteFenced` | 一条带条件的 `INSERT … ON CONFLICT DO UPDATE … WHERE seen_fence <= presented` 原子预占；写入体经 `ExecWithin` 走**同一事务**，报错即整体回滚（**不得部分写**） |
 | `taskboard.Board` | 认领是事务内的读-判-写；令牌随机铸造、接管代次同一次落库；释放/完成/续期条件更新只认令牌 |
 | `checkpoint.StoreCAS` | 条件 upsert（`WHERE 已持久化序号 < 本次序号`），`Seq == 0` 先拒 |
-| 租户隔离（issue #275） | effect / 资源 / 下游 / 事件表的键均为 `(tenant, 业务键)` 复合主键；租户作用域实例（`NewTenant*`）从 ctx 取租户，缺租户 ⇒ `tenant.ErrNoContext`（写入被拒），声明与 ctx 不一致 ⇒ `ErrTenantMismatch`；事件每个租户一条独立 ID 空间与水位行，订阅侧按流过滤 |
+| 租户隔离（issue #275） | effect / 资源 / 下游 / 事件表的键均为 `(tenant, 业务键)` 复合主键；租户作用域实例（`NewTenant*`）从 ctx 取租户，缺租户 ⇒ `tenant.ErrNoContext`（写入被拒），声明与 ctx 不一致 ⇒ `ErrTenantMismatch`；事件每个租户一条独立 ID 空间与水位行，订阅侧按流过滤；尾随游标用 `NewTenantTailCursorStore` 按 `(tenant, consumer)` 隔离 |
 | `controlplane.Store`（issue #278） | 三个 `Snapshot*` 在 REPEATABLE READ 只读事务里取一致快照；三个 `Commit*` 在 `pgref_control_version` 单行版本锚上「校验 → 留痕 → 写状态 → 推进版本」同事务；任务状态落在 `pgref_board_task`（**与 taskboard 同一张可写表**），运行成员由该表 `run_id` 单源表达。`ControlStore`/`BoardStore` 的 `TaskSourceID` 同 schema 一致，`NewAuthoritativeStorePlane` 装配期判同源 |
 
 ## 跑起来（三选一，按场景）

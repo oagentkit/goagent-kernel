@@ -25,6 +25,7 @@ package pgstore
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -58,20 +59,7 @@ var _ eventbus.CursorStore = (*TailCursorStore)(nil)
 // LoadCursor 读上次保存的游标（0, false, nil = 从未存过；error = 读失败，
 // Tailer 会停摆重试，不得静默回退 MaxID）。
 func (s *TailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) {
-	var n int64
-	err := s.pool.QueryRow(ctx,
-		`SELECT cursor_pos FROM pgref_tail_cursor WHERE consumer = $1`,
-		s.consumer).Scan(&n)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, errors.Wrap(err, "pgstore: 读尾随游标失败", "consumer", s.consumer)
-	}
-	if n < 0 {
-		return 0, false, errors.New("pgstore: 尾随游标为负（数据损坏，consumer=" + s.consumer + "）")
-	}
-	return uint64(n), true, nil
+	return loadCursor(ctx, s.pool, s.consumer)
 }
 
 // SaveCursor 保存游标（UPSERT；单调不减：回退写被 GREATEST 吸收，不落库）。
@@ -79,18 +67,93 @@ func (s *TailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) 
 // 失败返回 error，调用方（Tailer）只 warn 不停摆——游标落后只会导致重启后
 // 重读（订阅侧幂等吸收），方向安全。
 func (s *TailCursorStore) SaveCursor(ctx context.Context, cursor uint64) error {
-	if cursor > uint64(1<<63-1) {
-		return errors.New("pgstore: 尾随游标超出 BIGINT 范围（consumer=" + s.consumer + "）")
+	return saveCursor(ctx, s.pool, s.consumer, cursor)
+}
+
+// TenantTailCursorStore **租户作用域**的 eventbus.CursorStore（issue #275）。
+//
+// 为什么需要它：游标是「某个租户事件流」的续读点。多租户部署若两个租户的
+// 尾随者共用一条 consumer key，后跑的会把游标推过对方整段窗口——事件流本身
+// 已按租户隔离（NewTenantEventStore），游标却串了，订阅侧静默漏帧。
+//
+// 装配期声明租户作用域：每次读写都从 ctx 取租户（tenant.Require，缺租户
+// ⇒ tenant.ErrNoContext）。物理行仍是 pgref_tail_cursor，consumer 键由
+// tenant + 长度前缀 + consumer 派生——长度前缀保证不同 (tenant, consumer)
+// 组合拼不出同一个键（consumer 里出现任何分隔符都不影响单射）。
+type TenantTailCursorStore struct {
+	pool     *pgxpool.Pool
+	consumer string
+}
+
+// NewTenantTailCursorStore 构造租户作用域游标存储。pool 不得为 nil，
+// consumer 不得为空（装配期编程错误 fail fast，与 NewTailCursorStore 同口径）。
+func NewTenantTailCursorStore(pool *pgxpool.Pool, consumer string) *TenantTailCursorStore {
+	if pool == nil {
+		panic("pgstore: TenantTailCursorStore 需要连接池（nil pool 的游标无从读写）")
 	}
-	_, err := s.pool.Exec(ctx, `
+	if consumer == "" {
+		panic("pgstore: TenantTailCursorStore 需要 consumer key（空键会让所有尾随者共享一条游标）")
+	}
+	return &TenantTailCursorStore{pool: pool, consumer: consumer}
+}
+
+var _ eventbus.CursorStore = (*TenantTailCursorStore)(nil)
+
+// LoadCursor 读当前租户上次保存的游标（缺租户上下文 ⇒ tenant.ErrNoContext）。
+func (s *TenantTailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) {
+	t, err := resolveTenant(ctx, true, "")
+	if err != nil {
+		return 0, false, err
+	}
+	return loadCursor(ctx, s.pool, tenantCursorKey(t, s.consumer))
+}
+
+// SaveCursor 保存当前租户的游标（缺租户上下文 ⇒ tenant.ErrNoContext）。
+func (s *TenantTailCursorStore) SaveCursor(ctx context.Context, cursor uint64) error {
+	t, err := resolveTenant(ctx, true, "")
+	if err != nil {
+		return err
+	}
+	return saveCursor(ctx, s.pool, tenantCursorKey(t, s.consumer), cursor)
+}
+
+// tenantCursorKey 把 (tenant, consumer) 拼成 pgref_tail_cursor.consumer 的
+// 单射键：长度前缀 + tenant + consumer。长度前缀是必要的——只加分隔符时，
+// tenant 或 consumer 内含该分隔符就能拼出同一个键（跨租户串游标）。
+func tenantCursorKey(tenantID, consumer string) string {
+	return strconv.Itoa(len(tenantID)) + ":" + tenantID + consumer
+}
+
+func loadCursor(ctx context.Context, pool *pgxpool.Pool, consumer string) (uint64, bool, error) {
+	var n int64
+	err := pool.QueryRow(ctx,
+		`SELECT cursor_pos FROM pgref_tail_cursor WHERE consumer = $1`,
+		consumer).Scan(&n)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, errors.Wrap(err, "pgstore: 读尾随游标失败", "consumer", consumer)
+	}
+	if n < 0 {
+		return 0, false, errors.New("pgstore: 尾随游标为负（数据损坏，consumer=" + consumer + "）")
+	}
+	return uint64(n), true, nil
+}
+
+func saveCursor(ctx context.Context, pool *pgxpool.Pool, consumer string, cursor uint64) error {
+	if cursor > uint64(1<<63-1) {
+		return errors.New("pgstore: 尾随游标超出 BIGINT 范围（consumer=" + consumer + "）")
+	}
+	_, err := pool.Exec(ctx, `
 		INSERT INTO pgref_tail_cursor (consumer, cursor_pos) VALUES ($1, $2)
 		ON CONFLICT (consumer) DO UPDATE
 		  SET cursor_pos = GREATEST(pgref_tail_cursor.cursor_pos, EXCLUDED.cursor_pos),
 		      updated_at = clock_timestamp()
 		  WHERE pgref_tail_cursor.cursor_pos < EXCLUDED.cursor_pos`,
-		s.consumer, int64(cursor))
+		consumer, int64(cursor))
 	if err != nil {
-		return errors.Wrap(err, "pgstore: 保存尾随游标失败", "consumer", s.consumer)
+		return errors.Wrap(err, "pgstore: 保存尾随游标失败", "consumer", consumer)
 	}
 	return nil
 }

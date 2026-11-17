@@ -66,6 +66,8 @@
 // 事件面每个租户一条独立 ID 空间与水位行（pgref_event_watermark 主键
 // tenant）：订阅侧用租户作用域实例取流即按租户过滤，单租户流仍满足
 // TailStore 的「无空洞推进」——过滤共享 ID 空间会产生永久空洞。
+// 尾随游标经 NewTenantTailCursorStore 按 (tenant, consumer) 隔离（同一
+// consumer 名在两个租户下是两条游标，跨租户不会互相推进）。
 // 旧库由 EnsureSchema 的 vN+1 迁移补齐租户列 / 复合主键（旧行归入 ”）。
 //
 // # 时钟
