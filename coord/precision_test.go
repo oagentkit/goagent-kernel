@@ -6,7 +6,7 @@
 //  1. 原子后端（实现 AtomicDecision）：取时、快照、判定、提交在同一事务内
 //     ⇒ 窗口内过期必须被拒绝，LeasePrecision 报 Atomic/Window=0；
 //  2. 非原子后端：同一时序下续期可能已按旧快照提交，但必须留下**可解释的
-//     告警**（观测窗口、预算、是否越过到期时刻），LeasePrecision 显式标记
+//     提示**（观测窗口、预算、是否越过到期时刻），LeasePrecision 显式标记
 //     Degraded 与预算数值。
 //
 // 时间源固定为存储时钟（ClockSource）：节点本地时钟只在 SingleMachine
@@ -38,7 +38,7 @@ func (w *windowStorage) Txn(ctx context.Context, asserts []Assert, mutations []M
 	if w.beforeTxn != nil {
 		w.beforeTxn()
 	}
-	return w.clockedStorage.MemoryBackend.Txn(ctx, asserts, mutations)
+	return w.MemoryBackend.Txn(ctx, asserts, mutations)
 }
 
 // atomicStorage 实现 AtomicDecision 的存储时钟后端：DecideTx 在锁内取时、
@@ -52,17 +52,17 @@ func (a *atomicStorage) DecideTx(ctx context.Context, decide func(now time.Time,
 	if a.beforeDecide != nil {
 		a.beforeDecide()
 	}
-	a.clockedStorage.MemoryBackend.mu.Lock()
-	defer a.clockedStorage.MemoryBackend.mu.Unlock()
-	now := a.clockedStorage.nowLocked()
+	a.MemoryBackend.mu.Lock()
+	defer a.MemoryBackend.mu.Unlock()
+	now := a.nowLocked()
 	read := func(keys ...string) (map[string]Entry, error) {
-		return a.clockedStorage.MemoryBackend.snapshotLocked(keys...), nil
+		return a.snapshotLocked(keys...), nil
 	}
 	asserts, mutations, err := decide(now, read)
 	if err != nil {
 		return false, now, err
 	}
-	applied := a.clockedStorage.MemoryBackend.txnLocked(asserts, mutations)
+	applied := a.txnLocked(asserts, mutations)
 	return applied, now, nil
 }
 
@@ -152,7 +152,7 @@ func TestRenewWindowExpiryAtomicRejected(t *testing.T) {
 	oldUntil := claimed.Lease.Until
 
 	// 判定发生在事务内；进入事务后存储时钟越过旧到期时刻。
-	storage.beforeDecide = func() { storage.clockedStorage.advance(11 * time.Second) }
+	storage.beforeDecide = func() { storage.advance(11 * time.Second) }
 
 	_, verdict, err := board.RenewWithVerdict(context.Background(), "t1", claimed.Lease.Token,
 		taskboard.ClaimRequest{TTL: 10 * time.Second})
@@ -174,7 +174,7 @@ func TestRenewWindowExpiryAtomicRejected(t *testing.T) {
 }
 
 // TestRenewWindowExpiryDegradedWarns 非原子路径的同一时序：续期会按旧快照
-// 提交成功，但必须留下可解释告警——窗口、预算、越过到期的事实都在
+// 提交成功，但必须留下可解释提示——窗口、预算、越过到期的事实都在
 // 结构化字段里（不是只写一句散文）。
 func TestRenewWindowExpiryDegradedWarns(t *testing.T) {
 	storage := newWindowStorage(t)
@@ -184,7 +184,7 @@ func TestRenewWindowExpiryDegradedWarns(t *testing.T) {
 	}
 	claimed := claimForRenew(t, board, 10*time.Second)
 
-	storage.beforeTxn = func() { storage.clockedStorage.advance(11 * time.Second) }
+	storage.beforeTxn = func() { storage.advance(11 * time.Second) }
 
 	task, verdict, err := board.RenewWithVerdict(context.Background(), "t1", claimed.Lease.Token,
 		taskboard.ClaimRequest{TTL: 20 * time.Second})
@@ -211,12 +211,12 @@ func TestRenewWindowExpiryDegradedWarns(t *testing.T) {
 	}
 	warn := verdict.Warning()
 	if !strings.Contains(warn, "窗口") || !strings.Contains(warn, "预算") {
-		t.Fatalf("告警必须可解释（窗口/预算都要出现）: %q", warn)
+		t.Fatalf("提示必须可解释（窗口/预算都要出现）: %q", warn)
 	}
 }
 
 // TestRenewWindowExpiryWithinBudgetWarns 窗口内过期但**没有超预算**：
-// 告警仍要指出「窗口内过期」，但不得误报超预算——宿主才能按预算口径
+// 提示仍要指出「窗口内过期」，但不得误报超预算——宿主才能按预算口径
 // 决定「可接受的风险」还是「后端行为异常」。
 func TestRenewWindowExpiryWithinBudgetWarns(t *testing.T) {
 	storage := newWindowStorage(t)
@@ -226,7 +226,7 @@ func TestRenewWindowExpiryWithinBudgetWarns(t *testing.T) {
 	}
 	claimed := claimForRenew(t, board, 100*time.Millisecond)
 
-	storage.beforeTxn = func() { storage.clockedStorage.advance(100 * time.Millisecond) }
+	storage.beforeTxn = func() { storage.advance(100 * time.Millisecond) }
 
 	_, verdict, err := board.RenewWithVerdict(context.Background(), "t1", claimed.Lease.Token,
 		taskboard.ClaimRequest{TTL: time.Minute})
@@ -246,7 +246,7 @@ func TestRenewWindowExpiryWithinBudgetWarns(t *testing.T) {
 }
 
 // TestRenewAtomicNoWindow 无异常时序下原子路径的窗口事实：Window=0、
-// Observed=true、无告警（正例，防止实现把所有续期都报成降级）。
+// Observed=true、无提示（正例，防止实现把所有续期都报成降级）。
 func TestRenewAtomicNoWindow(t *testing.T) {
 	storage := newAtomicStorage(t)
 	board, err := NewBoardAdapter(storage)
@@ -264,7 +264,7 @@ func TestRenewAtomicNoWindow(t *testing.T) {
 		t.Fatalf("原子路径的窗口事实不成立: %+v", verdict)
 	}
 	if verdict.Warning() != "" {
-		t.Fatalf("无异常的原子续期不得告警: %q", verdict.Warning())
+		t.Fatalf("无异常的原子续期不得提示: %q", verdict.Warning())
 	}
 	if !task.Lease.Until.Equal(precisionBase.Add(time.Minute)) {
 		t.Fatalf("续期到期时刻必须由存储时钟算（实得 %v）", task.Lease.Until)
@@ -272,7 +272,7 @@ func TestRenewAtomicNoWindow(t *testing.T) {
 }
 
 // TestStoreRenewWindowExpiryPair StoreAdapter 的同一判据成对覆盖：
-// 非原子路径留下窗口告警；原子路径拒绝。
+// 非原子路径留下窗口提示；原子路径拒绝。
 func TestStoreRenewWindowExpiryPair(t *testing.T) {
 	act := sideeffect.Action{
 		Key:      sideeffect.Key("precision:apply"),
@@ -288,7 +288,7 @@ func TestStoreRenewWindowExpiryPair(t *testing.T) {
 		if _, lease, _, err := store.Acquire(context.Background(), act, 10*time.Second); err != nil {
 			t.Fatalf("预占失败: %v", err)
 		} else {
-			storage.beforeTxn = func() { storage.clockedStorage.advance(11 * time.Second) }
+			storage.beforeTxn = func() { storage.advance(11 * time.Second) }
 			_, verdict, err := store.RenewWithVerdict(context.Background(), act, lease, 10*time.Second)
 			if err != nil {
 				t.Fatalf("非原子路径按旧快照续期不应报错（实得 %v）", err)
@@ -309,7 +309,7 @@ func TestStoreRenewWindowExpiryPair(t *testing.T) {
 		if err != nil {
 			t.Fatalf("预占失败: %v", err)
 		}
-		storage.beforeDecide = func() { storage.clockedStorage.advance(11 * time.Second) }
+		storage.beforeDecide = func() { storage.advance(11 * time.Second) }
 		if _, _, err := store.RenewWithVerdict(context.Background(), act, lease, 10*time.Second); !errors.Is(err, sideeffect.ErrFenceStale) {
 			t.Fatalf("原子路径必须拒绝窗口内过期（实得 %v）", err)
 		}
