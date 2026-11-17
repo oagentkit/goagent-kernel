@@ -187,7 +187,9 @@ modules:
       （issue #336）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
       不是每个 step_finished。INV3（issue #171）是它的外层——
       轮级括号配对：turn_started 开括号、turn_ended 闭合，闭合必须带归因
-      （closed_by ∈ 宿主注册词表，缺省 loop|recovery|boot-reconcile|panic）与
+      （closed_by ∈ 宿主注册词表，缺省见 eventbus.ClosedByDefaults：
+      loop|recovery|boot-reconcile|panic|recovery:dead-owner|recovery:dead-lease
+      ——生产方 reconcile 的四路归因与消费方缺省表同源，issue #391）与
       contract 终态词表内的 status；停机留开放=合法态（Run 退出不扫尾告警）、
       开放超时=open_leak（与既有 openIdleTTL/sweep 同款 TTL 清扫）。
       closed_by 词表开放给宿主注册，内核只判「有没有（在册的）归因」，
@@ -498,7 +500,9 @@ modules:
       启动孤儿对账与心跳租约死主回收：三路判定（boot-anchor / event-silence /
       heartbeat-lease）+ 宽限窗 + CAS 收敛编排，与 drain 成对（drain=计划内、
       reconcile=非计划死）。状态词表复用 contract（终态语义不定义两次），
-      收尾事件走 eventbus 词表；存储事实全经 Store 接缝注入，包零 DB/gorm 依赖。
+      收尾事件走 eventbus 词表，四路归因值引用 eventbus.ClosedBy*（与消费方
+      watchdog 的缺省表同源，issue #391）；存储事实全经 Store 接缝注入，
+      包零 DB/gorm 依赖。
 
   - id: commitgate
     roots: [commitgate]

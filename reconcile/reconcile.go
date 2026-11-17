@@ -105,19 +105,26 @@ package reconcile
 import (
 	"context"
 	"time"
+
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // 归因标识（Cause.By；宿主 turn 括号的 closed_by 与事件载荷按此分辨收敛路径）。
 // 四条路各一个标识——审计靠它分辨「发版重启的正常收割」与「死主回收」。
+//
+// 取值全部引用 eventbus 的 closed_by 词表（issue #391）：本包是生产方、
+// watchdog 是消费方，两包各抄一份时后者只认 loop/recovery/boot-reconcile/panic，
+// 把 dead-owner / dead-lease 的合法收敛报成「无归因」。词表只有一份，加归因
+// 先加 eventbus.ClosedBy* 并同步 ClosedByDefaults。
 const (
 	// ByBootReconcile 启动锚点路（进程启动对账收割的孤儿）。
-	ByBootReconcile = "boot-reconcile"
+	ByBootReconcile = eventbus.ClosedByBootReconcile
 	// ByRecovery 常规路·本副本/无主会话的事件静默收敛。
-	ByRecovery = "recovery"
+	ByRecovery = eventbus.ClosedByRecovery
 	// ByDeadOwner 常规路·他副本、无心跳行回落事件静默的收敛。
-	ByDeadOwner = "recovery:dead-owner"
+	ByDeadOwner = eventbus.ClosedByDeadOwner
 	// ByDeadLease 常规路·他副本心跳租约过期的立即回收。
-	ByDeadLease = "recovery:dead-lease"
+	ByDeadLease = eventbus.ClosedByDeadLease
 )
 
 // Session 在途会话的判定所需最小面（宿主 running 行的投影；领域字段不进本包）。
