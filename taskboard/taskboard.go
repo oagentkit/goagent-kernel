@@ -29,6 +29,15 @@
 // 故契约要求 @@Board.Claim@@ **由存储实现保证原子性**，本包只判结果
 // （并发跑 N 次，成功者必须恰好 1 个）。
 //
+// # 「读不懂 ⇒ 拒绝认领」是契约义务
+//
+// 状态不在内核词表内 ⇒ 认领必须报 @@ErrUnknownState@@，且不得铸令牌。
+// 这条写进了 @@Board.Claim@@ 契约的「必须报错」清单（issue #360）——
+// 此前哨兵存在、注释也写着「写路径拒绝」，但契约清单里没有它，于是照抄
+// 契约的实现不会写这个闸：四份参考实现里只有一份拒词表外状态。
+//
+// 判定只有一份：@@State.Claimable@@（state.go）。
+//
 // # 释放认领凭令牌，不凭内容
 //
 // 与 @@commitgate@@ 的教训同源：用「任务 id + agent 名」认人判的是
@@ -92,45 +101,6 @@ type TaskID string
 //
 // **允许重复**（并行分支常同名）——这正是「凭 token 不凭内容」的理由。
 type AgentID string
-
-// State 任务状态。
-type State string
-
-const (
-	// StateOpen 待认领。
-	StateOpen State = "open"
-	// StateClaimed 已被认领（owner + lease 必须有值）。
-	StateClaimed State = "claimed"
-	// StateDone 已完成（终态）。
-	StateDone State = "done"
-	// StateFailed 已失败（终态；但允许重新认领——失败的工作通常要重做）。
-	StateFailed State = "failed"
-)
-
-// Terminal 报告该状态是否**不可再被认领**。
-//
-// 只有 done 是终态：failed 的任务必须能重做，否则一次失败就把子任务永久钉死，
-// 而宿主的补救路径（重新派一个人）会静默失效。
-func (s State) Terminal() bool { return s == StateDone }
-
-// Valid 报告状态是否在内核词表内。
-//
-// # 为什么必须导出（issue #323）
-//
-// 词表外状态代表「内核读不懂这个状态」：体检面（Check）会报
-// CodeUnknownState，但写路径此前只判 Terminal()（未知状态不是终态）⇒
-// 同一个状态「体检说非法、Claim 说可领」。宿主需要能自己区分
-// 「状态合法且非终态」与「状态不在词表内」——Valid() 就是这个判据。
-//
-// Terminal() 对词表外状态仍返回 false（不能把「读不懂」说成「终态」），
-// 所以写路径必须显式消费 Valid()，不能靠 Terminal() 反推。
-func (s State) Valid() bool {
-	switch s {
-	case StateOpen, StateClaimed, StateDone, StateFailed:
-		return true
-	}
-	return false
-}
 
 // Lease 一次认领的凭证。
 type Lease struct {
@@ -201,7 +171,20 @@ type ClaimRequest struct {
 	TTL time.Duration
 }
 
-// Task 一个子任务（值类型，可安全复制与比较）。
+// Task 一个子任务。
+//
+// # 复制语义：**值语义但非不可变**（issue #379）
+//
+// 本类型含 Deps []TaskID 切片，故：
+//
+//   - 按值复制（t2 := t1）只复制**切片头**，两个 Task 共享 Deps 的底层
+//     数组——改写副本的 Deps 会牵动原件；
+//   - 含 slice 的结构体在 Go 里**不可用 == 比较**（语言事实），本类型
+//     因此**不可比较**。要比较请逐字段来（如 slices.Equal(t1.Deps, t2.Deps)）。
+//
+// 故本类型的复制与比较都要**另行处理**：复制由**持有方**负责（义务写进
+// Board 契约——List / Claim 返回的 Task 不得与实现内部共享 Deps 底层
+// 数组），比较只能逐字段来。
 type Task struct {
 	// Tenant 租户标识（开放键：内核不解释语义，只把非空值当作作用域）。
 	//
@@ -232,12 +215,35 @@ type Task struct {
 //   - @@Claim@@ **原子**：读-判-写不可分割（并发认领同一任务只能有一个赢家）；
 //   - @@Release@@ / @@Complete@@ **只认 token**，且 token 不匹配时报
 //     @@ErrLeaseLost@@（不许静默成功——静默成功会让输家以为自己的释放生效了）；
-//   - @@List@@ 返回**一致快照**（不是边改边读的流）。
+//   - @@List@@ 返回**一致快照**（不是边改边读的流）；
+//   - @@List@@ / @@Claim@@ 返回的 Task **不得与实现内部共享 Deps 底层数组**
+//     （返回副本；调用方改写返回值不得牵动板内依赖图——Task 含切片，
+//     按值复制只复制切片头，见 Task 的注释）。
+//
+// 状态判定**只有一份判据**：@@State.Claimable@@（state.go）。实现不得
+// 各写各的闸——「读不懂 ⇒ 拒绝认领」是**契约义务**，不是某个实现的可选
+// 加固（issue #360）。
 //
 // 支持多租户的实现还必须满足租户条款（见包文档「多租户」）：键按 ctx 的
 // 租户作用域生成；他租户任务不可见、不可领、不可收场（一律 ErrNotFound）；
 // 声明「必须带租户」时缺租户 fail-closed（tenant.ErrNoContext）。空租户与
 // 缺租户不是一回事：前者是默认命名空间（旧布局），后者是拒绝。
+//
+// 接缝契约（宿主实现本接口；worker 的领取环与收场路径**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**（worker 的领取
+// 环与本包的并发认领判据都不在锁内调用），故内核侧无锁可指：宿主实现
+// 不得在方法内回调本包的其它接缝（不得回调 Board 的方法）——内核正同步
+// 等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。这些方法落在任务板的持久化路径上，被领取环
+// **同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须承接 ctx 的
+// 取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时等待别的
+// 回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（worker 的
+// 领取环直接调它，本包无 recover），宿主实现须自行保证不 panic 或在实现
+// 内部 recover 成 error。
 type Board interface {
 	// List 返回当前全部任务的快照（顺序不要求，判据会排序）。
 	List(ctx context.Context) ([]Task, error)
@@ -248,7 +254,16 @@ type Board interface {
 	// 调用方只给「要多长的租约」（ClaimRequest），不给令牌。
 	//
 	// 以下情形必须报错而不是「尽力而为」：不存在（ErrNotFound）/
-	// 被别人活着持有（ErrTaken）/ 依赖未完成（ErrBlocked）/ 已是终态（ErrTerminal）。
+	// 被别人活着持有（ErrTaken）/ 依赖未完成（ErrBlocked）/ 已是终态（ErrTerminal）/
+	// 状态不在内核词表内（ErrUnknownState）。
+	//
+	// 最后一条是**契约义务**（issue #360），不是可选加固：词表外状态代表
+	// 「内核读不懂这个状态」，写路径必须 fail-closed 拒绝认领——否则一条
+	// 脏状态行会让副作用照常施加（认领成功、令牌已铸、失效形态是绿的）。
+	// 判定一律走 @@State.Claimable@@（单一判据），实现不得各写各的闸。
+	//
+	// 拒绝认领时**不得铸令牌**、不得改写状态（半途铸出令牌会把「没领到」
+	// 变成「领到了但没人知道」）。
 	Claim(ctx context.Context, id TaskID, agent AgentID, req ClaimRequest) (Task, error)
 	// Release 归还认领（凭 token）。
 	Release(ctx context.Context, id TaskID, token string) error

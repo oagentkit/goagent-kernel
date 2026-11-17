@@ -70,6 +70,17 @@ func (c *FakeClock) Advance(d time.Duration) {
 // **为什么单独一个接口**：过期判定是存储实现内部的事（它自己知道
 // 「租约还在不在」）。套件不能替它判，只能要求它**用可注入的时钟**。
 // 没实现这个接口 → 套件硬失败（而不是跳过过期场景——跳过等于假绿）。
+//
+// 接缝契约（宿主实现本接口；套件在**不持内核锁**处调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。套件的调用点不持任何内核锁，故内核侧无锁可指：
+// 宿主实现不得在方法内回调本套件的其它接缝。
+// no-blocking：**宿主侧兑现**。套件在用例主流程里同步调用该方法，
+// 阻塞即拖住整条用例（退化成「看起来在跑」的挂起）。
+// panic-isolated：**宿主侧兑现**。套件不隔离宿主实现的 panic——它要让 panic
+// 直接掀翻用例并显红，而不是被吞成一次「场景没跑起来」。
 type ClockedBoard interface {
 	taskboard.Board
 	// UseClock 指定存储实现读时钟的方式（通常是注入一个 func() time.Time）。
@@ -230,6 +241,72 @@ func runFailedTaskReclaimable(t *testing.T, factory Factory) {
 	if _, err := b.Claim(context.Background(), "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute}); err != nil {
 		t.Fatalf("失败的任务必须能重做（实得 %v）", err)
 	}
+}
+
+// ── 拷贝义务（issue #379）────────────────────────────────────────────────
+
+// RunCopyObligation 跑「返回的 Task 不得与实现内部共享 Deps 底层数组」
+// 这条契约判据（issue #379）。
+//
+// # 为什么单独导出而不是并进 Run
+//
+// 并进 Run 会让**所有**接套件的宿主实现立刻受这条约束——而契约刚补上，
+// 宿主实现还在跟进途中（共享切片的实现会当场红）。单独导出便于逐个实现
+// 先验，接入 Run 的时机由宿主自己决定。
+//
+// # 判据怎么走
+//
+// 认领一个带依赖的任务 → 改写返回值里的 Deps[0] → 再 List 一次：
+// 板内的依赖必须**原样未变**。返回副本的实现过；共享底层数组的实现挂
+// （板内依赖图被调用方改穿，依赖判定读到的依赖被换掉）。
+func RunCopyObligation(t *testing.T, b taskboard.Board) {
+	t.Helper()
+	ctx := context.Background()
+	seed(t, b,
+		taskboard.Task{ID: "t1", State: taskboard.StateDone},
+		taskboard.Task{ID: "t2", State: taskboard.StateOpen, Deps: []taskboard.TaskID{"t1"}},
+	)
+	claimed, err := b.Claim(ctx, "t2", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("认领依赖已完成的任务应当成功: %v", err)
+	}
+	if len(claimed.Deps) == 0 {
+		t.Fatal("认领结果应当带依赖清单（判据需要改写它）")
+	}
+	claimed.Deps[0] = "dep-mutated-by-caller"
+	assertDepsUnchanged(t, b, "t2", "t1")
+
+	// List 返回的 Task 同样不得与实现内部共享。
+	tasks, err := b.List(ctx)
+	if err != nil {
+		t.Fatalf("列出任务失败: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID == "t2" && len(task.Deps) > 0 {
+			task.Deps[0] = "dep-mutated-by-caller"
+		}
+	}
+	assertDepsUnchanged(t, b, "t2", "t1")
+}
+
+// assertDepsUnchanged 板内该任务的依赖必须仍是 want。
+func assertDepsUnchanged(t *testing.T, b taskboard.Board, id taskboard.TaskID, want taskboard.TaskID) {
+	t.Helper()
+	tasks, err := b.List(context.Background())
+	if err != nil {
+		t.Fatalf("列出任务失败: %v", err)
+	}
+	for _, task := range tasks {
+		if task.ID != id {
+			continue
+		}
+		if len(task.Deps) == 0 || task.Deps[0] != want {
+			t.Fatalf("返回的 Task 与实现内部共享了 Deps 底层数组：板内依赖被调用方改穿（%v，期望 %q）",
+				task.Deps, want)
+		}
+		return
+	}
+	t.Fatalf("板内找不到 %s（判据前提不成立）", id)
 }
 
 // ── 套件基础设施 ────────────────────────────────────────────────────────

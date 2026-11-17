@@ -61,6 +61,20 @@ var ErrInvalidBatch = errors.New("taskboard: 批量领取数量必须为正")
 // 会被实现跳过并继续尝试下一个候选；基础设施故障则应中止并返回错误。
 // **已返回的任务仍然归调用方**（调用方必须按持有者收场），错误只表示
 // 本轮批量没有取满 n 个。
+//
+// 接缝契约（宿主实现本接口；调用方在批量领取路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**：宿主实现不得
+// 在 ClaimReady 内回调本包的其它接缝——内核正同步等着它返回，回查即互相
+// 等待。
+// no-blocking：**宿主侧兑现**。ClaimReady 落在任务板的持久化路径上，被批量
+// 领取路径**同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须
+// 承接 ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时
+// 等待别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 type ReadyBoard interface {
 	Board
 	// ClaimReady 批量领取至多 n 个就绪任务给 agent。

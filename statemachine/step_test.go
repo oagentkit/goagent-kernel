@@ -171,18 +171,23 @@ func TestMustTransitionUnknownStatus(t *testing.T) {
 }
 
 // TestStepStatusValid 全部规范状态必须 Valid，词表外一律 false。
+//
+// 口径已改（issue #373）：**归一后**判定，故写法变体（"RUNNING" /
+// " running "）与规范形态同结论——同一个词的写法差异不该被报成「读不懂」。
 func TestStepStatusValid(t *testing.T) {
 	valid := []StepStatus{
 		StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved,
 		StatusRejected, StatusExpired, StatusSucceeded, StatusFailed,
 		StatusInterrupted, StatusRolledBack, StatusSkipped, StatusCancelled,
+		// 写法变体：归一后与规范形态同结论。
+		"RUNNING", "running ", "Created",
 	}
 	for _, s := range valid {
 		if !s.Valid() {
 			t.Errorf("StepStatus(%q).Valid() 应为 true", s)
 		}
 	}
-	for _, s := range []StepStatus{"", "bogus", "RUNNING", "running "} {
+	for _, s := range []StepStatus{"", "bogus", "runnin", "rolled back"} {
 		if s.Valid() {
 			t.Errorf("StepStatus(%q).Valid() 应为 false", s)
 		}

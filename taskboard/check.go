@@ -87,6 +87,9 @@ func Check(tasks []Task) []Problem {
 			out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeLeaseNoClaim,
 				Text: "非认领态残留 owner/租约（含到期时刻）：读起来像还有人负责，实际没人"})
 		}
+		// 终态仍带 owner 才报。**failed 不是终态**（词表上刻意如此：失败
+		// 的任务要能重做），所以 failed + 残留 owner 不在这条判据内——
+		// 它仍会被上面「非认领态残留 owner/租约」那条报出来。
 		if t.State.Terminal() && t.Owner != "" {
 			out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeTerminalClaimed,
 				Text: "终态仍带 owner：终态不可重开，残留 owner 会让「谁做完的」与「谁还占着」混在一起"})
@@ -110,6 +113,9 @@ func Check(tasks []Task) []Problem {
 				continue
 			}
 			// 依赖未完成却被认领/完成：前置约束被跳过，两段工作会并行施加。
+			//
+			// 「已完成」按 Terminal() 判，故 **failed 依赖不算已完成**（failed
+			// 非终态）：前置失败的任务仍可重做，它没做完就不能放行后继。
 			if t.State == StateClaimed || t.State == StateDone {
 				if !dep.State.Terminal() {
 					out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeBlockedClaim,

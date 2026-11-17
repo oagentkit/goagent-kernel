@@ -112,6 +112,18 @@ func newBoardAdapter(b Backend, tenantScoped bool) (*BoardAdapter, error) {
 //
 // 仅限测试：契约套件的过期场景用它做确定性推进。生产路径**不得**注入本地
 // 时钟——租约到期是跨进程共享的事实，时间真相在存储（issue #194）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：注入的回调内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：回调在**不持适配器锁**的位置被调用（nowAt 取回调在 a.mu
+// 内、调用在锁外）。
+// no-blocking：注入的回调内不得无界等待——它在认领 / 续期的重判循环里被
+// 同步调用（每次重判都重取时刻），阻塞会拖住整条判定路径。
+// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（resolveNow
+// 直接调它，coord 包内无 recover），注入方须自行保证不 panic。
 func (a *BoardAdapter) UseClock(now func() time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -215,15 +227,18 @@ func (a *BoardAdapter) Claim(ctx context.Context, id taskboard.TaskID, agent tas
 		if !snap[tk].Exists {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 		}
-		// 词表外状态是「内核读不懂」，不是「可再被认领」：Terminal() 对
-		// 未知状态返回 false，只看它会让一条脏状态行照常领到租约并发副作用。
-		// 与 taskboard.Check 的 CodeUnknownState 同向（写路径 fail-closed）。
-		if !cur.State.Valid() {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrUnknownState,
-				"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(cur.State))
-		}
-		if cur.State.Terminal() {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+		// 单一判据（issue #360）：认不认领由 taskboard.State.Claimable 说了算
+		// ——实现不得各写各的闸。此前四份实现各写一套，其中三份漏了「词表外」
+		// 那道（只判终态），脏状态行照常领到租约并铸令牌：失效形态是绿的
+		//（认领成功、令牌可用、副作用照常施加）。
+		//
+		// 拒绝必须发生在**铸令牌之前**：被拒的认领不得留下任何占用痕迹。
+		if err := cur.State.Claimable(); err != nil {
+			if errors.Is(err, taskboard.ErrUnknownState) {
+				return taskboard.Task{}, errors.Wrap(err,
+					"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(cur.State))
+			}
+			return taskboard.Task{}, errors.Wrap(err, "任务已是终态", "task", string(id))
 		}
 		// 依赖键动态展开：清单与当前快照键集不一致 ⇒ 重取快照（带依赖键）。
 		need := claimKeySet(scope, id, cur.Deps)

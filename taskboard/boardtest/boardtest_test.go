@@ -83,8 +83,11 @@ func (m *memBoard) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, string(id))
 	}
-	if t.State.Terminal() {
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, string(id))
+	// 单一判据（issue #360）：词表外 ⇒ ErrUnknownState，终态 ⇒ ErrTerminal。
+	// 实现不得各写各的闸——四份实现曾各写一套，其中三份漏了词表外那道，
+	// 脏状态行照常领到租约并铸令牌（失效形态是绿的）。
+	if err := t.State.Claimable(); err != nil {
+		return taskboard.Task{}, errors.Wrap(err, string(id))
 	}
 	if t.State == taskboard.StateClaimed && !leaseExpired(t.Lease, m.clockLocked()) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, string(id))
@@ -108,7 +111,10 @@ func (m *memBoard) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	t.Owner = agent
 	t.Lease = lease
 	t.Seq++
-	return *t, nil
+	// 返回副本：不得与实现内部共享 Deps 底层数组（issue #379）。
+	out := *t
+	out.Deps = append([]taskboard.TaskID(nil), t.Deps...)
+	return out, nil
 }
 
 func (m *memBoard) Release(_ context.Context, id taskboard.TaskID, token string) error {
@@ -167,7 +173,10 @@ func (m *memBoard) Renew(_ context.Context, id taskboard.TaskID, token string, r
 		t.Lease.Until = time.Time{}
 	}
 	t.Seq++
-	return *t, nil
+	// 返回副本：不得与实现内部共享 Deps 底层数组（issue #379）。
+	out := *t
+	out.Deps = append([]taskboard.TaskID(nil), t.Deps...)
+	return out, nil
 }
 
 // TestConformanceOnMemoryBoard 好实现必须全绿（缺省规模档：10 与 100）。

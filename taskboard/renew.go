@@ -83,6 +83,22 @@ type Fence uint64
 //
 // 宿主应在**施加副作用之前**调 Renew：返回 @@ErrLeaseLost@@ 说明任务已易主，
 // 本次动作必须放弃——继续做就是与新持有者重复施加。
+//
+// 接缝契约（宿主实现本接口；调用方在续期路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**：宿主实现不得
+// 在 Renew 内回调本包的其它接缝——内核正同步等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。Renew 落在任务板的持久化路径上，被续期路径
+// **同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须承接 ctx 的
+// 取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时等待别的
+// 回调。
+// panic-isolated：**宿主侧兑现（内核有隔离，但覆盖面不全）**——worker 的
+// 两条续期路径把宿主 panic 隔离成一次续期失败（并发路径走 async.GoSafe、
+// 批量路径走 renewBatchCall 的 recover，issue #368）；但那不是全部调用点
+// （租约会话的续期协程直接调它），故宿主实现仍须自行保证不 panic 或在实现
+// 内部 recover 成 error。
 type RenewingBoard interface {
 	Board
 	// Renew 续期并确认持有资格（契约见类型级说明）。
@@ -120,6 +136,22 @@ type Renewal struct {
 //   - 返回切片与请求**同序、等长**，每条结果的 ID 回显请求 ID；
 //   - 批量不改变 Renew 的语义：续期不递增 Fence、不换 Token；每条仍按
 //     存储自己的时钟校验与推算到期时刻。
+//
+// 接缝契约（宿主实现本接口；调用方在批量续期路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。内核的调用点**不持任何内核锁**：宿主实现不得
+// 在 RenewBatch 内回调本包的其它接缝——内核正同步等着它返回，回查即互相
+// 等待。
+// no-blocking：**宿主侧兑现**。RenewBatch 是**一次存储往返**续多条，被批量
+// 续期路径**同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须
+// 承接 ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时
+// 等待别的回调。
+// panic-isolated：**内核侧兑现（worker 的批量续期路径）**——renewBatchCall
+// 用 recover 把宿主 panic 隔离成一次整批失败（issue #368：批量路径此前直接
+// 调，panic 会掀翻心跳协程 ⇒ 全部在途租约停止续期）；但隔离是**驱动侧**的
+// 性质，不是本接缝自身的保证——宿主实现仍须自行保证不 panic。
 type BatchRenewingBoard interface {
 	RenewingBoard
 	// RenewBatch 一次存储往返续期多条（契约见类型级说明）。

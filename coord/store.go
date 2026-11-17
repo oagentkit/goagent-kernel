@@ -74,6 +74,18 @@ func NewStoreAdapter(b Backend) (*StoreAdapter, error) {
 //
 // 仅限测试：契约套件的过期场景用它做确定性推进。生产路径**不得**注入本地
 // 时钟——占用到期是跨进程共享的事实，时间真相在存储（issue #194）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：注入的回调内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：回调在**不持适配器锁**的位置被调用（nowAt 取回调在 s.mu
+// 内、调用在锁外）。
+// no-blocking：注入的回调内不得无界等待——它在占用判定的重判循环里被同步
+// 调用（每次重判都重取时刻），阻塞会拖住整条判定路径。
+// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（resolveNow
+// 直接调它，coord 包内无 recover），注入方须自行保证不 panic。
 func (s *StoreAdapter) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

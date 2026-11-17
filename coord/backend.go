@@ -96,6 +96,18 @@ type Mutation struct {
 // 实现形态示例：Redis → Lua 脚本内 TIME；PostgreSQL → 事务内
 // clock_timestamp()（examples/pgstore 即此形态）；etcd → 以 revision 或
 // 专门的存储侧时间键为锚。拿不出权威时间的后端见 SingleMachine。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：resolveNow 在**不持适配器锁**的位置调用本接口（nowAt 取
+// 回调在锁内、调用在锁外）。
+// no-blocking：宿主实现内不得无界等待——它在认领 / 续期的重判循环里被
+// 同步调用（每次重判都重取时刻），阻塞会拖住整条判定路径。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（resolveNow
+// 直接调 Now，无 recover），宿主实现须自行保证不 panic。
 type ClockSource interface {
 	// Now 存储侧当前时刻。
 	Now(ctx context.Context) (time.Time, error)
@@ -105,6 +117,17 @@ type ClockSource interface {
 // 「只在单进程内使用」，适配器才允许用节点本地时钟判到期——单进程内只有
 // 一个时钟，不存在跨进程不一致。不声明也不实现 ClockSource 的后端
 // **拒绝装配**（@@ErrNoTimeAuthority@@），不静默退化成节点时钟。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口只在**装配期**被调用（hasTimeAuthority），不持内核
+// 锁、不在热路径上。
+// no-blocking：宿主实现内不得无界等待——装配期同步调用，阻塞即拖住装配。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（装配期调用，
+// panic 会掀翻装配），宿主实现须自行保证不 panic。
 type SingleMachine interface {
 	// SingleMachine 报告后端是否只在单进程内使用。
 	SingleMachine() bool
@@ -157,6 +180,19 @@ func resolveNow(b Backend, injected func() time.Time, ctx context.Context) (time
 //
 // 实现了本接口的后端，租约判定与提交的窗口为 0（见 LeasePrecision）；
 // 未实现的后端走误差预算降级路径（见 DefaultLeaseErrorBudget）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：内核交给宿主的 decide 闭包在**宿主事务内**运行 ⇒ 闭包内
+// 不得回查本包的 Backend（不得在事务内再发一次后端交互）。内核侧兑现：
+// 闭包只调宿主给的 read 与内核自己的 plan，不回查 Backend；宿主侧要求：
+// read 提供的快照必须属于同一事务。
+// no-blocking：decide 闭包在宿主事务内同步运行 ⇒ 闭包内不得无界等待
+// （不得做 I/O / 等锁 / 等其它回调）。内核侧兑现：plan 是纯判定。
+// panic-isolated：**宿主侧兑现**——闭包内的 panic 会逃进宿主的事务实现，
+// 内核不设 recover；宿主必须自行隔离，否则事务半途 panic、闸状态不明。
 type AtomicDecision interface {
 	// DecideTx 在一次事务内取存储时刻、读快照、执行判定并条件提交。
 	DecideTx(ctx context.Context, decide func(now time.Time, read func(keys ...string) (map[string]Entry, error)) (asserts []Assert, mutations []Mutation, err error)) (applied bool, at time.Time, err error)
@@ -167,6 +203,16 @@ type AtomicDecision interface {
 // 未实现时适配器按 DefaultLeaseErrorBudget 承诺。实现本接口的后端应当
 // 按自己的真实事务往返（含存储时钟读取）声明上界；返回值 <= 0 视作未声明。
 // 只能声明、不能验证——实际窗口由 LeaseVerdict 在每次判定后观测。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口是**只读声明**，在装配期与判定前被读取，不持内核锁。
+// no-blocking：宿主实现内不得无界等待——读取是纯读数，判定路径同步等它。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic。
 type LeaseBudget interface {
 	LeaseErrorBudget() time.Duration
 }
@@ -186,6 +232,18 @@ type LeaseBudget interface {
 //
 // 典型实现形态见包文档的「形态约定」节。跨进程原子性由实现方的存储保证
 // ——本包的内存后端只在单进程内成立，不得上生产。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁），
+// 也不得在一次调用内自锁（如连接池耗尽时等待自己）。内核侧兑现：适配器
+// 在**不持适配器锁**的位置调用本接口（casLoop 只用断言护窗口）。
+// no-blocking：宿主实现内不得无界等待——每次重判都是一次后端往返，内核
+// 不设超时，阻塞会拖住整条判定路径。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（coord 包内
+// 无 recover），宿主实现须自行保证不 panic。
 type Backend interface {
 	// Snapshot 一致快照读：返回这些键的当前状态。
 	// 同一个键重复出现按一次计；不存在的键返回 Exists=false 的条目。

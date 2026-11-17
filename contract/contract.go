@@ -28,6 +28,16 @@
 //
 // 这样约 80% 的编排逻辑可下沉，剩下 20% 留在宿主适配层。
 //
+// ## 状态词表
+//
+// 会话状态词表在 status.go（**单一事实源**）：AllStatuses 给出全集，
+// IsKnownStatus / ClassifyStatus / IsSessionTerminal 给出判定面。
+//
+// **会话终态 ≠ 环节终态**：本包判的是会话终态，环节终态由
+// statemachine.IsStepTerminal 判。两个概念各有各的词表（failed 的归属
+// 还相反），详见 status.go 的包注释——**不要**把某一侧的词表灌进另一侧
+// 的判定面。
+//
 // ## 稳定承诺
 //
 // 本包是**契约面**：方法集只增不改（加新能力时新增方法并给零值默认实现），
@@ -63,26 +73,27 @@ const (
 	StatusTimedOut        = "timed_out"
 )
 
-// IsTerminalStatus 报告 status 是否为会话终态词表成员。
-//
-// 终态 = 一轮编排不会再自行前进的收尾状态（succeeded / failed / cancelled /
-// timed_out）。created / running / waiting_approval 是过程态，不是终态。
-//
-// 这是**词表成员判定**，不是「这个终态是否与事实一致」的裁决——后者需要会话
-// 存储面与恢复路径，归宿主。机制面只需要一个共同的词表真相，故在这里单点导出：
-// 消费方（如 watchdog 的轮括号校验）不必各抄一份终态清单（第二套词表必然漂移）。
-func IsTerminalStatus(status string) bool {
-	switch status {
-	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut:
-		return true
-	}
-	return false
-}
-
 // RunContext 编排运行上下文。
 //
 // 生命周期：一轮编排对应一个实例，由宿主在派发时构造、终态后释放。
 // 实现须**并发安全**：编排引擎会在事件回调与主流程间共享同一实例。
+//
+// 接缝契约（宿主实现本接口，编排引擎调用其方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**纯契约面**——本仓没有内核包调用这些
+// 方法（调用方是宿主仓里的编排引擎与宿主适配层），故内核侧无锁可指：宿主
+// 实现不得在方法内回调编排引擎的同一条推进路径（引擎正等着它返回，回查
+// 即互相等待）。
+// no-blocking：**宿主侧兑现**。方法在编排主流程上被**同步**调用，必须有界
+// 返回：不得等锁、不得做长耗时 I/O。读方法（ID / CaseID / Status /
+// CurrentStep / Field）应取宿主已缓存的内存态；写方法（SetStatus /
+// SetCurrentStep / SetField）落在会话持久化路径上，落库应放在宿主适配层
+// 或异步写侧，不得在方法内同步等库。
+// panic-isolated：**宿主侧兑现**。本包不做 recover（纯声明面），panic 会沿
+// 编排引擎的调用栈上抛；宿主实现须自行保证不 panic，或在实现内部 recover
+// 成 error。
 type RunContext interface {
 	// ID / CaseID 会话与案例标识（编排日志与事件载荷用，必须稳定）。
 	ID() string
@@ -115,6 +126,20 @@ type StepRef struct {
 //
 // 编排引擎不直接碰存储——所有环节状态的读写都经此出口，
 // 这样换一个宿主（文件系统、内存、别的库）不必改编排逻辑。
+//
+// 接缝契约（宿主实现本接口，编排引擎调用其方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**纯契约面**（见 RunContext 的同一说明），
+// 内核侧无锁可指：宿主实现不得在 Open / Finish 内回调编排引擎的环节推进
+// 路径（引擎正等着它返回，回查即互相等待）。
+// no-blocking：**宿主侧兑现**。Open（建行 + 状态迁移）与 Finish（收口）落在
+// 环节状态的持久化路径上，被编排主流程**同步**等待：必须承接宿主侧的取消
+// 信号并在期限内返回，不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**。本包不做 recover（纯声明面），panic 会沿
+// 编排引擎的调用栈上抛；宿主实现须自行保证不 panic，或在实现内部 recover
+// 成 error。
 type StepSink interface {
 	// Open 新建环节：宿主应完成「建行 + 状态迁移到 running」两件事。
 	// name 为环节标识（agent slug 或链节点路径），label 为用户可见语义标签。
@@ -123,12 +148,20 @@ type StepSink interface {
 	// succeeded / failed / degraded / skipped，本包不判值——终态判定由宿主
 	// 注入，见包头承诺）。
 	//
-	// 词表与 statemachine 的 StepStatus 是**两套口径**（issue #159）：那边
-	// 的终态以 statemachine.IsTerminal 为准，且 failed 在状态机里**不是**终态
-	// （它还有出边 → rolled_back），degraded 也不在其词表中。宿主若两包组合
-	// 使用（如把 statemachine.IsTerminal 注入 commitgate 当判定面），请按
-	// statemachine 的词表对齐自己的 status 取值，不要把本注释的举例词表
-	// 直接灌进那边的判定面。
+	// # 会话终态与环节终态是**两个概念**（issue #354）
+	//
+	// 本包判的是**会话**终态（contract.IsSessionTerminal）：一轮会话会不会
+	// 再自行前进。statemachine 判的是**环节**终态
+	// （statemachine.IsStepTerminal）：一个环节还能不能迁移。
+	//
+	// 两张词表**互不覆盖**：会话侧有 timed_out，环节侧有 rolled_back /
+	// skipped；failed 的归属还**相反**——会话侧 failed 是终态（这一轮结束
+	// 了），环节侧 failed **不是**终态（环节还有出边 → rolled_back：失败的
+	// 工作通常要重做）。degraded 也不在任一词表内。
+	//
+	// ⇒ 宿主**不要**把某一侧的词表灌进另一侧的判定面，也不必试图「对齐」
+	// 两边：**不存在一个同时满足两边的词表**。落库的 status 取值只须与
+	// **消费它的那一侧**的词表对齐。
 	Finish(ref StepRef, status string) error
 }
 
@@ -136,6 +169,20 @@ type StepSink interface {
 //
 // 编排侧只说「我要 server X 的这几个工具」，**不关心工具从哪来**
 // （MCP 池、静态注册表、测试替身都实现同一接口）。这是宿主可替换的关键接缝。
+//
+// 接缝契约（宿主实现本接口，编排引擎调用其方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**纯契约面**（见 RunContext 的同一说明），
+// 内核侧无锁可指：宿主实现不得在 Tools 内回调编排引擎的派发路径（引擎正
+// 等着它返回，回查即互相等待）。
+// no-blocking：**宿主侧兑现**。Tools 在派发路径上被**同步**调用（取不到工具面
+// ⇒ 该环节无法执行），必须廉价有界：工具清单应是宿主已装配好的内存态，
+// 不得在方法内同步做远端发现或拉取。
+// panic-isolated：**宿主侧兑现**。本包不做 recover（纯声明面），panic 会沿
+// 编排引擎的调用栈上抛；宿主实现须自行保证不 panic，或在实现内部 recover
+// 成 error。
 type ToolBinder interface {
 	// Tools 按 server + allow 白名单取工具面。
 	// allow 为空 = 取该 server 全部工具。
@@ -145,6 +192,21 @@ type ToolBinder interface {
 }
 
 // Tools 一次绑定得到的工具面。
+//
+// 接缝契约（宿主实现本接口，编排引擎调用其方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**纯契约面**（见 RunContext 的同一说明），
+// 内核侧无锁可指：宿主实现不得在 Names / Invoke 内回调编排引擎的派发路径
+// （引擎正等着它返回，回查即互相等待）。
+// no-blocking：**宿主侧兑现**。Names 必须廉价（诊断与留痕用，同一次派发里
+// 会被反复问），不得做 I/O；Invoke 是工具执行的落地面，它**可以**长耗时，
+// 但「不阻塞」在此处的准确含义是「**有界**」——必须承接 ctx 的取消/超时
+// 并在期限内返回，不得无限等待。
+// panic-isolated：**宿主侧兑现**。本包不做 recover（纯声明面），panic 会沿
+// 编排引擎的调用栈上抛；宿主实现须自行保证不 panic，或在实现内部 recover
+// 成 error。
 type Tools interface {
 	// Names 返回工具名列表（诊断与留痕用）。
 	Names() []string
@@ -153,6 +215,19 @@ type Tools interface {
 }
 
 // Clock 时钟注入点（避免编排逻辑直接依赖 time.Now，测试可注入确定性时钟）。
+//
+// 接缝契约（宿主实现本接口，编排引擎调用其方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**纯契约面**（见 RunContext 的同一说明），
+// 内核侧无锁可指：宿主实现不得在 Now 内回调编排引擎的判定路径（引擎正等着
+// 它返回，回查即互相等待）。
+// no-blocking：**宿主侧兑现**。Now 在过期/超时判定路径上被**高频**同步调用
+// （每次重判都重取时刻），必须廉价有界：不得等锁、不得做 I/O。
+// panic-isolated：**宿主侧兑现**。本包不做 recover（纯声明面），panic 会沿
+// 编排引擎的调用栈上抛；宿主实现须自行保证不 panic，或在实现内部 recover
+// 成 error。
 type Clock interface {
 	Now() (unixNano int64)
 }
