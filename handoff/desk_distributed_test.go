@@ -116,7 +116,7 @@ func TestDeskDistributedSemantics(t *testing.T) {
 
 	// ── 超时：责任期过后回执迟到 ⇒ 单落 expired，回执被拒 ──
 	clock.Advance(2 * time.Minute) // baseTicket TTL = 1min
-	if err := source.Reply(ctx, offered.Key, h1.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); !kerrors.Is(err, ErrExpired) {
+	if err := source.Reply(ctx, offered.Key, h1.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); !kerrors.Is(err, ErrExpired) {
 		t.Fatalf("超时后的回执必须 ErrExpired, got %v", err)
 	}
 	snap, _ = source.Snapshot(ctx)
@@ -138,10 +138,10 @@ func TestDeskDistributedSemantics(t *testing.T) {
 	}
 
 	// ── 旧代迟到：gen1 的令牌不得关掉 gen2 的单 ──
-	if err := source.Reply(ctx, offered2.Key, h1.Token, Receipt{Status: ReceiptDone, Summary: "late"}); !kerrors.Is(err, ErrLeaseLost) {
+	if err := source.Reply(ctx, offered2.Key, h1.Token, Receipt{Status: ReceiptCompleted, Summary: "late"}); !kerrors.Is(err, ErrLeaseLost) {
 		t.Fatalf("旧代迟到回执必须 ErrLeaseLost, got %v", err)
 	}
-	if err := source.Reply(ctx, offered2.Key, h2.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); err != nil {
+	if err := source.Reply(ctx, offered2.Key, h2.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); err != nil {
 		t.Fatalf("新持有者的回执应成功（旧代拒绝不得波及新一代）: %v", err)
 	}
 	got, err := source.Deliveries(ctx, baseTicket().ReplyTo)

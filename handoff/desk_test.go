@@ -47,7 +47,7 @@ func TestDeskCrossInstanceHandoff(t *testing.T) {
 	if h.Token == "" || h.Fence != 1 {
 		t.Fatalf("handle 应由存储铸造令牌与代次：%+v", h)
 	}
-	if err := target.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); err != nil {
+	if err := target.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +59,7 @@ func TestDeskCrossInstanceHandoff(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("应取到一条回执，得到 %+v", got)
 	}
-	if got[0].Key != "step-7" || got[0].Generation != 1 || got[0].Receipt.Status != ReceiptDone {
+	if got[0].Key != "step-7" || got[0].Generation != 1 || got[0].Receipt.Status != ReceiptCompleted {
 		t.Fatalf("回执内容不完整：%+v", got[0])
 	}
 
@@ -95,7 +95,7 @@ func TestDeskReceiptAddressing(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := d.Reply(ctx, tk.Key, h.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); err != nil {
+		if err := d.Reply(ctx, tk.Key, h.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -192,7 +192,7 @@ func TestDeskOwnershipEpochMonotonic(t *testing.T) {
 
 	// 过期后重新交接 = 新代，旧令牌的回执必被拒。
 	clock.Advance(2 * time.Minute)
-	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "late"}); !kerrors.Is(err, ErrExpired) {
+	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "late"}); !kerrors.Is(err, ErrExpired) {
 		t.Fatalf("迟到回执应 ErrExpired（懒式落账），得到 %v", err)
 	}
 	next, err := d.Offer(ctx, baseTicket())
@@ -202,7 +202,7 @@ func TestDeskOwnershipEpochMonotonic(t *testing.T) {
 	if next.Generation != 4 {
 		t.Fatalf("过期后重新交接应开第四代：%+v", next)
 	}
-	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "late"}); !kerrors.Is(err, ErrLeaseLost) {
+	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "late"}); !kerrors.Is(err, ErrLeaseLost) {
 		t.Fatalf("旧代令牌的迟到回执应 ErrLeaseLost，得到 %v", err)
 	}
 }
@@ -300,7 +300,7 @@ func TestLocalDeskDeliveriesAndTakeAt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); err != nil {
+	if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := d.Deliveries(ctx, "reply://proc-a/inbox")

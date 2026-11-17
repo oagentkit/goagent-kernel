@@ -36,6 +36,7 @@ package contract
 
 import (
 	"context"
+	"strings"
 
 	"github.com/oekit/pkg/errors"
 )
@@ -51,8 +52,23 @@ import (
 // 超时）是两根轴、两个 Cause。
 var ErrSessionDeadline = errors.New("会话超过会话级时限")
 
-// 会话状态（编排语义；与宿主存储列名无关）。
+// ErrUserCancelled 用户经取消 API 触发的协作中止 Cause（issue #355）。
+//
+// **全仓唯一身份**：宿主用 context.WithCancelCause(ErrUserCancelled) 表达
+// 用户取消，deadline/finalize 的收尾路由都用同一个值判定。两侧各写一份
+// errors.New 时字面量相同但 error 值不同，errors.Is 互不认领——同一 ctx 在
+// 一侧判 cancelled（落终态）、另一侧判停机（不落终态，会话滞留 running）。
+//
+// 与 ErrSessionDeadline（墙钟到点）、裸 ctx 取消（进程停机）、
+// steer.ErrSteered（接管）是四个可区分的 Cause，判定一律走 errors.Is。
+var ErrUserCancelled = errors.New("会话被用户取消")
+
+// 会话状态（编排运行生命周期；与宿主存储列名无关）。
+//
 // 取值由宿主定义，但编排引擎只按「可流转」使用，不解释具体语义。
+// 与环节状态共有的 6 个取值（created / running / waiting_approval /
+// succeeded / failed / cancelled）在此**单点定义**：statemachine 的
+// StepStatus 常量全部是这里的别名（issue #357），不再各写一份字面量。
 const (
 	StatusCreated         = "created"
 	StatusRunning         = "running"
@@ -63,17 +79,55 @@ const (
 	StatusTimedOut        = "timed_out"
 )
 
-// IsTerminalStatus 报告 status 是否为会话终态词表成员。
+// 环节状态（与 statemachine.StepStatus 共用同一取值空间；issue #354/#357）。
 //
-// 终态 = 一轮编排不会再自行前进的收尾状态（succeeded / failed / cancelled /
-// timed_out）。created / running / waiting_approval 是过程态，不是终态。
+// 环节状态与会话状态是**两根轴**（环节可以由 failed 补偿迁移到 rolled_back，
+// 会话到 failed 就收尾），但取值空间重叠，且终态判定必须是**同一份判据**：
+// 否则宿主按一份词表落库、内核按另一份判终态，同一状态在两处得到相反结论。
+// 这里补齐环节独有的 6 个取值，终态判定因此只需一份词表就能覆盖两根轴；
+// 转移表与环节语义仍在 statemachine（本包不解释迁移）。
+const (
+	StatusApproved    = "approved"
+	StatusRejected    = "rejected"
+	StatusExpired     = "expired"
+	StatusInterrupted = "interrupted"
+	StatusRolledBack  = "rolled_back"
+	StatusSkipped     = "skipped"
+)
+
+// IsTerminalStatus 报告 status 是否为内核终态词表成员（会话/环节共用一份判据）。
 //
-// 这是**词表成员判定**，不是「这个终态是否与事实一致」的裁决——后者需要会话
-// 存储面与恢复路径，归宿主。机制面只需要一个共同的词表真相，故在这里单点导出：
-// 消费方（如 watchdog 的轮括号校验）不必各抄一份终态清单（第二套词表必然漂移）。
+// 终态 = 一轮编排不会再**自行**前进的收尾状态：
+//
+//   - 会话轴：succeeded / failed / cancelled / timed_out；
+//   - 环节轴：succeeded / failed / cancelled / rejected / expired /
+//     interrupted / rolled_back / skipped。
+//
+// **failed 在两根轴上都是终态。** 环节的 failed → rolled_back 是回滚补偿：
+// 由裁决面/恢复面显式驱动，不是状态机自行前进，故不改变「failed 已收尾」
+// 的判定（issue #354 把两侧口径收敛到这一条）。
+//
+// created / running / waiting_approval / approved 是过程态；词表外取值
+// （含宿主自定义终态）一律 false——本函数只判**内核词表成员**，不臆断
+// 自定义状态。#334 的三态口径不变：词表外按「判不了」处置，不得冒充终态。
+//
+// 这是**词表成员判定**，不是「这个终态是否与事实一致」的裁决——后者需要存储
+// 面与恢复路径，归宿主。机制面只需要一个共同的词表真相，故在这里单点导出：
+// 消费方（checkpoint / controlplane / watchdog / 参考实现）一律引用本函数，
+// 不各抄一份终态清单（第二套词表必然漂移）。
+//
+// statemachine 是**环节侧**的类型化入口：IsTerminal 从自己的转移表派生
+// （无自行推进出边=终态，#374），不直接调用本函数——两者对 12 个环节状态
+// 的结论由 statemachine 的跨包表驱动用例逐条钉住；转移表若变，用例会同时
+// 逼本函数与 IsTerminal 对齐（#354）。timed_out 是会话独有取值，环节侧
+// 按「词表外」返回 false，这是轴的边界而不是判据分叉。
 func IsTerminalStatus(status string) bool {
-	switch status {
-	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut:
+	// 写法归一与 statemachine 同口径（issue #373/#354）：状态值可能来自库/
+	// 配置/外部来源，大小写与空白是常见漂移，不应让同一状态在两包得到
+	// 相反结论。归一后仍只认内核词表（词表外 false）。
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut,
+		StatusRejected, StatusExpired, StatusInterrupted, StatusRolledBack, StatusSkipped:
 		return true
 	}
 	return false
@@ -123,12 +177,12 @@ type StepSink interface {
 	// succeeded / failed / degraded / skipped，本包不判值——终态判定由宿主
 	// 注入，见包头承诺）。
 	//
-	// 词表与 statemachine 的 StepStatus 是**两套口径**（issue #159）：那边
-	// 的终态以 statemachine.IsTerminal 为准，且 failed 在状态机里**不是**终态
-	// （它还有出边 → rolled_back），degraded 也不在其词表中。宿主若两包组合
-	// 使用（如把 statemachine.IsTerminal 注入 commitgate 当判定面），请按
-	// statemachine 的词表对齐自己的 status 取值，不要把本注释的举例词表
-	// 直接灌进那边的判定面。
+	// 终态判定的公开入口是 contract.IsTerminalStatus（issue #354）；statemachine
+	// 的 12 个 StepStatus 常量已全部别名化到本包常量（issue #357），其
+	// IsTerminal 从转移表派生并与本函数对 12 个环节状态逐条一致（跨包用例
+	// 钉住）。宿主把任一判据注入 commitgate 当判定面，对环节词表内的取值
+	// 结论相同。degraded 等宿主自定义终态不在内核词表内，按 #334 的三态口径
+	// 由宿主自行登记，不要指望内核认得。
 	Finish(ref StepRef, status string) error
 }
 

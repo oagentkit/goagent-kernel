@@ -10,7 +10,6 @@ import (
 
 	"github.com/yi-nology/goagent-kernel/contract"
 	"github.com/yi-nology/goagent-kernel/finalize"
-	"github.com/yi-nology/goagent-kernel/statemachine"
 	"github.com/yi-nology/goagent-kernel/steer"
 )
 
@@ -74,11 +73,11 @@ func TestDecideQueueAware(t *testing.T) {
 // 混进保产面。
 func TestBuildSummaryOnlyCountsSucceeded(t *testing.T) {
 	steps := []steer.DoneStep{
-		{Slug: "step-a", Summary: "合成产出 A", Status: statemachine.StatusSucceeded},
-		{Slug: "step-b", Summary: "合成产出 B", Status: statemachine.StatusFailed},
-		{Slug: "step-c", Summary: "合成产出 C", Status: statemachine.StatusSkipped},
-		{Slug: "step-d", Summary: "合成产出 D", Status: statemachine.StatusRolledBack},
-		{Slug: "step-e", Summary: "合成产出 E", Status: statemachine.StatusInterrupted},
+		{Slug: "step-a", Summary: "合成产出 A", Status: contract.StatusSucceeded},
+		{Slug: "step-b", Summary: "合成产出 B", Status: contract.StatusFailed},
+		{Slug: "step-c", Summary: "合成产出 C", Status: contract.StatusSkipped},
+		{Slug: "step-d", Summary: "合成产出 D", Status: contract.StatusRolledBack},
+		{Slug: "step-e", Summary: "合成产出 E", Status: contract.StatusInterrupted},
 	}
 	out := steer.BuildSummary(steps, steer.Caps{})
 	if !strings.Contains(out, "step-a：合成产出 A") {
@@ -111,7 +110,7 @@ func TestBuildSummaryEmptyAndDegraded(t *testing.T) {
 // 截断（按 byte 切会把多字节字符拦腰截断）；负值 = 不截断（显式语义不归一）。
 func TestBuildSummaryCaps(t *testing.T) {
 	long := strings.Repeat("字", 80)
-	steps := []steer.DoneStep{{Slug: "step-a", Summary: long, Status: statemachine.StatusSucceeded}}
+	steps := []steer.DoneStep{{Slug: "step-a", Summary: long, Status: contract.StatusSucceeded}}
 
 	one := steer.BuildSummary(steps, steer.Caps{StepSummary: 5, Report: 400})
 	if !strings.Contains(one, "step-a：字字字字…") {
@@ -224,7 +223,7 @@ func TestRunRequeueHit(t *testing.T) {
 		status: contract.StatusRunning,
 		queue:  true,
 		steps: []steer.DoneStep{
-			{Slug: "step-a", Summary: "合成产出 A", Status: statemachine.StatusSucceeded},
+			{Slug: "step-a", Summary: "合成产出 A", Status: contract.StatusSucceeded},
 		},
 	}
 	out, err := steer.Run(steeredCtx(t), st, steer.Spec{

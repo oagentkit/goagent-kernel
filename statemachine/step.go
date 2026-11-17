@@ -13,29 +13,41 @@ import (
 	"strings"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // StepStatus 环节状态。
 type StepStatus string
 
-// 无类型常量（批次二十八）：同一取值既可作 StepStatus 用（转移表/判定），也可作
-// string 直传 repo.TransitionStep 等以字符串参数调用的位点——单一事实源不设两份。
+// 环节状态常量：**全部是 contract 同值常量的别名**（issue #354/#357）。
+//
+// 状态词表只有一个定义处（contract）；本包不再写第二份字面量。无类型别名
+// 保持批次二十八的性质：同一取值既可作 StepStatus 用（转移表/判定），也可作
+// string 直传 repo.TransitionStep 等以字符串参数调用的位点。
+//
+// 两包共有的 6 个取值（created/running/waiting_approval/succeeded/failed/
+// cancelled）与会话词表同源；环节独有的 6 个取值也由 contract 单点定义，
+// 使终态判据只需一份词表就能覆盖两根轴。
+//
+// Deprecated: 状态取值的词表主人是 contract（便于两包共用同一份终态判据）。
+// 这些常量保留为别名仅为兼容既有调用方；新代码请直接使用 contract.StatusX。
 const (
-	StatusCreated         = "created"
-	StatusRunning         = "running"
-	StatusWaitingApproval = "waiting_approval"
-	StatusApproved        = "approved"
-	StatusRejected        = "rejected"
-	StatusExpired         = "expired"
-	StatusSucceeded       = "succeeded"
-	StatusFailed          = "failed"
+	StatusCreated         = contract.StatusCreated
+	StatusRunning         = contract.StatusRunning
+	StatusWaitingApproval = contract.StatusWaitingApproval
+	StatusApproved        = contract.StatusApproved
+	StatusRejected        = contract.StatusRejected
+	StatusExpired         = contract.StatusExpired
+	StatusSucceeded       = contract.StatusSucceeded
+	StatusFailed          = contract.StatusFailed
 	// StatusInterrupted 中断占位态（spec 2026-09-21-conversation-uplift P1-3）：环节因
 	// 用户取消/会话超时/进程中断而中止——区别于失败（执行了但失败）。占位报告写明
 	// 「被中断、无产出或不完整」，下一轮对话历史如实携带，LLM 自行决定重做或跳过。
-	StatusInterrupted = "interrupted"
-	StatusRolledBack  = "rolled_back"
-	StatusSkipped     = "skipped"
-	StatusCancelled   = "cancelled"
+	StatusInterrupted = contract.StatusInterrupted
+	StatusRolledBack  = contract.StatusRolledBack
+	StatusSkipped     = contract.StatusSkipped
+	StatusCancelled   = contract.StatusCancelled
 )
 
 // StepType 环节类别；plan/execute 必经审批态，readonly 裁剪审批（AGENTS 治理闸门）。
@@ -75,24 +87,46 @@ func (s StepStatus) Valid() bool {
 	}
 }
 
-// transitions 合法转移表。
+// transitions **自行推进**的合法转移表：无出边 = 终态（issue #374）。
 //
-// **终态不在这张表里另列清单**：无出边即终态，IsTerminal 直接读本表派生
-// （issue #374）。给某个状态加/删出边时，终态结论自动跟随。
+// **终态不在这张表里另列清单**：IsTerminal 直接读本表派生，给某个状态加/删
+// 出边时终态结论自动跟随。
+//
+// failed 不在本表里列出边：failed → rolled_back 是**补偿迁移**（由裁决面/
+// 恢复面显式驱动，不是状态机自行前进），登记在 compensations。故 failed
+// 仍是终态，且与 contract.IsTerminalStatus 的结论一致（issue #354）。
 var transitions = map[StepStatus][]StepStatus{
 	StatusCreated:         {StatusRunning, StatusSkipped},
 	StatusRunning:         {StatusSucceeded, StatusFailed, StatusInterrupted, StatusWaitingApproval},
 	StatusWaitingApproval: {StatusApproved, StatusRejected, StatusExpired, StatusCancelled},
 	StatusApproved:        {StatusRunning},
-	StatusFailed:          {StatusRolledBack},
-	// rejected/expired/succeeded/interrupted/skipped/rolled_back/cancelled 无出边（终态）
+	// rejected/expired/succeeded/failed/interrupted/skipped/rolled_back/cancelled 无自行出边（终态）
+}
+
+// compensations **显式补偿**迁移：只允许从终态出发，且不改变「终态不自行
+// 前进」的判定。目前唯一一条是失败环节回滚（failed → rolled_back）。
+var compensations = map[StepStatus][]StepStatus{
+	StatusFailed: {StatusRolledBack},
 }
 
 // CanTransition 判定 from→to 是否合法（两边先归一：写法变体与规范形态
 // 走同一张转移表，issue #373）。
+//
+// 两段判定：① 自行推进走 transitions；② 补偿迁移只允许从**终态**出发，
+// 且必须显式登记在 compensations（IsTerminal 的生产调用点——终态定义若漂了，
+// 补偿迁移的准入会立刻跟着变）。
 func CanTransition(from, to StepStatus) bool {
-	for _, next := range transitions[from.normalized()] {
-		if next == to.normalized() {
+	f, t := from.normalized(), to.normalized()
+	for _, next := range transitions[f] {
+		if next == t {
+			return true
+		}
+	}
+	if !IsTerminal(f) {
+		return false
+	}
+	for _, next := range compensations[f] {
+		if next == t {
 			return true
 		}
 	}
@@ -177,19 +211,21 @@ func RequiresApproval(t StepType) bool {
 	}
 }
 
-// IsTerminal 是否终态。
+// IsTerminal 是否终态（环节侧的类型化入口）。
 //
-// # 词表边界（issue #159 / #374）
+// # 判据：转移表派生（issue #374）
 //
-// 本函数是**本状态机**的终态判据，**直接读转移表**：无出边 = 终态。
-// failed 在这里不是终态（它还有出边 → rolled_back，回滚是失败后的正常去向），
-// degraded 不在本包词表中。contract.StepSink.Finish 的 status 是宿主自定义
-// 词表（那边举例 succeeded/failed/degraded/skipped），与本表是**两套口径**——
-// 两包组合使用时（如把本函数注入 commitgate 当终态判定），宿主须让落库的
-// status 取值跟随本表，不要按 contract 注释的举例词表灌进来。
+// 本函数是**本状态机**的终态判据，直接读 transitions：无**自行推进**出边 =
+// 终态。failed 的出边（→ rolled_back）是补偿迁移，登记在 compensations，
+// 不在 transitions 里，所以 failed 仍是终态——与 contract.IsTerminalStatus
+// 的结论一致（issue #354；两包对 12 个环节状态逐条一致由用例钉住）。
 //
 // 写法变体先归一（与 Valid / CanTransition 同口径）。词表外的值不是终态：
-// 「读不懂」不能被当成「不可再变」。
+// 「读不懂」不能被当成「不可再变」（timed_out 等会话独有状态在环节词表外，
+// 本函数返回 false；会话侧判据 contract.IsTerminalStatus 仍认它）。
+//
+// 反向验证（#374 常驻用例）：给某个终态临时加一条 transitions 出边，本函数
+// 必须立即跟随；#354 的跨包用例则保证此时 contract 侧也会红——两处必须同改。
 func IsTerminal(s StepStatus) bool {
 	n := s.normalized()
 	if !n.Valid() {

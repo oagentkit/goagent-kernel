@@ -5,6 +5,7 @@ package contract
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/oekit/pkg/errors"
@@ -105,19 +106,54 @@ func TestMinimalHostSatisfiesContract(t *testing.T) {
 	}
 }
 
-// TestIsTerminalStatus 终态词表单点：四个终态为真，过程态与未知值为假。
+// TestIsTerminalStatus 终态词表单点：会话 7 值 + 环节独有 6 值逐条钉住。
 //
-// 这个函数是 watchdog INV3 轮括号校验的 status 真相源（issue #171）——两份
-// 终态清单必然漂移，故词表成员判定只留这一处。
+// 这个函数是 watchdog INV3 轮括号校验的 status 真相源（issue #171），也是
+// statemachine 环节终态判据的对齐目标（issue #354：后者从转移表派生，跨包
+// 用例逐条断言两包一致）——两份终态清单必然漂移，故词表成员判定只留这一处。
+//
+// 反向验证：把 StatusFailed（或任一终态）从 IsTerminalStatus 的 case 列表
+// 删掉，本用例立即转红。
 func TestIsTerminalStatus(t *testing.T) {
-	for _, s := range []string{StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut} {
-		if !IsTerminalStatus(s) {
-			t.Fatalf("%q 应为终态", s)
+	cases := []struct {
+		status string
+		want   bool
+	}{
+		// 会话轴：4 终态 + 3 过程态 + 1 会话独有终态。
+		{StatusCreated, false},
+		{StatusRunning, false},
+		{StatusWaitingApproval, false},
+		{StatusSucceeded, true},
+		{StatusFailed, true},
+		{StatusCancelled, true},
+		{StatusTimedOut, true},
+		// 环节轴独有：6 个取值（approved 过程态，其余终态）。
+		{StatusApproved, false},
+		{StatusRejected, true},
+		{StatusExpired, true},
+		{StatusInterrupted, true},
+		{StatusRolledBack, true},
+		{StatusSkipped, true},
+	}
+	for _, tc := range cases {
+		if got := IsTerminalStatus(tc.status); got != tc.want {
+			t.Errorf("IsTerminalStatus(%q) = %v, want %v", tc.status, got, tc.want)
+		}
+		// 写法变体与规范形态同结论（大小写/空白归一，与 statemachine 同口径）。
+		for _, variant := range []string{
+			" " + tc.status + " ",
+			strings.ToUpper(tc.status),
+			strings.ToUpper(tc.status[:1]) + tc.status[1:],
+		} {
+			if got := IsTerminalStatus(variant); got != tc.want {
+				t.Errorf("IsTerminalStatus(%q) 写法变体 = %v, want %v", variant, got, tc.want)
+			}
 		}
 	}
-	for _, s := range []string{StatusCreated, StatusRunning, StatusWaitingApproval, "", "degraded", "unknown"} {
+	// 词表外一律 false：不得臆断宿主自定义终态（含 degraded / aborted）。
+	for _, s := range []string{"", "degraded", "unknown", "aborted", "RUNNING"} {
 		if IsTerminalStatus(s) {
-			t.Fatalf("%q 不应为终态", s)
+			t.Errorf("%q 不在内核词表内，不得判成终态", s)
 		}
 	}
 }

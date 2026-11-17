@@ -178,6 +178,13 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 **这一层是你与内核之间的唯一边界。** 编排引擎不碰存储、不碰数据库——
 所有环节状态的读写都经 `StepSink` 出口。
 
+> **状态词表只有一个定义处**（issue #354/#357）：`contract` 单点定义会话与
+> 环节共用的状态取值，`statemachine` 的 12 个状态常量全部是它的别名
+> （标注 Deprecated，新代码请用 `contract.StatusX`）。终态判定的公开入口只有
+> 一份：`contract.IsTerminalStatus`；`statemachine.IsTerminal` 是环节侧的类型化
+> 入口，从转移表派生并与前者对 12 个环节状态逐条一致（跨包用例钉住）。
+> 别在宿主侧另抄一份终态清单——两份必然漂移，且今天看不出差别。
+
 ```go
 package myapp
 

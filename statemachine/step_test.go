@@ -65,15 +65,13 @@ func TestRequiresApproval(t *testing.T) {
 	}
 }
 
+// TestTerminal 12 个环节状态全覆盖（旧用例只列了 5 个终态，failed /
+// interrupted / cancelled 三个「无争议也无人钉」的状态因此漂了很久——
+// issue #354）。期望值来自 stepVocabulary 的唯一口径。
 func TestTerminal(t *testing.T) {
-	for _, s := range []StepStatus{StatusRejected, StatusExpired, StatusSucceeded, StatusSkipped, StatusRolledBack} {
-		if !IsTerminal(s) {
-			t.Errorf("%s 应为终态", s)
-		}
-	}
-	for _, s := range []StepStatus{StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved} {
-		if IsTerminal(s) {
-			t.Errorf("%s 不应为终态", s)
+	for _, tc := range stepVocabulary {
+		if got := IsTerminal(tc.status); got != tc.wantTerminal {
+			t.Errorf("IsTerminal(%s) = %v, want %v", tc.status, got, tc.wantTerminal)
 		}
 	}
 }

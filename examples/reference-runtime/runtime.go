@@ -60,7 +60,7 @@ func newRuntime(runID string, store *memStore, steps []*stepDef, ttl time.Durati
 		byID:   map[string]*stepDef{},
 		snaps:  store.snaps,
 		gate:   checkpoint.NewSeqGate(),
-		guard:  commitgate.NewGuard(isTerminalStatus),
+		guard:  commitgate.NewGuard(contract.IsTerminalStatus),
 		runner: sideeffect.NewRunner(store.effects, ttl),
 		branch: "worker-1",
 	}
@@ -197,16 +197,9 @@ func decideRetry(outcome sideeffect.Outcome) error {
 	return nil
 }
 
-// isTerminalStatus 某个状态是否已是终态（注入终态闸的词表）。
-func isTerminalStatus(status string) bool {
-	switch status {
-	case contract.StatusSucceeded, contract.StatusFailed,
-		contract.StatusCancelled, contract.StatusTimedOut:
-		return true
-	default:
-		return false
-	}
-}
+// 终态闸直接注入 contract.IsTerminalStatus（issue #358）：参考实现是给宿主
+// 抄的契约，**不得手抄**内核词表——手抄当前恰好一致，contract 新增终态时
+// 它不会跟着变，也没有任何测试会红。注入导出函数则永远同源。
 
 // callCounter 统计各步骤的执行体被调用了多少次——续跑不重放的证据。
 type callCounter struct {
