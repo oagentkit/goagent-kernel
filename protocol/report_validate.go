@@ -13,36 +13,47 @@ func (r *Report) Validate() ([]string, error) {
 	var warns []string
 
 	// —— 必填与枚举 ——
+	//
+	// 判据面一律走**导出谓词**（Is*Valid），不直读私有词表（issue #362）：
+	// 私有 map 是唯一真相，谓词、枚举出口、判据面三者全部从它派生。
+	// 谓词面先归一大小写/空白 ⇒ 直构路径与解析路径对同一份字节给同一结论
+	//（issue #371）：模型写 "HIGH" / "OUT" / "ADOPT" 是同一个词，不是两个裁决。
 	if strings.TrimSpace(r.Confidence) == "" {
 		critical = append(critical, "confidence 缺失")
-	} else if !confidenceAll[r.Confidence] {
+	} else if !IsConfidenceValid(r.Confidence) {
 		critical = append(critical, fmt.Sprintf("confidence 不在白名单: %q", r.Confidence))
 	}
 	// —— verdicts.stance 白名单兜底（宽容解码只挡条目畸形；直构/手工构造报告在此拦截） ——
 	for _, v := range r.Verdicts {
-		if !stanceAll[v.Stance] {
+		if !IsStanceValid(v.Stance) {
 			critical = append(critical, fmt.Sprintf("verdicts.stance 非法: %q（agent=%s）", v.Stance, v.Agent))
 		}
 	}
-	if r.Decision != "" && !decisionAll[r.Decision] {
+	if strings.TrimSpace(r.Decision) != "" && !IsDecisionValid(r.Decision) {
 		critical = append(critical, fmt.Sprintf("decision 不在白名单: %q", r.Decision))
 	}
-	if r.Scope != "" && !scopeAll[r.Scope] {
+	if strings.TrimSpace(r.Scope) != "" && !IsScopeValid(r.Scope) {
 		// warn 与 critical 同时留痕：归一化面不再把词表外值改写成 "in"，
 		// 宿主必须能在「归一化后仍词表外」这件事上看到信号，而不是只拿到
 		// 一条整份拒绝。
 		warns = append(warns, fmt.Sprintf("scope 不在白名单: %q（保持原值，未归一为 in/out）", r.Scope))
 		critical = append(critical, fmt.Sprintf("scope 不在白名单: %q", r.Scope))
 	}
-	if r.Scope == "out" && strings.TrimSpace(r.Redirect) == "" {
+	// 红线判据用**规范形态**比较（canonicalScope）：写法变体（"OUT"）与规范值
+	// （"out"）触发同一条红线——否则直构路径上的 "OUT" 会绕过「转出必填 redirect」
+	// 这条治理红线（issue #371/#382）。
+	if canonicalScope(r.Scope) == ScopeOut && strings.TrimSpace(r.Redirect) == "" {
 		critical = append(critical, "scope=out 时 redirect 必填")
 	}
 
 	// —— recommendation 白名单与治理铁律 ——
 	if rec := r.Recommendation; rec != nil {
-		isExec := rec.RequiresExecution || (rec.Action != "" && rec.Action != ActionNone)
+		// action 走谓词 + 规范形态比较：写法变体（"NONE"）与规范值（"none"）
+		// 同待遇——直构路径不得比解析路径更严（issue #371）。
+		action := canonicalAction(rec.Action)
+		isExec := rec.RequiresExecution || (strings.TrimSpace(rec.Action) != "" && action != ActionNone)
 		switch {
-		case rec.Action != "" && !actionWhitelist[rec.Action]:
+		case strings.TrimSpace(rec.Action) != "" && !IsActionValid(rec.Action):
 			critical = append(critical, fmt.Sprintf("action 不在白名单: %q", rec.Action))
 		case isExec && !rec.RequiresApproval:
 			critical = append(critical, "执行类动作 requires_approval 必须为 true")
@@ -70,7 +81,10 @@ func (r *Report) Validate() ([]string, error) {
 	}
 
 	// —— 审批决策一致性 ——
-	if r.Decision == DecisionPending {
+	//
+	// 用规范形态比较（canonicalDecision）：写法变体（"PENDING_APPROVAL"）与规范值
+	// 触发同一条红线——否则直构路径上的写法变体会绕过这条治理红线（issue #371）。
+	if canonicalDecision(r.Decision) == DecisionPending {
 		if r.Recommendation == nil || !r.Recommendation.RequiresApproval {
 			critical = append(critical, "decision=pending_approval 时 requires_approval 必须为 true")
 		}

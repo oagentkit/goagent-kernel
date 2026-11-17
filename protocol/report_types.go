@@ -200,11 +200,23 @@ func (v *Verdicts) UnmarshalJSON(data []byte) error {
 		// 而这里连留痕都没有——事后无法区分「模型没给裁决」与「裁决被大小写吃掉」。
 		// 与同包的 decision / action / confidence 归一是同一类错（写法差异不该
 		// 改变语义），那里已各修过一次。
-		st := strings.ToLower(strings.TrimSpace(it.Stance))
-		if !stanceAll[st] {
+		//
+		// 大小写与空白只是**写法差异**：命中词表才收敛到规范形态。
+		//
+		// 词表外的取值**不再丢弃条目**（issue #361）：此前的 continue 让
+		// 「否决」裁决（模型写 "rejected" 这类极自然写法）凭空消失，而 Validate
+		// 的「verdicts.stance 非法」判据在解析路径上**永远够不着**——同包的两条
+		// fail-closed 红线被归一化面 disarm 掉。此处保留原值交 Validate 判
+		// critical（fail-closed 方向），不再静默改写报告。
+		st := canonicalEnumValue(it.Stance)
+		if st == "" {
+			// 未表态（没有 stance）：条目不携带任何裁决信息，按结构缺省丢弃
+			// （与「缺 agent」同款）——这不是「词表外取值」，没有可丢的语义。
 			continue
 		}
-		it.Stance = st
+		if IsStanceValid(st) {
+			it.Stance = st
+		}
 		out = append(out, it)
 	}
 	*v = out
@@ -325,7 +337,7 @@ var (
 	actionWhitelist = map[string]bool{ActionKillAndRestart: true, ActionTune: true, ActionNone: true}
 	confidenceAll   = map[string]bool{ConfidenceHigh: true, ConfidenceMedium: true, ConfidenceLow: true}
 	decisionAll     = map[string]bool{DecisionPending: true, DecisionApproved: true, DecisionRejected: true}
-	scopeAll        = map[string]bool{"in": true, "out": true}
+	scopeAll        = map[string]bool{ScopeIn: true, ScopeOut: true}
 
 	// decisionNoneSynonyms 已删（2026-09-25）：normalizeDecision 对未知值一律归"无决策"，
 	// 逐词收录是打地鼠（实弹：target_scope_mismatch_no_action/redirect 两轮各一新词形）。
@@ -339,7 +351,10 @@ var (
 )
 
 // IsConfidenceValid 合议触发门用（scheduler 层过滤无效报告）。
-func IsConfidenceValid(c string) bool { return confidenceAll[c] }
+//
+// 大小写/空白变体先归一（与 IsSeverityValid 及其余谓词同形，issue #371）：
+// 模型写 "HIGH" 与 "high" 是同一个置信档，不是两个裁决。
+func IsConfidenceValid(c string) bool { return confidenceAll[canonicalEnumValue(c)] }
 
 // rawRequiresApproval 从归一化前的 recommendation 原始 map 判定 requires_approval 真值
 // （bool / 字符串 "true" 双形态；结构缺失或不可判 → false）。decision 归一在字段游走期

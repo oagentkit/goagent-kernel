@@ -32,76 +32,105 @@ func TestConclusionListTolerance(t *testing.T) {
 	}
 }
 
-// T28 decision="info"（实弹 2026-09-09：巡检 agent 用 info 表达"仅告知"）→ 归一空串放行。
+// T28 decision="info"（实弹 2026-09-09：巡检 agent 用 info 表达"仅告知"）。
+//
+// # 口径变更（issue #361）：词表外取值**保持原值**交 Validate 判 critical
+//
+// 旧实现把词表外的 decision 抹成 ""（无决策）——「不认识」与「没声明」混成同一个
+// 零值，Validate 的白名单判据因此永远够不着它（同包的一条 fail-closed 红线被
+// disarm 掉，零告警通过）。现在报告说「我给了一个你们不认识的决策」这件事必须
+// 被看见，而不是被改写成「无决策」。
 func TestDecisionInfoSynonym(t *testing.T) {
 	r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
 		`"decision":"info","recommendation":{"action":"none","requires_approval":false}}`)
 	if err != nil {
-		t.Fatalf("info 应归一为无决策: %v", err)
+		t.Fatalf("解析不应失败: %v", err)
 	}
-	if _, verr := r.Validate(); verr != nil {
-		t.Fatalf("归一后应通过白名单校验: %v", verr)
+	if r.Decision != "info" {
+		t.Fatalf("词表外 decision 应保持原值, got %q", r.Decision)
 	}
-	if r.Decision != "" {
-		t.Fatalf("decision 应为空串: %q", r.Decision)
+	if _, verr := r.Validate(); verr == nil {
+		t.Fatal("词表外 decision 必须被 Validate 判 critical（fail-closed）")
 	}
 }
 
 // T29 decision 环境受限自造枚举（实弹 2026-09-09 复盘：专家在目标机不可达/平台不匹配时
-// 自述无法给出决策，曾被全量拦截成 5 连违约）→ 归一空串放行；散文化取值（中文句子）同归；
-// 枚举空间的未知 ASCII 词仍拦截（T7 语义不变）。
+// 自述无法给出决策，曾被全量拦截成 5 连违约）。
+//
+// # 口径变更（issue #361）
+//
+// 旧实现逐词收录同义族（打地鼠）并把漏网词抹成 ""。现在口径反过来：**词表外的
+// 取值一律保持原值**交 Validate 判 critical——同包口径与 scope 一致（#321），
+// 且 Validate 的 fail-closed 红线在解析路径上重新可达。
 func TestDecisionEnvironmentSynonyms(t *testing.T) {
 	for _, d := range []string{"host_unreachable", "platform_mismatch_stop", "degraded",
 		"awaiting_input", "clarification_needed", "采集受限，需人工检查"} {
 		r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
 			`"decision":"` + d + `","recommendation":{"action":"none","requires_approval":false}}`)
 		if err != nil {
-			t.Fatalf("decision=%q 应归一为无决策: %v", d, err)
+			t.Fatalf("decision=%q 解析不应失败: %v", d, err)
 		}
-		if r.Decision != "" {
-			t.Fatalf("decision=%q 应为空串: %q", d, r.Decision)
+		if r.Decision != d {
+			t.Fatalf("decision=%q 应保持原值, got %q", d, r.Decision)
 		}
-		if _, verr := r.Validate(); verr != nil {
-			t.Fatalf("decision=%q 归一后应通过校验: %v", d, verr)
+		if _, verr := r.Validate(); verr == nil {
+			t.Fatalf("decision=%q 必须被 Validate 判 critical（fail-closed）", d)
 		}
 	}
 }
 
-// T29 decision="escalate"（实弹 2026-09-10：平台无工具可用时模型表达"转人工"）→ 归一空串。
+// T29 decision="escalate"（实弹 2026-09-10：平台无工具可用时模型表达"转人工"）。
+//
+// # 口径变更（issue #361）：保持原值 + fail-closed（与 T29 另一组同款）。
 func TestDecisionEscalateSynonym(t *testing.T) {
 	r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
 		`"decision":"escalate","recommendation":{"action":"none","requires_approval":false}}`)
 	if err != nil {
-		t.Fatalf("escalate 应归一为无决策: %v", err)
+		t.Fatalf("解析不应失败: %v", err)
 	}
-	if _, verr := r.Validate(); verr != nil {
-		t.Fatalf("归一后应通过白名单校验: %v", verr)
+	if r.Decision != "escalate" {
+		t.Fatalf("词表外 decision 应保持原值, got %q", r.Decision)
+	}
+	if _, verr := r.Validate(); verr == nil {
+		t.Fatal("词表外 decision 必须被 Validate 判 critical（fail-closed）")
 	}
 }
 
-// T31 未知枚举形 decision 一律归"无决策"（2026-09-25 215 两轮实弹结构收敛）：
-// target_scope_mismatch_no_action（安全专家报 Alpine 容器无判读对象）与 redirect
-// （k8s 专家表达本域转出）是连续两轮各出现一枚的新词形——逐词收录同义族是打地鼠，
-// 真模型持续自造诚实信号词，每个漏网词都让整份专项报告被拦、巡检聚合缺域。
-// decision 无治理语义（真正闸门在 action+requires_approval），未知值归空零成本。
+// T31 未知枚举形 decision（2026-09-25 215 两轮实弹记录）：
+// target_scope_mismatch_no_action（安全专家报容器无判读对象）与 redirect
+// （k8s 专家表达本域转出）是连续两轮各出现一枚的新词形。
+//
+// # 口径变更（issue #361）
+//
+// 旧口径是「逐词收录同义族」（打地鼠）+ 漏网词抹成 ""。抹零的代价是
+// **Validate 的白名单判据永远够不着它**——同包的 fail-closed 红线在解析路径上
+// 被 disarm 掉（零告警通过）。现在：词表外的取值保持原值，判据面 fail-closed
+// 裁决（与 scope 第三轮 #321 的修法同向）。
 func TestDecisionUnknownEnumNormalized(t *testing.T) {
 	for _, d := range []string{"target_scope_mismatch_no_action", "redirect", "target_scope_mismatch"} {
 		r, err := ParseReport(`{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s",` +
 			`"decision":"` + d + `","recommendation":{"action":"none","requires_approval":false}}`)
 		if err != nil {
-			t.Fatalf("decision=%q 应归一为无决策: %v", d, err)
+			t.Fatalf("decision=%q 解析不应失败: %v", d, err)
 		}
-		if r.Decision != "" {
-			t.Fatalf("decision=%q 应为空串: %q", d, r.Decision)
+		if r.Decision != d {
+			t.Fatalf("decision=%q 应保持原值, got %q", d, r.Decision)
 		}
-		if _, verr := r.Validate(); verr != nil {
-			t.Fatalf("decision=%q 归一后应通过校验: %v", d, verr)
+		if _, verr := r.Validate(); verr == nil {
+			t.Fatalf("decision=%q 必须被 Validate 判 critical（fail-closed）", d)
 		}
 	}
 }
 
-// T30 合议 verdicts 宽容解码：非法 stance/缺 agent 条目解码期丢弃、报告不炸；
-// 合法枚举兜底——手工构造的非法 stance 必须被 Validate 拦截。
+// T30 合议 verdicts 宽容解码：缺 agent / 未表态（无 stance）条目解码期丢弃、报告不炸；
+// **词表外 stance 保留原值**交 Validate 拦截（issue #361）。
+//
+// # 为什么词表外的 stance 不再丢弃
+//
+// 旧实现对词表外 stance 直接 continue——「否决」裁决（模型写 "rejected" 这类极
+// 自然写法）凭空消失，而 Validate 的「verdicts.stance 非法」判据在解析路径上
+// **永远够不着**（同包两条 fail-closed 红线之一被 disarm 掉）。现在保留原值，
+// 由判据面 fail-closed 裁决。
 func TestVerdictsTolerantDecode(t *testing.T) {
 	raw := `{"agent_name":"workflow/verdict-judge","confidence":"medium",
 		"verdicts":[{"agent":"specialists/memory-analysis","stance":"adopt","reason":"证据自洽"},
@@ -111,11 +140,20 @@ func TestVerdictsTolerantDecode(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
 		t.Fatalf("宽容解码不得报错: %v", err)
 	}
-	if len(r.Verdicts) != 2 {
-		t.Fatalf("非法 stance/缺 agent 条目应丢弃, got %d: %+v", len(r.Verdicts), r.Verdicts)
+	// 缺 agent（{"stance":"reject"}）与未表态（{"agent":"y"}）两条丢弃；
+	// 词表外的 "maybe" **保留原值**。
+	if len(r.Verdicts) != 3 {
+		t.Fatalf("词表外 stance 应保留, got %d: %+v", len(r.Verdicts), r.Verdicts)
 	}
-	if r.Verdicts[0].Stance != VerdictAdopt || r.Verdicts[1].Stance != VerdictReject {
+	if r.Verdicts[0].Stance != VerdictAdopt || r.Verdicts[2].Stance != VerdictReject {
 		t.Fatalf("stance 解析错误: %+v", r.Verdicts)
+	}
+	if r.Verdicts[1].Stance != "maybe" {
+		t.Fatalf("词表外 stance 应保持原值, got %q", r.Verdicts[1].Stance)
+	}
+	// 判据面必须够得着它（fail-closed 红线在解析路径上可达）。
+	if _, err := r.Validate(); err == nil {
+		t.Fatal("词表外 stance 必须被 Validate 拦截（fail-closed）")
 	}
 	// 合法枚举兜底：手工构造的非法 stance 必须被 Validate 拦截
 	bad := Report{AgentName: "a", Confidence: ConfidenceHigh,

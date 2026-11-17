@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -31,6 +32,9 @@ func TestVocabularyEnumerationMatchesPredicates(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := c.all()
+			if len(got) == 0 {
+				t.Fatalf("枚举出口不得为空：%s 的词表有 %d 个取值", c.name, len(c.table))
+			}
 			if len(got) != len(c.table) {
 				t.Fatalf("枚举出口漏值：All*= %d 条，词表 %d 条（%v）", len(got), len(c.table), got)
 			}
@@ -68,8 +72,48 @@ func TestVocabularyEnumerationMatchesPredicates(t *testing.T) {
 	}
 }
 
+// TestEnumerationsFollowTheirOwnTable 每个枚举出口必须读**自己**那张表：
+// 往一张表里加一个探针值，只有对应的出口认它。
+//
+// 这是「出口接错表」的判据（issue #383）：例：AllScopes 误接 severityAll ⇒
+// 宿主持 scope 清单做前置校验时，会把严重度取值当成合法 scope 放行（更松），
+// 而 scope 真正的取值一个都没进清单（更严）。两种失效都不会让任何东西变红，
+// 除非有判据。
+//
+// 反向验证：把 AllScopes 改成返回 sortedKeys(severityAll) ⇒ 本条转红。
+func TestEnumerationsFollowTheirOwnTable(t *testing.T) {
+	const probe = "__probe_enum__"
+	severityAll[probe] = true
+	defer delete(severityAll, "__probe_enum__")
+
+	if !slices.Contains(AllSeverities(), probe) {
+		t.Fatal("AllSeverities 必须认 severityAll 新增的取值")
+	}
+	others := map[string][]string{
+		"AllStances":           AllStances(),
+		"AllActions":           AllActions(),
+		"AllConfidences":       AllConfidences(),
+		"AllDecisions":         AllDecisions(),
+		"AllScopes":            AllScopes(),
+		"AllDecisionSources":   AllDecisionSources(),
+		"AllConfidenceKinds":   AllConfidenceKinds(),
+		"AllEscalationReasons": AllEscalationReasons(),
+	}
+	for name, got := range others {
+		if slices.Contains(got, probe) {
+			t.Errorf("%s 认了 severityAll 的取值：枚举出口接错了表", name)
+		}
+	}
+}
+
 // TestNewVocabularyPredicates 此前 4 张词表只有私有 map、没有合法性谓词；
 // 补齐后每条都要能单独判「合法接受 / 非法拒绝」。
+//
+// # 口径变更（issue #371）：谓词认**写法变体**
+//
+// 谓词面此前是精确查表，"OUT" 被判非法——而解析面把 "OUT" 归一为 "out" 并放行，
+// 同一份字节在两条路径上得到两个裁决。现在谓词先归一（大小写/空白）再查表，
+// 与 IsSeverityValid 同形：写法变体与规范值是同一个取值。
 func TestNewVocabularyPredicates(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -79,16 +123,22 @@ func TestNewVocabularyPredicates(t *testing.T) {
 		{"stance", IsStanceValid, VerdictAdopt},
 		{"action", IsActionValid, ActionTune},
 		{"decision", IsDecisionValid, DecisionApproved},
-		{"scope", IsScopeValid, "out"},
+		{"scope", IsScopeValid, ScopeOut},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if !c.valid(c.good) {
 				t.Fatalf("合法值 %q 被拒", c.good)
 			}
-			for _, bad := range []string{"", "__unknown__", "OUT"} {
+			for _, bad := range []string{"", "__unknown__", "out_of_scope"} {
 				if c.valid(bad) {
 					t.Fatalf("非法值 %q 被接受", bad)
+				}
+			}
+			// 写法变体与规范值同待遇（归一后查表）。
+			for _, variant := range []string{strings.ToUpper(c.good), " " + c.good + " "} {
+				if !c.valid(variant) {
+					t.Fatalf("写法变体 %q 应与 %q 同待遇（被接受）", variant, c.good)
 				}
 			}
 		})

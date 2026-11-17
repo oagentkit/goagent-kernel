@@ -1,8 +1,6 @@
 package protocol
 
 import (
-	"strings"
-
 	"github.com/oekit/pkg/jsonrepair"
 )
 
@@ -62,7 +60,7 @@ func normalizeAction(m map[string]any, k string, v any) {
 	if !ok {
 		return
 	}
-	m[k] = strings.ToLower(strings.TrimSpace(s))
+	m[k] = canonicalOrUnset(s, IsActionValid)
 }
 
 // normalizeConfidence confidence 归一：大小写与空白收敛到白名单形态。
@@ -76,7 +74,7 @@ func normalizeConfidence(m map[string]any, k string, v any) {
 	if !ok {
 		return
 	}
-	m[k] = strings.ToLower(strings.TrimSpace(s))
+	m[k] = canonicalOrUnset(s, IsConfidenceValid)
 }
 
 // normalizeSeverity severity 归一：大小写与空白收敛到白名单形态。
@@ -97,9 +95,7 @@ func normalizeSeverity(m map[string]any, k string, v any) {
 	if !ok {
 		return
 	}
-	if n := strings.ToLower(strings.TrimSpace(s)); severityAll[n] {
-		m[k] = n
-	}
+	m[k] = canonicalSeverity(s)
 }
 
 // normalizeNeedsFollowupScalar needs_followup 标量形态是布尔（无目标语义）→
@@ -111,7 +107,7 @@ func normalizeSeverity(m map[string]any, k string, v any) {
 func normalizeNeedsFollowupScalar(m map[string]any) {
 	if arr, ok := m["needs_followup"].([]any); ok && len(arr) == 1 {
 		if s, isStr := arr[0].(string); isStr {
-			switch strings.ToLower(strings.TrimSpace(s)) {
+			switch canonicalEnumValue(s) {
 			case "true", "false":
 				m["needs_followup"] = []any{}
 			}
@@ -120,37 +116,52 @@ func normalizeNeedsFollowupScalar(m map[string]any) {
 }
 
 // normalizeDecision decision 归一：字符串 → 小写化；白名单（pending_approval/approved/
-// rejected）保留；**其余任意值一律归空串（无决策）**。对象/数组形态（模型自造结构）→
-// 删除键。2026-09-25 两轮 215 实弹（target_scope_mismatch_no_action/redirect）证明
-// 逐词收录同义族是打地鼠——真模型持续自造诚实信号词（目标不匹配/转出/无判读对象…），
-// 每个漏网词都让整份专项报告被拦、巡检聚合缺域。decision 本无治理语义（真正闸门在
-// action+requires_approval，09-10 已裁定），未知值收敛为无决策零成本；Validate 的
-// 白名单检查保留作直构报告后备防线。
+// rejected）保留；**词表外的取值保持原值**交 Validate 判 critical。对象/数组形态
+// （模型自造结构）→ 删除键。
+//
+// # 为什么不再「一律归空串」（issue #361）
+//
+// 旧实现（2026-09-25 收敛，自造同义词族打地鼠）把未知值抹成 ""（无决策）。但
+// **"不认识" 与 "没声明" 不是同一个零值**：抹成 "" 之后，Validate 的
+// 「decision 不在白名单」判据（r.Decision != "" && !IsDecisionValid(...)）就
+// **永远够不着它**——同包的一条 fail-closed 红线在解析路径上被 disarm 掉，
+// 零告警通过。
+//
+// 同包的 scope 已在第三轮 #321 改成「保持原值、交 Validate 判 critical」，
+// 于是同一包内出现两种相反的口径。现在 decision 与之一致：词表外保持原值，
+// 判据面 fail-closed 裁决。
 func normalizeDecision(m map[string]any, k string, v any) {
 	switch v.(type) {
 	case map[string]any, []any:
 		delete(m, k)
 	default:
 		if s, ok := jsonrepair.CoerceString(v); ok {
-			sd := strings.ToLower(strings.TrimSpace(s))
+			c := canonicalEnumValue(s)
+			dec := ""
 			switch {
-			case decisionAll[sd]:
-				m[k] = sd
-			case sd == "pending": // 常见缩写（实弹：模型输出 "pending"）→ 规范枚举
-				m[k] = DecisionPending
+			case c == "":
+				dec = "" // 未声明：空白等同缺省
+			case IsDecisionValid(c):
+				dec = c
+			case c == "pending": // 常见缩写（实弹：模型输出 "pending"）→ 规范枚举
+				dec = DecisionPending
 			default:
-				// 同义"无决策"词（hold/info/platform_mismatch…）与散文化表述、未知枚举形
-				// ASCII 词同待遇：一律无决策（历史词族清单见 2026-09-09/10 实弹记录）。
-				m[k] = ""
+				// 词表外：**保持原值**，判定交给 Validate（fail-closed，issue #361）。
+				// 旧实现在此抹成 ""（无决策）——那把「不认识」与「没声明」混成
+				// 同一个零值，Validate 的白名单判据因此永远够不着它。
+				dec = s
 			}
+			m[k] = dec
 			// 实弹 2026-09-10（macOS 只读检查）：模型把 pending_approval 当"待处理"用，
 			// 而报告无审批语义（requires_approval 缺失）→ 撞 Validate 一致性红线，
-			// 整份诚实的检查报告被拦。decision 本无治理语义（真正闸门在
-			// action+requires_approval）：pending_approval 而无 requires_approval
-			// 真值时归一为无决策，与自造枚举同待遇。Validate 的红线检查保留作
-			// 直构报告的后备防线。
-			if m[k] == DecisionPending && !rawRequiresApproval(m["recommendation"]) {
-				m[k] = ""
+			// 整份诚实的检查报告被拦。
+			//
+			// 旧实现在这里把 decision 抹成 ""（同属「往松处删」）：那条治理红线
+			// 因此在解析路径上**永远不可能触发**（decision 能活到 Validate 的前提
+			// 就是 requires_approval 为真，那时红线本来就满足）。此处改为**补严**
+			// ——与 fixRecommendationContradiction 同向：保住 decision，把审批位补上。
+			if canonicalDecision(dec) == DecisionPending && !rawRequiresApproval(m["recommendation"]) {
+				ensureRequiresApproval(m)
 			}
 		}
 	}
@@ -184,6 +195,9 @@ func normalizeDecision(m map[string]any, k string, v any) {
 // 删键（scope 可选），不凭空指定 in/out，也不让严格 unmarshal 因类型不符炸掉
 // 整份报告。
 //
+// 纯空白按**未声明**处理（归一为零值），非空的词表外取值保持原值——判据面用
+// TrimSpace 判「是否声明」，两条路径对同一份字节给同一结论。
+//
 // 归一口径与 decision / action / confidence / stance 一致：ToLower + TrimSpace。
 func normalizeScope(m map[string]any, k string, v any) {
 	s, ok := v.(string)
@@ -191,10 +205,33 @@ func normalizeScope(m map[string]any, k string, v any) {
 		delete(m, k)
 		return
 	}
-	switch st := strings.ToLower(strings.TrimSpace(s)); st {
-	case "in", "out":
-		m[k] = st
-	default:
-		m[k] = s // 词表外：保持原值，判定交给 Validate
+	// 归一形态由**词表**（scopeAll）决定，不再自带第二份 case 清单（issue #382）：
+	// 词表新增一个取值而这里漏改 ⇒ 该值在判定面是合法值、在归一面却被判成
+	// 词表外 ⇒ 一整个词表内的取值被整份报告 critical 拒掉（更严），且没有任何
+	// 判据会红。三处实现（词表 / 归一面 / 判据面）现在同源。
+	m[k] = canonicalOrUnset(s, IsScopeValid)
+}
+
+// ensureRequiresApproval 把 recommendation.requires_approval 补成 true。
+//
+// # 为什么是「补严」而不是「删 decision」
+//
+// 旧实现在 normalizeDecision 里把 pending_approval 抹成 ""（无决策）——那等于
+// **消掉**报告自己声明的「待审批」，Validate 的治理红线（decision=pending_approval
+// 时 requires_approval 必须为 true）在解析路径上**永远不可能触发**（issue #361）。
+//
+// 同包的 fixRecommendationContradiction 走的是另一条同向的路：把矛盾**补严**
+// （action 规整 + requires_approval=true）。这里对齐它——保住 decision，把审批位
+// 补上，判据面照常裁决。
+func ensureRequiresApproval(m map[string]any) {
+	rec, ok := m["recommendation"].(map[string]any)
+	if !ok {
+		if _, exists := m["recommendation"]; exists {
+			// recommendation 形态不可判（非对象）：交判据面裁决（fail-closed）。
+			return
+		}
+		rec = map[string]any{}
+		m["recommendation"] = rec
 	}
+	rec["requires_approval"] = true
 }

@@ -101,7 +101,15 @@ func TestWalkNormalizeDeep(t *testing.T) {
 
 // C5 决策枚举保留：合法 decision 且带审批语义（requires_approval=true）时原样保留；
 // pending_approval 而无审批语义（实弹 2026-09-10 macOS 只读检查把枚举当"待处理"用）
-// 归一为无决策——不撞 Validate 一致性红线，诚实报告不再被整份拦截。
+// 时**补严**——保住 decision，把 requires_approval 补成 true，不撞 Validate 一致性
+// 红线，诚实报告不再被整份拦截。
+//
+// # 口径变更（issue #361）
+//
+// 旧实现在这里把 decision 抹成 ""（无决策）——那等于**消掉**报告自己声明的
+// 「待审批」，Validate 的治理红线（decision=pending_approval 时 requires_approval
+// 必须为 true）在解析路径上**永远不可能触发**。现在与 fixRecommendationContradiction
+// 同向：补严而不是删。
 func TestDecisionEnumPreserved(t *testing.T) {
 	raw := `{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s","scope":"in",` +
 		`"recommendation":{"action":"tune","steps":["uptime"],"requires_execution":true,"requires_approval":true},` +
@@ -119,8 +127,14 @@ func TestDecisionEnumPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r2.Decision != "" {
-		t.Fatalf("pending_approval 无审批语义应归一为无决策: %q", r2.Decision)
+	if r2.Decision != DecisionPending {
+		t.Fatalf("pending_approval 无审批语义应保留 decision（补严而非删除）: %q", r2.Decision)
+	}
+	if r2.Recommendation == nil || !r2.Recommendation.RequiresApproval {
+		t.Fatal("pending_approval 无审批语义应补严 requires_approval=true")
+	}
+	if _, verr := r2.Validate(); verr != nil {
+		t.Fatalf("补严后应通过校验: %v", verr)
 	}
 	// requires_approval 为字符串 "true"（标量容错归一前形态）同样视为有审批语义。
 	strForm := `{"agent_name":"X","confidence":"high","conclusion":"c","summary":"s","scope":"in",` +
@@ -166,26 +180,35 @@ func TestParseReportObjectStringField(t *testing.T) {
 	}
 }
 
-// C8 实弹容错（2026-09-08）：decision 自造枚举（"hold"）→ 归一为空；全角标点结构位修复。
+// C8 实弹容错（2026-09-08）：decision 自造枚举（"hold"）→ **保持原值**交判据面
+// fail-closed；全角标点结构位修复。
+//
+// # 口径变更（issue #361）
+//
+// 旧实现把词表外的 decision 抹成 ""（无决策），Validate 的白名单判据因此永远
+// 够不着它。现在保持原值：报告给了内核不认识的决策，这件事必须被看见。
 func TestDecisionSynonymAndFullWidth(t *testing.T) {
 	r, err := ParseReport(`{"agent_name":"X","confidence":"low","conclusion":"c","summary":"s","decision":"HOLD"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Decision != "" {
-		t.Fatalf("hold 同义词应归一为空: %q", r.Decision)
+	if r.Decision != "HOLD" {
+		t.Fatalf("词表外 decision 应保持原值: %q", r.Decision)
 	}
-	// 未知自造枚举 → 一律归空（2026-09-25 结构收敛：打地鼠不可持续，decision 无治理语义；
-	// Validate 的白名单检查仅作直构报告后备——见 report_test.go TestDecisionWhitelist）。
+	if _, verr := r.Validate(); verr == nil {
+		t.Fatal("词表外 decision 必须被 Validate 拦截（fail-closed）")
+	}
+	// 未知自造枚举同待遇：保持原值 + 判据面裁决（Validate 的白名单判据在解析
+	// 路径上重新可达——见 report_test.go TestDecisionWhitelist 的直构路径）。
 	r2, err := ParseReport(`{"agent_name":"X","confidence":"low","conclusion":"c","summary":"s","decision":"banana"}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r2.Decision != "" {
-		t.Fatalf("未知枚举应归一为空: %q", r2.Decision)
+	if r2.Decision != "banana" {
+		t.Fatalf("词表外 decision 应保持原值: %q", r2.Decision)
 	}
-	if _, verr := r2.Validate(); verr != nil {
-		t.Fatalf("归一后不应再被拦截: %v", verr)
+	if _, verr := r2.Validate(); verr == nil {
+		t.Fatal("词表外 decision 必须被 Validate 拦截（fail-closed）")
 	}
 	// 全角标点（结构位）：，：混入 JSON 骨架 → 修复通道救回；字符串内部全角原样保留。
 	raw := `{"agent_name":"X"，"confidence":"low"，"conclusion":"内存不足，需处置"，"summary":"s"}`

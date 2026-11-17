@@ -44,6 +44,21 @@ const (
 	ConfidenceLow    = "low"
 )
 
+// scope 取值（判定词表：scope）。
+//
+// scope 是**路由信号**（out = 转出/转派）：模型写 "OUT" / "Out" / " out " 说的是
+// 同一件事，解析面归一、谓词面认写法变体（issue #371）。
+//
+// 此前本包九张判定词表里**只有 scope 没有导出常量**——宿主只能手抄 "in"/"out"，
+// 内核改一次词值，宿主编译期不报错、运行期静默失效（issue #382）。现在与其余
+// 八张表口径一致：取值一律有常量，词表本体（scopeAll）也引用它。
+const (
+	// ScopeIn 在范围内。
+	ScopeIn = "in"
+	// ScopeOut 超出范围（转出/转派；此时 redirect 必填）。
+	ScopeOut = "out"
+)
+
 // 严重度枚举（批次一百三十七，终报结构化补缺）：info|low|medium|high|critical。
 // 与 confidence 相互独立——confidence 说「结论可信到什么程度」，severity 说「问题本身
 // 有多重」。专家可不填（空=未评估，渲染与聚合按缺席处理）；聚合面取子报告最高值
@@ -99,13 +114,10 @@ const SeverityRankUnknown = 6
 
 // normalizeSeverityValue severity 的写法归一：ToLower + TrimSpace。
 // 归一后命中词表才返回规范形态；仍词表外则保持原值（不臆断成某个档）。
-func normalizeSeverityValue(s string) string {
-	n := strings.ToLower(strings.TrimSpace(s))
-	if severityAll[n] {
-		return n
-	}
-	return s
-}
+//
+// 实现走 canonicalSeverity（谓词面同一份口径），不再自写一遍 ToLower——
+// 归一面与谓词面各写一遍必然漂移（issue #371）。
+func normalizeSeverityValue(s string) string { return canonicalSeverity(s) }
 
 // SeverityRankOf 严重度序取值。
 //
@@ -127,8 +139,10 @@ func SeverityRankOf(s string) int {
 }
 
 // IsSeverityValid 严重度白名单判定（空合法=未评估；大小写/空白变体先归一）。
+//
+// 归一走 canonicalEnumValue——与其余五个谓词同一份实现（issue #371）。
 func IsSeverityValid(s string) bool {
-	n := strings.ToLower(strings.TrimSpace(s))
+	n := canonicalEnumValue(s)
 	return n == "" || severityAll[n]
 }
 
