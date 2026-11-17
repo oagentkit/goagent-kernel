@@ -190,6 +190,24 @@ func TestReadOnlyWorkspaceAllowed(t *testing.T) {
 	}
 }
 
+// TestNewClonesWorkspaceSlices 构造后改写调用方的 ReadOnly/Writable 不得写穿
+// 到计划（issue #397）。出口方向由 TestWorkspacesReturnsDefensiveCopy 钉住，
+// 两个方向必须成对——只修一个方向时，另一侧的宿主仍能改穿隔离声明。
+func TestNewClonesWorkspaceSlices(t *testing.T) {
+	ws := []Workspace{{ID: "alpha", ReadOnly: []string{"vendor/"}, Writable: []string{"src/"}}}
+	p, err := New(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws[0].ReadOnly[0] = "lib/"
+	ws[0].Writable[0] = "lib/"
+
+	got := p.Workspaces()[0]
+	if got.ReadOnly[0] != "vendor/" || got.Writable[0] != "src/" {
+		t.Fatalf("构造期留存了调用方的底层数组，改写入参写穿到计划: %+v", got)
+	}
+}
+
 // TestWorkspacesReturnsDefensiveCopy 改动 Workspaces() 返回值不得写穿到计划
 // 本体（issue #225）：此前直接交出内部底层数组——调用方改一个元素，New 的
 // 一致性自检与 Conflicts 的结论随之静默作废。登记表只读，调用方改不动。
