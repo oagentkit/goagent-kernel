@@ -21,7 +21,20 @@ import (
 //	判定环故障（stage_failed）→ unknown（宿主门禁坏了：程序改不了它，
 //	  也不是「重试就会好」的瞬时故障——保守侧不可重试，issue #65）
 //	其余 → unknown（不可分类 = 不可重试，保守侧）
+//
+// # 已是 toolfail 分类的值必须幂等透传（issue #364）
+//
+// rejectionKindOf 探测到的就是 toolfail 分类值（宿主绑定用 toolfail.New 表过
+// 态）：它们经 Result.ErrorKind 流到这里时**已经是**跨进程分类，再走本地映射
+// 只会落 default 降成 unknown——transient / rate_limited / self_reported 这些
+// 「可重试」会被降成「不可重试」，permanent / authentication 等的处置文案也
+// 全部丢失。故先判 AllClasses 命中并原样返回，未命中再走本地诊断词表。
 func kindForErrorKind(kind string) string {
+	for _, c := range toolfail.AllClasses() {
+		if kind == string(c) {
+			return string(c)
+		}
+	}
 	switch kind {
 	case "budget_calls", "budget_bytes":
 		return string(toolfail.ClassRateLimited)
