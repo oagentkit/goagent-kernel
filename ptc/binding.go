@@ -177,7 +177,7 @@ func mountBindings(
 			if werr != nil {
 				return &Result{
 					Error:     fmt.Sprintf("绑定 %q 的调用形态包装失败: %v", b.Name, werr),
-					ErrorKind: "binding_signature",
+					ErrorKind: ErrorKindBindingSignature,
 				}
 			}
 			mountable = w
@@ -185,7 +185,7 @@ func mountBindings(
 		if err := host.Set(name, mountable); err != nil {
 			return &Result{
 				Error:     fmt.Sprintf("绑定 %q 挂载失败: %v", b.Name, err),
-				ErrorKind: "runtime",
+				ErrorKind: ErrorKindRuntime,
 			}
 		}
 	}
@@ -194,7 +194,7 @@ func mountBindings(
 	// 程序内工具发现：装配了才挂，没装配就不存在这个全局。
 	// 发现结果同样是宿主数据入口，故与 host.<tool> 共用同一套三预算闸（#200）。
 	if derr := mountDiscover(vm, discover, res, maxCalls, maxBytes); derr != nil {
-		return &Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: "runtime"}
+		return &Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: ErrorKindRuntime}
 	}
 
 	return nil
@@ -249,7 +249,7 @@ func stageOutcome(serr error) (kind, prefix string) {
 		return "", "" // 与判定环无关（宿主/程序侧错误），不做判定环归因
 	}
 	if errors.Is(serr, invoke.ErrStageFailed) || errors.Is(serr, invoke.ErrEmptyName) {
-		return "stage_failed", "判定环故障"
+		return ErrorKindStageFailed, "判定环故障"
 	}
-	return "stage_denied", "判定环拒绝"
+	return ErrorKindStageDenied, "判定环拒绝"
 }

@@ -217,8 +217,11 @@ func (b *BoardStore) Claim(ctx context.Context, id taskboard.TaskID, agent taskb
 		if r == nil {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 		}
-		if r.state == string(taskboard.StateDone) {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+		// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
+		// 词表外 → ErrUnknownState，终态 → ErrTerminal；不得只判 done。
+		if cerr := taskboard.State(r.state).Claimable(); cerr != nil {
+			return taskboard.Task{}, errors.Wrap(cerr, "任务状态不可认领",
+				"task", string(id), "state", r.state)
 		}
 		if err := depsDone(ctx, tx, r.deps); err != nil {
 			return taskboard.Task{}, err

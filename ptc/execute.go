@@ -45,7 +45,7 @@ func execute(
 	prog, cerr := goja.Compile(programSourceName, wrapped, false)
 	if cerr != nil {
 		res.Location = locationOfSyntax(cerr, wrapLines)
-		res.Error, res.ErrorKind = fmt.Sprintf("程序语法错误%s: %v", describePosition(res.Location), cerr), "syntax"
+		res.Error, res.ErrorKind = fmt.Sprintf("程序语法错误%s: %v", describePosition(res.Location), cerr), ErrorKindSyntax
 		return *res
 	}
 
@@ -91,7 +91,7 @@ func execute(
 	p, ok := v.Export().(*goja.Promise)
 	if !ok {
 		// 理论不可达（IIFE 恒返回 Promise）；防御性按坏返回处理。
-		res.Error, res.ErrorKind = "程序返回值不是 Promise（IIFE 包装失效）", "bad_result"
+		res.Error, res.ErrorKind = "程序返回值不是 Promise（IIFE 包装失效）", ErrorKindBadResult
 		return *res
 	}
 	switch p.State() {
@@ -100,7 +100,7 @@ func execute(
 		enc := json.NewEncoder(&buf)
 		enc.SetEscapeHTML(false) // 工具输出常含 <>——\u003c 转义是噪音，值面给人看
 		if merr := enc.Encode(normalizeValue(p.Result())); merr != nil {
-			res.Error, res.ErrorKind = fmt.Sprintf("return 值不可 JSON 序列化: %v", merr), "bad_result"
+			res.Error, res.ErrorKind = fmt.Sprintf("return 值不可 JSON 序列化: %v", merr), ErrorKindBadResult
 			return *res
 		}
 		res.OK = true
@@ -126,7 +126,7 @@ func execute(
 				res.Error, res.ErrorKind = text, intKind
 				return *res
 			}
-			res.Error, res.ErrorKind = "程序拒绝: "+text, "runtime"
+			res.Error, res.ErrorKind = "程序拒绝: "+text, ErrorKindRuntime
 		} else if _, prefix := stageOutcome(tr.err); prefix != "" {
 			// 判定环的拒绝/故障：前缀只认 *invoke.DenyError（issue #59）。
 			res.Error, res.ErrorKind = fmt.Sprintf("%s: %v", prefix, tr.err), tr.kind
@@ -136,7 +136,7 @@ func execute(
 			res.Error, res.ErrorKind = fmt.Sprintf("%v", tr.err), tr.kind
 		}
 	default:
-		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", "pending"
+		res.Error, res.ErrorKind = "await 永不落定的 Promise（VM 无定时器，绑定均为同步调用）", ErrorKindPending
 	}
 	return *res
 }

@@ -124,7 +124,8 @@ func (m *MemStore) List(_ context.Context) ([]taskboard.Task, error) {
 }
 
 // Claim 运行时侧：认领（铸造令牌与接管代次，语义对齐 taskboard.Board.Claim
-// ——被**活着**持有 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked）。
+// ——被**活着**持有 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked /
+// 状态不在词表内 ErrUnknownState）。
 //
 // 「仍被持有」必须同时看状态与租约存活（taskboard.LeaseHeld，issue #335）：
 // 只看 State == claimed 会让持有者崩溃后的任务永久不可接管——与 Board.Claim
@@ -140,11 +141,16 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
 	now := m.nowLocked()
+	// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
+	// 词表外 → ErrUnknownState，终态 → ErrTerminal。只判 StateDone 会让
+	// 一条脏状态行照常领到租约。
+	if cerr := mt.task.State.Claimable(); cerr != nil {
+		return taskboard.Task{}, errors.Wrap(cerr, "任务状态不可认领",
+			"task", string(id), "state", string(mt.task.State))
+	}
 	switch {
 	case taskboard.LeaseHeld(mt.task, now):
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人活着持有")
-	case mt.task.State == taskboard.StateDone:
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态")
 	}
 	for _, d := range mt.task.Deps {
 		dep, ok := m.tasks[d]

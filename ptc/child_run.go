@@ -31,7 +31,7 @@ func runProgramInChild(start *wire.Start, call bindingCaller) wire.Result {
 		return resultToWire(Result{
 			Error: fmt.Sprintf("绑定标识符冲突：工具 %q 与 %q 净化后同为 host.%s，程序无法区分二者，故拒绝执行",
 				first, dup, ident),
-			ErrorKind: "binding_collision",
+			ErrorKind: ErrorKindBindingCollision,
 		}, start.ResultID)
 	}
 	for _, b := range bindings {
@@ -42,14 +42,14 @@ func runProgramInChild(start *wire.Start, call bindingCaller) wire.Result {
 		if serr != nil {
 			return resultToWire(Result{
 				Error:     fmt.Sprintf("绑定 %q 的调用形态非法: %v", b.Name, serr),
-				ErrorKind: "binding_signature",
+				ErrorKind: ErrorKindBindingSignature,
 			}, start.ResultID)
 		}
 		if id := toolname.Normalize(b.Name); ps.name != id {
 			return resultToWire(Result{
 				Error: fmt.Sprintf("绑定 %q 的调用形态函数名 %s 与其在 host 下的名字 %s 不一致",
 					b.Name, ps.name, id),
-				ErrorKind: "binding_signature",
+				ErrorKind: ErrorKindBindingSignature,
 			}, start.ResultID)
 		}
 	}

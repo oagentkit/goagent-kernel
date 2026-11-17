@@ -128,7 +128,7 @@ func Check(tickets []Ticket, now time.Time) []Problem {
 	}
 
 	for _, t := range byKey {
-		if !t.State.valid() {
+		if !t.State.Valid() {
 			out = append(out, Problem{Key: t.Key, Code: CodeUnknownState,
 				Text: "状态不在词表内（offered / accepted / closed / expired / withdrawn）"})
 			continue

@@ -94,8 +94,19 @@ func (s State) Terminal() bool {
 	return s == StateClosed || s == StateExpired || s == StateWithdrawn
 }
 
-// valid 报告状态是否在词表内。
-func (s State) valid() bool {
+// Valid 报告状态是否在词表内。
+//
+// # 为什么必须导出（issue #359）
+//
+// 体检面（Check）对词表外状态报 CodeUnknownState，但写路径此前只判
+// `== StateAccepted` 与 Terminal()——未知状态两条都不命中，于是被当作
+// 「待领取」，Take 照常铸造令牌并把状态改写成 accepted。内核在一条自己
+// 读不懂的记录上发放了执行权。
+//
+// 判据必须能被写路径（Take / Reply / Cancel）与落库面（Ledger.Save）直接
+// 消费；私有谓词逼实现靠 Terminal() 反推，而 Terminal() 对未知状态返回
+// false（不能把「读不懂」说成「终态」），反推必然漏。
+func (s State) Valid() bool {
 	switch s {
 	case StateOffered, StateAccepted, StateClosed, StateExpired, StateWithdrawn:
 		return true
@@ -197,18 +208,21 @@ type Store interface {
 	// Take 领取交接单：负责人在这一次原子操作里从 From 变为 to。
 	//
 	// 非指定接收方（ErrNotAddressee）/ 已超时（ErrExpired）/ 已被领取或
-	// 终态（ErrTaken / ErrAlreadySettled）必须报错。令牌与代次由存储
+	// 终态（ErrTaken / ErrAlreadySettled）/ 状态不在词表内（ErrUnknownState）
+	// 必须报错——词表外一律不得铸造令牌、不得改写状态。令牌与代次由存储
 	// 同一次原子操作铸造。
 	Take(ctx context.Context, key Key, to Agent) (Handle, error)
 	// Reply 交回执（凭领取令牌）。
 	//
 	// 令牌不匹配 → ErrLeaseLost；已超时 → ErrExpired（迟到回执被拒，
-	// 责任期已过）；回执不自洽 → 报错且状态不动。成功 ⇒ 单落 StateClosed。
+	// 责任期已过）；状态不在词表内 → ErrUnknownState；回执不自洽 → 报错且
+	// 状态不动。成功 ⇒ 单落 StateClosed。
 	Reply(ctx context.Context, key Key, token string, r Receipt) error
 	// Cancel 源方收回（仅 StateOffered）。
 	//
 	// 非 From（ErrNotSource）/ 已被领取（ErrTaken）/ 已终态
-	// （ErrAlreadySettled）必须报错。成功 ⇒ 单落 StateWithdrawn。
+	// （ErrAlreadySettled）/ 状态不在词表内（ErrUnknownState）必须报错。
+	// 成功 ⇒ 单落 StateWithdrawn。
 	Cancel(ctx context.Context, key Key, by Agent) error
 	// Snapshot 当前代的全部交接单（一致快照）。
 	Snapshot(ctx context.Context) ([]Ticket, error)
@@ -230,4 +244,10 @@ var (
 	ErrLeaseLost = errors.New("handoff: 领取令牌不匹配")
 	// ErrAlreadySettled 交接单已是终态。
 	ErrAlreadySettled = errors.New("handoff: 交接单已是终态")
+	// ErrUnknownState 交接单状态不在内核词表内（读不懂 ⇒ 写路径拒绝）。
+	//
+	// 与 Check 的 CodeUnknownState 同一事实、同一方向：体检说「这状态非法」，
+	// 领取 / 回执 / 收回 / 落库也必须拒绝——否则一条脏状态行会让写路径照常
+	// 铸造令牌、改写状态，事后无法区分「本来就是词表外状态」与「正常领取」。
+	ErrUnknownState = errors.New("handoff: 交接单状态不在词表内")
 )

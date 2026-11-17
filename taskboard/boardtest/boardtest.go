@@ -125,6 +125,7 @@ func RunConfig(t *testing.T, factory Factory, cfg Config) {
 	t.Run("跨任务令牌复用被拒", func(t *testing.T) { runCrossTaskTokenRejected(t, factory) })
 	t.Run("重复令牌并发提交恰好一人成功", func(t *testing.T) { runDuplicateTokenOneWinner(t, factory) })
 	t.Run("依赖未完成不得认领", func(t *testing.T) { runBlockedClaimRejected(t, factory) })
+	t.Run("词表外状态不得认领", func(t *testing.T) { runUnknownStateClaimRejected(t, factory) })
 	t.Run("完成后不得重开", func(t *testing.T) { runTerminalNoReopen(t, factory) })
 	t.Run("失败的任务可重新认领", func(t *testing.T) { runFailedTaskReclaimable(t, factory) })
 	t.Run("租约过期可被接管", func(t *testing.T) { runExpiredTakeover(t, factory) })
@@ -203,6 +204,45 @@ func runBlockedClaimRejected(t *testing.T, factory Factory) {
 	if _, err := b.Claim(context.Background(), "t2", "a2", taskboard.ClaimRequest{TTL: time.Minute}); err != nil {
 		t.Fatalf("依赖完成后应当可认领: %v", err)
 	}
+}
+
+// runUnknownStateClaimRejected 词表外状态不得认领（issue #360 的契约义务）。
+//
+// 判据看三件事：返回 ErrUnknownState、不铸令牌/代次、状态与租约原样不变。
+// 只判「返回非 nil」会漏掉实现把脏状态改写成 claimed 之后才报错的一半失效
+// （状态被抹掉、事后无法区分「本来就是脏状态」与「正常领取」）。
+func runUnknownStateClaimRejected(t *testing.T, factory Factory) {
+	t.Helper()
+	b, _ := newBoard(t, factory)
+	const dirty = taskboard.State("weird_state")
+	seed(t, b, taskboard.Task{ID: "t1", State: dirty})
+
+	got, err := b.Claim(context.Background(), "t1", "a1", taskboard.ClaimRequest{TTL: time.Minute})
+	if !errors.Is(err, taskboard.ErrUnknownState) {
+		t.Fatalf("词表外状态认领必须报 ErrUnknownState（实得 %v）——"+
+			"否则一条脏状态行会照常领到租约并发副作用", err)
+	}
+	if got.Lease.Token != "" || got.Lease.Fence != 0 {
+		t.Fatalf("被拒的认领不得铸造令牌/代次，实得 %+v", got.Lease)
+	}
+
+	tasks, lerr := b.List(context.Background())
+	if lerr != nil {
+		t.Fatalf("List 失败: %v", lerr)
+	}
+	for _, task := range tasks {
+		if task.ID != "t1" {
+			continue
+		}
+		if task.State != dirty {
+			t.Fatalf("状态被改写了：原 %q，现 %q", dirty, task.State)
+		}
+		if task.Owner != "" || !task.Lease.IsZero() {
+			t.Fatalf("被拒的认领不得留下负责人/租约，实得 owner=%q lease=%+v", task.Owner, task.Lease)
+		}
+		return
+	}
+	t.Fatal("t1 不在 List 结果里（快照不完整）")
 }
 
 // runTerminalNoReopen 完成后不得重开。

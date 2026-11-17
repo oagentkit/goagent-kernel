@@ -176,7 +176,10 @@ type VerdictItem struct {
 	EvidenceIDs StringList `json:"evidence_ids,omitempty"`
 }
 
-// Verdicts 宽容解码（仿 ChartSpec）：stance 非法或 agent 为空的条目丢弃，绝不影响整报解析。
+// Verdicts 宽容解码（仿 ChartSpec）：agent 为空的条目丢弃（没有裁决主体，
+// 不是一条可归因的裁决）；stance 词表外**保留原值**交 Validate 判 critical
+// （issue #361：静默丢会让一条否决裁决凭空消失，事后无法区分「模型没给裁决」
+// 与「裁决被内核吃掉」）。
 type Verdicts []VerdictItem
 
 func (v *Verdicts) UnmarshalJSON(data []byte) error {
@@ -200,11 +203,18 @@ func (v *Verdicts) UnmarshalJSON(data []byte) error {
 		// 而这里连留痕都没有——事后无法区分「模型没给裁决」与「裁决被大小写吃掉」。
 		// 与同包的 decision / action / confidence 归一是同一类错（写法差异不该
 		// 改变语义），那里已各修过一次。
+		//
+		// 词表外（"rejected" 这类极自然的写法）**不再 continue**：保留原值，
+		// 由 Validate 的 stance 白名单报 critical（与 scope/action 同向，
+		// issue #361）。空串是「没给裁决」而非「给了一个读不懂的裁决」，
+		// 仍按缺主体条目丢弃——两者不是同一个事实。
 		st := normalizeEnum(it.Stance)
-		if !IsStanceValid(st) {
+		if st == "" {
 			continue
 		}
-		it.Stance = st
+		if IsStanceValid(st) {
+			it.Stance = st
+		}
 		out = append(out, it)
 	}
 	*v = out
