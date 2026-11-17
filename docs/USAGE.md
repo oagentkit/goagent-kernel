@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 本文覆盖 23 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 本文覆盖 24 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -35,16 +35,16 @@
 >
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
-> | 本文覆盖 | 23 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **51** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **58** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **59** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 本文覆盖 | 24 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **59** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **60** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **51** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **58** 个包目录。
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **59** 个包目录。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -2313,6 +2313,106 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 **怎么用**：先按目标场景选存储 / Worker 模式，再把 `required` 列里的能力逐条
 对到清单的 `evidence`。`partial` / `missing` 的条目都挂着 issue——它们是**有主
 的缺口**，不是「文档里没写所以不存在」。
+
+---
+
+### 3.15 跨区域所有权：`ownership`（issue #273）
+
+#### 什么时候需要它
+
+同一条任务域（比如「同一个任务队列/同一张任务板」）会被**多个区域**的
+Worker 写，而你需要在网络分区时保证「旧区域不能继续提交」——`taskboard`
+的租约管的是**单个任务**在**同一个存储**里的归属，`handoff` 的 Epoch 管的是
+**交接单**的代次；两者都不回答「哪个区域是这份任务域的权威」。
+
+单区域部署不需要跨域转移，但建议照常接 `Local`：提交路径从此有同一条
+栅栏判据，将来接共享权威时调用方代码不用改。
+
+#### 最小集成片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/ownership"
+
+// 单区域：本区域即权威（任意任务域 epoch 1；转移显式 ErrSingleRegion）。
+auth, err := ownership.NewLocal("region-a")
+if err != nil {
+	return err // ErrBadMapping：区域为空
+}
+
+// 多区域：把配置事实（任务域 → 权威区域）显式登记。
+// MemoryAuthority 是进程内参考实现——真实共享权威由宿主落到同一份
+// 可写存储（表结构/事务/选主归宿主，本包不做）。
+auth, err = ownership.NewMemoryAuthority(ownership.RegionMap{
+	"task-domain-1": "region-a",
+	"task-domain-2": "region-c",
+})
+if err != nil {
+	return err // ErrBadMapping：空映射/空键值
+}
+
+// 提交落点：取当前授权，Fence 通过才提交。
+g, err := auth.Owner(ctx, "task-domain-1")
+if err != nil {
+	return err // ErrUnknownDomain：映射没登记这个域
+}
+if err := auth.Fence(ctx, g.Commit()); err != nil {
+	return err // 任何错误都必须拒绝，不得降级为放行
+}
+```
+
+**跨区域转移是两阶段**（确认前候选代次不可用）：
+
+```go
+// ① 当前权威区域凭授权令牌提出转移；当前授权不变。
+tr, err := auth.BeginTransfer(ctx, ownership.TransferRequest{
+	Domain: "task-domain-1",
+	From:   "region-a",
+	Token:  g.Token,
+	To:     "region-b",
+})
+if err != nil {
+	return err
+}
+// 把 tr.ID 与 tr.Token 交给目标区域（回执令牌只发目标区域）。
+
+// ② 目标区域凭回执令牌确认；成功后 epoch 提升、新区域成为唯一权威。
+grant, err := auth.ConfirmTransfer(ctx, ownership.ConfirmRequest{
+	ID: tr.ID, Token: tr.Token, By: "region-b",
+})
+if err != nil {
+	return err // ErrNoTransfer：提案被取代；ErrNotTarget：确认方不对
+}
+// 之后 region-b 用 grant 提交；region-a 的旧 grant 提交得到 ErrStaleEpoch。
+```
+
+#### 关键符号
+
+| 符号 | 作用 |
+|---|---|
+| `RegionMap` | 任务域 → 权威区域的映射：`Validate` / `Owner` / `Domains`，可配置可查 |
+| `Authority` | 权威管理面：`Owner` / `Mapping` / `BeginTransfer` / `ConfirmTransfer` + `Fence` |
+| `Fencer` | 提交路径唯一接缝（单区域 `Local`、多区域共享权威、参考实现都满足） |
+| `Grant` / `Commit` | 当前授权 / 一次提交声明；`Grant.Commit()` 逐字段投影，别手抄 |
+| `Transfer` | 两阶段提案：`Candidate`（当前代次 + 1）与回执 `Token`；**不是授权** |
+| `Judge` | 纯判据（宿主实现可直接复用；判定次序：回退 → 未确认 → 区域 → 令牌） |
+| `ErrSingleRegion` | 单区域本地权威拒绝跨域转移（显式拒绝，不静默不做） |
+
+#### 坑
+
+- **把 `BeginTransfer` 当成授权**。候选代次在确认前提交一律
+  `ErrEpochUnconfirmed`；`Owner` / `Mapping` 也仍是旧区域。确认前只有一个权威。
+- **Fence 与提交分两次操作**。`Fence` 是判据不是事务：判据通过到提交生效之间
+  仍有窗口（与 `coord` 的判定—提交窗口同一类事实）。接共享存储时把 `Judge`
+  放进同一次条件写/CAS，不要「先 Fence 再另起一次写」。
+- **拿所有权 epoch 当租约 TTL**。本包没有到期/续期：`Grant` 不会随时间失效，
+  任务租约仍归 `taskboard.Lease` / `handoff.Ticket.TTL`。把两套时限混在一起，
+  会得到「所有权过期但任务租约还在」的双真相。
+- **权威不可达时放行**。分区期间可达性失败必须按拒绝处理（fail-closed）；
+  「查不到就默认本地权威」正是双主。
+- **空映射启动**。`NewMemoryAuthority(RegionMap{})` 直接 `ErrBadMapping`：
+  空映射会让每笔提交都报 `ErrUnknownDomain`，配置错误与业务错误从此分不开。
+- **指望 `Local` 做转移**。单区域没有第二权威，转移请求显式
+  `ErrSingleRegion`；需要跨区域时换共享权威实现，调用方接口不变。
 
 ---
 
