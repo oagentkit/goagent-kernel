@@ -100,7 +100,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -315,7 +315,7 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 # 单测一条命令跑完，本地改完代码先跑它。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck modreplace modwork cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -411,6 +411,14 @@ modwork: ## go.work / go.work.sum 不得入库（只应存在于本机）
 	fi
 	@echo "go.work 未入库 ✓"
 
+hygiene: ## 仓库卫生：被跟踪的编译产物二进制不得入库（issue #413）
+	@# 复发形态是「本地构建完顺手 git add .」——靠人记不住，故机器判。
+	@# 判据在 cmd/hygiene：读 git ls-files 的**被跟踪**清单（与 modwork/modreplace
+	@# 同口径），逐个比对可执行二进制魔数。判魔数不判扩展名——扩展名可以改。
+	@# git 不可用时**报错退出**而不是静默跳过：判据跑不起来却报绿，
+	@# 是最贵的失效形态。
+	$(EXPORT) $(GOENV) go run ./cmd/hygiene
+
 # check 的依赖链就是「提交前必须全绿」的定义。2026-11-06 复核时补上三条
 # **此前根本没被跑过**的门禁：race（竞态）、vuln（依赖与标准库漏洞）、
 # crossbuild（声明支持的平台必须真编得过）。它们的共同点是「目标/文档里有，
@@ -444,7 +452,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck releasecheck modreplace modwork
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

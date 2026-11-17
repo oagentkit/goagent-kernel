@@ -23,6 +23,12 @@
 *.test
 *.out
 
+# 仓库根的构建产物（issue #413）。`docsync` 是 cmd/docsync 的本地产物，
+# 3.5MB 的机器码曾被误提交（b469d8b）——跨平台 checkout 拿到的是不可执行的
+# 文件，且与源码可能不同步（review 时看到的是一个改不动的 blob diff）。
+# 钉死根目录（带前导斜杠），避免误伤别处的同名文件。
+/docsync
+
 # 项目本地的 Go 缓存：以项目内 GOPATH/GOMODCACHE 跑 go 命令时生成（文档里的
 # 宿主侧验证命令就是这个形态，见 docs/SPLIT_PLAN.md）。
 # 是构建产物，不是源码——且它们**不被**上面的规则覆盖：`*.out` 匹配不到
