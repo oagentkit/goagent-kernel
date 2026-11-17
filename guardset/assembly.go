@@ -172,6 +172,19 @@ func WithSwapGate(g SwapGate) AssemblyOption {
 //
 // 回调 panic 会被吞掉（不掀翻整次换份）：换份**已经落地**，让回调抛异常就把
 // 已经发生的事实改写成「没发生」——那正是本包要消灭的那类失效。
+//
+// 接缝契约（宿主注入的换份留痕回调；内核在交换落地后**锁外**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。回调在交换**落地之后、锁外**调用（见 notify），
+// 故它可以安全地读 `Current()`；但它**不得**回调 `Swap`（那会与正在进行的
+// 换份互相等待）。
+// no-blocking：**宿主侧兑现**。回调在换份路径上被同步等待：必须有界返回，
+// 不得等锁、不得做长耗时 I/O。
+// panic-isolated：**内核侧兑现**。notify 用 internal/subhub.Do 吞掉回调的
+// panic（不掀翻整次换份：换份已经落地，让回调抛异常就把已发生的事实改写成
+// 「没发生」）。
 func WithSwapRecorder(f func(SwapRecord)) AssemblyOption {
 	return func(c *assemblyConfig) { c.recorder = f }
 }
@@ -280,6 +293,19 @@ func (a *Assembly) Snapshot() Snapshot {
 //
 // 闸（`WithSwapGate`）在**每次发布尝试前**跑，看到即将换上去的那一份。
 // CAS 重试会重复调用它 ⇒ 闸门必须是幂等的纯谓词。
+//
+// 接缝契约（宿主注入的换份计算函数；内核在 CAS 重试循环里**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。换份走 atomic.Pointer 的 CAS 循环，mutate 在
+// **不持任何内核锁**的位置被调用——回查本包不会自锁。但**不得回调 Swap /
+// SwapFunc**：那会与正在进行的那次换份互相等待（CAS 重试会把它放大成活锁）。
+// no-blocking：**宿主侧兑现**。mutate 在换份路径上被同步等待（CAS 重试会
+// 重复调用它）：必须有界返回，不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本回调的 panic（SwapFunc
+// 直接调它，本包无 recover），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error；否则 panic 会掀翻换份的发起方。
 func (a *Assembly) SwapFunc(ctx context.Context, mutate func(cur Snapshot) (*Set, error)) error {
 	if a == nil {
 		return ErrUnassembled

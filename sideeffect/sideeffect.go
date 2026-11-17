@@ -271,6 +271,18 @@ var ErrActionConflict = errors.New("同 Key 的动作身份与首次登记不一
 //
 // 一个动作可以没有闸（进程内单持有者），也可以有闸而无栅栏
 // （下游自己判陈旧）。两者独立。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：写入体（write）内不得回查本包的 Store 写面（回查即重入存储
+// 事务 / 闸的锁路径 ⇒ 死锁）。内核侧兑现：**内核不调用本接口**——它是
+// 宿主下游的契约（宿主在施加阶段用它把结果落到资源上），内核侧无锁可持。
+// no-blocking：写入体内不得无界等待——比较与写入必须在**同一次原子操作**
+// 里完成（拆成三步则栅栏形同虚布，两个持有者会双双通过检查）。
+// panic-isolated：**宿主侧兑现**——内核不调用本接口，无从隔离其 panic；
+// 典型形态是写入体报错 ⇒ 整个事务回滚（examples/pgstore 的形态）。
 type FencedSink interface {
 	// WriteFenced 在资源上执行一次带栅栏令牌的写入。
 	//

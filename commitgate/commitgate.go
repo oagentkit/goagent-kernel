@@ -138,36 +138,6 @@ type Lease struct {
 	Token uint64
 }
 
-// Guard 终态独占提交闸。并发安全（状态操作全在 Store，实现各自保证）。
-//
-// 零值不可用，请用 NewGuard——闸的零值若表示「放行」，等于缺配置即失效。
-type Guard struct {
-	// store 已提交记录的存储接缝（缺省进程内参考实现）。
-	store Store
-	// isTerminal 由宿主注入的状态词表判定；nil 时按「全部都是终态」处理，
-	// 这是更保守的一侧（宁可多拦，不可在不知道词表时漏拦）。
-	isTerminal func(status string) bool
-	// seedWarn 回灌失败留痕钩子（WithSeedWarn 装配期注入；nil 走包内 logx）。
-	seedWarn SeedWarn
-}
-
-// NewGuard 构造闸（进程内参考存储）。isTerminal 判定某状态是否为终态；
-// 传 nil 表示所有提交都按终态处理。
-func NewGuard(isTerminal func(status string) bool) *Guard {
-	return NewGuardWithStore(NewMemoryStore(), isTerminal)
-}
-
-// NewGuardWithStore 构造闸并注入存储接缝（issue #145）。
-//
-// 多副本宿主用它接自己的跨进程存储；判定逻辑仍只有本包这一份。
-// s 为 nil ⇒ 退化为进程内参考存储。
-func NewGuardWithStore(s Store, isTerminal func(status string) bool) *Guard {
-	if s == nil {
-		s = NewMemoryStore()
-	}
-	return &Guard{store: s, isTerminal: isTerminal}
-}
-
 // Seed 用**已持久化的**终态回灌闸（宿主进程重启后调用一次）。
 //
 // 不灌的后果与 SeqGate 同源：进程重启后闸是空的，上一进程已提交的终态被畅通无阻

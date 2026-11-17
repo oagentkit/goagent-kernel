@@ -60,6 +60,20 @@ type Record struct {
 // 每个方法都收 ctx（issue #185）：网络存储实现要把取消/超时传到底层驱动。
 // 经 Guard 调用时 ctx 恒非 nil（Guard 在边界把 nil 归一为
 // context.Background()）；直接调用 Store 的代码请传非 nil ctx。
+//
+// 接缝契约（宿主实现跨进程存储，内核在 Guard 的判定—占用路径上同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：实现不得回查本闸（不得在 Claim / ReleaseToken /
+//     SeedIfAbsent 里回调 Guard）——Guard 正处在「判据 → 占用」的流程里
+//     等着存储返回，回查即形成「占用里再占用」的重入。跨进程原子性契约
+//     见本文件头，**不在此复刻第二份**。
+//   - no-blocking：Claim / ReleaseToken 可能要走网络，故「不阻塞」在此处的
+//     准确含义是「有界」：必须承接 ctx 的取消/超时并在期限内返回，不得无限
+//     等待、不得在持存储内部锁时等待别的回调。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；存储实现的 panic
+//     会沿 Acquire / ReleaseLease 上抛。
 type Store interface {
 	// Claim 原子占用：不存在 ⇒ 写入 rec（Token 由实现铸造后随 out 返回）
 	// 且 claimed=true；已存在 ⇒ claimed=false，out 为先前记录（供

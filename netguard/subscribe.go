@@ -80,6 +80,18 @@ var subs subhub.Registry[*Policy]
 // 快照，顺序仍单调向前），也不能在两者之间漏掉一次变更。
 //
 // 立即回调同样在锁外调用、panic 同样被 recover，与变更通知完全一致。
+//
+// 接缝契约（宿主注入的订阅回调）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：订阅者回调内不得回查本包（不得在回调里再动同一张订阅表）。内核侧
+// 兑现「调用点不持锁」：订阅表是无锁快照（subhub），两个调用点（立即回调与
+// 变更通知）都在**锁外**同步调用；本包的策略面是单指针原子发布，回查不会自锁。
+// no-blocking：通知是**同步遍历且无期限**：订阅者必须尽快返回，不得等待其它
+// 订阅者、不得等下一轮通知（本包不设期限，也没有 ctx）。
+// panic-isolated：**内核侧兑现**——两个调用点都经 subhub.Invoke（逐个 recover）：
+// 一个订阅者 panic 不掀翻整次通知、也不影响其余订阅者。
 func Subscribe(fn func(*Policy)) (Subscription, error) {
 	if fn == nil {
 		return 0, ErrNilSubscriber

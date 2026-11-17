@@ -18,6 +18,18 @@ import "context"
 // SessionTurns 在途轮的可寻址能力面（Turns 的超集）。
 //
 // 与 Turns 同样的实现纪律：不得持锁调取消回调。
+//
+// 接缝契约（宿主实现，内核在会话级收敛循环里同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：ActiveOf / CancelOf 不得回查本包（不得在取消里再调
+//     DrainSession）——同 Turns 的理由：取消会触发收尾路径，回查即重入
+//     收尾。
+//   - no-blocking：ActiveOf 必须廉价（循环反复问它）；CancelOf 必须尽快
+//     返回，不得把 cause 广播给其他会话、不得等待别的取消完成。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；实现 panic 会掀翻
+//     收敛循环。
 type SessionTurns interface {
 	Turns
 

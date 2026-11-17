@@ -58,6 +58,21 @@ type Request struct {
 	// Attempt 执行步接缝（nil = 不执行任何改派，只给出档位与原错误）。
 	Attempt AttemptFunc
 	// OnEvent 每次改派尝试前的通知（nil = 不通知）。只在此处产出改派说明。
+	//
+	// 接缝契约（宿主实现，内核在改派环里同步调用）：
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	//   - no-reentry：不得回查本包（不得在通知里再调 StickyFailover）——
+	//     通知是「改派说明」的产出点，重入会让一次改派嵌套在另一次里，
+	//     累计错误与尝试次数的口径互相污染。
+	//   - no-blocking：通知**同步**发生在改派环内，必须廉价返回，不得做
+	//     I/O（写日志、落库、发网络请求都另走旁路）——慢通知会拖住整条
+	//     改派路径。
+	//   - panic-isolated：宿主侧兑现——本包**不做 recover**；通知回调 panic
+	//     会掀翻整个改派环。
+	//
+	// （同结构体的 FailoverCandidates / Attempt 是同型接缝，约束相同。）
 	OnEvent func(Event)
 }
 

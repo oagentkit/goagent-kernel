@@ -103,6 +103,19 @@ func ShutdownBudget(d time.Duration) time.Duration {
 //
 // 实现须**快照后逐个调用**，不得持锁调取消回调——取消会触发收尾路径，
 // 持锁重入即死锁。
+//
+// 接缝契约（宿主实现，内核在收敛循环里同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：Active / CancelAll 不得回查本包（不得在取消回调里再调
+//     Drain）——取消会触发收尾路径，回查即在收尾里再收一次尾。本包已有的
+//     纪律（快照后逐个取消、不得持锁调取消回调）正是这一条的内核侧形态。
+//   - no-blocking：Active 必须廉价（收敛循环按节拍反复问它）；CancelAll
+//     必须尽快返回，不得等待别的取消完成——它跑在关停链上，等下去会拖住
+//     停机。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；实现 panic 会掀翻
+//     收敛循环。
 type Turns interface {
 	// Active 在途轮数。
 	Active() int

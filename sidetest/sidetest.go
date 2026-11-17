@@ -150,6 +150,17 @@ func (c *FakeClock) Advance(d time.Duration) {
 // **为什么单独一个接口**：过期判定是存储实现内部的事（它自己知道
 // 「租约还在不在」）。套件不能替它判，只能要求它**用可注入的时钟**。
 // 没实现这个接口 → 套件硬失败（而不是跳过过期场景——跳过等于假绿）。
+//
+// 接缝契约（宿主实现的存储能力；一条接缝覆盖其全部方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：实现内不得回查本包（套件只是判据，不持任何锁）。内核侧兑现
+// 「调用点不持锁」：套件全程不持锁，实现里回查套件不会自锁。
+// no-blocking：实现的方法被套件**同步**调用（每个场景一次或多次），慢实现
+// 拖住整个场景——须自行有界。
+// panic-isolated：**宿主侧兑现**——套件不做 recover：实现 panic 会让该子测试
+// 带现场栈失败（是被看见的失败，不是被吞掉的假绿）。
 type ClockedStore interface {
 	sideeffect.Store
 	// UseClock 指定存储实现读时钟的方式（通常是注入一个 func() time.Time）。

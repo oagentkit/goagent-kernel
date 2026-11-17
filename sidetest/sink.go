@@ -46,6 +46,17 @@ import (
 //
 // 观测面只服务判据（读已见最大 / 制造并读取一次参考业务写入），
 // 不要求实现方暴露任何内部结构。
+//
+// 接缝契约（宿主实现的下游栅栏实现；一条接缝覆盖其全部方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：实现内不得回查本包。内核侧兑现「调用点不持锁」：套件全程不持锁，
+// 实现里回查套件不会自锁。
+// no-blocking：实现的方法被套件**同步**调用（并发场景还会被多路同时调用），
+// 慢实现拖住整个场景——须自行有界。
+// panic-isolated：**宿主侧兑现**——套件不做 recover：实现 panic 会让该子测试
+// 带现场栈失败（是被看见的失败，不是被吞掉的假绿）。
 type SinkProbe interface {
 	sideeffect.FencedSink
 	// SeenFence 返回该资源已见过的最大令牌（无记录返回 0）。

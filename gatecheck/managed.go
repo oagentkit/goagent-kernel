@@ -93,6 +93,24 @@ type Managed struct {
 	// 未标记的调用 fail-safe 升人审（`Op.Mutating` 三态化后的语义：门无法
 	// 从工具名判定变更性，不得默认按非变更放行）。要走出人审，宿主在映射里
 	// 显式声明 `Mutating: policy.Mutating(false/true)`。
+	//
+	// 接缝契约（宿主实现，内核在 Managed.Exec 的判定路径上同步调用）：
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	//   - no-reentry：不得回查本包（不得在映射里再调 m.Check / m.Exec）——
+	//     映射跑在判据之前，回查即「判据里再判一次」，出口与档位会被判两遍。
+	//   - no-blocking：必须是廉价的纯映射，不得做 I/O（不得查策略中心、
+	//     不得现场请求人审）——它在每次 Exec 的热路径上被调用一次；「要不要
+	//     人审」的语义归上游 policy.Gate，OpFunc 只产出「这次调用是什么
+	//     操作」。
+	//   - panic-isolated：宿主侧兑现——本包**不做 recover**；映射 panic 会
+	//     掀翻这次 Exec。
+	//
+	// 与上游的分工：**审批判定**归上游 toolgate/policy（Gate.Check）、
+	// **档位与预算词表**归上游 guardx/sandbox，本包**转交**它们的结论，
+	// **不**在本包复刻第二套审批规则。本包**自己**判的只有两处合成：出口
+	// 策略取更严一档（effectiveEgress）、要求档位下限取内层后端自报档位。
 	OpFunc func(program string, budget sandbox.Budget) policy.Op
 }
 

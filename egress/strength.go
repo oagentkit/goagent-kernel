@@ -95,6 +95,25 @@ func (s Strength) String() string {
 // 上游 guardx/sandbox 定了档位词表与能力声明面（Enforcer），但没有
 // 「实测证据」这一档。本包是出口**判据**的归属地，故在此定义；
 // 上游若日后补上同名能力，本包的别名可逐字替换（调用面不动）。
+//
+// 接缝契约（宿主实现实测探测，内核在 SatisfiedVerdict 里同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在探测里再调 SatisfiedVerdict /
+//     SatisfiedBy）——判据正等着它返回，回查即重入判定路径。
+//   - no-blocking：本方法**不带 ctx**（理由见上：探测怎么做是后端的事，
+//     判据面保持无副作用、可重复），故实现**不得**在调用内做可能长时间
+//     等待的探测——探测应在装配阶段做一次并缓存，本方法只交出结果。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；探测 panic 会沿
+//     SatisfiedVerdict 上抛。
+//
+// 与上游的分工：出站**档位词表与「能否强制」的声明面**（Mode / Enforcer）
+// 来自上游 guardx/sandbox，本包只做 type alias，**不在本包另立一份**；
+// 档位达标与否由上游的 Mode.Satisfies 判。本包**自己**判的只有「实测
+// 证据」这一维（StrengthDeclared 与 StrengthEnforced 的分野）——上游没有
+// 这一档，故它是本仓自己的判据，且只有这一份（VerifyVerdict 与
+// SatisfiedVerdict 共用同一份实现）。
 type EgressVerifier interface {
 	// VerifyEgress 返回**实测**得到的出站档位。
 	//

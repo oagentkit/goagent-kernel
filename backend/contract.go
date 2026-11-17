@@ -20,6 +20,25 @@ import (
 // 后端自己解释 Job 的执行语义，但**必须**如实自报隔离档位：档位是宿主做
 // 风险判断的依据，说谎的成本落在宿主身上（与 sandbox.Providers 登记
 // 门禁同一条纪律——「档位声明要有人签字」）。
+//
+// 接缝契约（宿主实现本接口，内核调用其方法；三条约束的兑现方逐条写明）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：ID / Isolation 是**声明方法**，登记簿一律在**锁外**调用
+//     （issue #329：锁内只比对登记时缓存下来的 ID 快照）。宿主实现不得在
+//     这两个方法里回查登记簿（Register / Candidates / Resolve）——那会与
+//     持锁路径二次抢锁，死锁。
+//   - no-blocking：声明方法必须是廉价的纯查询，不得做 I/O（问配置中心、
+//     问容器运行时）——同一次选路里它们会被反复调用，慢 ID() 会拖住选路。
+//     「不阻塞」在此处的准确含义是「有界且不等待」，不是「零耗时」。
+//   - panic-isolated：**宿主侧兑现**——本包调用宿主实现时**不做 recover**
+//     （本仓唯一的 panic 隔离机制在 internal/subhub，只覆盖订阅/通知类
+//     回调）。宿主实现须自行保证不 panic，或在内部 recover 成 error；
+//     否则 panic 会沿本包的调用栈上抛。
+//
+// Exec 由宿主在拿到本包选出的后端后调用（本包不执行作业），它可以是长耗时
+// 阻塞的——上面「不阻塞」的约束只覆盖声明方法 ID / Isolation。
 type Backend interface {
 	// ID 后端标识，在登记簿里唯一。
 	//
@@ -51,6 +70,19 @@ type Backend interface {
 //
 // 为什么是可选接口而不是 Backend 的必选方法：进程内兜底后端（Inline）没有
 // 任何出站强制面，必选方法会逼它撒谎或报错——可选 + 沉默按最弱，两个都不用。
+//
+// 接缝契约（宿主实现，内核在判据里调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：Egress() 只返回**已声明的档位**，不得回查登记簿或本包的
+//     其它能力面——判据面在锁外调用它，回查即二次抢锁。
+//   - no-blocking：必须是纯查询，不得做 I/O——它在每次选路里都会被问一次。
+//   - panic-isolated：宿主侧兑现（本包不 recover，见 Backend 的同一说明）。
+//
+// 与上游的分工：出站**档位词表与档位序**来自上游 guardx/sandbox
+// （sandbox.EgressMode），本包只引用、**不另立一份**；「档位是否达标」由
+// 本包 backend.Spec.SatisfiedBy 这一条判据判——上游的判定本包不复刻。
 type EgressEnforcer interface {
 	// Egress 返回该后端实际能兑现的出站档位。
 	Egress() sandbox.EgressMode
@@ -62,6 +94,19 @@ type EgressEnforcer interface {
 // 基本闸（墙钟经 context 兜底），不兑现内存与输出截断。内存是唯一
 // 「兜不住就出事」的项——任务式后端跑的是完整作业，一个无界分配能撑爆
 // 宿主；声明不了就别被选中。
+//
+// 接缝契约（宿主实现，内核在判据里调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：Capable() 只回答「兜不兜得住」，不得回查登记簿或本包的
+//     其它能力面——判据面在锁外调用它，回查即二次抢锁。
+//   - no-blocking：必须是纯查询，不得做 I/O——它在每次选路里都会被问一次。
+//   - panic-isolated：宿主侧兑现（本包不 recover，见 Backend 的同一说明）。
+//
+// 与上游的分工：预算**词表**来自上游 guardx/sandbox（sandbox.Budget），本包
+// 只引用、**不另立一份**；「全部非零项是否都兜得住」由本包
+// backend.Spec.SatisfiedBy 这一条判据判——上游的判定本包不复刻。
 type Capable interface {
 	// Capable 报告该后端能否兑现这份预算的全部非零项。
 	Capable(b sandbox.Budget) bool

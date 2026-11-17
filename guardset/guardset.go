@@ -221,6 +221,18 @@ type Guard struct {
 	Rank int
 
 	// Check 判定函数。为 nil 视为该环坏了，按拒绝收口（fail-closed）。
+	//
+	// 接缝契约（宿主填本字段，内核在判定路径上**同步**调用它）：
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：**内核侧兑现**。判定路径**不加锁**（Set 只读一个
+	// atomic.Pointer，见 Set 的并发说明），runGuard 在**不持任何内核锁**的
+	// 位置调用它——回查本包不会自锁；但不得等待正在进行的换份完成。
+	// no-blocking：**宿主侧兑现**。判定在编排的判定路径上被**同步**等待：必须
+	// 有界返回，不得等锁、不得做长耗时 I/O。
+	// panic-isolated：**内核侧兑现**。runGuard 用 defer recover 把宿主 panic
+	// 收成一条不可重试的拒绝——不掀翻判定面，panic 也不外溢到内核调用栈。
 	Check func(ctx context.Context, c invoke.Call) invoke.Verdict
 }
 

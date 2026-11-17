@@ -16,6 +16,17 @@ var log = logx.Delegating("steer")
 //
 // 四个方法就是判据的全部输入：完成环节清单、队列非空与否、报告覆写、
 // 条件迁移——本包不认识任何领域字段。
+//
+// 接缝契约（宿主实现的存储面；一条接缝覆盖其全部方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：实现内不得回查本包（不得再走本包的接管收尾路径）。内核侧兑现
+// 「调用点不持锁」：本包无锁，存储调用在锁外同步发生。
+// no-blocking：存储调用走**脱离 ctx**（context.WithoutCancel）——宿主不能靠
+// 取消打断自己，故实现必须**有界**：不得无界等待（等锁、等别的回调）。
+// panic-isolated：**宿主侧兑现**——本包不做 recover：实现 panic 会穿到调用方
+// （宿主实现须自行保证不 panic）。
 type Store interface {
 	// ReadSteps 读环节清单（含状态；BuildSummary 只计成功环节）。
 	// 读失败不中断收尾：Run 用降级正文继续（保产摘要的失败面不得扩大）。

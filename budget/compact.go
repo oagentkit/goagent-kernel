@@ -31,6 +31,19 @@ type Locator string
 //
 // 内核**不调 LLM**：「编排是代码，LLM 只做单环节」——摘要是一次 LLM 调用，
 // 属于模型面，不属于编排面。内核给计划、宿主给摘要，接口边界即纪律边界。
+//
+// 接缝契约（宿主实现，内核在 Apply 里同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在摘要里再调 Apply）——压实是**不可逆
+//     的逐字丢弃**，重入压实会在同一段会话上做第二次丢弃，账与计划口径
+//     互相污染。
+//   - no-blocking：本回调**必然要等**（摘要是一次模型调用），故「不阻塞」
+//     在此处的准确含义是「有界」：必须承接 ctx 的取消/超时并在期限内返回，
+//     不得等待其它回调、不得持锁等待。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；宿主实现须自行
+//     保证不 panic，或在内部 recover 成 error。
 type Summarizer interface {
 	// Summarize 把领先条目压成一条摘要。leading 已由 Apply 校验过条数与计划一致。
 	Summarize(ctx context.Context, leading []Item) (Summary, error)
@@ -40,6 +53,18 @@ type Summarizer interface {
 //
 // 压实是不可逆的逐字丢弃，所以原文必须先落地：摘要是**有损**的，事后发现摘要
 // 丢了关键信息时，唯一能救回来的地方是这份归档。内核不碰存储，只定义这次接缝。
+//
+// 接缝契约（宿主实现，内核在 Apply 里同步调用，且**先于**摘要）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在归档里再调 Apply）——归档已落地时
+//     重入压实会再丢一次原文，而这份归档是唯一的救回点。
+//   - no-blocking：落盘必然耗时，故「不阻塞」在此处的准确含义是「有界」：
+//     必须承接 ctx 的取消/超时并在期限内返回，不得等待其它回调、不得持锁
+//     等待。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；宿主实现须自行
+//     保证不 panic，或在内部 recover 成 error。
 type Archive interface {
 	// Archive 落盘压实前的原文并返回取回句柄。
 	Archive(ctx context.Context, items []Item) (Locator, error)

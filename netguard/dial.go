@@ -94,6 +94,18 @@ type DialOptions struct {
 	Dialer *net.Dialer
 	// Lookup 主机解析器。nil 时用 net.DefaultResolver.LookupIP；测试可注入
 	// 假解析器来模拟「解析结果在校验与建连之间改变」。
+	//
+	// 接缝契约（宿主注入的解析回调）：
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：解析回调内不得回查本包（不得再走本包的拨号/判定面）。内核侧
+	// 兑现「调用点不持锁」：预检在拨号三道判据里，**全程无锁**（策略是单指针
+	// 原子发布、名单是快照），故回查不会自锁。
+	// no-blocking：解析自带的 DNS I/O 是它该付的；但不得无界等待、不得等本包
+	// 其它判定或别的回调完成——ctx 到点即返回（内核不替它兜底）。
+	// panic-isolated：**宿主侧兑现**——本包不做 recover：解析器 panic 会穿到
+	// 拨号闭包之外（宿主实现须自行保证不 panic）。
 	Lookup func(ctx context.Context, host string) ([]net.IP, error)
 }
 
@@ -104,6 +116,17 @@ const dialTimeout = 10 * time.Second
 // DialFunc 返回包在传输层 DialContext 上的出站守卫。
 //
 // next 为 nil 时用缺省拨号器。返回值可直接赋给 http.Transport.DialContext。
+//
+// 接缝契约（宿主注入的底层拨号器）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：拨号器内不得回查本包（不得再走本包的拨号/判定面）。内核侧兑现
+// 「调用点不持锁」：拨号发生在名字层与预检之后、端点核对之前，全程无锁。
+// no-blocking：建连耗时是拨号器该付的；但不得无界等待、不得等本包其它判定或
+// 别的回调完成（缺省拨号器自带 10s 超时；注入的拨号器须自行有界）。
+// panic-isolated：**宿主侧兑现**——本包不做 recover：拨号器 panic 会穿到
+// http.Transport 的调用栈（宿主实现须自行保证不 panic）。
 func DialFunc(next func(ctx context.Context, network, addr string) (net.Conn, error), opts DialOptions) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	dial := next
 	if dial == nil {

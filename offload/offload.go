@@ -148,6 +148,19 @@ type Blob struct {
 //   - Put 对同一 relPath 重复调用**幂等**（内容寻址下重复写必然是同一份字节）；
 //   - relPath 是逻辑键而非本机路径，宿主自行决定落点；
 //   - 在 State 存活期内该键可取回（保留期与回收由宿主负责，本包不清理）。
+//
+// 接缝契约（宿主实现，内核在逐条处理的外置循环里同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在 Put 里再调本包的外置入口）——内核
+//     正逐条处理并等待它返回，回查即重入处理路径。
+//   - no-blocking：本接口**不带 ctx**（签名固定），内核**同步等待** Put
+//     返回，故「不阻塞」在此处的准确含义是「有界」：实现须自行保证落盘
+//     在有界时间内返回（超时的兜底由实现自己做），不得无限等待、不得等待
+//     其它回调。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；Put panic 会掀翻
+//     这一轮的外置处理。
 type Store interface {
 	Put(relPath string, data []byte) error
 }

@@ -161,6 +161,26 @@ func (s *policySubscriber) queueLocked(p Policy) {
 // 变更不会漏，而并发变更可能**合并**为最新一代（单调投递门的选择，见文件头）。
 //
 // 立即回调同样在锁外调用、panic 同样被 recover，与变更通知完全一致。
+//
+// 接缝契约（宿主注入的订阅者回调）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：订阅者回调里**允许**再调 SetStrategy（无锁，不会自锁；
+//     重入的通知进 pending，由单调投递门在当前投递结束后补投，见文件头）——
+//     这是本包明确允许的。但回调不得**等待**另一轮投递完成（那会与投递
+//     门互相等待）。
+//   - no-blocking：回调在**锁外**同步执行（无 ctx、无期限），写侧会等它
+//     返回——订阅者须尽快返回，不得在回调里做长时间 I/O；耗时工作应自交
+//     异步。代次序由投递门保证，回调内不必自己做代次比对。
+//   - panic-isolated：**内核侧兑现**——回调经 internal/subhub.Invoke 调用，
+//     逐个 recover：一个订阅者 panic 不掀翻变更通知、也不影响其余订阅者，
+//     且 panic 不外溢到内核调用栈。
+//
+// 与上游的分工：本包的判据**自持**（处置策略与脱敏判定面全部在本包，上游
+// 不提供同类判据）；订阅机制（快照表 + 铸造句柄 + 锁外通知 + panic 隔离）
+// 在 internal/subhub，与 netguard / guardset 共用**同一份实现**——本包不
+// 另立第二份订阅机制。
 func Subscribe(fn func(Policy)) (Subscription, error) {
 	if fn == nil {
 		return 0, ErrNilSubscriber

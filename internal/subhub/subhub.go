@@ -58,6 +58,21 @@ type Registry[T any] struct {
 // （netguard.ErrNilSubscriber 等），报错文案也各有语境。本包不替它们判，
 // 也不替它们编一个共用哨兵——共用哨兵会让 `errors.Is(err, netguard.ErrNilSubscriber)`
 // 这类既有调用点判定链断掉。
+//
+// 接缝契约（宿主注入的订阅者回调；本包是**通知面**，不是调用面）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：登记本身**不调用** fn——回调只在 Notify 时被调用（遍历
+//     一次快照、**无锁**）。订阅者不得在回调里回查本表（不得在通知里再
+//     Add / Remove / Notify）——通知遍历的是一次快照，嵌套增删会让「这次
+//     通知看到谁」变得不可复核。
+//   - no-blocking：Notify 是**同步遍历**，本包**没有锁**（通知在锁外这一
+//     条由结构保证，不是靠纪律）。订阅者必须尽快返回：不得等待其它订阅
+//     者、不得等待下一轮通知（本包不设期限，也没有 ctx）。
+//   - panic-isolated：**内核侧兑现**——本包就是 panic 隔离机制本体：回调
+//     经 Invoke / Do 调用，逐个 recover（见文件头「回调 panic 不得影响
+//     发布面」），一个订阅者 panic 不掀翻整次通知、也不影响其余订阅者。
 func (r *Registry[T]) Add(fn func(T)) Handle {
 	h := Handle(r.seq.Add(1))
 	e := entry[T]{handle: h, fn: fn}
@@ -136,6 +151,19 @@ func (r *Registry[T]) Len() int {
 //
 // 为什么要吞：调用点全都在「变更已经落地」之后（否则订阅者拿到的就不是事实）。
 // 让其中一个订阅者把进程或整次变更说成失败，等于把已发生的事实改写成没发生。
+//
+// 接缝契约（宿主注入的回调；本函数**就是隔离点**本身）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：本包**无锁**，回调里可以安全地再调本包的其它方法（Add /
+//     Remove / Notify）而不会自锁；但回调不得**等待**通知完成——那会与
+//     正在投递的调用者互相等待。
+//   - no-blocking：本函数**不设期限**（没有 ctx 参数），调用方（Notify）
+//     也是同步遍历——回调必须自行保证有界：不得无限等待、不得等待别的回调。
+//   - panic-isolated：**内核侧兑现**——这就是隔离点：defer recover 吞掉
+//     panic（`defer func() { _ = recover() }`()），panic 不外溢到调用栈，
+//     也不影响其余订阅者。
 func Invoke[T any](fn func(T), v T) {
 	defer func() { _ = recover() }()
 	fn(v)
@@ -143,6 +171,17 @@ func Invoke[T any](fn func(T), v T) {
 
 // Do 调用一个无参回调并吞掉 panic——留痕/通知类副作用的同一条纪律，
 // 供「没有载荷要传」的回调（如换份留痕）使用，免得每个使用方各写一份 recover。
+//
+// 接缝契约（宿主注入的回调；本函数**就是隔离点**本身）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：同 Invoke——本包无锁，回调里可安全再调本包其它方法；但
+//     不得等待通知完成。
+//   - no-blocking：同 Invoke——无 ctx、无期限，调用方同步等待，回调必须
+//     自行保证有界。
+//   - panic-isolated：**内核侧兑现**——defer recover 吞掉 panic，panic 不
+//     外溢到调用栈。
 func Do(fn func()) {
 	defer func() { _ = recover() }()
 	fn()

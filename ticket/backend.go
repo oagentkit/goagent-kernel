@@ -59,6 +59,18 @@ import (
 // 这四个操作的语义，不依赖它们怎么达成。**过期判定的时间权威在实现侧**
 // （存储时钟，见文件头「时间的真相只有存储一个」）：接口不接收调用方时间，
 // 节点时钟因此没有进入判定面的路径。
+//
+// 接缝契约（宿主实现的跨进程存储；一条接缝覆盖其全部方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：实现内不得回查本包（不得再走本包的票据判定面）。内核侧兑现
+// 「调用点不持锁」：Store 调用存储方法时不持任何内核锁；进程内参考实现在
+// **锁外**取时钟（issue #317）。
+// no-blocking：存储调用是同步的，跨副本实现会做 I/O——须自行有界（不得无界
+// 等待）；本包不替它设期限。
+// panic-isolated：**宿主侧兑现**——本包不对存储调用做 recover：实现 panic 会穿
+// 到 Store 的调用方（宿主实现须自行保证不 panic）。
 type Backend interface {
 	// Put 写入一张未消费票据，expires_at 由**存储时钟** + ttl 落下，
 	// 并返回该时刻（Issue 原样返回给宿主）。
@@ -117,6 +129,16 @@ func NewMemoryBackend(maxSize int) Backend {
 // 宿主可以放心在时钟闭包里读票据数或其他本包接口。
 //
 // maxSize <= 0 ⇒ DefaultMaxEntries；now 为 nil ⇒ time.Now。
+//
+// 接缝契约（宿主注入的存储时钟）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：时钟回调内不得回查本包（不得再调 Put/Take/GC/Len）——**但本实现
+// 保证回调在锁外被调用**（issue #317），故回查是安全的、不会自锁。
+// no-blocking：时钟在写入/消费/清理的**同步路径**上被调用，须廉价返回。
+// panic-isolated：**宿主侧兑现**——本包不做 recover：时钟回调 panic 会穿到
+// Put/Take/GC 的调用方（宿主实现须自行保证不 panic）。
 func NewMemoryBackendWithClock(maxSize int, now func() time.Time) Backend {
 	if maxSize <= 0 {
 		maxSize = DefaultMaxEntries

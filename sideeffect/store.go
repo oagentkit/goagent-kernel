@@ -62,6 +62,18 @@ import (
 //     持有者身份与授予时铸造的一致（ErrNotHolder）、租约的资源与动作的
 //     资源一致（ErrResourceMismatch）。只查其中一两项，就有只偷到令牌的
 //     组件冒充持有者（令牌会经下游流转）、或拿 A 资源的租约动 B 资源这类洞。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包，也不得在一次调用内自调本接口（自锁）。
+// 内核侧：Runner 在**不持任何内核锁**的位置调用本接口（判据全在存储侧，
+// 闸状态由存储的原子操作决定）。
+// no-blocking：宿主实现内不得无界等待——内核的判据路径（抢闸 → 资格检查
+// → 施加 → 记账）同步等它返回，阻塞会拖住整条路径。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（本包无
+// recover），宿主实现须自行保证不 panic。
 type Store interface {
 	// Acquire 一次原子判定，返回「能否执行」与「若能执行则用哪一代令牌」。
 	//
@@ -329,6 +341,17 @@ type Store interface {
 // 可省，不强迫所有调用方持有凭据。但跨进程对账的宿主应当用本接口——
 // 不实现本接口的存储编译不破，但 sidetest 套件对缺失**硬失败**
 // （与 RenewingBoard 同一处置：跳过 = 把「没测过」伪装成「通过了」）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本包自身不调用本接口（由适配器 / 宿主调用）；适配器侧调用
+// 时同样**不持内核锁**（校验与裁决在同一事务内）。
+// no-blocking：宿主实现内不得无界等待——裁决路径同步等它返回。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic。
 type OwnedResolveStore interface {
 	Store
 

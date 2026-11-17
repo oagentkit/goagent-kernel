@@ -104,6 +104,16 @@ func New() *Store {
 // 注入点在**后端**而不是 Store（issue #186）：跨进程实现由宿主注入的
 // Backend 自带存储时钟，`now` 只影响本函数构造的进程内参考后端。
 // maxSize <= 0 ⇒ 取 DefaultMaxEntries；now 为 nil ⇒ time.Now。
+//
+// 接缝契约（宿主注入的存储时钟）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：本函数只把时钟**转交**给进程内参考后端，不调用它；真正兑现
+// 「回调在锁外被调用」的是后端那一侧（issue #317：Put/Take/GC 都在加锁前取值）。
+// no-blocking：时钟在票据写入/消费/清理的同步路径上被调用，须廉价返回。
+// panic-isolated：**宿主侧兑现**——本包不做 recover：时钟回调 panic 会穿到
+// 票据操作的调用方（宿主实现须自行保证不 panic）。
 func NewWithClock(maxSize int, now func() time.Time) *Store {
 	return NewWithBackend(NewMemoryBackendWithClock(maxSize, now))
 }

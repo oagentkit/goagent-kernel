@@ -209,6 +209,19 @@ type ConfirmRequest struct {
 //   - 判定与提交在**同一次原子操作**里完成，或显式声明判定—提交窗口；
 //   - 任何错误都不得被解释成放行（fail-closed）；
 //   - 代次只增不减、令牌由权威铸造（调用方不自行生成）。
+//
+// 接缝契约（宿主实现，内核在提交路径上同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：Fence 不得回调本包的**有状态**面（不得在判定里再触发
+//     转移或占用）——判定与提交必须落在权威的同一次原子操作里，嵌套触发
+//     即把这次判定变成另一次判定的一部分。调用纯判据 Judge 是允许且被
+//     要求的（见 Authority 注释：判定逻辑只有一份）。
+//   - no-blocking：Fence 可能要走共享存储，故「不阻塞」在此处的准确含义
+//     是「有界」：必须承接 ctx 的取消/超时并在期限内返回，不得无限等待。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；Fence panic 会沿
+//     提交路径上抛。
 type Fencer interface {
 	// Fence 校验一次提交的所有权声明；nil = 放行，任何错误 = 拒绝。
 	Fence(ctx context.Context, c Commit) error
@@ -225,6 +238,23 @@ type Fencer interface {
 //   - 确认回执对**最近一次已确认提案**幂等；未知/被取代的提案一律
 //     @@ErrNoTransfer@@，不得凭令牌猜测复活；
 //   - @@Fence@@ 的判定逻辑复用 @@Judge@@（第二份判据必然漂移）。
+//
+// 接缝契约（宿主实现，内核在提交与转移路径上同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：实现不得回调本包的**有状态**面（不得在 ConfirmTransfer
+//     里再调 BeginTransfer、不得在 Owner / Mapping 里做转移）——两阶段转移
+//     的次序就是「提案 → 确认」，嵌套触发会让代次与令牌的铸造次序失真。
+//   - no-blocking：Owner / Mapping / BeginTransfer / ConfirmTransfer 都可能
+//     要走共享存储，故「不阻塞」在此处的准确含义是「有界」：必须承接 ctx
+//     的取消/超时并在期限内返回。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；实现 panic 会沿
+//     提交或转移路径上抛。
+//
+// 与上游的分工：本包的判据**自持**——权威、代次、令牌与转移协议全部在本包，
+// 宿主只提供共享权威的**存储与原子性**；纯判据只有 Judge 这一份，本包不
+// 转交也不复刻任何第二份判据。
 type Authority interface {
 	Fencer
 	// Owner 返回任务域当前的权威授权；未知任务域 ⇒ ErrUnknownDomain。

@@ -59,6 +59,18 @@ import "github.com/yi-nology/goagent-kernel/internal/subhub"
 //
 // 要「现在这一份」请直接取 `Snapshot()`——两个入口各自表达一件事，
 // 而不是让一个入口同时兼职两种语义。
+//
+// 接缝契约（宿主注入的换份订阅回调；内核在交换落地后**锁外**通知它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。通知在交换**落地之后、锁外**发生，且遍历的是
+// 一次快照（subhub 的 copy-on-write 名单）——回调里可以安全地读 `Current()`；
+// 但不得回调 `Swap`（那会与正在进行的换份互相等待）。
+// no-blocking：**宿主侧兑现**。通知是**同步遍历**（subhub.Invoke 无 ctx、无
+// 期限）：回调必须自行保证有界——不得无限等待、不得等其它回调。
+// panic-isolated：**内核侧兑现**。subhub.Invoke 用 defer recover 吞掉回调的
+// panic——不掀翻换份，也不影响其余订阅者。
 func (a *Assembly) Subscribe(fn func(SwapRecord)) (Subscription, error) {
 	if a == nil {
 		return 0, ErrUnassembled

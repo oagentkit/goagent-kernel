@@ -65,37 +65,8 @@ func NewRunner(store Store, ttl time.Duration) *Runner {
 	return &Runner{store: store, ttl: ttl}
 }
 
-// Effect 动作的执行体。
-//
-// 拆成「准备」与「施加」两段，是为了在**两者之间**插入持有资格检查：
-// 准备阶段可能很慢（调外部接口、算结果），而闸的有效期可能在这段时间里
-// 到期被别人接管。此时若不加检查就进入施加阶段，就是**两份闸同时开着**
-// ——本次动作与新持有者做同一件事，副作用施加两次。
-//
-// # Apply 为什么必须拿到 Lease
-//
-// Lease 里带着**栅栏令牌**（Fence）。它不是给你看的，是给你**传下去**的：
-//
-//   - 下游按令牌拒收陈旧写入 → 过期持有者的迟到写被下游挡下（见 FencedSink）；
-//   - 下游按令牌/幂等键去重 → 重试不会重复施加（此时才敢声明
-//     Action.RetrySafety = RetrySafetySafe）。
-//
-// 不给令牌，下游就无从区分「这次写」与「那次过期持有者的写」——
-// 栅栏就只剩上游那半截，形同虚设。
-//
-// # 两段的失败语义不同
-//
-//   - Prepare 失败 → 动作没开始，**未施加任何副作用**（可安全重试）；
-//   - Apply 失败 → 副作用**可能已生效**，是否生效取决于远端
-//     （见 Action.RetrySafety）。
-type Effect struct {
-	// Prepare 准备阶段：算结果、构造请求，但**不施加副作用**。
-	// 可为 nil（不需要准备阶段）。
-	Prepare func(ctx context.Context) (any, error)
-	// Apply 施加阶段：真正对外部世界动手。prepared 是 Prepare 的产出，
-	// lease 是本次持有（含栅栏令牌）——把它传给下游。
-	Apply func(ctx context.Context, prepared any, lease Lease) (Result, error)
-}
+// Effect 动作的执行体（Prepare / Apply 两段，含两段各自的接缝契约）见
+// effect.go——执行体是宿主写的回调，与内核写的编排分文件，两者的读者不同。
 
 // Execute 执行一次副作用（单段执行体）。
 //
@@ -136,6 +107,17 @@ type Effect struct {
 // 差别不是形式：意图是「这次尝试还没结论」的唯一凭据。在结果未知的那条
 // 路上误用 Abandon（等于把「可能已生效」当成「确定没生效」）⇒ 意图被撤销
 // ⇒ 该 Key 重新可被执行 ⇒ 重复施加的入口重新打开，且失效仍是**静默**的。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：单段执行体内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧：它在**不持任何内核锁**处被调用（包成 Effect.Apply 执行）。
+// no-blocking：执行体内不得无界等待——内核只在**施加前**检查一次资格，
+// 施加期间闸到期即被别人接管 ⇒ 两边同时做同一动作。
+// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（本包无
+// recover），宿主实现须自行保证不 panic。
 func (r *Runner) Execute(ctx context.Context, act Action, fn func(ctx context.Context, lease Lease) (Result, error)) (Outcome, Result, error) {
 	return r.ExecuteWith(ctx, act, Effect{
 		Apply: func(ctx context.Context, _ any, lease Lease) (Result, error) {
@@ -345,6 +327,16 @@ func (r *Runner) Reconcile(ctx context.Context, act Action, res Resolution) (Out
 // 用它就等于自愿放弃区分「我做完了」「别人做过了我拿回结果」
 // 「正被别人占着」「上次结果未知」这几种情况——若调用方需要那个区分
 // （审计、计费、给用户看「已完成」而不是「正在做」），请用 Execute。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：单段执行体内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧：它在**不持任何内核锁**处被调用（包成 Effect.Apply 执行）。
+// no-blocking：执行体内不得无界等待——内核只在**施加前**检查一次资格。
+// panic-isolated：**宿主侧兑现**——内核不隔离本回调的 panic（runner.go 无
+// recover），宿主实现须自行保证不 panic。
 func (r *Runner) Run(ctx context.Context, act Action, fn func(ctx context.Context, lease Lease) (Result, error)) (Result, error) {
 	outcome, res, err := r.Execute(ctx, act, fn)
 	if err != nil {
