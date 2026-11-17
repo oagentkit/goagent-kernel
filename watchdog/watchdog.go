@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // Pub 告警发布（与调度器 pub 同一落库广播路径：repo.InsertEvent + Bus.Broadcast）。
@@ -37,18 +38,21 @@ type Pub func(sessionID, caseID string, stepID *uint64, typ, level string, paylo
 
 // 工具调用级告警 reason 词表（EventToolPairingLeak 的 payload["reason"]）。
 //
-// 与 trajectory 的 Pairing 词表对应：unpaired_result / duplicate_result /
-// duplicate_call 逐字同名；declared_not_executed 是 trajectory 的
-// missing_result 在监视器侧的既有名称（同一事实：声明了、始终没等到结果）。
+// **单源（issue #392）**：三条与 trajectory.Pairing 逐字同名的 reason 直接引用
+// trajectory 的导出常量，不再手抄字面量；declared_not_executed 是
+// trajectory.PairingMissingResult 的注册别名（eventbus 侧登记映射，线路值不变
+// 以兼容既有消费者）。同一事实只有一份规范词表，聚合面不再把同一条件拆成
+// 两个桶。
 const (
 	// ReasonDeclaredNotExecuted 会话收口 / TTL 过期仍未配对的调用声明。
-	ReasonDeclaredNotExecuted = "declared_not_executed"
+	// 注册别名：规范 token 见 eventbus.CanonicalPairingReason。
+	ReasonDeclaredNotExecuted = eventbus.PairingReasonDeclaredNotExecuted
 	// ReasonUnpairedResult 结果没有任何调用声明（幽灵结果）。
-	ReasonUnpairedResult = "unpaired_result"
+	ReasonUnpairedResult = string(trajectory.PairingUnpairedResult)
 	// ReasonDuplicateResult 同一 call_id 的第二个及以后结果（第一次观测是真相）。
-	ReasonDuplicateResult = "duplicate_result"
+	ReasonDuplicateResult = string(trajectory.PairingDuplicateResult)
 	// ReasonDuplicateCall 同一 call_id 的第二个及以后声明（第一次观测是真相）。
-	ReasonDuplicateCall = "duplicate_call"
+	ReasonDuplicateCall = string(trajectory.PairingDuplicateCall)
 )
 
 // 残留清扫参数：事件总线对慢订阅丢帧/会话未收口的异常流会让部分 session 条目

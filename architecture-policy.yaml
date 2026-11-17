@@ -174,7 +174,7 @@ modules:
 
   - id: watchdog
     roots: [watchdog]
-    requires: [contract, eventbus] # INV3 轮括号的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus
+    requires: [contract, eventbus, trajectory] # INV3 的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus；配对缺口 reason 引用 trajectory.Pairing（#392，同一事实不得两份实现）
     owner: harness
     managed: true
     notes: |
@@ -184,7 +184,10 @@ modules:
       INV1/INV2 是工具调用级配对（声明↔结果）；配对键与 trajectory 同源
       （eventbus.ToolCallID：全局 call_id，不含 step）——step 是归属信息而不是
       配对键，结果可跨环节到达、同号声明可跨环节重试，按 step 分段会产出假红
-      （issue #336）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
+      （issue #336）。INV1/INV2 的 reason 词表直接引用 trajectory.Pairing——
+      unpaired_result/duplicate_result/duplicate_call 三条逐字同名，
+      declared_not_executed 是 missing_result 的注册别名（eventbus 侧映射，
+      issue #392）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
       不是每个 step_finished。INV3（issue #171）是它的外层——
       轮级括号配对：turn_started 开括号、turn_ended 闭合，闭合必须带归因
       （closed_by ∈ 宿主注册词表，缺省见 eventbus.ClosedByDefaults：

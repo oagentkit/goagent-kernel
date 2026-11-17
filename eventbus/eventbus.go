@@ -272,8 +272,10 @@ const (
 	// 工具身份守卫事件（spec 2026-09-15-tool-identity-otel-guard-design P4）：
 	// violation 为热路径守卫实锤（requested/resolved/checksum/violation 随 payload）；
 	// pairing_leak 为被动 watcher 配对不变量告警（reason=declared_not_executed|
-	// unpaired_result|duplicate_result|duplicate_call）。配对键经 ToolCallID 单源
-	// 读取（issue #336：两包各写一份配对键 ⇒ 同一事件流两个相反结论）。
+	// unpaired_result|duplicate_result|duplicate_call；declared_not_executed 是
+	// trajectory.PairingMissingResult 的注册别名，见 pairing.go 的
+	// CanonicalPairingReason，issue #392）。配对键经 ToolCallID 单源读取
+	// （issue #336：两包各写一份配对键 ⇒ 同一事件流两个相反结论）。
 	EventToolIdentityViolation = "tool_identity_violation"
 	EventToolPairingLeak       = "tool_pairing_leak"
 	// 轮级括号不变量告警（watchdog INV3，issue #171）：turn_started/turn_ended
