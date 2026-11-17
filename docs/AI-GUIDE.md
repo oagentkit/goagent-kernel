@@ -481,6 +481,8 @@ make check
 
 | 目标 | 拦什么 | 红了怎么修 |
 |---|---|---|
+| `versioncheck` | 门禁工具版本口径：ci.yml 装的版本与 Makefile 声明的不一致 | 两处同步（Makefile 的 `LINT_VERSION` / `GOVULNCHECK_VERSION` 是唯一来源）|
+| `cijobname` | ci.yml 的 job 名超 90 字节（GitHub 截断 ⇒ 分支保护的 required context 匹配不上 ⇒ 每个 PR 卡在 BLOCKED 且看不出原因）| 改短 job 名，并同步分支保护的 required contexts（两者必须逐字相同）|
 | `fmt-check` | gofmt 未格式化 | `gofmt -w <文件>`；文件集由 git 决定，不递归扫 `.*-work/` |
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
@@ -491,9 +493,13 @@ make check
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）| 按报告的 goroutine 栈修共享状态；别把该目标改成 `CGO_ENABLED=0` |
 | `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
+| `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |
 | `apilifecheck` | API 生命周期四方一致性：`api-lifecycle.yaml` ↔ 包注释标记 ↔ 生产包覆盖（漏登记/幽灵登记）↔ Deprecated 替代指向存在性；外加错误哨兵登记表 ↔ 代码双向判等（issue #113/#104）| 新包补登记 + 包注释 `// 生命周期:` 标记；改级别两处同步；Deprecated 补真实存在的 replacement；新增哨兵登记进 `docs/error-semantics.md`；口径见 `docs/api-compat.md` |
+| `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符 / USAGE 逐行不一致（issue #277）| 见 `docs/DEPLOY-MATRIX.yaml` |
+| `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
+| `hygiene` | 仓库**跟踪**了编译产物二进制（本地构建产物留在工作树里是正确状态，判的是「进了版本库」）| `git rm --cached <路径>` + 删掉工作树副本 + 把该路径补进 `.gitignore`；构建产物请用 `make` 目标或 `go build -o bin/` 产出 |
 
 ### 4.1 架构门禁的规则表
 
