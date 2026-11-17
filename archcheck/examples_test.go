@@ -226,6 +226,99 @@ func TestExampleCoverageProblems(t *testing.T) {
 	}
 }
 
+// 分支覆盖判据必须能区分「每个分支都有正例」与「还有分支没被钉住」。
+//
+// 反向构造是关键：只有一条正例的 `(alpha|beta)` 必须报出 beta，而不是靠
+// 「正例整体命中」蒙混过关——那正是 issue #386 的失效形态。
+func TestExampleBranchCoverageProblems(t *testing.T) {
+	partially := Rule{
+		ID:          "partial",
+		ForbidRegex: "(alpha|beta|gamma)",
+		Examples: []RuleExample{
+			{Text: "var x = alpha", Want: exampleWantHit},
+			{Text: "var y = 1", Want: exampleWantMiss},
+		},
+	}
+	got := exampleBranchCoverageProblems(partially)
+	if len(got) != 2 {
+		t.Fatalf("alpha 之外的 2 个分支必须各自报一条，实得 %v", got)
+	}
+	for _, g := range got {
+		if !strings.Contains(g, "分支") || !strings.Contains(g, "没有") {
+			t.Fatalf("失败文案必须点明「分支无样例覆盖」: %q", g)
+		}
+	}
+
+	all := Rule{
+		ID:          "all",
+		ForbidRegex: "(alpha|beta|gamma)",
+		Examples: []RuleExample{
+			{Text: "var x = alpha", Want: exampleWantHit},
+			{Text: "var x = beta", Want: exampleWantHit},
+			{Text: "var x = gamma", Want: exampleWantHit},
+			{Text: "var y = 1", Want: exampleWantMiss},
+		},
+	}
+	if got := exampleBranchCoverageProblems(all); len(got) != 0 {
+		t.Fatalf("每个分支都有正例时不该报: %v", got)
+	}
+
+	// 嵌套分支（两层各 2 支）：只钉住第一层第一支 / 第二层第一支的一条样例，
+	// 另外 2 个分支必须报出来。
+	nested := Rule{
+		ID:          "nested",
+		ForbidRegex: "(alpha|beta)/(gamma|delta)",
+		Examples: []RuleExample{
+			{Text: "var x = alpha/gamma", Want: exampleWantHit},
+			{Text: "var y = 1", Want: exampleWantMiss},
+		},
+	}
+	got = exampleBranchCoverageProblems(nested)
+	if len(got) != 2 {
+		t.Fatalf("嵌套规则的 2 个未覆盖分支必须各自报一条，实得 %d: %v", len(got), got)
+	}
+
+	// import 规则同样要按分支覆盖：第二支没有任何正例，必须点名报出。
+	imp := Rule{
+		ID:           "import",
+		ForbidImport: "^alpha$|^beta$",
+		Examples: []RuleExample{
+			{Text: "alpha", Want: exampleWantHit},
+			{Text: "gamma", Want: exampleWantMiss},
+		},
+	}
+	got = exampleBranchCoverageProblems(imp)
+	if len(got) != 1 || !strings.Contains(got[0], "beta") {
+		t.Fatalf("import 规则的第二支必须被点名: %v", got)
+	}
+
+	// 单分支规则不报（一正一反的覆盖判据已经足够）。
+	single := Rule{
+		ID:          "single",
+		ForbidRegex: "^os/exec$",
+		Examples:    []RuleExample{{Text: "os/exec", Want: exampleWantHit}},
+	}
+	if got := exampleBranchCoverageProblems(single); len(got) != 0 {
+		t.Fatalf("单分支规则不该报: %v", got)
+	}
+}
+
+// 分支覆盖自检必须复用真实判定核：注释行命中的词不算覆盖。
+// 若这里退化成「文本里出现过即算覆盖」，把样例写成注释也能把分支钉住。
+func TestExampleBranchCoverageUsesRealKernel(t *testing.T) {
+	r := Rule{
+		ID:          "comments",
+		ForbidRegex: "(alpha|beta)",
+		Examples: []RuleExample{
+			{Text: "// alpha 只出现在注释里", Want: exampleWantHit},
+		},
+	}
+	got := exampleBranchCoverageProblems(r)
+	if len(got) != 2 {
+		t.Fatalf("注释里的词不得算分支覆盖，两个分支都应报缺样例: %v", got)
+	}
+}
+
 // require_rule_examples 开关必须真的生效：关着的时候不报、开着的时候报。
 // 单测「开着报」不够——它可能只是「无论开关都报」。
 func TestRequireRuleExamplesSwitch(t *testing.T) {
@@ -249,6 +342,9 @@ func TestRequireRuleExamplesSwitch(t *testing.T) {
 		}
 		if got := exampleCoverageProblems(r); len(got) != 0 {
 			t.Fatalf("规则 %q 的样例覆盖不全: %v", r.ID, got)
+		}
+		if got := exampleBranchCoverageProblems(r); len(got) != 0 {
+			t.Fatalf("规则 %q 有正则分支没有样例钉住: %v", r.ID, got)
 		}
 	}
 	if _, err := Load(root + "/architecture-policy.yaml"); err != nil {

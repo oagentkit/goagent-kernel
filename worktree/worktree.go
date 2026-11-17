@@ -104,6 +104,12 @@ func New(ws []Workspace) (*Plan, error) {
 			}
 		}
 		w.ID = id
+		// 构造方向的深拷贝（issue #397）：出口方向已由 #225 深拷贝交付，
+		// 但此处原样存 w 时 ReadOnly/Writable 的底层数组仍与调用方入参共享——
+		// 宿主复用/改写同一份声明切片，计划里的分区随之改变，New 的重叠自检
+		// 与 Conflicts 的结论都基于改后的事实。与出口方向同一把尺子。
+		w.ReadOnly = slices.Clone(w.ReadOnly)
+		w.Writable = slices.Clone(w.Writable)
 		out = append(out, w)
 	}
 	slices.SortStableFunc(out, func(a, b Workspace) int { return strings.Compare(a.ID, b.ID) })

@@ -179,6 +179,10 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 		h.Name = name
 		h.Event = event
 		h.ToolPrefix = strings.TrimSpace(h.ToolPrefix)
+		// 构造期快照（issue #390）：h 是按值拷贝的结构体，但 Args 的切片头
+		// 被复制、底层数组仍由调用方持有。hook 是检查层，参数变了等于检查内容
+		// 变了；宿主复用同一份配置模板再生成别的规则是最常见的写法。
+		h.Args = slices.Clone(h.Args)
 		out = append(out, h)
 	}
 	// 求值顺序必须确定：hook 集合常常来自 map / 文件遍历，顺序不定会让

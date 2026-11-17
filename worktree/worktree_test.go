@@ -190,6 +190,24 @@ func TestReadOnlyWorkspaceAllowed(t *testing.T) {
 	}
 }
 
+// TestNewClonesWorkspaceSlices 构造后改写调用方的 ReadOnly/Writable 不得写穿
+// 到计划（issue #397）。出口方向由 TestWorkspacesReturnsDefensiveCopy 钉住，
+// 两个方向必须成对——只修一个方向时，另一侧的宿主仍能改穿隔离声明。
+func TestNewClonesWorkspaceSlices(t *testing.T) {
+	ws := []Workspace{{ID: "alpha", ReadOnly: []string{"vendor/"}, Writable: []string{"src/"}}}
+	p, err := New(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws[0].ReadOnly[0] = "lib/"
+	ws[0].Writable[0] = "lib/"
+
+	got := p.Workspaces()[0]
+	if got.ReadOnly[0] != "vendor/" || got.Writable[0] != "src/" {
+		t.Fatalf("构造期留存了调用方的底层数组，改写入参写穿到计划: %+v", got)
+	}
+}
+
 // TestWorkspacesReturnsDefensiveCopy 改动 Workspaces() 返回值不得写穿到计划
 // 本体（issue #225）：此前直接交出内部底层数组——调用方改一个元素，New 的
 // 一致性自检与 Conflicts 的结论随之静默作废。登记表只读，调用方改不动。
@@ -204,13 +222,17 @@ func TestWorkspacesReturnsDefensiveCopy(t *testing.T) {
 	before := len(p.Conflicts())
 
 	ws := p.Workspaces()
-	ws[0].Writable = append(ws[0].Writable, "lib/") // 伪造与 beta 的可写重叠
-	ws[1].ID = "gamma"                              // 伪造 ID 改写
+	// 必须**原地写**：`append` 在对 len==cap 的切片（slices.Clone 的产物）
+	// 上必然重新分配，写的是一个全新数组，与计划本体零关联——那样的断言
+	// 在「交出内部数组」的坏实现下也恒绿（issue #387）。
+	ws[0].Writable[0] = "lib/" // 伪造与 beta 的可写重叠
+	ws[1].ID = "gamma"         // 伪造 ID 改写
 
 	if got := len(p.Conflicts()); got != before {
 		t.Fatalf("改写返回值不得影响计划结论：改前 %d 条冲突，改后 %d 条", before, got)
 	}
-	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 {
+	// 断言落在**元素值**上：坏实现改穿的是元素，不是长度。
+	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 || again[0].Writable[0] != "src/" {
 		t.Fatalf("计划本体不得被写穿: %+v", again[0])
 	}
 }

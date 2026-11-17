@@ -168,3 +168,33 @@ func TestPromptMarksEmptyID(t *testing.T) {
 		t.Fatalf("空 ID 应显式标注，实得: %q", out)
 	}
 }
+
+// TestBuildClonesEntryTags Build 产出的 Piece.Entry 不得与调用方入参共享
+// Tags 底层数组（issue #394）。
+//
+// Entry 自称「值类型」，但 Tags 是切片：按值放进 Piece 只复制切片头。
+// 标签是 AND 匹配的判据，改穿后两边的匹配结果随之改变。
+func TestBuildClonesEntryTags(t *testing.T) {
+	entries := []Entry{entry("m1", "正文", "project", "s", base, "alpha")}
+	res, err := Build(entries, Query{Scope: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Pieces) != 1 {
+		t.Fatalf("应注入 1 条，实得 %+v", res)
+	}
+	res.Pieces[0].Entry.Tags[0] = "mutated-out"
+	if entries[0].Tags[0] != "alpha" {
+		t.Fatalf("Build 的结果与入参共享 Tags 底层数组（改结果写穿源）: %v", entries[0].Tags)
+	}
+
+	entries2 := []Entry{entry("m2", "正文", "project", "s", base, "alpha")}
+	res2, err := Build(entries2, Query{Scope: "project"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries2[0].Tags[0] = "mutated-in"
+	if res2.Pieces[0].Entry.Tags[0] != "alpha" {
+		t.Fatalf("Build 的结果与入参共享 Tags 底层数组（改源写穿结果）: %v", res2.Pieces[0].Entry.Tags)
+	}
+}

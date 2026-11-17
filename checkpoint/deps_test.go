@@ -319,15 +319,31 @@ func TestDeclaredModeDeterministic(t *testing.T) {
 	}
 }
 
-// TestDeclaredModeSkipRunNoAlias 声明模式下结果切片同样不得与入参共享底层数组。
+// TestDeclaredModeSkipRunNoAlias 声明模式下结果切片同样不得与**快照 Done**
+// 共享底层数组，Skip 与 Run 也不得互相共享。
+//
+// 原断言拿 steps（[]StepDef）比 p.Skip（[]string）：两者元素类型不同，
+// 在 Go 里不可能共享同一底层数组，断言恒绿（issue #393）。真正的别名面
+// 是快照 Done（[]string）与结果切片、以及 Skip 与 Run 之间。
 func TestDeclaredModeSkipRunNoAlias(t *testing.T) {
 	steps := []StepDef{isolated("plug-a"), isolated("plug-b")}
 	s := snap("run", 1, contract.StatusRunning, "plug-b")
 	p := BuildPlan(steps, &s)
+	if len(p.Skip) != 1 || len(p.Run) != 1 {
+		t.Fatalf("前置条件不成立: Skip=%v Run=%v", p.Skip, p.Run)
+	}
+	doneBefore := append([]string(nil), s.Done...)
+	runBefore := append([]string(nil), p.Run...)
+
 	p.Skip[0] = "mutated"
-	p.Run[0] = "mutated"
-	if steps[0].ID != "plug-a" || steps[1].ID != "plug-b" {
-		t.Fatalf("结果切片与编排图共享了底层数组: %+v", steps)
+	if !reflect.DeepEqual(s.Done, doneBefore) {
+		t.Fatalf("结果切片与快照 Done 共享了底层数组: %v", s.Done)
+	}
+	if !reflect.DeepEqual(p.Run, runBefore) {
+		t.Fatalf("Skip 与 Run 共享了底层数组: %v", p.Run)
+	}
+	if &p.Skip[0] == &p.Run[0] {
+		t.Fatal("Skip 与 Run 指向同一底层数组")
 	}
 }
 
