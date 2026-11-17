@@ -73,7 +73,8 @@ func legacyPlan(graph []StepDef, snap *Snapshot) Plan {
 		}
 	}
 
-	if isTerminal(snap.Status) && len(p.Run) > 0 {
+	// 旧口径快照里的终态判定：与被替换的实现逐字相同（contract.IsTerminalStatus）。
+	if contract.IsTerminalStatus(snap.Status) && len(p.Run) > 0 {
 		p.addAnomaly(AnomalyCompleteWithPending, "",
 			"快照标记运行已终结但仍有未完成步骤，内核不自动重开，需宿主显式决定")
 		p.Skip, p.Run = nil, nil

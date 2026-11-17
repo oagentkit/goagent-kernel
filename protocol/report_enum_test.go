@@ -48,11 +48,10 @@ var vocabularyCases = []vocabularyCase{
 // 后者不是。把「这不是词表」写成一条带理由的声明，下一次加 map 的人
 // 必须做一次判断，而不是无声地绕过门禁。
 var nonVocabularyMaps = map[string]string{
-	"stringKeys":      "修复通道的已知字符串键清单（遍历键名，不是枚举取值域）",
-	"listKeys":        "修复通道的字符串项列表键清单（同上）",
-	"chartStatusOK":   "图表状态词归一的目标分组（ok 同义族），不是对外枚举出口",
-	"chartStatusWarn": "图表状态词归一的目标分组（warn 同义族），不是对外枚举出口",
-	"chartStatusDown": "图表状态词归一的目标分组（down 同义族），不是对外枚举出口",
+	"stringKeys": "修复通道的已知字符串键清单（遍历键名，不是枚举取值域）",
+	"listKeys":   "修复通道的字符串项列表键清单（同上）",
+	// 图表状态词的三张分组表**已**有对外枚举出口，登记在 groupedVocabularyCases
+	// （issue #356）——它们是分组词表，形状套不上上面的扁平登记面。
 }
 
 // TestVocabularyEnumerationMatchesPredicates 每张判定词表的枚举出口与
@@ -280,6 +279,11 @@ func TestEveryVocabularyMapHasEnumerationCase(t *testing.T) {
 	for _, c := range vocabularyCases {
 		covered[c.tableName] = true
 	}
+	for _, g := range groupedVocabularyCases {
+		for _, n := range g.tableNames {
+			covered[n] = true
+		}
+	}
 
 	for name := range declared {
 		if covered[name] {
@@ -317,6 +321,12 @@ func TestEveryEnumerationExportIsCovered(t *testing.T) {
 		full := runtime.FuncForPC(reflect.ValueOf(c.all).Pointer()).Name()
 		name := full[strings.LastIndex(full, ".")+1:]
 		covered[name] = true
+	}
+	for _, g := range groupedVocabularyCases {
+		for _, fn := range []func() []string{g.buckets, g.allWords} {
+			full := runtime.FuncForPC(reflect.ValueOf(fn).Pointer()).Name()
+			covered[full[strings.LastIndex(full, ".")+1:]] = true
+		}
 	}
 	for name := range declared {
 		if !covered[name] {

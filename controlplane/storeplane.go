@@ -304,13 +304,13 @@ func (p *StorePlane) Terminate(ctx context.Context, req Termination) error {
 			}
 			return ErrStaleRun
 		}
-		switch classifyRunStatus(snap.Status) {
-		case runStatusTerminal:
+		switch contract.ClassifyStatus(snap.Status) {
+		case contract.StatusTerminal:
 			if aerr := p.audit(ctx, req.Operator, ActionTerminate, target, req.Basis, "运行已是终态"); aerr != nil {
 				return aerr
 			}
 			return errors.Wrap(ErrTerminalRun, "当前状态: "+snap.Status)
-		case runStatusUnknown:
+		case contract.StatusUnknown:
 			// 词表外取值不得按「非终态」放行（issue #334）：它可能是宿主
 			// 自定义终态，改写它就是覆盖历史事实。与 checkpoint 的
 			// statusUnknown 同方向——判不了就阻塞，交宿主显式决定。
@@ -353,29 +353,21 @@ func taskIDsOf(tasks []taskboard.Task) []taskboard.TaskID {
 	return out
 }
 
-// runStatusClass 运行状态的三态归类（与 checkpoint.classifyStatus 同构，
-// issue #334）。两态不够用：「不在终态词表内」把**词表外**取值也吞进
+// 运行状态的三态归类直接取自 contract.ClassifyStatus（issue #363）。
+//
+// 本包此前**自建**了一份三态分类器（runStatusClass / runStatusOpen /
+// runStatusTerminal / runStatusUnknown + classifyRunStatus），注释写着「终态
+// 词表取自 contract——不在本包另立一份」，但它自己列举了已知过程态
+//（"" / created / running / waiting_approval）——**立的就是另一份**。
+// checkpoint 侧当时有一份逐字同构的副本（statusClass / classifyStatus），
+// 两处注释都这么写。
+//
+// 后果不是当下的错误结论（两份今天完全同构），而是**静默分叉**的入口：
+// 同一个状态在两包得到相反结论（checkpoint 当可续跑 vs controlplane 当需
+// 终止），而两份边界要一起改才会一致、这件事没有任何机制记录。
+//
+// 现在「什么算词表外」这条边界只有一份：contract.ClassifyStatus。本包只决定
+// **处置方向**（未知 ⇒ 拒绝终止），不决定**分类**。
+//
+// 三态本身仍不可省（issue #334）：「不在终态词表内」把**词表外**取值也吞进
 // 「非终态」，宿主自定义终态（如 "aborted"）会被当成可终止并静默改写。
-type runStatusClass int
-
-const (
-	// runStatusOpen 已知过程态（含空状态——崩溃快照的常态，是过程态）。
-	runStatusOpen runStatusClass = iota
-	// runStatusTerminal 已知终态（contract 的词表）。
-	runStatusTerminal
-	// runStatusUnknown 词表外：语义判不了，按保守侧处置（拒绝终止）。
-	runStatusUnknown
-)
-
-// classifyRunStatus 把运行状态归入三态。终态词表取自 contract——不在本包
-// 另立一份（第二套词表必然漂移）。
-func classifyRunStatus(status string) runStatusClass {
-	switch status {
-	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
-		return runStatusOpen
-	}
-	if contract.IsTerminalStatus(status) {
-		return runStatusTerminal
-	}
-	return runStatusUnknown
-}

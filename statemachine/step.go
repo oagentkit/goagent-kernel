@@ -77,14 +77,9 @@ func (s StepStatus) normalized() StepStatus {
 // 大小写/空白变体与规范形态同结论（issue #373）：它们是同一个状态，不是
 // 「读不懂」——误诊会把宿主导向错误的数据来源排查。
 func (s StepStatus) Valid() bool {
-	switch s.normalized() {
-	case StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved,
-		StatusRejected, StatusExpired, StatusSucceeded, StatusFailed,
-		StatusInterrupted, StatusRolledBack, StatusSkipped, StatusCancelled:
-		return true
-	default:
-		return false
-	}
+	// 判定读 stepStatusAll（enum.go）——与 AllStepStatuses 出口**同一张表**，
+	// 不另写一份清单（issue #356）。
+	return stepStatusAll[s.normalized()]
 }
 
 // transitions **自行推进**的合法转移表：无出边 = 终态（issue #374）。
@@ -180,12 +175,9 @@ func (t StepType) normalized() StepType {
 // 没有 Valid()，宿主只能看到 false，连「词表里没有它」都查不到。
 // 口径向 backend.Isolation.Valid() 对齐：越界值不得被当成最弱档。
 func (t StepType) Valid() bool {
-	switch t.normalized() {
-	case TypeReadonly, TypePlan, TypeApproval, TypeExecute, TypeVerify:
-		return true
-	default:
-		return false
-	}
+	// 判定读 stepTypeAll（enum.go）——与 AllStepTypes 出口**同一张表**，
+	// 不另写一份清单（issue #356）。
+	return stepTypeAll[t.normalized()]
 }
 
 // RequiresApproval 该环节类别是否必须经过审批态。

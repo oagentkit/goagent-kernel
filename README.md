@@ -88,8 +88,8 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `spill` | 341 | oekit/pkg | 输出预算溢出：提示契约 / 取回（分页**rune 无损**，#199——页边界不切坏多字节字符，逐页拼接与原文逐字节相等）/ 按龄清理 |
 | `pii` | 1336 | oekit/pkg | 个人信息价值面脱敏（手机号 / 身份证四重校验 + 全角/零宽/分组分隔归一化）；运行时策略（开关/面/强度）整份单指针原子交换 + 变更订阅 `Subscribe`，快照只读可断言、代次单调不回退 |
 | `netguard` | 1212 | oagentkit/guardx、oekit/pkg | 出站 URL 守卫（SSRF）：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。扩展名单**整份原子交换 + 代次可观测**（两次独立取会读到撕裂策略）。代次**只有一个真相**（策略指针内的 gen，全局值是它的投影；交换走 CAS 循环，故并发下代次唯一、单调、不回卷）。**`DialFunc` 把同一套判定落到建连那一刻**（名字层 + egress 预检 + 建连后核对真实 RemoteAddr）——闭合「校验 → 拨号」的 rebinding 窗口；判据仍是 egress，**不引入第二套 IP 策略**。放行面**具名且两层共用同一类型**（`Allow`，零值即严）；`NewClient`/`NewTransport` 是接线件——宿主一行把守卫挂上，且 client 可注入（测试连本机假服务器时**只在测试里**放宽回环）**非纯 stdlib**；DNS 解析与拨号间的 rebinding 窗口见包头「已知局限」与 dial.go；与上游 `oekit/pkg/urlguard` 的分工（IP 策略单源 egress 不换、域名后缀层本包为超集）同样见包头|
-| `statemachine` | 180 | oekit/pkg | 环节状态机：条件迁移的纯函数件（错误三态：非法迁移 / 状态不在词表；`StepType.Valid` + 词表外审批保守侧） |
-| `contract` | 169 | oekit/pkg | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）|
+| `statemachine` | 305 | oekit/pkg | 环节状态机：条件迁移的纯函数件（错误三态：非法迁移 / 状态不在词表；`StepType.Valid` + 词表外审批保守侧）；环节状态与类别各有**枚举出口**（`AllStepStatuses()` / `AllStepTypes()`），出口与 `Valid()` 读同一张词表 |
+| `contract` | 362 | oekit/pkg | 编排运行契约：编排引擎 ↔ 宿主状态的**唯一边界**（纯接口面，零实现）；状态词表**单源**：`AllStatuses()` 枚举、`IsKnownStatus()` 判成员、`ClassifyStatus()` 给三态（过程 / 终态 / 读不懂），会话轴与环节轴共用一份判据 |
 | `checkpoint` | 1268 | oekit/pkg | 编排续跑契约：进度快照存取边界 + **「续跑而非重放」**的恢复判定（空洞不采信 / 终态不自动重开 / 序号单调闸）+ **跨进程 CAS 存取契约**（`StoreCAS.SaveIfNewer`；**v0.33.0 起序号为 0 的快照一律拒收**——它不是一次真实提交，而放它落库等于给了它唯一能覆盖既有快照的写）与提交序列固化（`Committer`：抢序号→落库→**仅失败时**回滚，宿主无法漏掉）+ **依赖声明**（`StepDef.DependsOn` / `Isolated`）：并行 fan-out 的合法乱序完成按各自前驱采信，不再被「连续前缀」整批作废；零值 = 旧口径逐字不变|
 | `commitgate` | 484 | oekit/logx、oekit/pkg | 环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次（`statemachine` 是纯谓词，`SeqGate` 只排快照序号，两者都排不出「两条分支都赢了」）。终态词表由宿主注入。**放闸靠凭证**：`Acquire` 返回唯一令牌、`ReleaseLease` 凭令牌精确释放——靠 (状态,分支,序号) 认人的旧 `Release` 分辨不出两次同名同序的占用，迟到的释放会放掉别人的闸。状态在 `Store` 接缝之后（#145）：判定留 Guard、**令牌由存储铸造**（跨副本不撞），进程内参考实现 `NewMemoryStore` 不得上生产。回灌面 fail-loud（#204）：`SeedE` 对 Store 故障响亮上抛（吞掉 = 闸为空、重复终态提交重新敞开），Deprecated `Seed` 走 `SeedWarn` 钩子/logx warn 留痕 |
 | `budget` | 750 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
@@ -235,8 +235,8 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 66,027 行 / 344 文件（不含 `_test.go`）|
-| 测试 | 426 个测试文件 |
+| 生产代码 | 66,346 行 / 348 文件（不含 `_test.go`）|
+| 测试 | 434 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 9 条规则（`rules` 段）+ **12 条 `go/ast` 结构规则**（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 59 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** |

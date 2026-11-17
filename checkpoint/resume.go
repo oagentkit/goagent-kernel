@@ -125,41 +125,25 @@ func (p *Plan) addAnomaly(kind AnomalyKind, step, detail string) {
 	p.Anomalies = append(p.Anomalies, Anomaly{Kind: kind, Step: step, Detail: detail})
 }
 
-// isTerminal 该状态是否为运行终态。判定单源在 contract.IsTerminalStatus——
-// 不在本包另立一份终态清单，否则三个包（contract / checkpoint / controlplane）
-// 会各自漂移出不同的终态定义（issue #334 的收敛方向）。
-func isTerminal(status string) bool {
-	return contract.IsTerminalStatus(status)
-}
-
-// statusClass 快照状态的三态归类。
+// 快照状态的三态归类直接取自 contract.ClassifyStatus（issue #363）。
 //
-// 两态不够用（issue #219）：「非终态」把**词表外**的值也吞进去，而宿主完全
-// 可能把运行落库为自定义终态（"aborted"）——两态判据对它 fail-open，已终结
-// 的运行被当成「可续跑」静默重开。三态让「判不了」显式成为一类，处置对齐
-// Reconcile 的口径：未知按阻塞侧。
-type statusClass int
-
-const (
-	// statusOpen 已知过程态（或快照没写状态——崩溃快照的常态，续跑是本包的本职）。
-	statusOpen statusClass = iota
-	// statusTerminal 已知终态。
-	statusTerminal
-	// statusUnknown 词表外：语义判不了，不得按「可续跑」放行。
-	statusUnknown
-)
-
-// classifyStatus 把快照状态归入三态。词表取自 contract——不在本包另立一份。
-func classifyStatus(status string) statusClass {
-	switch status {
-	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
-		return statusOpen
-	}
-	if isTerminal(status) {
-		return statusTerminal
-	}
-	return statusUnknown
-}
+// 本包此前**自建**了一份三态分类器（statusClass / statusOpen / statusTerminal /
+// statusUnknown + classifyStatus），注释写着「词表取自 contract——不在本包另立
+// 一份」，但它自己列举了已知过程态（"" / created / running / waiting_approval）
+//——**立的就是另一份**。controlplane 侧当时还有一份逐字同构的副本
+//（runStatusClass / classifyRunStatus），两处注释都这么写。
+//
+// 后果不是当下的错误结论（两份今天完全同构），而是**静默分叉**的入口：新增
+// 一个过程态要同时改两个包，而「必须同时改」没有任何机制记录——与 #354 的
+// 「终态成员判定两份」同一根源。
+//
+// 现在「什么算词表外」这条边界只有一份：contract.ClassifyStatus。本包只决定
+// **处置方向**（未知 ⇒ 阻塞续跑并报 anomaly），不决定**分类**。
+//
+// 三态本身仍不可省（issue #219）：「非终态」把**词表外**的值也吞进去，而宿主
+// 完全可能把运行落库为自定义终态（"aborted"）——两态判据对它 fail-open，已
+// 终结的运行被当成「可续跑」静默重开。三态让「判不了」显式成为一类，处置
+// 对齐 Reconcile 的口径：未知按阻塞侧。
 
 // BuildPlan 由编排图与（可为 nil 的）进度快照算出恢复计划。纯函数，无副作用。
 //
@@ -285,14 +269,14 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	// 词表外状态同宽处理（issue #219）：它可能是宿主自定义的终态，「判不了」
 	// 不是放行的理由——按阻塞侧处理（与 Reconcile 对未登记闸态同一条口径），
 	// 而不是 fail-open 成「可续跑」。
-	switch classifyStatus(snap.Status) {
-	case statusTerminal:
+	switch contract.ClassifyStatus(snap.Status) {
+	case contract.StatusTerminal:
 		if len(p.Run) > 0 {
 			p.addAnomaly(AnomalyCompleteWithPending, "",
 				"快照标记运行已终结但仍有未完成步骤，内核不自动重开，需宿主显式决定")
 			p.Skip, p.Run = nil, nil
 		}
-	case statusUnknown:
+	case contract.StatusUnknown:
 		if len(p.Run) > 0 {
 			p.addAnomaly(AnomalyUnknownStatus, "",
 				"快照状态 "+snap.Status+" 不在已知词表内（可能是宿主自定义终态），内核不自动续跑，需宿主显式决定")

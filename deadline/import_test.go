@@ -10,6 +10,7 @@ package deadline
 import (
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,22 @@ func TestRouteHasProductionConsumer(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") ||
+		if d.IsDir() {
+			// 跳过点目录与产物目录（.git / .gomodcache / node_modules / site）：
+			// 它们**不是本仓的代码**。扫进去的后果是把别的模块的产物当本仓
+			// 源码解析——本地模块缓存里就躺着故意写坏的 testdata 文件
+			// （golang.org/x/tools 的 cmd/fiximports/testdata/.../bad.go），
+			// 解析失败会让本用例以「扫描失败」变红，而它与本包的判据毫无关系。
+			//
+			// 先例：taskboard/claim_gate_test.go、archcheck/error_sentinel_test.go
+			// 的全仓扫描都带这道守卫；本用例此前漏了。
+			name := d.Name()
+			if path != ".." && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "site") {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") ||
 			strings.HasSuffix(path, "_test.go") ||
 			strings.Contains(filepath.ToSlash(path), "/deadline/") {
 			return nil
