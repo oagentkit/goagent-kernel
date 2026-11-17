@@ -31,6 +31,39 @@ func blocking(name string) Hook {
 	return Hook{Name: name, Event: "pre_tool", Command: "check", Blocking: true, Timeout: time.Second}
 }
 
+// capturingRunner 记录 Dispatch 实际交给 Runner 的 hook 参数。
+type capturingRunner struct {
+	args []string
+}
+
+func (c *capturingRunner) Run(ctx context.Context, h Hook, p Payload) (Outcome, error) {
+	c.args = append([]string(nil), h.Args...)
+	return Outcome{}, nil
+}
+
+// TestNewClonesHookArgs 构造后改写调用方的 Args 不得写穿活 hook（issue #390）。
+//
+// New 把 Hook 按值存进 Engine，但 Args 的底层数组被活体持有：宿主复用/改写
+// 同一份配置模板时，Runner 收到的是改后的参数——检查内容静默变了。
+func TestNewClonesHookArgs(t *testing.T) {
+	hooks := []Hook{{
+		Name: "check", Event: "pre_tool", Command: "check",
+		Args: []string{"alpha"},
+	}}
+	r := &capturingRunner{}
+	e, err := New(hooks, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hooks[0].Args[0] = "beta"
+	if _, err := e.Dispatch(context.Background(), Payload{Event: "pre_tool"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.args) != 1 || r.args[0] != "alpha" {
+		t.Fatalf("Runner 收到的是改后参数：New 未快照 Args，实得 %v", r.args)
+	}
+}
+
 // TestNewValidates 加载期自检：写错的声明必须在装载时报错。
 func TestNewValidates(t *testing.T) {
 	r := &fakeRunner{}
