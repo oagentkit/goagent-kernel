@@ -138,70 +138,19 @@ func locationOfException(err error, wrapLines int) Position {
 
 // suggestionsFor 按错误类别给模型的修复建议。
 //
-// 写成表而不是散落在各收口分支里：建议是**给模型读的契约**，必须与类别一一对应
-// 且口径一致；散落写就会随时间漂移，同一个类别两处不同措辞。
+// 建议是**给模型读的契约**：必须与 ErrorKind 一一对应且口径一致。表在
+// kind.go 的 errorKindTable（与失败分类同一张表，issue #365）——新增一个
+// ErrorKind 漏登建议会被用例拦住，不会再出现「分类有、建议没有」的半条契约。
 //
 // 每条都写「怎么办」而不是「发生了什么」——Error 字段已经说了发生什么。
+// 未知类别返回 nil（不编建议：猜出来的建议会把模型引向一条不存在的路）。
+// 返回独立切片：调用方改写不影响后续调用。
 func suggestionsFor(kind string) []string {
-	switch kind {
-	case "deadline":
-		return []string{
-			"墙钟超时：把长耗时操作拆成多次调用，或先取小结果再决定是否继续",
-			"程序内不要 await 一个永不落定的 Promise（VM 无定时器）",
-		}
-	case "budget_calls":
-		return []string{
-			"工具调用次数超限：把多次小调用合并成一次带筛选条件的调用",
-			"必要时改用结构化查询一次取回，而不是逐条遍历",
-		}
-	case "budget_bytes":
-		return []string{
-			"返回字节超限：不要把工具原始输出原样 return，用 map/filter 聚合后只返回小结果",
-			"原始数据在程序内处理，不要带过模型面",
-		}
-	case "pending":
-		return []string{
-			"await 永不落定：VM 无定时器，宿主绑定均为同步调用，程序内不存在会自己 resolve 的 Promise",
-			"改造成对已 resolve 值的同步调用链",
-		}
-	case "bad_result":
-		return []string{
-			"return 值必须是 JSON 可序列化的：不能返回函数或循环引用",
-			"返回数组/对象字面量即可；字符串请确保是合法 JSON 文本",
-		}
-	case "syntax":
-		return []string{
-			"检查括号、引号、模板字符串是否配对",
-			"程序体是 async 函数体：顶层可直接用 await 与 return",
-		}
-	case "binding_collision":
-		return []string{
-			"这是装配期缺陷而非程序问题：两个工具名净化成同一个 host 标识符（如 get-logs 与 get_logs）",
-			"请宿主重命名其中一个工具后重试，程序本身无需改动",
-		}
-	case "runtime":
-		return []string{
-			"宿主绑定抛出的错误会直接冒泡：确认调用参数形状与该工具的契约一致",
-			"可以用 try/catch 包裹可疑调用，让程序带着已取得的部分结果继续",
-		}
-	case "host_panic":
-		return []string{
-			"这是宿主侧缺陷（绑定函数自己崩了），不是程序写错：改写法、换参数、try/catch 都无济于事",
-			"把这个 panic 连同 tool 名与参数报给宿主维护者；排除前避开该工具",
-		}
-	case "stage_denied":
-		return []string{
-			"这次调用被宿主的门禁判定拒绝：不是参数形状错，也不是程序 bug，改写法重试不会通过",
-			"改用被允许的工具或路径；确需该操作时先与宿主确认审批或白名单流程",
-		}
-	case "stage_failed":
-		return []string{
-			"这次失败来自宿主门禁自身（判定环崩溃或调用没有可判定的对象），不是程序的问题：改程序不会有任何用",
-			"同类调用请稍后重试；若持续失败，请宿主排查门禁代码与该工具的注册信息",
-		}
-	default:
+	info, ok := errorKindTable[kind]
+	if !ok {
 		return nil
 	}
+	return append([]string(nil), info.Suggestions...)
 }
 
 // Describe 位置的模型可读渲染：「第 N 行第 M 列」（1-based）。

@@ -4,17 +4,6 @@ import (
 	"github.com/oagentkit/guardx/invoke"
 )
 
-// ErrorKindUnmanaged 未受管执行被拒：装配了工具绑定，却没装判定环。
-//
-// 它与 stage_denied / stage_failed 分开不是分类洁癖：
-//   - stage_denied：判定环**判了**，结论是不许（正常裁决）；
-//   - stage_failed：判定环**自己坏了**（宿主门禁的故障）；
-//   - unmanaged：判定环**压根不在**，于是无人判过——这是「没接线」，不是「判了不许」。
-//
-// 三者的处置完全不同：前两者改程序或修门禁代码，第三者**必须先装上门禁**。
-// 合成一类的话，调用方会去改一段本来没问题的程序，而真正该做的是把门禁接上。
-const ErrorKindUnmanaged = "unmanaged"
-
 // unmanagedRefusal 判「装配了工具绑定却没装判定环」这一档。
 //
 // 返回空串 = 放行；返回非空 = 拒绝理由（会进 Result.Error）。
