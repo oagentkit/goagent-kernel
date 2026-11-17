@@ -235,7 +235,7 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 66,010 行 / 343 文件（不含 `_test.go`）|
+| 生产代码 | 66,028 行 / 344 文件（不含 `_test.go`）|
 | 测试 | 426 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |

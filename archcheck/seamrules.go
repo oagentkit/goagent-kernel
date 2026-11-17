@@ -245,3 +245,23 @@ func seamRel(root, path string) (string, error) {
 	}
 	return filepath.ToSlash(rel), nil
 }
+
+// checkSeamSelfPolicy 校验 policy seams 段的判据面不为空（issue #369/#370）。
+//
+// 与 rules 段「有执行体但 scope 为空」同一条纪律：接入判据的声明面若没有可判
+// 的条目，它仍是 severity: error、仍计入规则数，却一条都不判。这类失效只有
+// 门禁自己老实报出来才看得见。从 selfcheck.go 拆出（400 行阈值），划界按用途。
+func checkSeamSelfPolicy(pol *Policy, policyPath string, add func(file string, line int, format string, args ...any)) {
+	if pol.Seams == nil || !pol.Seams.on() {
+		return
+	}
+	if ls := pol.Seams.lockScan(); subRuleEnabled(ls.Enabled) && len(ls.Accessors) == 0 {
+		add(policyPath, 0, "seams.lock_scan 已启用但 accessors 为空：锁内调用扫描一条都不判")
+	}
+	if ps := pol.Seams.panicScan(); subRuleEnabled(ps.Enabled) && len(ps.GuardedCalls) == 0 {
+		add(policyPath, 0, "seams.panic_scan 已启用但 guarded_calls 为空：panic 外溢检测一条都不判")
+	}
+	if pol.Seams.MinDeclarations < 0 {
+		add(policyPath, 0, "seams.min_declarations 不能为负")
+	}
+}
