@@ -36,6 +36,7 @@ package contract
 
 import (
 	"context"
+	"strings"
 
 	"github.com/oekit/pkg/errors"
 )
@@ -121,7 +122,10 @@ const (
 // 逼本函数与 IsTerminal 对齐（#354）。timed_out 是会话独有取值，环节侧
 // 按「词表外」返回 false，这是轴的边界而不是判据分叉。
 func IsTerminalStatus(status string) bool {
-	switch status {
+	// 写法归一与 statemachine 同口径（issue #373/#354）：状态值可能来自库/
+	// 配置/外部来源，大小写与空白是常见漂移，不应让同一状态在两包得到
+	// 相反结论。归一后仍只认内核词表（词表外 false）。
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut,
 		StatusRejected, StatusExpired, StatusInterrupted, StatusRolledBack, StatusSkipped:
 		return true

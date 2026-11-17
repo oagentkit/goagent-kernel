@@ -159,12 +159,16 @@ func TestOverlappingValuesEqualAcrossPackages(t *testing.T) {
 func TestTerminalPredicateConsistent(t *testing.T) {
 	for _, tc := range stepVocabulary {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := IsTerminal(tc.status); got != tc.wantTerminal {
-				t.Errorf("statemachine.IsTerminal(%q) = %v, want %v", tc.status, got, tc.wantTerminal)
-			}
-			if got := contract.IsTerminalStatus(string(tc.status)); got != tc.wantTerminal {
-				t.Errorf("contract.IsTerminalStatus(%q) = %v, want %v（两包判据必须逐条一致）",
-					tc.status, got, tc.wantTerminal)
+			// 规范值与写法变体（大小写/前后空白）两包必须同结论：statemachine
+			// 的归一口径（#373）与 contract 的归一口径（#354）只能有一条。
+			for _, variant := range stateVariants(string(tc.status)) {
+				if got := IsTerminal(StepStatus(variant)); got != tc.wantTerminal {
+					t.Errorf("statemachine.IsTerminal(%q) = %v, want %v", variant, got, tc.wantTerminal)
+				}
+				if got := contract.IsTerminalStatus(variant); got != tc.wantTerminal {
+					t.Errorf("contract.IsTerminalStatus(%q) = %v, want %v（两包判据必须逐条一致）",
+						variant, got, tc.wantTerminal)
+				}
 			}
 		})
 	}
