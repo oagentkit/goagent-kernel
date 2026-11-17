@@ -34,6 +34,10 @@ import (
 // BoardStore taskboard.Board（含 RenewingBoard）的 PostgreSQL 参考实现。
 type BoardStore struct {
 	pool *pgxpool.Pool
+	// src 来源标识（controlplane.TaskSource，issue #268/#278）：控制面
+	// Store 与任务权威面（本板）都用同一个 pool/schema 时返回相同值，
+	// NewAuthoritativeStorePlane 据此在装配期判定「同一张任务表」。
+	src string
 
 	mu  sync.Mutex
 	now func() time.Time
@@ -44,8 +48,12 @@ func NewBoardStore(pool *pgxpool.Pool) *BoardStore {
 	// 默认（未注入）不读进程本地时钟：nowIn 走数据库 clock_timestamp——
 	// 认领与续期的租约判定是跨节点共享的事实，时间源必须是数据库
 	//（与 EffectStore 同口径，评审第三轮 P0）。
-	return &BoardStore{pool: pool, now: nil}
+	return &BoardStore{pool: pool, src: poolSourceID(pool), now: nil}
 }
+
+// TaskSourceID 实现 controlplane.TaskSource：同一 schema 的 BoardStore 与
+// ControlStore 报同一来源；不同 schema / 不同库报不同来源（装配期拒绝）。
+func (b *BoardStore) TaskSourceID() string { return b.src }
 
 // UseClock 注入时钟（boardtest 契约套件用）。
 func (b *BoardStore) UseClock(now func() time.Time) {
@@ -125,6 +133,9 @@ type boardRow struct {
 	fence int64
 	until *time.Time
 	seq   int64
+	// runID 控制面归属运行（issue #278）：任务状态的唯一位移载体，
+	// pgref_run 不复制任务成员。
+	runID string
 }
 
 // held 该任务当前是否仍被活持有（零值到期 = 不限期，当成已过期会让
@@ -134,11 +145,11 @@ func (r *boardRow) held(now time.Time) bool {
 		(r.until == nil || r.until.After(now))
 }
 
-const boardCols = `id, title, deps, state, owner, token, fence, until, seq`
+const boardCols = `id, title, deps, state, owner, token, fence, until, seq, run_id`
 
 func scanBoardRow(row pgx.Row) (*boardRow, error) {
 	var r boardRow
-	if err := row.Scan(&r.id, &r.title, &r.deps, &r.state, &r.owner, &r.token, &r.fence, &r.until, &r.seq); err != nil {
+	if err := row.Scan(&r.id, &r.title, &r.deps, &r.state, &r.owner, &r.token, &r.fence, &r.until, &r.seq, &r.runID); err != nil {
 		return nil, err
 	}
 	return &r, nil

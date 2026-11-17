@@ -7,9 +7,13 @@
 //   - pgref_downstream      下游资源（已见最大令牌 + 参考业务数据，FencedSink 的落点）
 //   - pgref_board_task      任务认领面（taskboard.Board）
 //   - pgref_snapshot        进度快照（checkpoint.StoreCAS）
-//   - pgref_event_watermark 已提交水位线（单行；事件 ID 分配的串行化点，#264）
-//   - pgref_event           事件行（与业务状态同事务提交的落点，#264）
+//   - pgref_event_watermark 已提交水位线（**每租户一行**；事件 ID 分配的串行化点，#264/#275）
+//   - pgref_event           事件行（与业务状态同事务提交的落点，#264；含租户列 #275）
 //   - pgref_tail_cursor     尾随游标持久化（eventbus.CursorStore，#264 重启续读）
+//   - pgref_run             运行状态（控制面 Store 的落点，#278；任务成员由
+//     pgref_board_task.run_id 单源表达，不另存一份可写任务状态）
+//   - pgref_control_version 控制面版本锚（单行全局修订号，#278）
+//   - pgref_control_effect  控制面效果裁决账（#278；权威接线优先用副作用闸）
 package pgstore
 
 import (
@@ -27,8 +31,13 @@ import (
 // 刻意放在 Go 侧而不是 init.sql：契约套件与冒烟入口都从这条路径建表，
 // 单一来源，宿主抄它时不会抄到一份没人维护的 SQL 文件。
 const schemaDDL = `
+-- 租户维度（issue #275）：三张副作用相关表都以 (tenant, 业务键) 联合定位。
+-- tenant = '' 是旧布局 / 单租户命名空间（与 taskboard.Task.Tenant 的空值
+-- 口径一致）；租户作用域存储（NewTenantEffectStore）从 ctx 取非空租户，
+-- 缺租户 fail-closed。旧库的迁移在 EnsureSchema 的 tenantDDL 里（幂等）。
 CREATE TABLE IF NOT EXISTS pgref_effect_action (
-    key             TEXT PRIMARY KEY,
+    tenant          TEXT       NOT NULL DEFAULT '',
+    key             TEXT       NOT NULL,
     done            BOOLEAN    NOT NULL DEFAULT FALSE,
     result          BYTEA,
     uncertain       BOOLEAN    NOT NULL DEFAULT FALSE,
@@ -38,22 +47,29 @@ CREATE TABLE IF NOT EXISTS pgref_effect_action (
     intent_holder   TEXT,
     intent_expires  TIMESTAMPTZ,
     recon_holder    TEXT,
-    recon_expires   TIMESTAMPTZ
+    recon_expires   TIMESTAMPTZ,
+    PRIMARY KEY (tenant, key)
 );
 
 CREATE TABLE IF NOT EXISTS pgref_effect_resource (
-    resource TEXT PRIMARY KEY,
+    tenant   TEXT        NOT NULL DEFAULT '',
+    resource TEXT        NOT NULL,
     fence    BIGINT      NOT NULL DEFAULT 0,
     holder   TEXT,
-    until    TIMESTAMPTZ
+    until    TIMESTAMPTZ,
+    PRIMARY KEY (tenant, resource)
 );
 
 CREATE TABLE IF NOT EXISTS pgref_downstream (
-    resource   TEXT PRIMARY KEY,
+    tenant     TEXT   NOT NULL DEFAULT '',
+    resource   TEXT   NOT NULL,
     seen_fence BIGINT NOT NULL,
-    value      TEXT   NOT NULL DEFAULT ''
+    value      TEXT   NOT NULL DEFAULT '',
+    PRIMARY KEY (tenant, resource)
 );
 
+-- run_id 是控制面（issue #278）判定任务归属运行的**单源**：任务状态仍然
+-- 只在 pgref_board_task 这一张可写表里，pgref_run 不复制任务成员。
 CREATE TABLE IF NOT EXISTS pgref_board_task (
     id     TEXT PRIMARY KEY,
     title  TEXT        NOT NULL DEFAULT '',
@@ -63,7 +79,8 @@ CREATE TABLE IF NOT EXISTS pgref_board_task (
     token  TEXT,
     fence  BIGINT      NOT NULL DEFAULT 0,
     until  TIMESTAMPTZ,
-    seq    BIGINT      NOT NULL DEFAULT 0
+    seq    BIGINT      NOT NULL DEFAULT 0,
+    run_id TEXT        NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS pgref_snapshot (
@@ -74,35 +91,227 @@ CREATE TABLE IF NOT EXISTS pgref_snapshot (
     fields TEXT   NOT NULL DEFAULT ''
 );
 
--- 事件面（issue #264）：Outbox 形态的两张表。水位行是 ID 分配的串行化点
--- （UPDATE … RETURNING 拿号并持行锁到事务提交），committed 就是「已提交
--- 水位线」——事件行与它的推进同事务落库，可观测态下恒有
--- committed == max(pgref_event.id) 且行集恰为 1..committed（无洞无孤儿）。
+-- 事件面（issue #264 + #275）：Outbox 形态的两张表。**每个租户一行水位**
+-- 是 ID 分配的串行化点（UPDATE … RETURNING 拿号并持行锁到事务提交），
+-- committed 就是该租户的「已提交水位线」——事件行与它的推进同事务落库，
+-- 可观测态下恒有 committed == max(pgref_event.id) 且该租户行集恰为
+-- 1..committed（无洞无孤儿）。租户各自一条 ID 空间：跨租户不串流，且
+-- 单租户流仍满足 TailStore 的「无空洞推进」（过滤式共享 ID 空间做不到）。
 CREATE TABLE IF NOT EXISTS pgref_event_watermark (
-    id        SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    tenant    TEXT PRIMARY KEY,
     committed BIGINT NOT NULL DEFAULT 0
 );
 
-INSERT INTO pgref_event_watermark (id) VALUES (1) ON CONFLICT DO NOTHING;
-
 CREATE TABLE IF NOT EXISTS pgref_event (
-    id          BIGINT PRIMARY KEY,
+    tenant      TEXT        NOT NULL DEFAULT '',
+    id          BIGINT      NOT NULL,
     session_id  TEXT        NOT NULL DEFAULT '',
     case_id     TEXT        NOT NULL DEFAULT '',
     step_id     BIGINT,
     type        TEXT        NOT NULL DEFAULT '',
     level       TEXT        NOT NULL DEFAULT 'info',
     payload     JSONB       NOT NULL DEFAULT '{}'::jsonb,
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, id)
 );
 
 -- 尾随游标（eventbus.CursorStore，#264「崩溃点重启续读」）：一行一个消费者。
 -- cursor_pos 单调不减由 SaveCursor 的 UPSERT 保证；updated_at 仅作对账留痕。
+-- 多租户部署的 consumer key 必须自带租户（如 "t-a/replica-1"）：游标是
+-- 「某个租户流」的续读点，共用一条会让订阅侧跳过整段他租户窗口。
 CREATE TABLE IF NOT EXISTS pgref_tail_cursor (
     consumer   TEXT PRIMARY KEY,
     cursor_pos BIGINT      NOT NULL DEFAULT 0 CHECK (cursor_pos >= 0),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
+
+-- 控制面 Store 的持久化落点（issue #278）。运行记录只存状态与代次；
+-- 任务成员由 pgref_board_task.run_id 单源表达——控制面与任务板共用同一张
+-- **可写任务表**，不存在第二份任务状态。
+CREATE TABLE IF NOT EXISTS pgref_run (
+    id     TEXT PRIMARY KEY,
+    status TEXT   NOT NULL DEFAULT '',
+    gen    BIGINT NOT NULL DEFAULT 0
+);
+
+-- 版本锚（全局修订号）：三个 Commit* 在同一个事务里「校验版本 → 留痕 →
+-- 写状态 → 推进版本」。快照之后目标被任何副本改过 ⇒ 提交必失败。
+CREATE TABLE IF NOT EXISTS pgref_control_version (
+    id  SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    ver BIGINT   NOT NULL DEFAULT 0
+);
+
+INSERT INTO pgref_control_version (id) VALUES (1) ON CONFLICT DO NOTHING;
+
+-- 控制面效果裁决账（SnapshotEffect / CommitEffect）。权威接线（#268）应
+-- 优先走 NewAuthoritativeStorePlane + SideEffectAuthority：裁决落到副作用
+-- 闸读取的同一份状态，本表只是 Store 契约的独立后端落点。
+CREATE TABLE IF NOT EXISTS pgref_control_effect (
+    key       TEXT PRIMARY KEY,
+    uncertain BOOLEAN NOT NULL DEFAULT FALSE,
+    unsafe    BOOLEAN NOT NULL DEFAULT FALSE,
+    resolved  TEXT    NOT NULL DEFAULT ''
+);
+`
+
+// tenantDDL vN+1 迁移（issue #275/#278）：把**已部署的旧表**补上租户列 /
+// 复合主键 / run_id。全部语句幂等；新库上 CREATE TABLE 已带这些形态，
+// 这里的 DO 块只会判定「已有正确主键」后跳过。
+//
+// 为什么主键必须改成复合：旧主键 (key) 让两个租户的同名 Key 抢同一行——
+// 加列但不换主键只是「多了一列没人判」，跨租户仍会重放。DO 块按
+// 「主键列里有没有 tenant」判定，不按约束名（宿主可能改过名）。
+const tenantDDL = `
+ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+ALTER TABLE pgref_effect_resource ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+ALTER TABLE pgref_downstream ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+ALTER TABLE pgref_board_task ADD COLUMN IF NOT EXISTS run_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE pgref_event ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+
+DO $mig$
+DECLARE pk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_effect_action'::regclass
+       AND c.contype = 'p'
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+              AND a.attname = 'tenant');
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_effect_action DROP CONSTRAINT %I', pk_name);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+         WHERE c.conrelid = 'pgref_effect_action'::regclass
+           AND c.contype = 'p'
+           AND EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  AND a.attname = 'tenant')) THEN
+        ALTER TABLE pgref_effect_action ADD PRIMARY KEY (tenant, key);
+    END IF;
+END $mig$;
+
+DO $mig$
+DECLARE pk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_effect_resource'::regclass
+       AND c.contype = 'p'
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+              AND a.attname = 'tenant');
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_effect_resource DROP CONSTRAINT %I', pk_name);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+         WHERE c.conrelid = 'pgref_effect_resource'::regclass
+           AND c.contype = 'p'
+           AND EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  AND a.attname = 'tenant')) THEN
+        ALTER TABLE pgref_effect_resource ADD PRIMARY KEY (tenant, resource);
+    END IF;
+END $mig$;
+
+DO $mig$
+DECLARE pk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_downstream'::regclass
+       AND c.contype = 'p'
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+              AND a.attname = 'tenant');
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_downstream DROP CONSTRAINT %I', pk_name);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+         WHERE c.conrelid = 'pgref_downstream'::regclass
+           AND c.contype = 'p'
+           AND EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  AND a.attname = 'tenant')) THEN
+        ALTER TABLE pgref_downstream ADD PRIMARY KEY (tenant, resource);
+    END IF;
+END $mig$;
+
+DO $mig$
+DECLARE pk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_event'::regclass
+       AND c.contype = 'p'
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+              AND a.attname = 'tenant');
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_event DROP CONSTRAINT %I', pk_name);
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+         WHERE c.conrelid = 'pgref_event'::regclass
+           AND c.contype = 'p'
+           AND EXISTS (
+               SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+                  AND a.attname = 'tenant')) THEN
+        ALTER TABLE pgref_event ADD PRIMARY KEY (tenant, id);
+    END IF;
+END $mig$;
+
+-- 旧水位表是「单行 id=1 + committed」。迁成「每租户一行」：补 tenant 列、
+-- 保住旧全局水位（tenant = '' 的那行）、删掉 id 列与 id=1 的约束/主键，
+-- 最后按 tenant 建主键。新库上这些语句全是无操作。
+ALTER TABLE pgref_event_watermark ADD COLUMN IF NOT EXISTS tenant TEXT NOT NULL DEFAULT '';
+INSERT INTO pgref_event_watermark (tenant)
+SELECT '' WHERE NOT EXISTS (SELECT 1 FROM pgref_event_watermark WHERE tenant = '');
+DO $mig$
+DECLARE pk_name TEXT;
+DECLARE chk_name TEXT;
+BEGIN
+    SELECT c.conname INTO pk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_event_watermark'::regclass
+       AND c.contype = 'p'
+       AND NOT EXISTS (
+           SELECT 1 FROM pg_attribute a
+            WHERE a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+              AND a.attname = 'tenant');
+    IF pk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_event_watermark DROP CONSTRAINT %I', pk_name);
+    END IF;
+    SELECT c.conname INTO chk_name
+      FROM pg_constraint c
+     WHERE c.conrelid = 'pgref_event_watermark'::regclass
+       AND c.contype = 'c'
+       AND pg_get_constraintdef(c.oid) LIKE '%id = 1%';
+    IF chk_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE pgref_event_watermark DROP CONSTRAINT %I', chk_name);
+    END IF;
+END $mig$;
+ALTER TABLE pgref_event_watermark DROP COLUMN IF EXISTS id;
+DO $mig$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint c
+         WHERE c.conrelid = 'pgref_event_watermark'::regclass
+           AND c.contype = 'p') THEN
+        ALTER TABLE pgref_event_watermark ADD PRIMARY KEY (tenant);
+    END IF;
+END $mig$;
 `
 
 // EnsureSchema 在 schema 里建好全部参考表（幂等，可重复执行）。
@@ -131,6 +340,11 @@ ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS id_safety SMALLINT;
 ALTER TABLE pgref_effect_action ADD COLUMN IF NOT EXISTS id_payload_hash TEXT;`
 		if _, err := tx.Exec(ctx, identityDDL); err != nil {
 			return fmt.Errorf("pgstore: 动作身份列迁移失败（schema %s）: %w", schema, err)
+		}
+		// vN+1（issue #275/#278）：租户列 / 复合主键 / run_id。同一事务内执行，
+		// 失败整体回滚——迁移不会留下「列加了但主键没换」的半截 schema。
+		if _, err := tx.Exec(ctx, tenantDDL); err != nil {
+			return fmt.Errorf("pgstore: 租户/控制面迁移失败（schema %s）: %w", schema, err)
 		}
 		return nil
 	})

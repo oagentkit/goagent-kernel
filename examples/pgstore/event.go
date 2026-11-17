@@ -58,10 +58,30 @@ import (
 // 并发安全（发布在水位行锁上串行，见文件头「串行化的代价」）。
 type EventStore struct {
 	pool *pgxpool.Pool
+	// tenantScoped 装配期声明（issue #275）：true ⇒ 发布与读取都从 ctx
+	// 取租户（缺租户 ⇒ tenant.ErrNoContext），每个租户一条独立 ID 空间与
+	// 水位线——订阅侧按租户过滤由**存储流**保证，不靠载荷里自筛。
+	tenantScoped bool
 }
 
 // NewEventStore 构造事件面存储。pool 归调用方管理（Close 由它负责）。
+//
+// 默认形态 = 旧布局 / 单租户命名空间（tenant ”）；事件行仍按 Event.Tenant
+// 落租户列，但读取面固定读 ” 流。多租户部署用 NewTenantEventStore。
 func NewEventStore(pool *pgxpool.Pool) *EventStore { return &EventStore{pool: pool} }
+
+// NewTenantEventStore 构造**租户作用域**的事件面存储（issue #275）。
+//
+// 与 EffectStore 同款：所有写读从 ctx 取租户（tenant.Require），缺租户
+// fail-closed；Event.Tenant 与 ctx 不一致 ⇒ ErrTenantMismatch。每个租户有
+// 自己的水位行与 ID 空间（1..committed），因此租户流仍满足 TailStore 的
+// 「无空洞推进」——过滤共享 ID 空间会产生永久空洞，不能这么实现。
+func NewTenantEventStore(pool *pgxpool.Pool) *EventStore {
+	return &EventStore{pool: pool, tenantScoped: true}
+}
+
+// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
+func (s *EventStore) TenantScoped() bool { return s.tenantScoped }
 
 // queryRower pgx 的 pool 与 tx 共有的最小读面（水位线读法在两者上都成立）。
 type queryRower interface {
@@ -112,14 +132,24 @@ func (s *EventStore) publishInTx(ctx context.Context, tx pgx.Tx, ev eventbus.Eve
 	ev = normalizeEvent(ev)
 	ev.ID = 0 // 权威游标由水位行铸造：输入侧 ID 一律忽略（防御陈旧游标流入）
 
-	// 拿号即持锁：UPDATE 水位行 RETURNING 新值——行锁持有到本事务提交，
-	// 下一个发布者在此等待 ⇒ 铸造序 == 提交序；回滚则本次拿号一并消失
-	// （不烧号）⇒ 序列空洞结构性地不存在。
+	// 租户作用域解析（入口一次）：缺租户拒绝；声明与 ctx 不一致拒绝。
+	tenantID, err := resolveTenant(ctx, s.tenantScoped, ev.Tenant)
+	if err != nil {
+		return 0, err
+	}
+	ev.Tenant = tenantID
+
+	// 拿号即持锁：按租户 UPSERT 水位行的 committed + 1 RETURNING 新值——
+	// 行锁持有到本事务提交，同一租户的下一个发布者在此等待 ⇒ 铸造序 ==
+	// 提交序；回滚则本次拿号一并消失（不烧号）⇒ 该租户序列空洞结构性地
+	// 不存在。不同租户各锁各的行，互不阻塞、各有一条 1..committed 的流。
 	var n int64
 	if err := tx.QueryRow(ctx,
-		`UPDATE pgref_event_watermark SET committed = committed + 1 WHERE id = 1
-		 RETURNING committed`).Scan(&n); err != nil {
-		return 0, errors.Wrap(err, "pgstore: 事件水位线拿号失败（水位行就绪了吗？EnsureSchema）")
+		`INSERT INTO pgref_event_watermark (tenant, committed) VALUES ($1, 1)
+		 ON CONFLICT (tenant) DO UPDATE
+		   SET committed = pgref_event_watermark.committed + 1
+		 RETURNING committed`, tenantID).Scan(&n); err != nil {
+		return 0, errors.Wrap(err, "pgstore: 事件水位线拿号失败（水位行就绪了吗？EnsureSchema）", "tenant", tenantID)
 	}
 	id := uint64(n) // 水位线从 0 单调递增，非负
 
@@ -131,10 +161,10 @@ func (s *EventStore) publishInTx(ctx context.Context, tx pgx.Tx, ev eventbus.Eve
 		occurred = ev.OccurredAt
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO pgref_event (id, session_id, case_id, step_id, type, level, payload, occurred_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8, clock_timestamp()))`,
-		n, ev.SessionID, ev.CaseID, stepIDArg(ev.StepID), ev.Type, ev.Level, ev.Payload, occurred); err != nil {
-		return 0, errors.Wrap(err, "pgstore: 事件行写入失败", "id", id)
+		`INSERT INTO pgref_event (tenant, id, session_id, case_id, step_id, type, level, payload, occurred_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, clock_timestamp()))`,
+		tenantID, n, ev.SessionID, ev.CaseID, stepIDArg(ev.StepID), ev.Type, ev.Level, ev.Payload, occurred); err != nil {
+		return 0, errors.Wrap(err, "pgstore: 事件行写入失败", "id", id, "tenant", tenantID)
 	}
 	return id, nil
 }
@@ -150,13 +180,19 @@ func (s *EventStore) Insert(ctx context.Context, ev eventbus.Event) (uint64, err
 // readWatermark 读已提交水位线（≤ 此值的游标 ID 已全部提交且可见）。
 // MaxID 与 CommittedWatermark 共用这一读法——初始化读法与逐拍读法共用
 // 同一条无空洞边界（#264 可机判口径第三条），不分裂成两个真相。
-func readWatermark(ctx context.Context, q queryRower) (uint64, error) {
+func readWatermark(ctx context.Context, q queryRower, tenantID string) (uint64, error) {
 	var n int64
 	if err := q.QueryRow(ctx,
-		`SELECT committed FROM pgref_event_watermark WHERE id = 1`).Scan(&n); err != nil {
-		return 0, errors.Wrap(err, "pgstore: 读事件水位线失败（水位行就绪了吗？EnsureSchema）")
+		`SELECT committed FROM pgref_event_watermark WHERE tenant = $1`, tenantID).Scan(&n); err != nil {
+		return 0, errors.Wrap(err, "pgstore: 读事件水位线失败（水位行就绪了吗？EnsureSchema）", "tenant", tenantID)
 	}
 	return uint64(n), nil // 水位线从 0 单调递增，非负
+}
+
+// readTenant 读路径的租户解析：租户作用域实例从 ctx 取（缺租户拒绝），
+// 旧布局实例固定读 ” 流（与写路径同一条 resolveTenant）。
+func (s *EventStore) readTenant(ctx context.Context) (string, error) {
+	return resolveTenant(ctx, s.tenantScoped, "")
 }
 
 // MaxID 当前权威游标空间的**无空洞边界**（eventbus.TailStore，空表 = 0）。
@@ -165,14 +201,22 @@ func readWatermark(ctx context.Context, q queryRower) (uint64, error) {
 // 游标推过无空洞边界——否则初始化本身就把在途小 ID 跳过（#264）。Outbox
 // 形态下无空洞边界就是已提交水位线（与 CommittedWatermark 同值同源）。
 func (s *EventStore) MaxID(ctx context.Context) (uint64, error) {
-	return readWatermark(ctx, s.pool)
+	t, err := s.readTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return readWatermark(ctx, s.pool, t)
 }
 
 // CommittedWatermark 已提交水位线读法（eventbus.WatermarkTailStore，#264
 // 的实现声明面）：实现本方法 = 声明本存储是 Outbox 形态，可机判口径见
 // eventbus 包的接口文档。
 func (s *EventStore) CommittedWatermark(ctx context.Context) (uint64, error) {
-	return readWatermark(ctx, s.pool)
+	t, err := s.readTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return readWatermark(ctx, s.pool, t)
 }
 
 // ListAfter 列出 id > cursor 的事件（eventbus.TailStore，升序，limit 为单拍
@@ -185,13 +229,18 @@ func (s *EventStore) CommittedWatermark(ctx context.Context) (uint64, error) {
 // 快照，≤ 水位线的行全部已提交。读失败不得返回部分结果（契约第四条）：
 // 行扫描中途出错即整体作废。
 func (s *EventStore) ListAfter(ctx context.Context, cursor uint64, limit int) ([]eventbus.Event, error) {
+	tenantID, err := s.readTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, session_id, case_id, step_id, type, level, payload, occurred_at
+		SELECT tenant, id, session_id, case_id, step_id, type, level, payload, occurred_at
 		  FROM pgref_event
-		 WHERE id > $1
-		   AND id <= (SELECT committed FROM pgref_event_watermark WHERE id = 1)
+		 WHERE tenant = $1
+		   AND id > $2
+		   AND id <= (SELECT committed FROM pgref_event_watermark WHERE tenant = $1)
 		 ORDER BY id
-		 LIMIT $2`, int64(cursor), limit)
+		 LIMIT $3`, tenantID, int64(cursor), limit)
 	if err != nil {
 		return nil, errors.Wrap(err, "pgstore: 读事件段失败")
 	}
@@ -203,7 +252,7 @@ func (s *EventStore) ListAfter(ctx context.Context, cursor uint64, limit int) ([
 			stepID *int64
 			ev     eventbus.Event
 		)
-		if err := rows.Scan(&n, &ev.SessionID, &ev.CaseID, &stepID, &ev.Type, &ev.Level, &ev.Payload, &ev.OccurredAt); err != nil {
+		if err := rows.Scan(&ev.Tenant, &n, &ev.SessionID, &ev.CaseID, &stepID, &ev.Type, &ev.Level, &ev.Payload, &ev.OccurredAt); err != nil {
 			return nil, errors.Wrap(err, "pgstore: 解析事件行失败")
 		}
 		ev.ID = uint64(n) // 水位线之下的事件 ID 从 1 单调递增，非负

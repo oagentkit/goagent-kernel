@@ -1,0 +1,261 @@
+# 部署配方能力清单（issue #277）
+#
+# 这份文件回答一个问题：**「我现在这套组合，缺哪些能力才能上生产」**。
+# 它是机器可查的声明面——`make deploycheck`（cmd/deploymatrix）逐条判定：
+#
+#   1. 每条能力的 evidence 可解析：
+#      - contract: path#Symbol —— 文件存在且符号真的声明在文件里（go/ast）
+#      - gate: target        —— Makefile 里有这个目标
+#      - issue: #N           —— 单号在 docs/*.md 或 CHANGELOG 有落点（本地可查）
+#      - doc: path           —— 文件存在
+#   2. state 必须由证据推导（禁止手写一个会过期的结论）：
+#      available = 至少一条 contract/gate 且无 issue 缺口
+#      partial   = 既有 contract/gate 又有 issue
+#      missing   = 只有 issue（还没有可查的契约/门禁落点）
+#   3. 场景 readiness = 必需能力里最差的那个状态；
+#   4. docs/USAGE.md 的 deploy-matrix 块必须与本文件的场景口径逐行一致。
+#
+# 能力没主 = 没人推进。每条缺口都必须挂 issue（或已经落到 contract/gate 上）。
+version: 1
+
+capabilities:
+  - id: idempotency-key-scope
+    title: 幂等键作用域（租户 / 运行进键，Attempt 不进键）
+    state: available
+    evidence:
+      - kind: contract
+        ref: sideeffect/key_scope.go#ActionKeyBuilder
+      - kind: contract
+        ref: worker/managed.go#ManagedWork
+    delivered_by: "#261"
+
+  - id: context-cancellation
+    title: Context 取消与在途收口
+    state: available
+    evidence:
+      - kind: contract
+        ref: contract/contract.go#RunContext
+      - kind: contract
+        ref: sideeffect/runner.go#Runner
+
+  - id: taskboard-persistence
+    title: 任务板持久化（单机文件 / PG）
+    state: available
+    evidence:
+      - kind: contract
+        ref: taskboard/taskboard.go#Board
+      - kind: contract
+        ref: examples/sqlitestore/store.go#Store
+      - kind: contract
+        ref: examples/pgstore/board.go#BoardStore
+
+  - id: startup-recovery
+    title: 启动恢复（重放 / 截断残尾 / 续读）
+    state: available
+    evidence:
+      - kind: contract
+        ref: examples/sqlitestore/store.go#Open
+      - kind: gate
+        ref: test
+
+  - id: single-store-full-state
+    title: 单一存储覆盖全部状态（任务板之外还含副作用 / 事件 / 快照）
+    state: partial
+    evidence:
+      - kind: contract
+        ref: taskboard/taskboard.go#Board
+      - kind: issue
+        ref: "#188"
+
+  - id: progress-reconciliation
+    title: 进度快照与副作用对账（单调序号 + 未知态裁决）
+    state: available
+    evidence:
+      - kind: contract
+        ref: checkpoint/cas.go#StoreCAS
+      - kind: contract
+        ref: sideeffect/store.go#Store
+
+  - id: multi-process-claim
+    title: 多进程竞争认领（原子读-判-写）
+    state: available
+    evidence:
+      - kind: contract
+        ref: taskboard/taskboard.go#Board
+      - kind: contract
+        ref: examples/pgstore/board.go#BoardStore
+
+  - id: unified-lease
+    title: 统一租约（令牌由存储铸造、代次单调）
+    state: available
+    evidence:
+      - kind: contract
+        ref: taskboard/renew.go#RenewingBoard
+      - kind: contract
+        ref: worker/managed_lease.go#LeaseSession
+    delivered_by: "#265"
+
+  - id: lease-renewal
+    title: 长任务租约自动续期 + 资格确认
+    state: available
+    evidence:
+      - kind: contract
+        ref: worker/managed_lease.go#LeaseSession
+      - kind: gate
+        ref: test
+    delivered_by: "#265"
+
+  - id: database-clock
+    title: 数据库时钟作为过期判定的唯一权威
+    state: available
+    evidence:
+      - kind: contract
+        ref: examples/pgstore/effect.go#EffectStore
+      - kind: contract
+        ref: examples/pgstore/board.go#BoardStore
+
+  - id: cross-process-token
+    title: 跨进程令牌（存储侧铸造、不靠进程内自增）
+    state: available
+    evidence:
+      - kind: contract
+        ref: examples/pgstore/board.go#BoardStore
+
+  - id: tenant-scoped-storage
+    title: 租户隔离落到持久化面（effect / 事件表租户维度 + 缺租户 fail-closed）
+    state: available
+    evidence:
+      - kind: contract
+        ref: examples/pgstore/effect.go#NewTenantEffectStore
+      - kind: contract
+        ref: examples/pgstore/event.go#NewTenantEventStore
+      - kind: gate
+        ref: integration
+    delivered_by: "#275"
+
+  - id: reliable-events
+    title: 可靠事件面（Outbox / 已提交水位线，无空洞推进）
+    state: available
+    evidence:
+      - kind: contract
+        ref: eventbus/tail.go#TailStore
+      - kind: contract
+        ref: eventbus/tail.go#WatermarkTailStore
+      - kind: contract
+        ref: examples/pgstore/event.go#EventStore
+    delivered_by: "#264"
+
+  - id: quota-reclaim
+    title: 配额预占的 TTL / 归属与安全回收
+    state: available
+    evidence:
+      - kind: contract
+        ref: scheduling/quota_store.go#QuotaStore
+      - kind: contract
+        ref: scheduling/quota_store.go#TaskLeaseOracle
+    delivered_by: "#267"
+
+  - id: job-idempotency
+    title: 外部作业的稳定执行幂等标识
+    state: available
+    evidence:
+      - kind: contract
+        ref: examples/containerbackend/k8sjob.go#K8sJob
+      - kind: gate
+        ref: test
+    delivered_by: "#263"
+
+  - id: network-egress-enforcement
+    title: K8s 出站禁网的实测校验（策略接受 ≠ 数据面生效）
+    state: partial
+    evidence:
+      - kind: contract
+        ref: examples/containerbackend/k8sjobegress.go#K8sEgressProbe
+      - kind: issue
+        ref: "#262"
+
+  - id: authority-uniqueness
+    title: 控制面与任务板共享同一份权威状态（不写第二份任务状态）
+    state: available
+    evidence:
+      - kind: contract
+        ref: controlplane/authority.go#NewAuthoritativeStorePlane
+      - kind: contract
+        ref: examples/pgstore/control.go#ControlStore
+    delivered_by: "#268"
+
+  - id: ownership-epoch
+    title: 跨区域所有权代次（Ownership Epoch + 转移确认）
+    state: partial
+    evidence:
+      - kind: contract
+        ref: handoff/ledger.go#Epoch
+      - kind: issue
+        ref: "#273"
+
+  - id: partition-write-fencing
+    title: 分区期间旧区域写入被 fence 拒绝
+    state: partial
+    evidence:
+      - kind: contract
+        ref: sideeffect/sideeffect.go#Fence
+      - kind: issue
+        ref: "#273"
+
+  - id: reliable-handoff
+    title: 可靠交接（回执 + 代次 + 台面状态）
+    state: available
+    evidence:
+      - kind: contract
+        ref: handoff/desk.go#Desk
+      - kind: contract
+        ref: handoff/ledger.go#Ledger
+
+scenarios:
+  - id: single-process-agent
+    title: 单进程 Agent
+    storage: memory
+    worker: single-process
+    required: [idempotency-key-scope, context-cancellation]
+    readiness: available
+    notes: 单进程不是「不用判据」：幂等键作用域与取消收口是后续扩容时不返工的前提。
+
+  - id: single-host-persistent
+    title: 单机持久化
+    storage: examples/sqlitestore
+    worker: single-node
+    required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
+    readiness: partial
+    notes: sqlitestore 目前覆盖任务板；副作用 / 事件 / 快照的单一存储落点仍是缺口（#188）。
+
+  - id: multi-process-same-host
+    title: 同机多进程
+    storage: PostgreSQL
+    worker: multi-process
+    required: [multi-process-claim, unified-lease, database-clock, cross-process-token, tenant-scoped-storage]
+    readiness: available
+    notes: 多租户共享一个库时用 NewTenant* 装配；缺租户上下文写入 fail-closed。
+
+  - id: k8s-single-cluster
+    title: K8s 单集群多副本
+    storage: PostgreSQL
+    worker: deployment
+    required: [unified-lease, lease-renewal, reliable-events, quota-reclaim, job-idempotency, network-egress-enforcement, tenant-scoped-storage]
+    readiness: partial
+    notes: 出站禁网的真集群实测（#262）是当前缺口；其余能力已落到契约 / 参考实现。
+
+  - id: multi-cluster-single-region
+    title: 多集群单区域
+    storage: shared-authority-pg
+    worker: local-workers
+    required: [authority-uniqueness, reliable-events, tenant-scoped-storage, reliable-handoff]
+    readiness: available
+    notes: 共享权威 PostgreSQL；控制面强释经任务板同一份状态（#268）。
+
+  - id: cross-region-multi-cluster
+    title: 跨区域多集群
+    storage: regional-authority
+    worker: regional-workers
+    required: [ownership-epoch, partition-write-fencing, reliable-handoff]
+    readiness: partial
+    notes: 跨区域 Ownership Authority 未实现（#273）；分区下的写入拒绝只有局部 fence 原语。

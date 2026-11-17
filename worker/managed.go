@@ -267,19 +267,24 @@ func (e *ManagedExecutor) Execute(ctx context.Context, id taskboard.TaskID, work
 	if act.Key == "" || act.Resource == "" {
 		// 默认身份的作用域段：任务板的租户（任务板分租户，副作用闸必须
 		// 同口径，否则跨租户同名任务互相重放）+ 宿主给的作用域段（词汇
-		// 归宿主，本仓只提供拼装机制）。拼装是纯函数：重试同一逻辑动作
-		// 恒得同一个键（Attempt 不进键）。
-		scopes := make([]string, 0, len(work.Scope)+1)
-		if task.Tenant != "" {
-			scopes = append(scopes, task.Tenant)
-		}
-		scopes = append(scopes, work.Scope...)
-		b := sideeffect.NewActionKeyBuilder(scopes...)
+		// 归宿主，本仓只提供拼装机制）。拼装走
+		// sideeffect.NewActionKeyBuilderFor 这一条入口（issue #275）：
+		// 租户排第一段、Scope 随后，拼法是纯函数——重试同一逻辑动作恒得
+		// 同一个键（Attempt 不进键）。
+		b := sideeffect.NewActionKeyBuilderFor(task.Tenant, work.Scope...)
 		if act.Key == "" {
 			act.Key = b.Key("task:" + string(id))
 		}
 		if act.Resource == "" {
 			act.Resource = b.Resource(string(id))
+		}
+		// 身份字段随默认键一并落到 Action：持久化面按 (Tenant, Key)
+		// 判定，不靠解析键字符串猜租户。
+		if act.Tenant == "" {
+			act.Tenant = task.Tenant
+		}
+		if len(act.Scope) == 0 {
+			act.Scope = append([]string(nil), work.Scope...)
 		}
 	}
 

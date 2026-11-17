@@ -1,7 +1,10 @@
 // key_scope_test.go —— 作用域段拼装的单射 / 稳定 / 透传判据（issue #261）。
 package sideeffect
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 // TestActionKeyBuilderInjective 不同身份（段集 × 叶段）拼不出同一个键。
 //
@@ -98,6 +101,39 @@ func TestActionKeyBuilderResourceParity(t *testing.T) {
 	// 叶段转义：资源名里的分隔符不构成更深的段。
 	if got := NewActionKeyBuilder("t-a").Resource("a/b"); got == "t-a/a/b" {
 		t.Fatalf("资源叶段的分隔符必须转义（否则与更深的段集撞键）：%q", got)
+	}
+}
+
+// TestActionKeyBuilderForIdentity 租户 + Scope 的统一入口（issue #275）：
+// Tenant 排第一段、Scope 随后；与手拼同一组段逐字一致（单源拼装）。
+func TestActionKeyBuilderForIdentity(t *testing.T) {
+	act := Action{Tenant: "t-a", Scope: []string{"run-1", "env-prod"}}
+	wantScopes := []string{"t-a", "run-1", "env-prod"}
+	if got := act.Scopes(); !slices.Equal(got, wantScopes) {
+		t.Fatalf("Scopes 顺序错误: %v，want %v", got, wantScopes)
+	}
+	forB := NewActionKeyBuilderFor(act.Tenant, act.Scope...)
+	manual := NewActionKeyBuilder(wantScopes...)
+	if got, want := string(forB.Key("task:deploy-01")), string(manual.Key("task:deploy-01")); got != want {
+		t.Fatalf("NewActionKeyBuilderFor 与手拼必须同源: %q != %q", got, want)
+	}
+	if got, want := forB.Resource("deploy-01"), manual.Resource("deploy-01"); got != want {
+		t.Fatalf("Resource 同源: %q != %q", got, want)
+	}
+	// 空租户不占身份位（缺维度 ≠ 空维度）。
+	if got, want := string(NewActionKeyBuilderFor("", "run-1").Key("task:x")),
+		string(NewActionKeyBuilder("run-1").Key("task:x")); got != want {
+		t.Fatalf("空租户不得占段: %q != %q", got, want)
+	}
+	// Scopes 返回的切片不借用 Action.Scope 的底层数组。
+	act.Scope[0] = "mutated"
+	if act.Scopes()[1] != "mutated" {
+		t.Fatal("Scopes 应反映 Action 当前值")
+	}
+	out := act.Scopes()
+	out[0] = "hacked"
+	if act.Scopes()[0] != "t-a" {
+		t.Fatal("Scopes 的返回值不得改写 Action 的状态")
 	}
 }
 

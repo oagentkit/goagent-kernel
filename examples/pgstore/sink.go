@@ -37,11 +37,39 @@ type txKey struct{}
 // Downstream FencedSink 的 PostgreSQL 参考实现。
 type Downstream struct {
 	pool *pgxpool.Pool
+	// tenantScoped 装配期声明（issue #275）：true ⇒ 资源键按 (tenant,
+	// resource) 隔离，缺租户上下文拒绝。false ⇒ tenant ''（旧布局），
+	// 资源字符串本身的作用域（ActionKeyBuilder.Resource）仍有效。
+	tenantScoped bool
 }
 
 // NewDownstream 构造下游栅栏（pool 归调用方管理）。
 func NewDownstream(pool *pgxpool.Pool) *Downstream {
 	return &Downstream{pool: pool}
+}
+
+// NewTenantDownstream 构造**租户作用域**的下游栅栏（issue #275）。
+//
+// 写入 / 读取都从 ctx 取租户；缺租户 ⇒ tenant.ErrNoContext。同一 resource
+// 字符串在两个租户下是两条独立的已见令牌记录——跨租户不会互相抬栅栏。
+func NewTenantDownstream(pool *pgxpool.Pool) *Downstream {
+	return &Downstream{pool: pool, tenantScoped: true}
+}
+
+// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
+func (d *Downstream) TenantScoped() bool { return d.tenantScoped }
+
+// tenantKey 已解析租户在 ctx 里的键：WriteFenced 把入口解析结果带进写入体，
+// WriteMarker / Marker 在写入体内读同一份结论（不再二次解析）。
+type tenantKey struct{}
+
+func withResolvedTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantKey{}, tenantID)
+}
+
+func resolvedTenant(ctx context.Context) (string, bool) {
+	t, ok := ctx.Value(tenantKey{}).(string)
+	return t, ok
 }
 
 // TxFromContext 返回写入体所在的事务句柄。
@@ -81,15 +109,20 @@ func ExecWithin(ctx context.Context, sql string, args ...any) (int64, error) {
 //     同一代持有者的多次写入合法，如分批提交）；
 //  3. 第 1 条的判定与第 2 条的写入（含令牌更新）在同一个事务里。
 func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented sideeffect.Fence, write func(ctx context.Context) error) error {
-	_, err := withinTx(ctx, d.pool, func(tx pgx.Tx) (bool, error) {
+	tenantID, err := resolveTenant(ctx, d.tenantScoped, "")
+	if err != nil {
+		return err
+	}
+	_, err = withinTx(ctx, d.pool, func(tx pgx.Tx) (bool, error) {
 		// 一条带条件的 upsert 完成比较与预占：
 		//   新资源直接以 presented 建行（首次写入恒通过）；
 		//   既有资源仅在 seen_fence <= presented 时更新（小于即陈旧）。
+		// (tenant, resource) 是联合键：跨租户同名资源各有各的栅栏。
 		tag, err := tx.Exec(ctx,
-			`INSERT INTO pgref_downstream (resource, seen_fence, value) VALUES ($1, $2, '')
-			 ON CONFLICT (resource) DO UPDATE SET seen_fence = EXCLUDED.seen_fence
+			`INSERT INTO pgref_downstream (tenant, resource, seen_fence, value) VALUES ($1, $2, $3, '')
+			 ON CONFLICT (tenant, resource) DO UPDATE SET seen_fence = EXCLUDED.seen_fence
 			 WHERE pgref_downstream.seen_fence <= EXCLUDED.seen_fence`,
-			resource, int64(presented))
+			tenantID, resource, int64(presented))
 		if err != nil {
 			return false, errors.Wrap(err, "pgstore: 栅栏预占失败", "resource", resource)
 		}
@@ -99,7 +132,7 @@ func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented
 				"resource", resource, "presented", uint64(presented))
 		}
 		if write != nil {
-			if err := write(WithTx(ctx, tx)); err != nil {
+			if err := write(withResolvedTenant(WithTx(ctx, tx), tenantID)); err != nil {
 				// 整体回滚：预占与写入体已写的部分一起消失（不得部分写）。
 				return false, err
 			}
@@ -111,9 +144,14 @@ func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented
 
 // SeenFence 读资源已见过的最大令牌（无记录返回 0）。
 func (d *Downstream) SeenFence(ctx context.Context, resource string) (sideeffect.Fence, error) {
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
 	var seen *int64
 	if err := d.pool.QueryRow(ctx,
-		`SELECT seen_fence FROM pgref_downstream WHERE resource = $1`, resource).Scan(&seen); err != nil {
+		`SELECT seen_fence FROM pgref_downstream WHERE tenant = $1 AND resource = $2`,
+		tenantID, resource).Scan(&seen); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil
 		}
@@ -125,21 +163,40 @@ func (d *Downstream) SeenFence(ctx context.Context, resource string) (sideeffect
 	return sideeffect.Fence(*seen), nil
 }
 
+// resourceTenant 资源面的租户解析：写入体里的 ctx 已带入口结论（不做
+// 第二次解析），外部调用走同一套 resolveTenant。
+func (d *Downstream) resourceTenant(ctx context.Context) (string, error) {
+	if t, ok := resolvedTenant(ctx); ok {
+		return t, nil
+	}
+	return resolveTenant(ctx, d.tenantScoped, "")
+}
+
 // WriteMarker 在写入体里写一个参考业务标记（值追加 'm'）。
 //
 // 它是参考实现的「业务写入」占位：宿主的真实业务写入走同一条路
 // （ExecWithin，同一事务）。供共享套件判「不得部分写」。
 func (d *Downstream) WriteMarker(ctx context.Context, resource string) error {
-	_, err := ExecWithin(ctx,
-		`UPDATE pgref_downstream SET value = value || 'm' WHERE resource = $1`, resource)
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = ExecWithin(ctx,
+		`UPDATE pgref_downstream SET value = value || 'm' WHERE tenant = $1 AND resource = $2`,
+		tenantID, resource)
 	return err
 }
 
 // Marker 读已落盘的参考业务标记。
 func (d *Downstream) Marker(ctx context.Context, resource string) (string, error) {
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return "", err
+	}
 	var value *string
 	if err := d.pool.QueryRow(ctx,
-		`SELECT value FROM pgref_downstream WHERE resource = $1`, resource).Scan(&value); err != nil {
+		`SELECT value FROM pgref_downstream WHERE tenant = $1 AND resource = $2`,
+		tenantID, resource).Scan(&value); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", nil
 		}

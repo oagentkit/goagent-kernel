@@ -111,47 +111,10 @@ package sideeffect
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"time"
 
-	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 )
-
-// HashPayload 动作 Payload 的身份摘要（sha256 hex，v0.33.0 后新增）。
-//
-// 存储实现用它把「同 Key 必须同 Payload」落成可持久化、可比对的定长值
-// （Action 身份三元组之一，见 ErrActionConflict）。统一在本包给出：
-// 两个参考实现与宿主各自实现哈希算法的话，比对口径会漂——而身份比对
-// 恰恰是「同一份事实」的判据，判据本身不能有两份。
-//
-// nil 与空切片同值（都哈希为空输入）——Payload 缺省即空，不制造
-// 「没传」与「传了空」的身份分裂。
-func HashPayload(p []byte) string {
-	// 单源：oekit/pkg/encoding.Sha256Hex 就是 sha256.Sum256 + hex.EncodeToString
-	// （小写十六进制、全长）。本仓不另写一份——哈希算法与编码口径一旦分叉，
-	// 「同 Key 同 Payload」的比对会得出两个不同答案（coord 的持久化身份、
-	// pgstore 的身份列、sidetest 的替身都读这一个入口）。
-	return encoding.Sha256Hex(p)
-}
-
-// MintHolder 铸造一份持有者身份（Lease.Holder / Reconcile.Holder 的参考
-// 铸造原语，v0.33.0）。
-//
-// 256 位随机数，不可预测、授予之间不重合。存储实现**可以**用它，也可以用
-// 任何不可预测的方案（存储侧序列派生、UUIDv4 等），但铸造必须发生在
-// **存储侧的授予动作里**——调用方自选的身份等于没有身份（与 taskboard
-// 「令牌由存储铸造」同一条纪律：凭据由判据面铸造）。随机源失败时直接
-// panic：宁可拒绝授予，也不发一份可预测的凭据。
-func MintHolder() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic(fmt.Sprintf("铸造持有者身份失败: %v", err))
-	}
-	return hex.EncodeToString(b[:])
-}
 
 // Key 幂等键：标识「一个逻辑动作」。
 //
@@ -184,6 +147,25 @@ type Action struct {
 	// 「下游按幂等键去重，重试不会重复施加」——**断言错了就是重复施加**，
 	// 故它只能是宿主的显式选择。
 	RetrySafety RetrySafety
+	// Tenant 动作所属租户（可选；空串 = 未声明）。词汇归宿主——本包不
+	// 解释任何租户体系（与 Payload 的边界同一条）。
+	//
+	// 它是持久化面的**身份第二维**：存储实现把 (Tenant, Key) 联合定位一条
+	// 动作记录，跨租户同名任务 / 同 Key 的动作因此互不命中。租户作用域
+	// 是否**强制**由存储装配期声明（声明后缺租户上下文的写入被拒，
+	// fail-closed），本包只给字段与拼装口径。
+	//
+	// 键的拼装必须走 ActionKeyBuilder（NewActionKeyBuilderFor），不得
+	// 各自拼字符串——Tenant 同时进键与进存储列时，两处口径必须同源。
+	Tenant string
+	// Scope 动作身份的额外作用域段（可选；宿主词汇——运行 id、环境名、
+	// 任务板未覆盖的命名空间维度……）。顺序即身份顺序，调用方固定一种
+	// 顺序并全仓只用这一种。
+	//
+	// 与 Tenant 一样，Scope 只提供**拼装输入**；真正的键构造走
+	// ActionKeyBuilder（见 NewActionKeyBuilderFor）。Attempt / 重试计数 /
+	// 时间戳不得入段（入段即每次重试一个新动作）。
+	Scope []string
 }
 
 // Result 一次动作的结果。

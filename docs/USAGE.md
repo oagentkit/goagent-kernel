@@ -2291,6 +2291,29 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | `memorypipe` | 要把长期记忆注入 prompt | `scope` 做父级兜底。按 `project` 查却回退到 `global`，作用域就失去了意义，而报告完全正常 |
 | `delegate` | 要把任务交给异构执行方（ACP 一类） | 按配置书写顺序取第一个执行方。一次无关重排就会换掉执行方——应取能力**最少**者 |
 | `worktree` | 多个 agent 各在自己的工作区里跑 | 以为只读区重叠也算冲突，或指望通配。**不支持通配**是写明的局限：`*` 与 `**` 各实现语义不同 |
+
+### 3.14 部署配方：场景 → 必需能力（issue #277）
+
+**「我现在这套组合，缺哪些能力才能上生产」**——答案不靠人记，在
+[docs/DEPLOY-MATRIX.yaml](DEPLOY-MATRIX.yaml)。每条能力的证据（契约符号 /
+门禁目标 / issue 单号）可解析，`state` 由证据推导（不抄会过期的数字）；
+本节的机器口径块与清单逐行一致，`make deploycheck` 判不一致即红。
+
+<!-- deploy-matrix:begin -->
+| 场景 | 推荐存储 | Worker 模式 | 必需能力 | 当前状态 |
+|---|---|---|---|---|
+| `single-process-agent` 单进程 Agent | memory | single-process | 幂等键作用域、Context 取消 | available |
+| `single-host-persistent` 单机持久化 | examples/sqlitestore | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | partial |
+| `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
+| `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | partial |
+| `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |
+| `cross-region-multi-cluster` 跨区域多集群 | regional-authority | regional-workers | Ownership Epoch、分区写入 fence、可靠交接 | partial |
+<!-- deploy-matrix:end -->
+
+**怎么用**：先按目标场景选存储 / Worker 模式，再把 `required` 列里的能力逐条
+对到清单的 `evidence`。`partial` / `missing` 的条目都挂着 issue——它们是**有主
+的缺口**，不是「文档里没写所以不存在」。
+
 ---
 
 ## 4. 门禁与提交前检查

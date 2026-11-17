@@ -1,5 +1,5 @@
-// Package pgstore 副作用闸 / 任务认领面 / 进度快照 / 可靠事件面（Outbox 形态）
-// 的 **PostgreSQL 参考实现**。
+// Package pgstore 副作用闸 / 任务认领面 / 进度快照 / 可靠事件面（Outbox 形态）/
+// 控制面状态存储的 **PostgreSQL 参考实现**。
 //
 // 生命周期: Experimental（v0.33.0 定级）——参考实现，随契约套件与参考部署
 // 演进，不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级
@@ -34,14 +34,41 @@
 //     在同一次操作里铸造；释放 / 完成 / 续期只认令牌。
 //   - checkpoint.StoreCAS：一条带条件的 upsert（WHERE 持久化序号 < 本次序号），
 //     影响行数为 0 即判陈旧。
+//   - controlplane.Store（issue #278）：三个 Snapshot* 在 REPEATABLE READ
+//     只读事务里取一致快照；三个 Commit* 在 pgref_control_version 单行版本锚
+//     上「校验 → 留痕 → 写状态 → 推进版本」同事务提交（留痕失败 ⇒ 状态一字
+//     不动）。任务状态与 taskboard.Board 共用 pgref_board_task 这**一张可写
+//     表**，运行成员由该表的 run_id 单源表达；ControlStore 与 BoardStore 的
+//     TaskSourceID 同 schema 一致，NewAuthoritativeStorePlane 据此装配期判
+//     同源（issue #268）。权威接线仍走 NewAuthoritativeStorePlane：强释经
+//     任务板令牌/代次判据，裁决经副作用闸同一份状态。
 //   - eventbus 可靠事件面（Outbox 形态，issue #264）：事件行与业务状态同
-//     事务提交（PublishInTx——事件与业务写入同生共死），ID 由单行水位表
-//     串行化铸造（铸造序 == 提交序，回滚不烧号 ⇒ 序列空洞结构性地不存在），
+//     事务提交（PublishInTx——事件与业务写入同生共死），ID 由每租户一行
+//     水位表串行化铸造（铸造序 == 提交序，回滚不烧号 ⇒ 序列空洞结构性地不存在），
 //     读侧以已提交水位线为上界（TailStore / WatermarkTailStore）。这是
 //     eventbus.TailStore 契约点名的唯一被承诺支持的生产形态；自增直读
 //     （BIGSERIAL + WHERE id > cursor）被该契约显式声明不支持。
 //     尾随游标经 TailCursorStore（pgref_tail_cursor）持久化——实现
 //     eventbus.CursorStore，崩溃/停机后从上次停点续读（#264）。
+//
+// # 租户作用域（issue #275）
+//
+// effect / 资源 / 下游 / 事件四张表都带 tenant 列，键按 (tenant, 业务键)
+// 联合定位：跨租户同名任务与同 Key 动作互不命中。装配期两种形态：
+//
+//   - 默认（NewEffectStore / NewEventStore / NewDownstream）：旧布局，
+//     tenant 取动作 / 事件自带值（空 = ”）；单租户部署逐字不变。
+//   - 租户作用域（NewTenantEffectStore / NewTenantEventStore /
+//     NewTenantDownstream）：每次调用从 ctx 取租户（tenant.Require），
+//     缺租户 ⇒ tenant.ErrNoContext（写入被拒，fail-closed）；声明与 ctx
+//     不一致 ⇒ ErrTenantMismatch。
+//
+// 事件面每个租户一条独立 ID 空间与水位行（pgref_event_watermark 主键
+// tenant）：订阅侧用租户作用域实例取流即按租户过滤，单租户流仍满足
+// TailStore 的「无空洞推进」——过滤共享 ID 空间会产生永久空洞。
+// 尾随游标经 NewTenantTailCursorStore 按 (tenant, consumer) 隔离（同一
+// consumer 名在两个租户下是两条游标，跨租户不会互相推进）。
+// 旧库由 EnsureSchema 的 vN+1 迁移补齐租户列 / 复合主键（旧行归入 ”）。
 //
 // # 时钟
 //

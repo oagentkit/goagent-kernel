@@ -623,7 +623,7 @@ modules:
   # oekit/pkg——多引一个机制包就红。
   - id: pgrefstore
     roots: [examples/pgstore, examples/pgstore/cmd/pgsmoke]
-    requires: [checkpoint, eventbus, sideeffect, taskboard, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [checkpoint, controlplane, eventbus, sideeffect, taskboard, tenant, "ext:github.com/jackc/pgx/v5", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
@@ -633,8 +633,14 @@ modules:
       （SELECT … FOR UPDATE 行锁），栅栏预占是一条带条件的 upsert，写入体走
       同一事务（不得部分写）。契约判定在共享契约套件（与内存版同一段判据）。
       eventbus 可靠事件面（Outbox 形态，issue #264）：事件行与业务状态同事务
-      （PublishInTx），ID 由单行水位表串行化铸造（铸造序 == 提交序，回滚不
+      （PublishInTx），ID 由每租户一行水位表串行化铸造（铸造序 == 提交序，回滚不
       烧号），读侧已提交水位线读法（TailStore / WatermarkTailStore）。
+      controlplane.Store 持久化实现（issue #278）：三个 Snapshot* 一致快照 +
+      pgref_control_version 版本锚上的同事务提交（留痕失败状态不变）；任务状态
+      与 taskboard 共用 pgref_board_task 同一张可写表，运行成员由 run_id 单源
+      表达；TaskSourceID 供 NewAuthoritativeStorePlane 装配期判同源（#268）。
+      租户维度（issue #275）：effect / 资源 / 下游 / 事件表均 (tenant, 业务键)
+      复合主键，NewTenant* 从 ctx 取租户、缺租户 fail-closed。
 
   # Standalone 单机持久化参考实现（2026-11-16 新增，issue #188）：
   # SQLite(WAL) 的**契约级设计** + 零依赖文件后端（flock + JSONL + fsync）。
@@ -1305,8 +1311,12 @@ dependency_direction:
   #   cmd/releasecheck                        发版纪律门禁（2026-11-17）：判 annotated tag /
   #                                            CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装
   #                                            提交；读 git 历史与 CHANGELOG 是工具职责，同上。
+  #   cmd/deploymatrix                        部署配方能力清单门禁（2026-11-17，issue #277）：
+  #                                            判 docs/DEPLOY-MATRIX.yaml 的证据可解析、
+  #                                            state/readiness 由证据推导、USAGE 机器口径块
+  #                                            逐行一致；解析 Go 符号与 Makefile 是工具职责。
   #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
