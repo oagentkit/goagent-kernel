@@ -158,39 +158,18 @@ func TestRunMissingBaseline(t *testing.T) {
 
 func TestRunUpdateRefusesRatchetDown(t *testing.T) {
 	baseline := filepath.Join(t.TempDir(), "seam-baseline.json")
-	var out, errb bytes.Buffer
-	if code := run([]string{"-root", "../..", "-baseline", baseline, "-update"}, &out, &errb); code != 0 {
-		t.Fatalf("初始 -update 失败: code=%d stderr=%s", code, errb.String())
-	}
-	base, err := loadBaseline(baseline)
-	if err != nil {
-		t.Fatalf("读基线: %v", err)
-	}
-	// 给一条接缝多写一条「约束」——当前源码当然没有，-update 必须拒绝。
-	found := false
-	for i := range base.Seams {
-		for _, c := range constraintOrder {
-			if !slices.Contains(base.Seams[i].Written, c) {
-				base.Seams[i].Written = append(base.Seams[i].Written, c)
-				found = true
-				break
-			}
-		}
-		if found {
-			break
-		}
-	}
-	if !found {
-		t.Skip("所有接缝都三条写齐，无法构造回退")
-	}
-	if err := writeBaseline(baseline, base); err != nil {
+	// 手工登记一条当前源码里不存在的接缝：-update 会把它判成「接缝消失」
+	// 并拒绝写入——棘轮不是「跑一次 -update 就重置」的装饰。
+	if err := writeBaseline(baseline, Report{
+		Schema: 1,
+		Seams:  []Seam{seam("legacy.Gone", constraintPanic)},
+	}); err != nil {
 		t.Fatalf("写基线: %v", err)
 	}
-	out.Reset()
-	errb.Reset()
+	var out, errb bytes.Buffer
 	code := run([]string{"-root", "../..", "-baseline", baseline, "-update"}, &out, &errb)
 	if code != 1 || !strings.Contains(errb.String(), "棘轮") {
-		t.Fatalf("-update 不应接受棘轮回退: code=%d stderr=%s", code, errb.String())
+		t.Fatalf("-update 不应接受接缝删除: code=%d stderr=%s", code, errb.String())
 	}
 }
 

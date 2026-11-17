@@ -87,44 +87,50 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	if !*update {
+		// 校验模式先读基线：缺基线时无需跑整仓类型检查（既快，也避免
+		// CI 上把「配置缺失」变成一次昂贵扫描）。
+		base, err := loadBaseline(*baselinePath)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				reportf(stderr, "seamcheck: 基线 %s 不存在；先运行 go run ./cmd/seamcheck -update 生成并评审\n", *baselinePath)
+				return 1
+			}
+			reportf(stderr, "seamcheck: 读基线失败: %v\n", err)
+			return 1
+		}
+		report, err := collect(*root)
+		if err != nil {
+			reportf(stderr, "seamcheck: 扫描失败: %v\n", err)
+			return 1
+		}
+		printReport(stdout, report, &base)
+		if verr := compare(base, report); verr != nil {
+			reportf(stderr, "seamcheck: 接缝契约基线不通过:\n%v\n", verr)
+			return 1
+		}
+		return 0
+	}
+
 	report, err := collect(*root)
 	if err != nil {
 		reportf(stderr, "seamcheck: 扫描失败: %v\n", err)
 		return 1
 	}
-
-	if *update {
-		if !*force {
-			if old, lerr := loadBaseline(*baselinePath); lerr == nil {
-				if rerr := ratchetOnlyUp(old, report); rerr != nil {
-					reportf(stderr, "seamcheck: 拒绝写入回退的基线（棘轮只允许上升；确需下调用 -force）:\n%v\n", rerr)
-					return 1
-				}
+	if !*force {
+		if old, lerr := loadBaseline(*baselinePath); lerr == nil {
+			if rerr := ratchetOnlyUp(old, report); rerr != nil {
+				reportf(stderr, "seamcheck: 拒绝写入回退的基线（棘轮只允许上升；确需下调用 -force）:\n%v\n", rerr)
+				return 1
 			}
 		}
-		if werr := writeBaseline(*baselinePath, report); werr != nil {
-			reportf(stderr, "seamcheck: 写基线失败: %v\n", werr)
-			return 1
-		}
-		printReport(stdout, report, nil)
-		reportf(stdout, "  已写入基线 %s\n", *baselinePath)
-		return 0
 	}
-
-	base, err := loadBaseline(*baselinePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			reportf(stderr, "seamcheck: 基线 %s 不存在；先运行 go run ./cmd/seamcheck -update 生成并评审\n", *baselinePath)
-			return 1
-		}
-		reportf(stderr, "seamcheck: 读基线失败: %v\n", err)
+	if werr := writeBaseline(*baselinePath, report); werr != nil {
+		reportf(stderr, "seamcheck: 写基线失败: %v\n", werr)
 		return 1
 	}
-	printReport(stdout, report, &base)
-	if verr := compare(base, report); verr != nil {
-		reportf(stderr, "seamcheck: 接缝契约基线不通过:\n%v\n", verr)
-		return 1
-	}
+	printReport(stdout, report, nil)
+	reportf(stdout, "  已写入基线 %s\n", *baselinePath)
 	return 0
 }
 
