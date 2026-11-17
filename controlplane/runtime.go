@@ -161,8 +161,6 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-<<<<<<< HEAD
-	now := m.nowLocked()
 	// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
 	// 词表外 → ErrUnknownState，终态 → ErrTerminal。只判 StateDone 会让
 	// 一条脏状态行照常领到租约。
@@ -170,8 +168,6 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 		return taskboard.Task{}, errors.Wrap(cerr, "任务状态不可认领",
 			"task", string(id), "state", string(mt.task.State))
 	}
-=======
->>>>>>> 84abe47 (fix(controlplane): 宿主时钟回调移出 MemStore 双锁 (#367))
 	switch {
 	case taskboard.LeaseHeld(mt.task, now):
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人活着持有")
