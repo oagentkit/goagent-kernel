@@ -227,8 +227,7 @@ func (l *Loop) renewBatchCall(
 	defer func() {
 		if r := recover(); r != nil {
 			async.ReportPanic(r)
-			results, err = nil, errors.Wrap(errBoardPanic,
-				"宿主任务板 RenewBatch panic（已隔离；整批按失败处理）")
+			results, err = nil, errors.New("worker: 宿主任务板 RenewBatch panic（已隔离；整批按失败处理）")
 		}
 	}()
 	return batch.RenewBatch(ctx, reqs)
