@@ -325,7 +325,7 @@ var (
 	actionWhitelist = map[string]bool{ActionKillAndRestart: true, ActionTune: true, ActionNone: true}
 	confidenceAll   = map[string]bool{ConfidenceHigh: true, ConfidenceMedium: true, ConfidenceLow: true}
 	decisionAll     = map[string]bool{DecisionPending: true, DecisionApproved: true, DecisionRejected: true}
-	scopeAll        = map[string]bool{"in": true, "out": true}
+	scopeAll        = map[string]bool{ScopeIn: true, ScopeOut: true}
 
 	// decisionNoneSynonyms 已删（2026-09-25）：normalizeDecision 对未知值一律归"无决策"，
 	// 逐词收录是打地鼠（实弹：target_scope_mismatch_no_action/redirect 两轮各一新词形）。

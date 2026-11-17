@@ -42,6 +42,19 @@ const (
 	ConfidenceLow    = "low"
 )
 
+// 范围（scope）枚举（issue #382）。
+//
+// scope 是**路由信号**：in = 在范围内；out = 超出范围、转出人工（此时 redirect
+// 必填）。此前词表本体、归一面、校验面的 redirect 红线三处各写一遍字面量，
+// 宿主也拿不到构造入口（只能手抄 "in"/"out"）。这里是唯一来源：
+// scopeAll、report_normalize.go 的归一、Validate 的红线全部引用它。
+const (
+	// ScopeIn 在范围内。
+	ScopeIn = "in"
+	// ScopeOut 超出范围（转出/转派；redirect 必填）。
+	ScopeOut = "out"
+)
+
 // 严重度枚举（批次一百三十七，终报结构化补缺）：info|low|medium|high|critical。
 // 与 confidence 相互独立——confidence 说「结论可信到什么程度」，severity 说「问题本身
 // 有多重」。专家可不填（空=未评估，渲染与聚合按缺席处理）；聚合面取子报告最高值

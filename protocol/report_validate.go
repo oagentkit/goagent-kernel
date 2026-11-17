@@ -37,7 +37,7 @@ func (r *Report) Validate() ([]string, error) {
 	// 红线判据与谓词共用同一归一口径：scope="OUT" 与 "out" 都是转出路由，
 	// redirect 必填的结论必须一致（issue #371）。
 	scope := normalizeEnum(r.Scope)
-	if scope == "out" && strings.TrimSpace(r.Redirect) == "" {
+	if scope == ScopeOut && strings.TrimSpace(r.Redirect) == "" {
 		critical = append(critical, "scope=out 时 redirect 必填")
 	}
 

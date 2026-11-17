@@ -185,6 +185,8 @@ func normalizeDecision(m map[string]any, k string, v any) {
 // 整份报告。
 //
 // 归一口径与 decision / action / confidence / stance 一致：ToLower + TrimSpace。
+// 接受集**不另写清单**：直接问 IsScopeValid（词表 = scopeAll = ScopeIn/ScopeOut），
+// 词表扩展时归一面自动跟随（issue #382）。
 func normalizeScope(m map[string]any, k string, v any) {
 	s, ok := v.(string)
 	if !ok {
