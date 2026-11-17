@@ -95,6 +95,23 @@ import (
 // dialTimeout 同值同因——一次卡住的解析不该挂住调用方。
 const checkResolveTimeout = 10 * time.Second
 
+// LookupFunc 主机解析器接缝：判定路径上「解析」这一环可注入。
+//
+// 为什么要有这个接缝（issue #412）：判定面要判的是「**解析出来的**地址是不是
+// 私网」，可「解析」这一步本身依赖**这台机器此刻能不能解析它**。没有接缝时，
+// 「内核认得这个域名吗」这个断言被绑在「这台机器此刻的网络状况」上——负载
+// 一抖就假红，而红点（解析失败）与真因（网络抖动）指向两个排查方向。
+//
+// 与拨号层的 DialOptions.Lookup **同形**（同一套签名，两处可互换）：拨号层
+// 当年就是因为「判据不可确定性测就等于这一层不可验」才留了这个口子，判定层
+// 此前没跟上——同一个洞，两处口径不一样。
+type LookupFunc func(ctx context.Context, host string) ([]net.IP, error)
+
+// defaultLookup 缺省解析器（net 的缺省解析器）。
+func defaultLookup(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
+}
+
 // CheckURLWith 校验出站 URL 是否允许平台代发。
 //
 // 放行面用具名的 Allow（见 allow.go）：私网与回环是两个独立开关，零值即全拒。
@@ -113,6 +130,22 @@ func CheckURLWith(rawURL string, allow Allow) error {
 // 无 ctx 的 LookupIP 会把整个 Policy.Check 无期限挂住）。ctx 为 nil 时
 // 等价 CheckURLWith（带 10s 上限）。
 func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
+	return CheckURLWithLookup(ctx, rawURL, allow, nil)
+}
+
+// CheckURLWithLookup 是判定路径的**接缝形态**：解析器可注入（issue #412）。
+//
+// lookup 为 nil 时用 net.DefaultResolver——与 CheckURLWithCtx 同行为，既有
+// 调用点逐字不变（additive）。ctx 为 nil 时等价「带 10s 上限」，与
+// CheckURLWithCtx 同口径。
+//
+// 判据口径**一个字都没动**：名字层 → 解析 → 逐 IP 过 egress。变的只是
+// 「解析」这一步的来源可换——于是「解析结果是不是私网」这件事可以在没有
+// 真实 DNS 的情况下被确定性地断言。
+func CheckURLWithLookup(ctx context.Context, rawURL string, allow Allow, lookup LookupFunc) error {
+	if lookup == nil {
+		lookup = defaultLookup
+	}
 	if ctx == nil {
 		// nil ctx = 调用方选了无取消形态：仍给 10s 上限，对齐拨号层的
 		// dialTimeout——无上限的一次卡住解析会挂住整个 Check。
@@ -139,7 +172,7 @@ func CheckURLWithCtx(ctx context.Context, rawURL string, allow Allow) error {
 	ips := []net.IP{}
 	if ip := net.ParseIP(host); ip != nil {
 		ips = append(ips, ip)
-	} else if resolved, err := net.DefaultResolver.LookupIP(ctx, "ip", host); err != nil {
+	} else if resolved, err := lookup(ctx, host); err != nil {
 		return errors.Wrap(err, "出站目标解析失败", "host", host)
 	} else {
 		ips = resolved

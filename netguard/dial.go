@@ -94,7 +94,10 @@ type DialOptions struct {
 	Dialer *net.Dialer
 	// Lookup 主机解析器。nil 时用 net.DefaultResolver.LookupIP；测试可注入
 	// 假解析器来模拟「解析结果在校验与建连之间改变」。
-	Lookup func(ctx context.Context, host string) ([]net.IP, error)
+	//
+	// 类型与判定层的 LookupFunc 同一个（issue #412）：两处接缝同形，
+	// 一个注入器两处都能用——同一个解析结果在两条路径上的判定因此可比。
+	Lookup LookupFunc
 }
 
 // dialTimeout 缺省拨号超时。拨号层多了一次解析往返，故给一个明确上限——
@@ -115,9 +118,7 @@ func DialFunc(next func(ctx context.Context, network, addr string) (net.Conn, er
 	}
 	lookup := opts.Lookup
 	if lookup == nil {
-		lookup = func(ctx context.Context, host string) ([]net.IP, error) {
-			return net.DefaultResolver.LookupIP(ctx, "ip", host)
-		}
+		lookup = defaultLookup
 	}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		host, _, err := net.SplitHostPort(addr)

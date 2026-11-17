@@ -127,6 +127,17 @@ func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error
 // CheckChainWithCtx 是 CheckChainWith 的取消传播形态：每一跳的解析都带
 // ctx（见 CheckURLWithCtx）。ctx 为 nil 时等价 CheckChainWith（带 10s 上限）。
 func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow Allow, maxHops int) error {
+	return CheckChainWithLookup(ctx, start, hops, allow, maxHops, nil)
+}
+
+// CheckChainWithLookup 是逐跳校验的**接缝形态**：每一跳的解析器可注入
+// （issue #412）。lookup 为 nil 时用 net.DefaultResolver——与 CheckChainWithCtx
+// 同行为，既有调用点逐字不变（additive）。
+//
+// 逐跳校验里每一跳都要解析一次域名，所以「链条判得对不对」此前同样被绑在
+// 「这台机器此刻能不能解析这些域名」上：起始跳公网名 + 相对 Location 的
+// 干净链，用例能不能过取决于此刻的网络。
+func CheckChainWithLookup(ctx context.Context, start string, hops []string, allow Allow, maxHops int, lookup LookupFunc) error {
 	if maxHops <= 0 {
 		maxHops = DefaultMaxHops
 	}
@@ -135,7 +146,7 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 	if n := firstTerminalHop(hops); n >= 0 {
 		followed = hops[:n]
 	}
-	if err := CheckURLWithCtx(ctx, start, allow); err != nil {
+	if err := CheckURLWithLookup(ctx, start, allow, lookup); err != nil {
 		return &HopDeniedError{Hop: 1, URL: start, Err: err}
 	}
 	if len(followed) > maxHops {
@@ -157,7 +168,7 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 		if err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: loc, Err: err}
 		}
-		if err := CheckURLWithCtx(ctx, next, allow); err != nil {
+		if err := CheckURLWithLookup(ctx, next, allow, lookup); err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: next, Err: err}
 		}
 		current = next

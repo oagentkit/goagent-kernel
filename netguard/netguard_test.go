@@ -1,7 +1,6 @@
 package netguard
 
 import (
-	"runtime"
 	"time"
 
 	"net"
@@ -38,7 +37,7 @@ func TestCheckURL(t *testing.T) {
 		{"缺 host 拒绝", "http:///path", true, false, true},
 	}
 	for _, tc := range cases {
-		err := CheckURLWith(tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop})
+		err := CheckURLWithLookup(context.Background(), tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, testResolver.lookup)
 		if (err != nil) != tc.wantErr {
 			t.Errorf("%s: CheckURLWith(%q, %+v) err=%v wantErr=%v", tc.name, tc.url, Allow{Private: tc.allowPrivate, Loopback: tc.allowLoop}, err, tc.wantErr)
 		}
@@ -134,17 +133,15 @@ func TestCheckURLBlockedNameIgnoresAllowFlags(t *testing.T) {
 // 必须与回环地址同待遇：allowLoopback=true 放行、false 拒绝。
 // 少了这条，新增名字层会把「allowLoopback=true 够不到自身服务」变成回归。
 func TestCheckURLLoopbackFamilyFollowsAllowFlag(t *testing.T) {
-	if err := CheckURLWith("http://localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
+	if err := CheckURLWithLookup(context.Background(), "http://localhost:9/x", Allow{Private: true, Loopback: true}, testResolver.lookup); err != nil {
 		t.Fatalf("allowLoopback=true 时回环族名字应放行: %v", err)
 	}
-	if runtime.GOOS == "windows" {
-		// windows 系统解析器不带 .localhost 特判（unix 的 systemd-resolved/
-		// macOS resolver 会把 *.localhost 导回环），api.localhost 在那里
-		// 直接 NXDOMAIN——放行语义的验证依赖解析器 magic，属平台差异，
-		// 显式跳过而不是让 windows CI 永远红。名字层拦截用例（下方
-		// allowLoopback=false）不走解析，windows 照跑。
-		t.Log("windows 无 .localhost 解析器 magic，跳过解析依赖断言")
-	} else if err := CheckURLWith("http://api.localhost:9/x", Allow{Private: true, Loopback: true}); err != nil {
+	// .localhost 后缀族：解析结果由**注入的解析器**给出（127.0.0.1），
+	// 因此这条断言不再依赖解析器的 magic——此前它靠 unix 的 systemd-resolved/
+	// macOS resolver 把 *.localhost 导回环，windows 上根本没有这个特判，
+	// 用例只能按平台跳过（windows CI 那一格是「跳过」而不是「验过」）。
+	// 接上解析器接缝后，放行语义在所有平台上被同一条断言钉住。
+	if err := CheckURLWithLookup(context.Background(), "http://api.localhost:9/x", Allow{Private: true, Loopback: true}, testResolver.lookup); err != nil {
 		t.Fatalf("allowLoopback=true 时 .localhost 后缀应放行: %v", err)
 	}
 	for _, u := range []string{"http://localhost/x", "http://api.localhost/x"} {
@@ -157,7 +154,7 @@ func TestCheckURLLoopbackFamilyFollowsAllowFlag(t *testing.T) {
 // TestCheckURLPublicNameAllowed 名字层不得误伤公网名（含大小写/尾点写法）。
 func TestCheckURLPublicNameAllowed(t *testing.T) {
 	for _, u := range []string{"https://example.com/hook", "http://EXAMPLE.com/x", "http://example.com./x"} {
-		if err := CheckURLWith(u, Allow{Private: false, Loopback: false}); err != nil {
+		if err := CheckURLWithLookup(context.Background(), u, Allow{Private: false, Loopback: false}, testResolver.lookup); err != nil {
 			t.Errorf("%s: 公网名应放行，实得 %v", u, err)
 		}
 	}
@@ -250,7 +247,7 @@ func TestExtraSuffixRejectionKeepsPrevious(t *testing.T) {
 	if err := SetExtraBlockedHostSuffixes(".good-example", "nodot"); !errors.Is(err, ErrInvalidBlockedSuffix) {
 		t.Fatalf("含非法项的批次应整批被拒，实得 %v", err)
 	}
-	if err := CheckURLWith("http://a.good-example/x", Allow{Private: false, Loopback: false}); err == nil {
+	if err := CheckURLWithLookup(context.Background(), "http://a.good-example/x", Allow{Private: false, Loopback: false}, testResolver.lookup); err == nil {
 		t.Error("被拒批次里的合法项不应被部分安装")
 	}
 	if err := CheckURLWith("http://a.keep-example/x", Allow{Private: false, Loopback: false}); !errors.Is(err, ErrBlockedName) {
@@ -314,7 +311,7 @@ func TestExtraBlockedConcurrentSetAndClassify(t *testing.T) {
 
 // TestCheckChainBlockedNameEveryHop 名字层对每一跳都生效（CheckChain 逐跳过 CheckURL）。
 func TestCheckChainBlockedNameEveryHop(t *testing.T) {
-	err := CheckChainWith("https://example.com/start", []string{"http://svc.internal/x"}, Allow{Private: false, Loopback: false}, 0)
+	err := checkChain("https://example.com/start", []string{"http://svc.internal/x"}, Allow{Private: false, Loopback: false}, 0)
 	var hd *HopDeniedError
 	if !errors.As(err, &hd) || hd.Hop != 2 {
 		t.Fatalf("第二跳跳进拦截后缀应报 Hop=2，实得 %v", err)
