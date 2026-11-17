@@ -181,14 +181,32 @@ func TestPlanDeterministic(t *testing.T) {
 	}
 }
 
-// TestSkipRunNoAlias 结果切片不得与入参共享底层数组（调用方改了会串）。
+// TestSkipRunNoAlias 结果切片不得与**类型兼容且真被传入**的对象共享底层数组。
+//
+// 原断言拿 ids（[]string）的副本去比 p.Skip（[]string），但 ids 从未传给
+// BuildPlan——graph(ids...) 逐个转成新的 StepDef 值；编排图与结果切片在类型
+// 上也不可能共享（[]StepDef vs []string）⇒ 断言结构上不可失败（issue #393）。
+//
+// 真正的别名面是快照 Done（[]string）与结果切片之间，以及 Skip 与 Run 互相
+// 之间。这里把结果写回后重读快照，并检查两个结果切片不指向同一数组。
 func TestSkipRunNoAlias(t *testing.T) {
-	ids := []string{"step-alpha", "step-beta", "step-gamma"}
 	s := snap("run", 1, contract.StatusRunning, "step-alpha")
-	p := BuildPlan(graph(ids...), &s)
+	p := BuildPlan(graph("step-alpha", "step-beta"), &s)
+	if len(p.Skip) != 1 || len(p.Run) != 1 {
+		t.Fatalf("前置条件不成立: Skip=%v Run=%v", p.Skip, p.Run)
+	}
+	doneBefore := append([]string(nil), s.Done...)
+	runBefore := append([]string(nil), p.Run...)
+
 	p.Skip[0] = "mutated"
-	if ids[0] != "step-alpha" {
-		t.Fatalf("Skip 与编排图共享了底层数组: %v", ids)
+	if !reflect.DeepEqual(s.Done, doneBefore) {
+		t.Fatalf("Skip 与快照 Done 共享了底层数组: %v", s.Done)
+	}
+	if !reflect.DeepEqual(p.Run, runBefore) {
+		t.Fatalf("Skip 与 Run 共享了底层数组: %v", p.Run)
+	}
+	if &p.Skip[0] == &p.Run[0] {
+		t.Fatal("Skip 与 Run 指向同一底层数组")
 	}
 }
 
