@@ -266,6 +266,72 @@ func TestScoreOfMatchesRawOracle(t *testing.T) {
 	}
 }
 
+// TestNewCopiesHostInput 钉住 #377 的入口方向：New 之后改写宿主原变量，
+// 目录披露出的元数据必须仍是原值（目录不得留存调用方的切片）。
+func TestNewCopiesHostInput(t *testing.T) {
+	skills := []Skill{{
+		Name:        "alpha",
+		Description: "alpha skill",
+		Resources:   []string{"deploy/"},
+		Tags:        []string{"alpha"},
+	}}
+	c := mustCatalog(t, skills...)
+
+	// 宿主在 New 之后改写自己的原变量（入口方向的改穿路径）。
+	skills[0].Resources[0] = "MUTATED_BY_HOST"
+	skills[0].Tags[0] = "MUTATED_BY_HOST"
+
+	res, err := c.Disclose(Query{Mention: "alpha"}, Budget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skills) != 1 || len(res.Scored) != 1 {
+		t.Fatalf("点名必须命中一条，实得 %+v", res)
+	}
+	if res.Skills[0].Resources[0] != "deploy/" || res.Scored[0].Skill.Resources[0] != "deploy/" {
+		t.Fatalf("New 留存入参切片：宿主改写原变量改穿了目录 %+v", res.Skills[0].Resources)
+	}
+	if res.Skills[0].Tags[0] != "alpha" || res.Scored[0].Skill.Tags[0] != "alpha" {
+		t.Fatalf("New 留存入参切片：宿主改写原变量改穿了目录 %+v", res.Skills[0].Tags)
+	}
+}
+
+// TestDiscloseCopiesCatalogSkill 钉住 #377 的出口方向：改写披露结果的
+// Skills / Scored 两个出口，二次披露必须仍读到目录里的原值。
+func TestDiscloseCopiesCatalogSkill(t *testing.T) {
+	c := mustCatalog(t, Skill{
+		Name:        "alpha",
+		Description: "alpha skill",
+		Resources:   []string{"deploy/"},
+		Tags:        []string{"alpha"},
+	})
+
+	res, err := c.Disclose(Query{Mention: "alpha"}, Budget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Skills) != 1 || len(res.Scored) != 1 {
+		t.Fatalf("点名必须命中一条，实得 %+v", res)
+	}
+	// 出口方向的改穿路径：两个出口各改一个引用字段。
+	res.Skills[0].Resources[0] = "MUTATED_BY_CALLER"
+	res.Scored[0].Skill.Tags[0] = "MUTATED_BY_CALLER"
+
+	again, err := c.Disclose(Query{Mention: "alpha"}, Budget{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Skills) != 1 || len(again.Scored) != 1 {
+		t.Fatalf("二次披露必须命中一条，实得 %+v", again)
+	}
+	if again.Skills[0].Resources[0] != "deploy/" {
+		t.Fatalf("披露结果与目录共享 Resources：二次披露读到 %+v", again.Skills[0].Resources)
+	}
+	if again.Skills[0].Tags[0] != "alpha" || again.Scored[0].Skill.Tags[0] != "alpha" {
+		t.Fatalf("披露结果与目录共享 Tags：二次披露读到 %+v", again.Scored[0].Skill.Tags)
+	}
+}
+
 // BenchmarkDisclose 披露热路径基准。目录成员的小写形态在 New 里算一次，
 // 这里量的是「每次披露」的成本（打分 + 排序 + 预算裁剪）。
 func BenchmarkDisclose(b *testing.B) {
