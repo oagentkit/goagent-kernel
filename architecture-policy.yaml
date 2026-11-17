@@ -1465,8 +1465,11 @@ dependency_direction:
 #                                            类型感知扫描导出 interface / 回调函数类型，
 #                                            输出声明/调用点/三条约束写齐数；扫描各包是
 #                                            工具职责，不形成机制依赖。
+#   cmd/hygiene                         仓库卫生门禁（issue #413，2026-11-18）：
+#                                            判「被跟踪的文件里不得有编译产物二进制」；
+#                                            读 git 索引与文件头是工具职责，不形成机制依赖。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/seamcheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/seamcheck, cmd/hygiene, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1737,6 +1740,18 @@ egress_paths:
         环境可能带凭据，而 git 的本地子命令用不到它们。
         将来若有人在这里加 fetch / push，本条目必须同步改成 proxy 并补上兑现的两半
         （env 生成 + 后端能力问询），否则门禁会在那个提交上直接红。
+    - path: cmd/hygiene/main.go
+      fn: gitOut
+      mode: unrestricted
+      notes: |
+        仓库卫生门禁的 git 读取点：只跑 rev-parse / ls-files 两个**本地**子命令
+        （不接触远端；命令串写死在本文件里，不含外部输入）。登记成 unrestricted 是
+        **事实**而不是放行——这两个子命令没有网络面，给不出「被代理强制」的证据，
+        登记成 proxy 只会让门禁以为「这条路径的出口有人管过」。
+        子进程环境走唯一事实源 procx.ChildEnv（PATH/HOME 等基础白名单 +
+        GIT_TERMINAL_PROMPT=0），**不继承全量 environ**：本工具在 CI 里跑，
+        父进程环境可能带凭据，而 git 的本地子命令用不到它们。
+        将来若有人在这里加 fetch / push，本条目必须同步改成 proxy 并补上兑现的两半。
 
 # ── 宿主接缝契约门禁（issue #369/#370）──
 #
