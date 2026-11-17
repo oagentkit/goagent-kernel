@@ -37,6 +37,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/oagentkit/guardx/invoke"
@@ -119,7 +120,14 @@ type SubprocessProvider struct {
 }
 
 // NewSubprocessProvider 构造子进程后端。
+//
+// 构造期快照（issue #398）：opts 按值存，但 Bindings / Stages 是切片 ⇒
+// 底层数组仍由调用方持有。Bindings 是**模型可调用工具集**的绑定面、
+// Stages 是每次绑定调用前必过的判定环——改穿等于换掉可调用工具集或判定档。
+// 元素里的 func / interface 值不可变，浅拷贝足够。
 func NewSubprocessProvider(opts SubprocessOptions) *SubprocessProvider {
+	opts.Bindings = slices.Clone(opts.Bindings)
+	opts.Stages = slices.Clone(opts.Stages)
 	return &SubprocessProvider{opts: opts}
 }
 

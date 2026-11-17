@@ -359,3 +359,27 @@ func TestSubprocessEffectiveBudget(t *testing.T) {
 		})
 	}
 }
+
+// TestNewSubprocessProviderClonesConfig 构造后改写调用方的 Bindings/Stages
+// 不得写穿 provider（issue #398）。
+//
+// Bindings 是模型可调用工具集的绑定面，Stages 是每次绑定调用前必过的判定环。
+// 二者都是切片：按值存 opts 只复制切片头，宿主复用同一份装配配置再生成别的
+// 后端时，活 provider 的可调用工具集/判定环会跟着变。
+func TestNewSubprocessProviderClonesConfig(t *testing.T) {
+	opts := SubprocessOptions{
+		Bindings: []Binding{{Name: "alpha"}},
+		Stages:   []invoke.Stage{invoke.StageFunc{StageName: "s1"}},
+	}
+	p := NewSubprocessProvider(opts)
+
+	opts.Bindings[0].Name = "mutated"
+	opts.Stages[0] = nil
+
+	if got := startBindings(p.opts.Bindings); len(got) != 1 || got[0].Name != "alpha" {
+		t.Fatalf("构造期留存了调用方的 Bindings 底层数组，绑定名被写穿: %+v", got)
+	}
+	if len(p.opts.Stages) != 1 || p.opts.Stages[0] == nil {
+		t.Fatal("构造期留存了调用方的 Stages 底层数组，判定环被写穿")
+	}
+}
