@@ -53,9 +53,9 @@ func TestReceiptValidate(t *testing.T) {
 		r    Receipt
 		pass bool
 	}{
-		{"done 带结论", Receipt{Status: ReceiptDone, Summary: "ok"}, true},
-		{"done 缺结论", Receipt{Status: ReceiptDone}, false},
-		{"done 带失败原因（对「完成」的理解不一致）", Receipt{Status: ReceiptDone, Summary: "ok", Failure: "x"}, false},
+		{"done 带结论", Receipt{Status: ReceiptCompleted, Summary: "ok"}, true},
+		{"done 缺结论", Receipt{Status: ReceiptCompleted}, false},
+		{"done 带失败原因（对「完成」的理解不一致）", Receipt{Status: ReceiptCompleted, Summary: "ok", Failure: "x"}, false},
 		{"failed 带原因", Receipt{Status: ReceiptFailed, Failure: "x"}, true},
 		{"failed 缺原因", Receipt{Status: ReceiptFailed}, false},
 		{"refused 带原因", Receipt{Status: ReceiptRefused, Failure: "x"}, true},

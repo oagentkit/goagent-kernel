@@ -159,9 +159,25 @@ const (
 	StatusRefused Status = "refused"
 )
 
-// valid 报告状态是否在词表内。
-func (s Status) valid() bool {
-	return s == StatusCompleted || s == StatusFailed || s == StatusRefused
+// Valid 报告状态是否在词表内（宿主的校验入口，issue #358）。
+//
+// 此前这是私有的 valid()，宿主想知道「这份回执合法吗」只能手抄三个常量，
+// 抄错就是静默放行词表外回执。合法值全集用 AllStatuses 枚举。
+func (s Status) Valid() bool {
+	switch s {
+	case StatusCompleted, StatusFailed, StatusRefused:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllStatuses 返回回执状态词表的全部取值（新切片，调用方可安全修改）。
+//
+// 与 Valid 的成员集合**双向一致**（#320 的规矩）：枚举里的每个值都 Valid，
+// Valid 为真的值必须都能在枚举里找到。宿主据此渲染选项/校验输入，不必手抄。
+func AllStatuses() []Status {
+	return []Status{StatusCompleted, StatusFailed, StatusRefused}
 }
 
 // Receipt 一次委托的回执。
@@ -185,7 +201,7 @@ type Receipt struct {
 //     「完成」的理解不一致，而委托方会按「完成」处理）；
 //   - failed / refused 必须有 Failure（没有原因就无法决定重试还是改需求）。
 func (r Receipt) Validate() error {
-	if !r.Status.valid() {
+	if !r.Status.Valid() {
 		return fmt.Errorf("delegate: 回执状态 %q 不在词表内（completed / failed / refused）", r.Status)
 	}
 	switch r.Status {

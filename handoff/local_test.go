@@ -47,7 +47,7 @@ func TestLocalDeskLifecycle(t *testing.T) {
 		if h.Fence != 1 || h.Token == "" || !h.Until.Equal(tk.Deadline) {
 			t.Fatalf("handle 错误：%+v", h)
 		}
-		if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "ok"}); err != nil {
+		if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"}); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := d.Snapshot(ctx)
@@ -116,7 +116,7 @@ func TestLocalDeskLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		clock.Advance(2 * time.Minute)
-		err = d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone, Summary: "ok"})
+		err = d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted, Summary: "ok"})
 		if !kerrors.Is(err, ErrExpired) {
 			t.Fatalf("迟到回执应被拒（ErrExpired），得到 %v", err)
 		}
@@ -131,7 +131,7 @@ func TestLocalDeskLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = d.Reply(ctx, "step-7", h.Token+"-wrong", Receipt{Status: ReceiptDone, Summary: "ok"})
+		err = d.Reply(ctx, "step-7", h.Token+"-wrong", Receipt{Status: ReceiptCompleted, Summary: "ok"})
 		if !kerrors.Is(err, ErrLeaseLost) {
 			t.Fatalf("期望 ErrLeaseLost，得到 %v", err)
 		}
@@ -143,7 +143,7 @@ func TestLocalDeskLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		h, _ := d.Take(ctx, "step-7", "proc-b")
-		if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptDone}); err == nil {
+		if err := d.Reply(ctx, "step-7", h.Token, Receipt{Status: ReceiptCompleted}); err == nil {
 			t.Fatal("缺结论的回执应被拒")
 		}
 		got, _ := d.Snapshot(ctx)

@@ -52,8 +52,9 @@
 //   - 原子性判结果不判过程：@@ConcurrentTake@@ 跑一遍，赢家必须恰好 1 个
 //     （taskboard.ConcurrentClaim 的同源判据）；
 //   - 令牌由存储铸造、动作凭令牌不凭内容（taskboard 的 v0.33.0 教训）；
-//   - 回执状态三值 done / failed / refused，completed 类结论必填、不得带
-//     失败原因（delegate.Receipt 的同源纪律）；
+//   - 回执状态三值 completed / failed / refused，completed 类结论必填、不得带
+//     失败原因（与 delegate.Status 同一份词表：ReceiptStatus 是它的类型别名，
+//     issue #358）；
 //   - 重新交接 = 新一代（generation 单调，sideeffect.Fence 的同源口径）。
 package handoff
 
@@ -62,6 +63,8 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/delegate"
 )
 
 // Key 交接单的幂等键（宿主按业务给；同一键的重复挂出是重放不是新单）。
@@ -160,23 +163,32 @@ type Handle struct {
 	Until time.Time
 }
 
-// ReceiptStatus 回执状态（三值——与 delegate.Status 同一条纪律）。
-type ReceiptStatus string
+// ReceiptStatus 回执状态（三值，issue #358）。
+//
+// 与 delegate.Status 是**同一个类型**（别名，不是第二份定义）：回执的
+// 「完成 / 做过尝试的失败 / 没尝试的拒绝」三值语义只有一份词表，合法值集合
+// 与 delegate 逐条相等。历史取值 done 已统一为 completed——宿主跨包聚合
+// （委托回执 + 交接回执）时两列值域不再不同而语义相同。
+type ReceiptStatus = delegate.Status
 
 const (
-	// ReceiptDone 交接的工作已完成。
-	ReceiptDone ReceiptStatus = "done"
+	// ReceiptCompleted 交接的工作已完成（= delegate.StatusCompleted，"completed"）。
+	ReceiptCompleted = delegate.StatusCompleted
+	// ReceiptDone 历史名称；值已统一为 completed，与 ReceiptCompleted 是同一个常量。
+	//
+	// Deprecated: 请改用 ReceiptCompleted（名称与词表取值一致，避免误读）。
+	ReceiptDone = ReceiptCompleted
 	// ReceiptFailed 交接的工作失败（接收方做过尝试）。
-	ReceiptFailed ReceiptStatus = "failed"
+	ReceiptFailed = delegate.StatusFailed
 	// ReceiptRefused 拒绝接收（接收方没有尝试）。
-	ReceiptRefused ReceiptStatus = "refused"
+	ReceiptRefused = delegate.StatusRefused
 )
 
 // Receipt 一次交接的回执。
 type Receipt struct {
 	// Status 状态。
 	Status ReceiptStatus
-	// Summary 一句话结论（done 时必填）。
+	// Summary 一句话结论（completed 时必填）。
 	Summary string
 	// Failure 失败/拒绝原因（failed 与 refused 时必填）。
 	Failure string
