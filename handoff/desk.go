@@ -120,6 +120,12 @@ func (d *Desk) Offer(ctx context.Context, t Ticket) (Ticket, error) {
 		cur, err := d.ledger.Load(ctx, t.Key)
 		switch {
 		case err == nil:
+			// 词表外状态既不是「重放」，也不是「可开新代」：内核读不懂这条
+			// 记录时不能把脏单原样交回（issue #359）。
+			if !cur.Ticket.State.Valid() {
+				return Ticket{}, errors.Wrap(ErrUnknownState,
+					"交接单状态不在词表内，拒绝挂出", "key", string(t.Key), "state", string(cur.Ticket.State))
+			}
 			if !cur.Ticket.State.Terminal() {
 				return cur.Ticket, nil // 重放：同一 Key 的重复挂出不开新单
 			}
@@ -203,6 +209,13 @@ func (d *Desk) take(ctx context.Context, key Key, to Agent, expected Epoch) (Han
 			}
 			return Handle{}, errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
 		}
+		// 词表外状态是「内核读不懂」，不是「待领取」：Valid() 必须在任何
+		// 「已领取 / 终态」判定之前消费，否则 mystery 两条都不命中，会走到
+		// 下面的 StateAccepted 改写并铸造令牌（issue #359）。
+		if !rec.Ticket.State.Valid() {
+			return Handle{}, errors.Wrap(ErrUnknownState,
+				"交接单状态不在词表内，拒绝领取", "key", string(key), "state", string(rec.Ticket.State))
+		}
 		if expected != 0 && rec.Epoch != expected {
 			return Handle{}, errors.Wrap(ErrStaleEpoch, "领取者出示的代次不是当前代",
 				"key", string(key), "epoch", expected, "current", rec.Epoch)
@@ -262,6 +275,10 @@ func (d *Desk) Reply(ctx context.Context, key Key, token string, r Receipt) erro
 			}
 			return errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
 		}
+		if !rec.Ticket.State.Valid() {
+			return errors.Wrap(ErrUnknownState,
+				"交接单状态不在词表内，拒绝回执", "key", string(key), "state", string(rec.Ticket.State))
+		}
 		if rec.Ticket.State.Terminal() {
 			return ErrAlreadySettled
 		}
@@ -313,6 +330,10 @@ func (d *Desk) Cancel(ctx context.Context, key Key, by Agent) error {
 				return ErrUnknownKey
 			}
 			return errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
+		}
+		if !rec.Ticket.State.Valid() {
+			return errors.Wrap(ErrUnknownState,
+				"交接单状态不在词表内，拒绝收回", "key", string(key), "state", string(rec.Ticket.State))
 		}
 		if rec.Ticket.State.Terminal() {
 			return ErrAlreadySettled

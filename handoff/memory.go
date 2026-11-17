@@ -91,6 +91,12 @@ func (m *MemoryLedger) Save(_ context.Context, rec Record) (Record, error) {
 	if err := rec.Ticket.Validate(); err != nil {
 		return Record{}, errors.New("handoff: " + err.Error())
 	}
+	// 落库面是最后一道防线：词表外状态不得入库（issue #359）。该闸先于
+	// 新建/更新的形态判定——脏状态在任何形态下都不是「可解释的记录」。
+	if !rec.Ticket.State.Valid() {
+		return Record{}, errors.Wrap(ErrUnknownState,
+			"交接单状态不在词表内，拒绝落库", "key", string(rec.Ticket.Key), "state", string(rec.Ticket.State))
+	}
 	if rec.Receipt != nil {
 		if err := rec.Receipt.Receipt.Validate(); err != nil {
 			return Record{}, errors.New("handoff: " + err.Error())

@@ -98,6 +98,8 @@ type Record struct {
 //     回执索引不可分割（拆开就有「两位写者各写一半」的窗口）；
 //   - @@Save@@ 只接受「同代更新」或「终态之上开新代」两种形态，旧代一律
 //     @@ErrStaleEpoch@@（不以「看起来更小」为由静默接受）；
+//   - @@Save@@ 拒绝**词表外状态**（@@ErrUnknownState@@）：落库面是最后一道
+//     防线，内核读不懂的记录不得入库（issue #359）；
 //   - @@Load@@ 无记录返回 @@ErrUnknownKey@@，不得返回 (零值, nil)；
 //   - @@Delete@@ 只删当前记录，**保留代次与版本水位**（否则 ABA 封不住）；
 //   - @@Receipts@@ 只返回发给该地址的回执（回执寻址的取件半边）。
@@ -114,7 +116,9 @@ type Ledger interface {
 	// 当前记录必须是终态，新单必须是 offered。
 	//
 	// 其余形态（旧代、跨代跳跃、对非终态开新代、Revision 不匹配）分别报
-	// ErrStaleEpoch / ErrConflict，**都不得写入**。
+	// ErrStaleEpoch / ErrConflict，**都不得写入**。Ticket.State 不在词表内
+	// （offered / accepted / closed / expired / withdrawn）⇒ ErrUnknownState，
+	// 不得落库（与写路径同向，issue #359）。
 	Save(ctx context.Context, rec Record) (Record, error)
 	// Load 读取当前记录；无记录返回 ErrUnknownKey。
 	Load(ctx context.Context, key Key) (Record, error)
