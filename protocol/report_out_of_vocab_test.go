@@ -175,7 +175,7 @@ func TestEnumOutOfVocabDirectionConsistent(t *testing.T) {
 			warns, err := r.Validate()
 			if tc.wantCritical {
 				if err == nil {
-					t.Fatalf("%s 词表外值必须判 critical，实得零告警通过", tc.name)
+					t.Fatalf("%s 词表外值必须判 critical，实得无 critical 通过", tc.name)
 				}
 			} else if err != nil {
 				t.Fatalf("%s 是增强面，不应拦整份报告，实得 %v", tc.name, err)
