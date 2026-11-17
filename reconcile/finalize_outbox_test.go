@@ -173,3 +173,52 @@ func TestFinalizeGuaranteeReportsModes(t *testing.T) {
 		t.Fatalf("atomic+legacy-pub: %+v", g)
 	}
 }
+
+// TestRecoveryLoopAutoFlushesOutbox 进程重启后的恢复循环无需宿主额外接线：
+// 下一轮 RecoverInterrupted 开始时会先补做上一轮遗留的终态事件（同一稳定 ID），
+// 补做成功后不再重复投递。
+func TestRecoveryLoopAutoFlushesOutbox(t *testing.T) {
+	store := newFinalizeStore()
+	pub := &dropPub{}
+	fail := true
+	var ids []string
+	dispatch := func(_ context.Context, ev FinalizeEvent) error {
+		if fail {
+			return errDeliveryBoom
+		}
+		ids = append(ids, ev.ID)
+		return nil
+	}
+	r := NewWithClock(store, pub.fn,
+		Config{InstanceID: "replica-a", FinalizeDispatch: dispatch},
+		func() time.Time { return rbase })
+
+	n, err := r.RecoverInterrupted(context.Background())
+	if n != 1 || err == nil {
+		t.Fatalf("首轮应收敛但投递失败（n=%d err=%v）", n, err)
+	}
+	if store.pendingCount() != 1 {
+		t.Fatalf("首轮失败后 Outbox 必须保留 1 行（实得 %d）", store.pendingCount())
+	}
+
+	// 恢复循环下一轮：开始即自动补做，无需会话再次出现在 running。
+	fail = false
+	n, err = r.RecoverInterrupted(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("补做轮不应再收敛会话（n=%d err=%v）", n, err)
+	}
+	if len(ids) != 1 || ids[0] != "finalize:s1:failed" {
+		t.Fatalf("恢复轮必须用稳定 Event.ID 补投一次（实得 %v）", ids)
+	}
+	if store.pendingCount() != 0 {
+		t.Fatalf("补做成功后不得残留行（实得 %d）", store.pendingCount())
+	}
+
+	// 再跑一轮：已投递的行不重复。
+	if _, err := r.RecoverInterrupted(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("已投递事件不得重复投递（实得 %v）", ids)
+	}
+}

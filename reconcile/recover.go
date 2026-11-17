@@ -31,12 +31,16 @@ func (r *Reconciler) RecoverBootOrphans(ctx context.Context) (int, error) {
 	if r.cfg.Boot.IsZero() {
 		return 0, nil // 无启动锚点（零值构造宿主）：防零锚点误收全量
 	}
+	// 启动即补做上一进程留下的终态事件（Outbox 行跨重启不丢）。
+	var errs error
+	if _, ferr := r.FlushFinalizeOutbox(ctx); ferr != nil {
+		errs = errors.Append(errs, ferr)
+	}
 	// 扫描面提示收窄到本实例（含无主行，见 Store 契约）；判定仍按 Owner 复核。
 	sessions, err := r.store.ListRunning(ctx, r.cfg.InstanceID)
 	if err != nil {
-		return 0, errors.Wrap(err, "列 running 会话失败")
+		return 0, errors.Append(errs, errors.Wrap(err, "列 running 会话失败"))
 	}
-	var errs error
 	n := 0
 	for i := range sessions {
 		s := sessions[i]
@@ -86,12 +90,17 @@ func (r *Reconciler) RecoverBootOrphans(ctx context.Context) (int, error) {
 // 心跳面读失败**降级不停车**：全体走事件静默判定（恢复不因观测面抖动停摆），
 // 错误随返回值带出留痕。LeaseTTL < 0（conf 关闭心跳面）则根本不读 ListBeats。
 func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
+	// 每轮先补做待投递的终态事件：上一轮「Finalize 已提交、Flush 未完成」
+	// 或进程重启留下的 Outbox 行在这里重试（issue #272，稳定 ID 幂等）。
+	var errs error
+	if _, ferr := r.FlushFinalizeOutbox(ctx); ferr != nil {
+		errs = errors.Append(errs, ferr)
+	}
 	sessions, err := r.store.ListRunning(ctx, "")
 	if err != nil {
-		return 0, errors.Wrap(err, "列 running 会话失败")
+		return 0, errors.Append(errs, errors.Wrap(err, "列 running 会话失败"))
 	}
 	var beats map[string]time.Time
-	var errs error
 	if r.lease > 0 {
 		beats, err = r.store.ListBeats(ctx)
 		if err != nil {

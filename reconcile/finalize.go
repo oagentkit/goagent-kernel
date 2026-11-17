@@ -152,6 +152,10 @@ func (r *Reconciler) reclaimFinalize(ctx context.Context, s Session, cause Cause
 //   - 已投递的行不再出现在 PendingFinalEvents 里，重放不会重复发送。
 //
 // 返回实际标记成功的行数与聚合错误（投递/标记失败都在里面）。
+//
+// RecoverBootOrphans / RecoverInterrupted 每轮开始时也会先调用一次：进程
+// 重启或上一轮「Finalize 已提交、Flush 未完成」留下的行无需宿主额外接线
+// 就会重试（宿主也可按自己的节奏单独调用，两者幂等）。
 func (r *Reconciler) FlushFinalizeOutbox(ctx context.Context) (int, error) {
 	if r.finalizer == nil {
 		return 0, nil
