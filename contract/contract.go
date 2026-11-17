@@ -112,8 +112,14 @@ const (
 //
 // 这是**词表成员判定**，不是「这个终态是否与事实一致」的裁决——后者需要存储
 // 面与恢复路径，归宿主。机制面只需要一个共同的词表真相，故在这里单点导出：
-// 消费方（statemachine / checkpoint / controlplane / watchdog / 参考实现）
-// 一律引用本函数，不各抄一份终态清单（第二套词表必然漂移）。
+// 消费方（checkpoint / controlplane / watchdog / 参考实现）一律引用本函数，
+// 不各抄一份终态清单（第二套词表必然漂移）。
+//
+// statemachine 是**环节侧**的类型化入口：IsTerminal 从自己的转移表派生
+// （无自行推进出边=终态，#374），不直接调用本函数——两者对 12 个环节状态
+// 的结论由 statemachine 的跨包表驱动用例逐条钉住；转移表若变，用例会同时
+// 逼本函数与 IsTerminal 对齐（#354）。timed_out 是会话独有取值，环节侧
+// 按「词表外」返回 false，这是轴的边界而不是判据分叉。
 func IsTerminalStatus(status string) bool {
 	switch status {
 	case StatusSucceeded, StatusFailed, StatusCancelled, StatusTimedOut,
@@ -167,12 +173,12 @@ type StepSink interface {
 	// succeeded / failed / degraded / skipped，本包不判值——终态判定由宿主
 	// 注入，见包头承诺）。
 	//
-	// 终态判定只有一个真相源：contract.IsTerminalStatus（issue #354）。
-	// statemachine 的 12 个 StepStatus 常量已全部别名化到本包常量，环节
-	// 词表与终态判据不再各写一份（issue #357）：宿主若把
-	// statemachine.IsTerminal 或 contract.IsTerminalStatus 注入 commitgate
-	// 当判定面，两者对同一取值给出同一结论。degraded 等宿主自定义终态不在
-	// 内核词表内，按 #334 的三态口径由宿主自行登记，不要指望内核认得。
+	// 终态判定的公开入口是 contract.IsTerminalStatus（issue #354）；statemachine
+	// 的 12 个 StepStatus 常量已全部别名化到本包常量（issue #357），其
+	// IsTerminal 从转移表派生并与本函数对 12 个环节状态逐条一致（跨包用例
+	// 钉住）。宿主把任一判据注入 commitgate 当判定面，对环节词表内的取值
+	// 结论相同。degraded 等宿主自定义终态不在内核词表内，按 #334 的三态口径
+	// 由宿主自行登记，不要指望内核认得。
 	Finish(ref StepRef, status string) error
 }
 
