@@ -29,6 +29,14 @@
 // ——OnLeaseLost 通知、取消在途 ctx、停止领取——都在锁外、由心跳协程顺序
 // 执行。宿主回调回查本包不会二次抢锁死锁，回调 panic 也不会掀翻心跳。
 //
+// # panic 隔离（issue #368）
+//
+// 同一宿主接缝（任务板续期）的两条路径必须同口径：并发路径每条
+// async.GoSafe（逐条隔离），批量路径经 renewBatchCall recover +
+// async.ReportPanic（整批隔离）。宿主 RenewBatch/Renew 的 panic 都不得
+// 逃出心跳协程——逃出一次就是全部在途租约失保、他副本接管、非幂等
+// 副作用双份。
+//
 // 计数住在 claimed 上、只由心跳协程（及其派生的续期 goroutine）在 mu 下
 // 读写；在途集合本身由 inflight.mu 护住。
 package worker
@@ -177,7 +185,7 @@ func (l *Loop) renewBatch(ctx context.Context, batch taskboard.BatchRenewingBoar
 	if l.cfg.RenewTimeout > 0 {
 		rctx, cancel = context.WithTimeout(ctx, l.cfg.RenewTimeout)
 	}
-	results, err := batch.RenewBatch(rctx, reqs)
+	results, err := l.renewBatchCall(rctx, batch, reqs)
 	timedOut := rctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded)
 	cancel()
 
@@ -199,6 +207,30 @@ func (l *Loop) renewBatch(ctx context.Context, batch taskboard.BatchRenewingBoar
 		outcomes = append(outcomes, renewOutcome{cur: cur, verdict: verdict})
 	}
 	return outcomes
+}
+
+// renewBatchCall 调宿主批量续期面并隔离 panic（issue #368）。
+//
+// 批量路径此前直接调 batch.RenewBatch：宿主 panic 会逃出 renewBatch →
+// 逃出 heartbeat → 被 loop.go 的 GoSafe 吞掉，心跳协程就此死亡、全部在途
+// 租约停止续期。这里与并发路径（每条独立 async.GoSafe）同口径隔离：
+// recover + async.ReportPanic，并把整批按基础设施失败处理——逐条结果不可信，
+// 由 renewBatch 对每条记一次续期失败（renewFails），心跳下一拍照常重试。
+//
+// 反向验证（issue #368 要求）：把本函数体改回直接调用 batch.RenewBatch ⇒
+// TestRenewBatchPanicIsolated 必须转红（panic 逃出续期路径）。
+func (l *Loop) renewBatchCall(
+	ctx context.Context,
+	batch taskboard.BatchRenewingBoard,
+	reqs []taskboard.RenewRequest,
+) (results []taskboard.Renewal, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			async.ReportPanic(r)
+			results, err = nil, errors.New("worker: 宿主任务板 RenewBatch panic（已隔离；整批按失败处理）")
+		}
+	}()
+	return batch.RenewBatch(ctx, reqs)
 }
 
 // renewOne 续期一条在途租约并执行锁外动作（单条路径；issue #326 的用例

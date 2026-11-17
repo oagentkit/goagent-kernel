@@ -1738,6 +1738,37 @@ egress_paths:
         将来若有人在这里加 fetch / push，本条目必须同步改成 proxy 并补上兑现的两半
         （env 生成 + 后端能力问询），否则门禁会在那个提交上直接红。
 
+# ── 宿主接缝契约门禁（issue #369/#370）──
+#
+# 三种机判形态与取舍见 archcheck/seams.go 的文件头（形态 B 阻断 / 形态 A 只读 /
+# 形态 C 阻断）。这里的段只是**声明面**；枚举面由 AST 规则自己给出（导出函数/
+# 方法/接口方法/结构体字段中参数或字段类型为 func() time.Time 的声明）。
+seams:
+  enabled: true
+  severity: error
+  marker: "@seam:"
+  # 三条约束的固定模板（#369）：不得重入 / 不得阻塞 / panic 处置。
+  required: [no-reentry, no-blocking]
+  # panic 处置二选一：
+  #   panic-isolated = 内核 recover 并上报；
+  #   panic-caller   = 内核不 recover，由调用方兜（显式第三态，不许不写）。
+  panic_dispositions: [panic-isolated, panic-caller]
+  # 判定面自检：枚举逻辑若漂移到 0 个声明，门禁必须响亮失败而不是静默变绿。
+  min_declarations: 1
+  lock_scan:
+    enabled: true
+    severity: warn   # 形态 A 是一阶启发式，漏判形态见 seams.go——只读、不阻断
+    accessors: [now, nowLocked, nowAt, clock]
+  panic_scan:
+    enabled: true
+    severity: error
+    # 已登记的高危宿主调用：调用点必须位于隔离包装器回调内，或所在函数带
+    # defer recover。清单是增量的（#368 的批量续期是第一条）；未登记的接缝
+    # 由上面的契约标记完备性兜底（#400 的机判清单是后续工作）。
+    guarded_calls: [RenewBatch]
+    wrappers: [subhub.Do, subhub.Invoke, async.GoSafe, async.RunSafe,
+               async.GoSafeWithErr, async.GoSafeWithContext]
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400

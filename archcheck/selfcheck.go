@@ -223,6 +223,10 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// seams 段判据面自检（issue #369/#370）：主体拆到 seamrules.go，保持本文件
+	// 在 max_file_lines=400 内，把新增空间留给判据本身而不是搬运。
+	checkSeamSelfPolicy(pol, policyPath, add)
+
 	// ── 阈值判定面必须覆盖所有登记在 modules 段的包 ──
 	//
 	// 漏一个包，该包对「超长文件」「god object」两条阈值门禁**完全隐形**：

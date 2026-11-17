@@ -321,6 +321,8 @@ type Policy struct {
 	// 字段名、共享判定面清单）。段缺省即关闭——形状是判定前提，没有形状
 	// 就判不了；声明了段却漏形状由自校验报红。
 	TenantGate *TenantGate `yaml:"tenant_gate"`
+	// Seams 是宿主接缝契约门禁的声明面（#369/#370）；段缺省即关闭。
+	Seams *SeamRules `yaml:"seams"`
 
 	// RequireRuleExamples 要求每条**有执行体**的规则都自带 examples。
 	//

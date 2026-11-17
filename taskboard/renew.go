@@ -57,6 +57,20 @@ type Fence uint64
 
 // RenewingBoard 支持租约续期的 Board。
 //
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// 实现方（宿主存储）必须遵守：
+//
+//   - **不得重入**：Renew 实现内不得回调内核的同一任务板路径
+//     （Claim/Complete/Release/RenewBatch）；同一把存储锁不可重入。
+//   - **不得阻塞**：Renew 位于心跳节拍上，必须尽快返回；慢 I/O 会拖住同拍
+//     其它任务的续期（批量面请用 RenewBatch 把往返压成一次）。
+//   - **panic 已隔离**：worker 的续期路径 recover 并上报（并发路径经
+//     async.GoSafe，批量路径经 renewBatchCall），宿主 panic 不会掀翻心跳
+//     协程；本次按一次续期失败计数（issue #368）。
+//
 // # 为什么是单独的接口而不是并进 Board
 //
 // 续期要求存储提供「校验持有资格 + 延长到期时刻」的**原子**操作——不是每份
@@ -110,6 +124,14 @@ type Renewal struct {
 }
 
 // BatchRenewingBoard 可选的**批量续期面**（issue #266）。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// 与前一条同口径：不得重入同一任务板路径、不得阻塞心跳节拍；实现 panic 由
+// worker 的 renewBatchCall recover + async.ReportPanic 隔离，整批按基础设施
+// 失败处理（逐条结果不可信），心跳协程继续运行（issue #368）。
 //
 // 为什么单独成接口：不是每份存储都能一次原子地续多条；判定方按类型断言
 // 认人，缺失时退回逐条 + 有界并发。实现方必须保证：

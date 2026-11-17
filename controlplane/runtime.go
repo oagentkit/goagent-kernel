@@ -88,6 +88,18 @@ func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 //
 // 与 taskboard 的「TTL 由存储自己的时钟推算」同口径：跨进程时调用方的
 // 时钟不可信，参考实现也必须能演示「到期由存储判定」。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再调用 Claim / Renew 等会读取存储时钟的写路径
+//     （会在回调里递归调用自己）。只读回查（SnapshotTask 等）是安全的：
+//     实现保证时钟在 m.mu + commitMu **之外**被调用（issue #367）。
+//   - **不得阻塞**：回调必须立即返回；它位于认领/续期路径的入口，阻塞会拖住
+//     整条写路径。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
+//     时钟失读是装配/编程错误，应当响亮失败；需要隔离的宿主应在回调内 recover。
 func (m *MemStore) UseClock(clock func() time.Time) {
 	if clock == nil {
 		return
@@ -97,10 +109,17 @@ func (m *MemStore) UseClock(clock func() time.Time) {
 	m.clock = clock
 }
 
-// nowLocked 存储侧当前时刻（持锁调用）。
-func (m *MemStore) nowLocked() time.Time {
-	if m.clock != nil {
-		return m.clock()
+// now 存储侧当前时刻（**调用方不得持有 m.mu / commitMu**）。
+//
+// clock 是宿主注入的回调，持锁调用会让回调回查本包时二次抢锁 ⇒ 永久死锁
+// （issue #367）。这里只在短临界区内取出回调指针，调用发生在锁外；写路径
+// 在进入 commitMu 之前先取 now，故宿主回调永远看不到内核的锁。
+func (m *MemStore) now() time.Time {
+	m.mu.Lock()
+	clock := m.clock
+	m.mu.Unlock()
+	if clock != nil {
+		return clock()
 	}
 	return time.Now()
 }
@@ -131,6 +150,8 @@ func (m *MemStore) List(_ context.Context) ([]taskboard.Task, error) {
 // 只看 State == claimed 会让持有者崩溃后的任务永久不可接管——与 Board.Claim
 // 的「被别人活着持有」契约及三个参考实现方向相反。
 func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
+	// 宿主时钟在双锁之外取值（issue #367）：回调回查 SnapshotTask 不会互锁。
+	now := m.now()
 	m.commitMu.Lock()
 	defer m.commitMu.Unlock()
 	m.mu.Lock()
@@ -140,7 +161,6 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-	now := m.nowLocked()
 	// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
 	// 词表外 → ErrUnknownState，终态 → ErrTerminal。只判 StateDone 会让
 	// 一条脏状态行照常领到租约。
@@ -179,6 +199,8 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 // 契约与 taskboard.Renew 一致：令牌不匹配 / 租约已过期 ⇒ ErrLeaseLost，
 // **不做任何修改**；续期不递增代次、不换令牌。
 func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	// 宿主时钟在双锁之外取值（issue #367）：回调回查 SnapshotTask 不会互锁。
+	now := m.now()
 	m.commitMu.Lock()
 	defer m.commitMu.Unlock()
 	m.mu.Lock()
@@ -188,7 +210,6 @@ func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, r
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-	now := m.nowLocked()
 	if mt.task.State != taskboard.StateClaimed || token == "" || token != mt.task.Lease.Token {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配（租约已易主或被释放过）")
 	}

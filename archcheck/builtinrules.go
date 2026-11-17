@@ -47,6 +47,9 @@ var builtinRuleIDs = []string{
 	tenantSurfaceMissingRuleID,
 	tenantViewerDroppedRuleID,
 	tenantSurfaceDriftRuleID,
+	seamContractRuleID,
+	seamLockHeldRuleID,
+	seamPanicEscapeRuleID,
 }
 
 // isBuiltinRule 报告某条规则 id 是否是内置的（不在 policy 的 rules 段里）。
@@ -83,6 +86,21 @@ func builtinRuleEnforced(pol *Policy, id string) bool {
 	case tenantSurfaceMissingRuleID, tenantViewerDroppedRuleID, tenantSurfaceDriftRuleID:
 		// 租户门要有形状声明才有判定面（与 facade 同款例外）：段缺省即关闭。
 		return pol.TenantGate != nil && pol.TenantGate.on()
+	case seamContractRuleID, seamLockHeldRuleID, seamPanicEscapeRuleID:
+		// 接缝门是新判据（#369/#370）：seams 段缺省即关闭；段存在且未显式
+		// 关段时，三个子门禁按各自 enabled 判定（缺省启用）。
+		if pol.Seams == nil || !pol.Seams.on() {
+			return false
+		}
+		switch id {
+		case seamLockHeldRuleID:
+			return subRuleEnabled(pol.Seams.lockScan().Enabled)
+		case seamPanicEscapeRuleID:
+			ps := pol.Seams.panicScan()
+			return subRuleEnabled(ps.Enabled) && len(ps.GuardedCalls) > 0
+		default:
+			return true
+		}
 	}
 	return false
 }

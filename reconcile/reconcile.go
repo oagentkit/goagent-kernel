@@ -268,6 +268,15 @@ func New(store Store, pub Pub, cfg Config) *Reconciler {
 // 静默超阈、启动锚点三个判定全依赖 now，读真实时间的过期用例恒不触发——
 // 判据会退化成一组空断言（全绿但什么都没验）。
 //
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取本 Reconciler 时钟的判定路径
+//     （会递归）；只读回查是安全的（Reconciler 自身无锁，时钟在判定路径上取）。
+//   - **不得阻塞**：回调在每轮对账的到期判定前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
+//
 // store / pub / InstanceID 任一缺失即 panic：装配期 fail fast，不留到运行时
 // （没有存储的对账无从判定，没有 InstanceID 会把他副本名下判成反面）。
 func NewWithClock(store Store, pub Pub, cfg Config, now func() time.Time) *Reconciler {

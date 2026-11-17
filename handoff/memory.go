@@ -36,6 +36,15 @@ type LedgerOption func(*MemoryLedger)
 //
 // 注入的回调**不会在持有 MemoryLedger 内部锁时被调用**（issue #317）：回调里
 // 重入本包的 Load/Epoch/List 等接口不会与不可重入的互斥锁相撞。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取本账本时钟的写路径（会递归）；
+//     只读回查是安全的（时钟在 m.mu 之外被调用）。
+//   - **不得阻塞**：回调在每次截止时刻推算前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
 func WithLedgerClock(clock func() time.Time) LedgerOption {
 	return func(m *MemoryLedger) {
 		if clock != nil {
@@ -60,6 +69,15 @@ func NewMemoryLedger(opts ...LedgerOption) *MemoryLedger {
 }
 
 // UseClock 注入时钟（与 LocalDesk 的 WithClock 同一形态：过期场景可确定性测）。
+//
+// # 接缝契约（issue #369）
+//
+// @seam: no-reentry no-blocking panic-caller
+//
+//   - **不得重入**：回调内不得再次触发会读取本账本时钟的写路径（会递归）；
+//     只读回查是安全的（时钟在 m.mu 之外被调用）。
+//   - **不得阻塞**：回调在每次截止时刻推算前被调用，必须立即返回。
+//   - **panic 由调用方兜**（panic-caller）：内核不 recover 该回调的 panic。
 func (m *MemoryLedger) UseClock(clock func() time.Time) {
 	if clock == nil {
 		return

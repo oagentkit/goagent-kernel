@@ -73,6 +73,13 @@ func (c *FakeClock) Advance(d time.Duration) {
 type ClockedBoard interface {
 	taskboard.Board
 	// UseClock 指定存储实现读时钟的方式（通常是注入一个 func() time.Time）。
+	//
+	// # 接缝契约（issue #369）
+	//
+	// @seam: no-reentry no-blocking panic-caller
+	//
+	// 实现方必须保证：注入的回调不在持有内部锁时被调用（不得重入）；
+	// 回调必须立即返回（不得阻塞）；panic 不由套件兜（panic-caller）。
 	UseClock(now func() time.Time)
 }
 
