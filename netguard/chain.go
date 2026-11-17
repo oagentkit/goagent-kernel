@@ -127,6 +127,18 @@ func CheckChainWith(start string, hops []string, allow Allow, maxHops int) error
 // CheckChainWithCtx 是 CheckChainWith 的取消传播形态：每一跳的解析都带
 // ctx（见 CheckURLWithCtx）。ctx 为 nil 时等价 CheckChainWith（带 10s 上限）。
 func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow Allow, maxHops int) error {
+	return CheckChainWithResolver(ctx, start, hops, allow, maxHops, nil)
+}
+
+// CheckChainWithResolver 是 CheckChainWithCtx 的**解析器接缝形态**：每一跳的
+// 解析器可注入（#412 残留）。r == nil 等价 net.DefaultResolver——既有调用点
+// 行为逐字不变（additive）。
+//
+// 为什么链条层也要这个接缝：逐跳校验里**每一跳**都要解析一次域名，所以
+// 「链条判得对不对」此前同样被绑在「这台机器此刻能不能解析这些域名」上——
+// 起始跳公网名 + 相对 Location 的干净链，用例能不能过取决于此刻的网络。
+// 单跳判定面补了接缝而链条面没补，等于同一个洞两处口径不一样。
+func CheckChainWithResolver(ctx context.Context, start string, hops []string, allow Allow, maxHops int, r URLResolver) error {
 	if maxHops <= 0 {
 		maxHops = DefaultMaxHops
 	}
@@ -135,7 +147,7 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 	if n := firstTerminalHop(hops); n >= 0 {
 		followed = hops[:n]
 	}
-	if err := CheckURLWithCtx(ctx, start, allow); err != nil {
+	if err := CheckURLWithResolver(ctx, start, allow, r); err != nil {
 		return &HopDeniedError{Hop: 1, URL: start, Err: err}
 	}
 	if len(followed) > maxHops {
@@ -157,7 +169,7 @@ func CheckChainWithCtx(ctx context.Context, start string, hops []string, allow A
 		if err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: loc, Err: err}
 		}
-		if err := CheckURLWithCtx(ctx, next, allow); err != nil {
+		if err := CheckURLWithResolver(ctx, next, allow, r); err != nil {
 			return &HopDeniedError{Hop: i + 2, URL: next, Err: err}
 		}
 		current = next
