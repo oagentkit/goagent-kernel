@@ -54,21 +54,21 @@ import (
 // normalizeBoolField（"TRUE" / "True" / " true " 炸掉整份解析）是同一类错，
 // 那里已经修过一次；action 是同一类错里**漏网的最后一个**。
 //
-// 归一口径与 decision / scope / confidence 一致：ToLower + TrimSpace。
-// 未知取值**不**归一（那是真错，交给 Validate 的白名单判 critical），
+// 归一口径与 decision / scope / confidence 一致（normalizeEnum，唯一来源）。
+// 未知取值**不**被映射成已知值（那是真错，交给 Validate 的白名单判 critical），
 // 本函数只收拾「同一个词的写法差异」。
 func normalizeAction(m map[string]any, k string, v any) {
 	s, ok := v.(string)
 	if !ok {
 		return
 	}
-	m[k] = strings.ToLower(strings.TrimSpace(s))
+	m[k] = normalizeEnum(s)
 }
 
 // normalizeConfidence confidence 归一：大小写与空白收敛到白名单形态。
 //
 // 同 normalizeAction 的那类错：模型写 "High" / "HIGH" / " high " 时，
-// Validate 的 `confidenceAll[...]` 不命中 → critical → **整份报告被拒**。
+// Validate 的谓词不命中 → critical → **整份报告被拒**。
 // 而 "high" 一切正常。confidence 是模型最常写错大小写的枚举位（它只有三个取值，
 // 却常被写成 "High"/"HIGH"），而它的判据是 critical——代价是整份丢弃。
 func normalizeConfidence(m map[string]any, k string, v any) {
@@ -76,7 +76,7 @@ func normalizeConfidence(m map[string]any, k string, v any) {
 	if !ok {
 		return
 	}
-	m[k] = strings.ToLower(strings.TrimSpace(s))
+	m[k] = normalizeEnum(s)
 }
 
 // normalizeSeverity severity 归一：大小写与空白收敛到白名单形态。
@@ -97,7 +97,7 @@ func normalizeSeverity(m map[string]any, k string, v any) {
 	if !ok {
 		return
 	}
-	if n := strings.ToLower(strings.TrimSpace(s)); severityAll[n] {
+	if n := normalizeEnum(s); n != "" && IsSeverityValid(n) {
 		m[k] = n
 	}
 }
@@ -132,9 +132,9 @@ func normalizeDecision(m map[string]any, k string, v any) {
 		delete(m, k)
 	default:
 		if s, ok := jsonrepair.CoerceString(v); ok {
-			sd := strings.ToLower(strings.TrimSpace(s))
+			sd := normalizeEnum(s)
 			switch {
-			case decisionAll[sd]:
+			case IsDecisionValid(sd):
 				m[k] = sd
 			case sd == "pending": // 常见缩写（实弹：模型输出 "pending"）→ 规范枚举
 				m[k] = DecisionPending
@@ -191,10 +191,9 @@ func normalizeScope(m map[string]any, k string, v any) {
 		delete(m, k)
 		return
 	}
-	switch st := strings.ToLower(strings.TrimSpace(s)); st {
-	case "in", "out":
+	if st := normalizeEnum(s); IsScopeValid(st) {
 		m[k] = st
-	default:
+	} else {
 		m[k] = s // 词表外：保持原值，判定交给 Validate
 	}
 }

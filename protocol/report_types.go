@@ -200,8 +200,8 @@ func (v *Verdicts) UnmarshalJSON(data []byte) error {
 		// 而这里连留痕都没有——事后无法区分「模型没给裁决」与「裁决被大小写吃掉」。
 		// 与同包的 decision / action / confidence 归一是同一类错（写法差异不该
 		// 改变语义），那里已各修过一次。
-		st := strings.ToLower(strings.TrimSpace(it.Stance))
-		if !stanceAll[st] {
+		st := normalizeEnum(it.Stance)
+		if !IsStanceValid(st) {
 			continue
 		}
 		it.Stance = st
@@ -337,9 +337,6 @@ var (
 	// 段间允许嵌套（workflow/custom/<name> NL 建链）；ops-scheduler 为无命名空间单例。
 	slugRe = regexp.MustCompile(`^((workflow|specialists|platform|compliance|imports)/[\w-]+(/[\w-]+)*|ops-scheduler)$`)
 )
-
-// IsConfidenceValid 合议触发门用（scheduler 层过滤无效报告）。
-func IsConfidenceValid(c string) bool { return confidenceAll[c] }
 
 // rawRequiresApproval 从归一化前的 recommendation 原始 map 判定 requires_approval 真值
 // （bool / 字符串 "true" 双形态；结构缺失或不可判 → false）。decision 归一在字段游走期

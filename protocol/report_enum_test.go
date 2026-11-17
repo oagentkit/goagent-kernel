@@ -86,7 +86,9 @@ func TestNewVocabularyPredicates(t *testing.T) {
 			if !c.valid(c.good) {
 				t.Fatalf("合法值 %q 被拒", c.good)
 			}
-			for _, bad := range []string{"", "__unknown__", "OUT"} {
+			// "OUT" 是合法值 out 的写法变体（issue #371），不是非法值；
+			// 词表外取值用真正不在词表里的形态。
+			for _, bad := range []string{"", "__unknown__", "out_of_scope"} {
 				if c.valid(bad) {
 					t.Fatalf("非法值 %q 被接受", bad)
 				}

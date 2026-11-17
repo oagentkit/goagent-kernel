@@ -10,8 +10,6 @@ package protocol
 // report_validate.go 白名单 · report_render.go Markdown 渲染。
 
 import (
-	"strings"
-
 	"github.com/oekit/pkg/errors"
 )
 
@@ -97,11 +95,11 @@ const SeverityRankUnassessed = 0
 // warn 留痕（severity 是增强面，不因它拦整份报告）。
 const SeverityRankUnknown = 6
 
-// normalizeSeverityValue severity 的写法归一：ToLower + TrimSpace。
+// normalizeSeverityValue severity 的写法归一（与 normalizeEnum 同一口径）。
 // 归一后命中词表才返回规范形态；仍词表外则保持原值（不臆断成某个档）。
 func normalizeSeverityValue(s string) string {
-	n := strings.ToLower(strings.TrimSpace(s))
-	if severityAll[n] {
+	n := normalizeEnum(s)
+	if IsSeverityValid(n) && n != "" {
 		return n
 	}
 	return s
@@ -116,7 +114,7 @@ func normalizeSeverityValue(s string) string {
 // 大小写与空白不改变语义：「Critical」/「CRITICAL」/「 critical 」都是
 // critical，不得落进「未评估」——那会让聚合方向看起来更轻。
 func SeverityRankOf(s string) int {
-	n := strings.ToLower(strings.TrimSpace(s))
+	n := normalizeEnum(s)
 	if n == "" {
 		return SeverityRankUnassessed
 	}
@@ -127,8 +125,11 @@ func SeverityRankOf(s string) int {
 }
 
 // IsSeverityValid 严重度白名单判定（空合法=未评估；大小写/空白变体先归一）。
+//
+// 与其余五个谓词共用 validEnum / normalizeEnum（issue #371）：写法差异的
+// 定义只有一处，谓词面与解析面不会各说各话。
 func IsSeverityValid(s string) bool {
-	n := strings.ToLower(strings.TrimSpace(s))
+	n := normalizeEnum(s)
 	return n == "" || severityAll[n]
 }
 
