@@ -98,7 +98,9 @@ func (s *MemoryStore) Insert(_ context.Context, ev Event) (uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seq++
-	row := ev
+	// 入口深拷贝：落库行是独立数据，调用方之后复用/改写载荷不得改穿账面
+	// （与广播面同一口径，issue #378）。
+	row := ev.Clone()
 	row.ID = s.seq
 	s.evs = append(s.evs, row)
 	return s.seq, nil
@@ -198,6 +200,9 @@ func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, 
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// 入口深拷贝：发布方在 Publish 返回后复用入参 map 是常见写法，返回帧、
+	// 落库行、广播帧都不得与它共享（issue #378）。
+	ev = ev.Clone()
 	ev.ID = 0 // 游标由存储铸造：输入侧 ID 一律忽略（防御陈旧游标伪造）
 	if ev.Level == "" {
 		ev.Level = "info"
@@ -206,7 +211,11 @@ func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, 
 		ev.OccurredAt = time.Now()
 	}
 
-	id, err := p.store.Insert(ctx, ev)
+	// 交给存储的是**另一份独立快照**：Store 实现可能异步留存/落库，而本发布器
+	// 之后还要用 ev 广播与返回——两份数据不得互相改穿（Store 契约不要求实现
+	// 深拷贝调用方入参，故边界拷贝由本包负责）。
+	stored := ev.Clone()
+	id, err := p.store.Insert(ctx, stored)
 	if err != nil {
 		return ev, err
 	}

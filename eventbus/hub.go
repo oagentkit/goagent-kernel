@@ -110,7 +110,9 @@ func (h *Hub) Publish(ev Event) {
 	relay := h.relay
 	h.mu.RUnlock()
 	if relay != nil && ev.SessionID != "" {
-		relay.Publish(ev)
+		// Relay 也是一份独立数据：它可能异步外发/落库，不得与本地订阅方
+		// 或发布方共享载荷（issue #378）。
+		relay.Publish(ev.Clone())
 	}
 }
 
@@ -125,13 +127,16 @@ func (h *Hub) Inject(ev Event) {
 }
 
 // deliverLocked 向会话订阅者投递（调用方持 h.mu 读锁）。
+//
+// 每个订阅方各拿一份 Clone：Hub 的消费方是独立 SSE 连接，一个连接原地改写
+// Payload 不得改穿其它连接与发布方（与 Bus.Broadcast 同一口径，issue #378）。
 func (h *Hub) deliverLocked(ev Event) {
 	for ch := range h.subs[ev.SessionID] {
-		select {
-		case ch <- ev:
-		default:
+		if len(ch) == cap(ch) {
 			h.dropped.Add(1)
+			continue
 		}
+		ch <- ev.Clone()
 	}
 }
 
