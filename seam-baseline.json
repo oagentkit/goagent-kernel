@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "declarations": 92,
-  "callsites": 435,
+  "callsites": 437,
   "fully_written": 5,
   "seams": [
     {
@@ -414,7 +414,7 @@
     {
       "id": "taskboard.Board",
       "kind": "interface",
-      "callsites": 74
+      "callsites": 76
     },
     {
       "id": "taskboard.ReadyBoard",
