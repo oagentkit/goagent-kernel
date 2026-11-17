@@ -12,27 +12,37 @@
 //
 //   - **锚点只写一次**：首轮认领成功后写 deadline_at（FirstClaimAt + Timeout）；
 //   - **续跑轮沿用同一锚点**（shared 模式）：轮内 ctx 只拿锚点的**剩余**时长；
-//   - **轮内 ctx 携带专属 cause**（ErrSessionDeadline）：与用户取消、进程停机三分；
+//   - **轮内 ctx 携带专属 cause**（ErrSessionDeadline）：与用户取消、进程停机、
+//     接管各占一档（收尾路由归 finalize，见下）；
 //   - **过期锚点立即收敛**：认领排队窗口把余量耗完的续跑轮，认领迁移成功后
 //     立即按 timed_out 收敛，**不进编排**（进去了也只是白跑一段）。
 //
 // 时限是**会话生命周期**的轴：进程活得好好的也会到点。
 //
-// # 三分与次序纪律（硬约束，Route 的测试钉住）
+// # 收尾路由的判定面在 finalize（issue #355）
+//
+// 收尾路由（cause → 该落哪个终态）此前有**两张表**：本包的 Route 与 finalize
+// 的 Route。两张表已**分叉**——同一个接管的 ctx 在两包得到**相反**结论（本包
+// 判 shutdown「不落终态」、finalize 判 takeover「落 created」），接管场景下该
+// 收敛的会话被永久留在 running；而两包零交叉断言，失效形态是绿的（两边都
+// 返回正常值，只是结论相反）。
+//
+// 现在**收尾路由的唯一收口是 finalize.Route/RouteWith**，本包的 Route 只是
+// 它的投影（Outcome ← Action 一一映射）。下列纪律改由 finalize 的路由表承担
+// （其用例钉住，交叉断言也在那里）：
 //
 //	原因值                      结论        落什么
+//	steer.ErrSteered            takeover    回 created（不落终态）
 //	ErrSessionDeadline          timed_out   终态（deny-by-default：超时的产出不可信）
-//	宿主的用户取消哨兵          cancelled   终态
+//	用户取消哨兵                cancelled   终态
 //	其余 ctx 已取消（进程停机） 不落终态    留给恢复循环/启动对账
 //
 // **timed_out 臂必须先于「ctx.Err() != nil（进程停机）」臂。** 停机臂的条件是
 // 「ctx 已取消」，而墙钟到点的 ctx 同样已取消（DeadlineExceeded）——次序写反，
 // 每次会话超时都会被判成停机、**不落终态**，会话永久滞留 running。
-// 这条次序由 finalize/收尾侧的路由表保证，本包的 Route 是它的内核侧判据面，
-// 两边各写一句、各钉一条用例。
 //
 // 父 ctx 取消时子 ctx 的 Cause 传播父原因，故「用户取消/停机」不会被墙钟
-// 装饰吃掉——三分的前提是三者各有自己的 cause（用户取消请用
+// 装饰吃掉——各档的前提是各有自己的 cause（用户取消请用
 // context.WithCancelCause 表达，裸 cancel 与停机在 Cause 上不可分）。
 //
 // # 与同域包的划界（各占一根轴，互不改判据）
@@ -42,7 +52,11 @@
 //     也不把时限塞进 budget。
 //   - **vs drain**：drain 是**进程**生命周期的在途轮收敛（停机排水）；本包是
 //     **会话**生命周期的总时限。drain.ErrDeadline 与本包 ErrSessionDeadline
-//     是两个 Cause，三分路由归收尾侧（Route 只认本包的哨兵）。
+//     是两个 Cause，收尾路由归 finalize（它认全部 cause）。
+//   - **vs finalize**：**收尾路由的唯一收口在 finalize**（issue #355）——本包的
+//     Route 是它的投影（同一组 ctx 两包必须得到同一结论，交叉断言在那边）；
+//     本包独有的是**会话墙钟机制**（锚点三态 / shared 锚点 / 轮 ctx 装饰），
+//     与 finalize 的「往哪收」不是一根轴。
 //   - **vs watchdog**：监视不变量，不做时限强制。
 //   - **vs contract**：contract 给了 StatusTimedOut 词表（本包的 Outcome.Status
 //     缺省消费它），没有时限机制——本包补机制不改词表；宿主自有状态词表经
@@ -240,6 +254,23 @@ func (c Config) anchorAt(now time.Time) Anchor {
 //
 // 内核不关心存哪（DB 列 / 内存表 / 文件）、也不关心键怎么来——宿主按会话
 // 构造实例。实现**并发安全**（收尾与恢复路径可能同时读）。
+//
+// # 接缝契约（宿主实现；内核在 Restore / Persist 里同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主实现内**不得回查本包**（不得调 Restore / Persist）——
+//     那会递归回本接口（Restore → LoadAnchor → Restore），无限递归。内核侧
+//     的兑现面：本包在调用点**不持有任何互斥锁**，故回查不会自锁；剩下
+//     不可回查的是本接口自身的递归。
+//   - no-blocking：宿主实现必须**有界**——两个方法都收 ctx，实现必须承接
+//     ctx 的取消 / 超时并在期限内返回，不得无限等待、不得在持存储内部锁时
+//     等别的回调。Restore 的读失败是**原样上抛**的（不静默当「未写」），
+//     所以一次挂住的读会把整轮的剩余时长装饰拖住；Persist 挂在首轮认领
+//     成功之后的路径上，同样会拖住本轮。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：宿主实现
+//     的 panic 会沿 Restore / Persist 外溢到调用栈。宿主实现须自行保证
+//     不 panic。
 type Store interface {
 	// LoadAnchor 读锚点；**未写必须返回 (nil, nil)**。
 	// 返回零值锚点会被判成「已写但过期」，续跑轮会当场 timed_out。

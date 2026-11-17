@@ -45,6 +45,11 @@
 //     回 created、队列续跑、空队列失败收敛），本包只管路由到那一臂。
 //     依赖方向 **finalize → steer**（消费 steer.ErrSteered），单向不许环；
 //     两边包头互指：finalize 管「往哪收」，steer 管「怎么收与怎么续」。
+//   - vs deadline：**收尾路由的唯一收口在本包**——deadline 的 Route 是本表的
+//     投影（issue #355：两张路由表曾各写一遍且判据**已分叉**，接管的 ctx 在
+//     两包得到相反结论，而两包零交叉断言）。deadline 独有的是**会话墙钟
+//     机制**（锚点三态 / shared 锚点 / 轮 ctx 装饰），与本包的「往哪收」
+//     不是一根轴。
 //
 // # 留宿主的回调
 //
@@ -55,6 +60,7 @@ package finalize
 
 import (
 	"context"
+	"slices"
 
 	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
@@ -104,6 +110,46 @@ const (
 	ActionShutdown
 )
 
+// allActions 路由臂全集（判定面与枚举面同源：新增一臂只改这一处）。
+var allActions = []Action{
+	ActionFailed,
+	ActionTakeover,
+	ActionCancelled,
+	ActionTimedOut,
+	ActionShutdown,
+}
+
+// AllActions 返回收尾路由臂的全集（**新副本**：调用方改不动本包的事实）。
+//
+// 取值域要有出口：文档面（README 职责列要列全的词表）与宿主的状态选择器都要
+// 拿它做**集合比对**才有意义——手抄一份常量只能比对「已知的几个臂」，真源加了
+// 第五个臂时抄写方不会知道自己漏了（issue #384）。
+func AllActions() []Action {
+	out := make([]Action, len(allActions))
+	copy(out, allActions)
+	return out
+}
+
+// AllRouteStatuses 返回路由各臂落下的**终态词**（非空取值的全集，新副本）。
+//
+// 「不落终态」的臂（停机）不在其中——它在词表上没有目标态，宿主不得把空串
+// 映射成任何 Status。取值从 allActions 派生（Action.Status），**不另抄清单**：
+// 抄一份就会与 Action.Status 分叉（而分叉是绿的：两边各自「看起来对」）。
+func AllRouteStatuses() []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(allActions))
+	for _, a := range allActions {
+		s := a.Status()
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // String 路由臂的人类可读形态（留痕与测试失败信息用）。
 func (a Action) String() string {
 	switch a {
@@ -151,11 +197,36 @@ func (a Action) Status() string {
 //
 // 接管臂只判 Cause 不判队列：「有排队条目才回 created、否则按失败收敛」
 // 是 steer.Decide 的队列感知（归接管臂载荷，见包头划界）。
-func Route(ctx context.Context) Action {
+//
+// # 本函数是收尾路由的**唯一收口**（issue #355）
+//
+// 此前同一份收尾事实有两张路由表（本包与 deadline），判据**已分叉**：同一个
+// 接管的 ctx 在两包得到相反结论（deadline 判 shutdown / finalize 判 takeover），
+// 而两包零交叉断言——失效形态是绿的（两边都返回正常值，只是结论相反）。
+// 现在路由表只有这一份：别的包要判「这次编排往哪收」都调这里
+// （deadline.Route 是本表的投影），交叉断言见本包的用例。
+func Route(ctx context.Context) Action { return RouteWith(ctx) }
+
+// RouteWith 与 Route 同形，但额外接受宿主注入的「用户取消」哨兵。
+//
+// # 为什么要有注入位
+//
+// 「用户取消」这件事**归宿主**（内核发不出「用户点了取消」这个事实），而接管
+// （steer.ErrSteered）、超时（ErrSessionDeadline）、停机（ctx 取消）三个哨兵是
+// 内核的。收尾路由表因此留一个注入位：注入的哨兵与缺省的 ErrUserCancelled
+// 同等对待（命中任一即判 cancelled）。
+//
+// 不传时行为与 Route **逐字相同**：只认 ErrUserCancelled。
+//
+// # 判定顺序是路由表的语义本体
+//
+// timeout 臂必须先于停机臂（ctx.Err() != nil）：停机不落终态、超时要落终态——
+// 次序反了，该收敛的会话被留给恢复循环，永久滞留 running。
+func RouteWith(ctx context.Context, userCancel ...error) Action {
 	switch {
 	case errors.Is(context.Cause(ctx), steer.ErrSteered):
 		return ActionTakeover
-	case errors.Is(context.Cause(ctx), ErrUserCancelled):
+	case isUserCancel(context.Cause(ctx), userCancel):
 		return ActionCancelled
 	case errors.Is(context.Cause(ctx), ErrSessionDeadline):
 		// 必须先于 ctx.Err() != nil（停机）分支：超时的 ctx 同样有 ctx.Err()，
@@ -166,6 +237,21 @@ func Route(ctx context.Context) Action {
 	default:
 		return ActionFailed
 	}
+}
+
+// isUserCancel 判定 cause 是否是「用户取消」（缺省哨兵或宿主注入的哨兵）。
+//
+// 判定走 errors.Is：宿主把哨兵包一层再发也判得中（包装链可判）。
+func isUserCancel(cause error, sentinels []error) bool {
+	if errors.Is(cause, ErrUserCancelled) {
+		return true
+	}
+	for _, s := range sentinels {
+		if s != nil && errors.Is(cause, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // Detached 派生脱离 ctx：切断取消传播、保留父 ctx 的值。

@@ -11,6 +11,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
+	"github.com/yi-nology/goagent-kernel/deadline"
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
@@ -32,8 +33,13 @@ func runDemo(ctx context.Context, out io.Writer) error {
 	steps := demoSteps(calls)
 	const runID = "run-demo-1"
 
+	// 会话级墙钟（可选）：总时限**不因续跑轮重置**——两轮共用同一份锚点
+	// （首轮写一次、续跑轮沿用）。墙钟是关闭直通的零值时行为与从前逐字相同。
+	anchors := newWallClockStore()
+	wall := deadline.Config{Timeout: 5 * time.Minute, Shared: true}
+
 	// 1) 建一条 3 步骤的任务（步骤间有 DependsOn 依赖）。
-	rt := newRuntime(runID, store, steps, 30*time.Second)
+	rt := newRuntime(runID, store, steps, 30*time.Second).withWallClock(wall, anchors)
 	if err := writef(out, "[1] 建任务：%d 个步骤，依赖链 %s\n", len(steps), describeDeps(steps)); err != nil {
 		return err
 	}
@@ -55,12 +61,13 @@ func runDemo(ctx context.Context, out io.Writer) error {
 	}
 
 	// 4) 恢复续跑：重建运行时（等价于进程重启），从存储回灌序号基线后重建计划。
-	rt2 := newRuntime(runID, store, steps, 30*time.Second)
+	rt2 := newRuntime(runID, store, steps, 30*time.Second).withWallClock(wall, anchors)
 	rep2, err := rt2.run(ctx, 0)
 	if err != nil {
 		return errors.Wrap(err, "续跑失败")
 	}
-	if err := writef(out, "[4] 恢复续跑：跳过 %v，只跑 %v；各步骤执行体调用次数 %s（前两步未重放）\n",
+	if err := writef(out, "[4] 恢复续跑：跳过 %v，只跑 %v；各步骤执行体调用次数 %s（前两步未重放）；"+
+		"会话墙钟沿用同一锚点（总时限不因续跑轮重置）\n",
 		rep2.Skipped, rep2.Executed, describeCalls(calls)); err != nil {
 		return err
 	}

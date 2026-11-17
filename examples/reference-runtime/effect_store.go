@@ -86,6 +86,21 @@ func newEffectStore() *effectStore {
 }
 
 // UseClock 注入时钟（sidetest 契约套件用）。
+//
+// # 接缝契约（宿主注入的时钟回调；内核在 Acquire / Renew / 对账路径的**取锁之前**同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主注入的时钟**不得回查本包**（不得再调本存储的任何方法，
+//     尤其不得在时钟里调 Acquire / Renew——那会递归回 clock()，栈溢出）。
+//     内核侧的兑现面：**先取回调、解锁后再调**（issue #317）——调用时钟时
+//     本包的互斥锁**不持有**，故回查不会自锁；但回查写方法仍会递归，故时钟
+//     必须是纯函数（只读进程内状态）。
+//   - no-blocking：宿主注入的时钟必须**立即返回**——内核在取锁之前同步等它
+//     返回；它不得做 I/O、不得等锁、不得等别的回调。过期判定全靠它时钟。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：时钟 panic
+//     会沿 Acquire / Renew / 对账路径外溢到调用栈。宿主注入的时钟须自行
+//     保证不 panic。
 func (s *effectStore) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

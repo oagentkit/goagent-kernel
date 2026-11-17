@@ -55,32 +55,6 @@ func NewBoardStore(pool *pgxpool.Pool) *BoardStore {
 // ControlStore 报同一来源；不同 schema / 不同库报不同来源（装配期拒绝）。
 func (b *BoardStore) TaskSourceID() string { return b.src }
 
-// UseClock 注入时钟（boardtest 契约套件用）。
-func (b *BoardStore) UseClock(now func() time.Time) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if now != nil {
-		b.now = now
-	}
-}
-
-// nowIn 事务内的当前时刻：注入（boardtest 套件）→ 注入值；否则读数据库
-// clock_timestamp。必须在**取得行锁之后**调用（与 EffectStore.nowIn 同款
-// 理由：等锁时长不得计入租约寿命）。
-func (b *BoardStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
-	b.mu.Lock()
-	injected := b.now
-	b.mu.Unlock()
-	if injected != nil {
-		return injected(), nil
-	}
-	var t time.Time
-	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&t); err != nil {
-		return time.Time{}, errors.Wrap(err, "pgstore: 读数据库时间失败")
-	}
-	return t, nil
-}
-
 // Seed 摆初始任务（契约里没有「创建」入口：任务拓扑是宿主的资产）。
 //
 // 签名与套件要求的形态一致（boardtest 经 interface{ Seed(tasks ...Task) }
@@ -217,8 +191,16 @@ func (b *BoardStore) Claim(ctx context.Context, id taskboard.TaskID, agent taskb
 		if r == nil {
 			return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 		}
-		if r.state == string(taskboard.StateDone) {
-			return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+		// 单一判据（issue #360）：词表外 ⇒ ErrUnknownState，终态 ⇒ ErrTerminal。
+		// 此前本实现只判"是不是 done"——词表外的脏状态行照常领到租约并铸令牌
+		//（失效形态是绿的）。拒绝必须发生在**铸令牌之前**：被拒的认领不得留下
+		// 任何占用痕迹。
+		if err := taskboard.State(r.state).Claimable(); err != nil {
+			if errors.Is(err, taskboard.ErrUnknownState) {
+				return taskboard.Task{}, errors.Wrap(err,
+					"任务状态不在词表内，拒绝认领", "task", string(id), "state", r.state)
+			}
+			return taskboard.Task{}, errors.Wrap(err, "任务已是终态", "task", string(id))
 		}
 		if err := depsDone(ctx, tx, r.deps); err != nil {
 			return taskboard.Task{}, err

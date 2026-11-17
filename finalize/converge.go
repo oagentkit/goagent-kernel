@@ -10,6 +10,26 @@ import (
 //
 // 四个方法就是并发裁决算法的全部输入：条件迁移、报告覆写、回读现终态、
 // 发事件——本包不碰任何存储客户端。
+//
+// # 接缝契约（宿主实现；内核在 Converge 里同步调用四个方法）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主实现内**不得回查本包**（不得调 Converge）——那会递归
+//     回本接口（Migrate → Converge → Migrate），无限递归。内核侧的兑现面：
+//     Converge 在调用点**不持有任何互斥锁**，故回查不会自锁；剩下不可回查
+//     的是本接口自身的递归。
+//   - no-blocking：四个方法都被**同步等待**，且内核传下去的是
+//     **Detached(ctx)**（脱离 ctx：切断取消传播）——它**不带期限**，所以
+//     「不阻塞」在此处的准确含义是「有界」：宿主必须自备超时（需要时
+//     context.WithTimeout(Detached(ctx), d)），不得无限等待、不得在持存储
+//     内部锁时等别的回调。Publish 没有返回值却同样被同步等待，它的耗时
+//     直接算在收尾时长里。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：宿主实现
+//     的 panic 会沿 Converge 外溢。Publish 尤其危险：它在**状态迁移已经
+//     落地之后**才被调用，一旦 panic，整次收尾看起来失败，而状态其实已经
+//     收敛——把已发生的事实改写成「没发生」。宿主实现须自行保证不 panic
+//     （尤其 Publish）。
 type Store interface {
 	// Migrate 一次原子条件迁移：现状态 ∈ from 时迁移到 to；ok=false = 0 行。
 	//

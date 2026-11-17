@@ -93,6 +93,25 @@ func (s *EffectStore) prepareAction(ctx context.Context, act sideeffect.Action) 
 // 注入值代表**系统时间**的测试替身（整个判定链的唯一时间源），不是
 // 「某个 worker 的本地时钟」——修复后的实现里 worker 根本不提供时间，
 // 这正是「租约统一数据库时钟」要达成的状态。
+//
+// # 接缝契约（宿主注入的时钟回调；内核在**持有动作行/资源行锁**的事务内同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主注入的时钟**不得回查本包**（不得再调本存储的任何方法，
+//     尤其不得在时钟里调 Acquire / Renew）：内核调用它时事务已持有本 Key 的
+//     动作行锁（必要时还有资源行锁），回查即两个事务互相等对方持有的行锁：
+//     自死锁。时钟必须是纯函数（只读进程内状态）。
+//   - no-blocking：宿主注入的时钟必须**立即返回**——内核在持行锁的事务里同步
+//     等它返回；它不得做 I/O、不得等锁、不得等别的回调。阻塞会把行锁与整个
+//     事务一起拖住，后来者全部堆在这行锁上。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：时钟 panic
+//     会沿 Acquire / Renew / 对账路径外溢（事务由 runTx 的 defer 回滚，不留
+//     半截状态，但 panic 本身外溢）。宿主注入的时钟须自行保证不 panic。
+//
+// 内核侧的兑现面：调用点在 nowIn 里——**先取回调、解锁后再调**（issue #317）：
+// 取出回调后即释放本包的进程内互斥锁（s.mu），故回调重入本包的互斥锁不会
+// 自锁；剩下不可回查的是**数据库行锁**（见上）。
 func (s *EffectStore) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -40,6 +40,25 @@ const lockTimeout = 5 * time.Second
 type Option func(*Store)
 
 // WithClock 注入存储时钟（契约套件的过期场景要确定性推进）。
+//
+// # 接缝契约（宿主注入的时钟回调；内核在**写事务内**同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主注入的时钟**不得回查本包**（不得再调本存储的任何方法，
+//     尤其不得在时钟里调 Claim / Renew / List）：内核调用它时**持有本存储的
+//     进程内互斥锁（s.mu）与目录级写锁（flock）**，回查本包即在 s.mu 上
+//     自死锁（sync.Mutex 不可重入：挂住，不是 panic，recover 抓不住）。
+//   - no-blocking：宿主注入的时钟必须**立即返回**——它是在写事务内被同步
+//     等着的；不得做 I/O、不得等锁、不得等别的回调。阻塞会把进程内互斥锁
+//     与跨进程 flock 一起拖住，同目录的其它进程全部排队。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：时钟 panic
+//     会沿 Claim / Renew 外溢（展开时 defer 会解锁：s.mu 与 flock 都放掉，
+//     数据不留半截），但 panic 本身外溢到调用栈。宿主注入的时钟须自行
+//     保证不 panic。
+//
+// ⚠️ 与 Store.UseClock 是**同一个回调**的两条注入路径（构造期 Option /
+// 运行期方法），契约完全相同——两条接缝各写一份，是为了让两条声明各自可读。
 func WithClock(clock func() time.Time) Option {
 	return func(s *Store) {
 		if clock != nil {
@@ -117,6 +136,25 @@ func (s *Store) Close() error {
 }
 
 // UseClock 注入存储时钟（boardtest.ClockedBoard）。
+//
+// # 接缝契约（宿主注入的时钟回调；内核在**写事务内**同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主注入的时钟**不得回查本包**（不得再调本存储的任何方法，
+//     尤其不得在时钟里调 Claim / Renew / List）：内核调用它时**持有本存储的
+//     进程内互斥锁（s.mu）与目录级写锁（flock）**，回查本包即在 s.mu 上
+//     自死锁（sync.Mutex 不可重入：挂住，不是 panic，recover 抓不住）。
+//   - no-blocking：宿主注入的时钟必须**立即返回**——它是在写事务内被同步
+//     等着的；不得做 I/O、不得等锁、不得等别的回调。阻塞会把进程内互斥锁
+//     与跨进程 flock 一起拖住，同目录的其它进程全部排队。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：时钟 panic
+//     会沿 Claim / Renew 外溢（展开时 defer 会解锁：s.mu 与 flock 都放掉，
+//     数据不留半截），但 panic 本身外溢到调用栈。宿主注入的时钟须自行
+//     保证不 panic。
+//
+// ⚠️ 与 WithClock 是**同一个回调**的两条注入路径（构造期 Option / 运行期
+// 方法），契约完全相同——两条接缝各写一份，是为了让两条声明各自可读。
 func (s *Store) UseClock(now func() time.Time) {
 	if now == nil {
 		return
@@ -214,8 +252,16 @@ func (s *Store) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.Ag
 			return nil, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
 		}
 		now := s.now()
-		if rec.Task.State == taskboard.StateDone {
-			return nil, oerrors.Wrap(taskboard.ErrTerminal, "sqlitestore: 任务已是终态", "task", string(id))
+		// 单一判据（issue #360）：词表外 ⇒ ErrUnknownState，终态 ⇒ ErrTerminal。
+		// 此前本实现只判"是不是 done"——词表外的脏状态行照常领到租约并铸令牌
+		//（失效形态是绿的）。拒绝必须发生在**铸令牌之前**：被拒的认领不得留下
+		// 任何占用痕迹。
+		if err := rec.Task.State.Claimable(); err != nil {
+			if oerrors.Is(err, taskboard.ErrUnknownState) {
+				return nil, oerrors.Wrap(err, "sqlitestore: 任务状态不在词表内，拒绝认领",
+					"task", string(id), "state", string(rec.Task.State))
+			}
+			return nil, oerrors.Wrap(err, "sqlitestore: 任务已是终态", "task", string(id))
 		}
 		for _, dep := range rec.Task.Deps {
 			depRec, ok := state[dep]

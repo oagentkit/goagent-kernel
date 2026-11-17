@@ -108,6 +108,22 @@ func ExecWithin(ctx context.Context, sql string, args ...any) (int64, error) {
 //  2. 否则执行写入体，并把已见最大更新为 presented（**等于**也放行——
 //     同一代持有者的多次写入合法，如分批提交）；
 //  3. 第 1 条的判定与第 2 条的写入（含令牌更新）在同一个事务里。
+//
+// # 接缝契约（宿主注入的写入体；内核在**栅栏预占之后、同一事务内**同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：写入体内**不得回查本包**（不得再调本栅栏的任何方法，尤其
+//     不得在写入体里再调 WriteFenced）：内核此刻持有该 (tenant, resource)
+//     行的锁，嵌套的 WriteFenced 会另起事务去等同一行 ⇒ 两个事务互相等
+//     对方持有的行锁，自死锁。
+//   - no-blocking：写入体不得做事务外的 I/O、不得等锁、不得等别的回调——它的
+//     业务写入必须走 ExecWithin / QueryRowWithin（ctx 里带的是本事务的句柄）；
+//     内核同步等它返回，事务与行锁全程开着。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：写入体的
+//     panic 会沿 WriteFenced 外溢；事务由 runTx 的 defer 回滚（栅栏预占与
+//     已写的业务数据一起消失，仍是「不得部分写」），但 panic 本身外溢到
+//     调用栈。宿主写入体须自行保证不 panic。
 func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented sideeffect.Fence, write func(ctx context.Context) error) error {
 	tenantID, err := resolveTenant(ctx, d.tenantScoped, "")
 	if err != nil {

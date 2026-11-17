@@ -54,6 +54,20 @@ func newBoardStore() *boardStore {
 }
 
 // UseClock 注入时钟（boardtest 契约套件用）。
+//
+// # 接缝契约（宿主注入的时钟回调；内核在 Claim / Renew 的**取锁之前**同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主注入的时钟**不得回查本包**（不得再调本板的方法，尤其
+//     不得在时钟里调 Claim / Renew——那会递归回 clock()，栈溢出）。内核侧的
+//     兑现面：**先取回调、解锁后再调**（issue #317）——调用时钟时本包的互斥
+//     锁**不持有**，故回查不会自锁；但回查写方法仍会递归，故时钟必须是纯
+//     函数（只读进程内状态）。
+//   - no-blocking：宿主注入的时钟必须**立即返回**——内核在取锁之前同步等它
+//     返回；它不得做 I/O、不得等锁、不得等别的回调。
+//   - panic-isolated：**宿主侧兑现**——本包**没有 recover 边界**：时钟 panic
+//     会沿 Claim / Renew 外溢到调用栈。宿主注入的时钟须自行保证不 panic。
 func (s *boardStore) UseClock(now func() time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -84,6 +98,9 @@ func (s *boardStore) Seed(tasks ...taskboard.Task) {
 			continue
 		}
 		t.Seq++
+		// 拷贝义务（issue #379）：板内自己持一份依赖数组——调用方改写它摆进来
+		// 的那个切片，不得连带改穿板内的依赖图。
+		t.Deps = slices.Clone(t.Deps)
 		s.tasks[t.ID] = t
 	}
 }
@@ -114,8 +131,18 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在", "task", string(id))
 	}
-	if t.State.Terminal() {
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态", "task", string(id))
+	// 单一判据（issue #360）：词表外 ⇒ ErrUnknownState，终态 ⇒ ErrTerminal。
+	// 此前本实现只判 Terminal()——而 Terminal() 对**词表外**状态返回 false
+	//（"读不懂"不是"终态"），于是一条脏状态行照常领到租约并铸令牌：失效形态
+	// 是绿的（认领成功、令牌可用、副作用照常施加，没有错误也没有告警）。
+	//
+	// 拒绝必须发生在**铸令牌之前**：被拒的认领不得留下任何占用痕迹。
+	if err := t.State.Claimable(); err != nil {
+		if errors.Is(err, taskboard.ErrUnknownState) {
+			return taskboard.Task{}, errors.Wrap(err,
+				"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(t.State))
+		}
+		return taskboard.Task{}, errors.Wrap(err, "任务已是终态", "task", string(id))
 	}
 	for _, dep := range t.Deps {
 		d, ok := s.tasks[dep]
@@ -142,8 +169,15 @@ func (s *boardStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboa
 	t.Owner = agent
 	t.Lease = lease
 	t.Seq++
-	s.tasks[id] = t
-	return t, nil
+	// 拷贝义务（issue #379）：**返回值不得与板内共享 Deps 底层数组**——调用方
+	// 改写返回值的 Deps[0] 会把板内的依赖图改穿（依赖判定读到的依赖被换掉）。
+	// 存进去的是板内自己的一份，返回值再拿一份：两边互不影响。
+	stored := t
+	stored.Deps = slices.Clone(t.Deps)
+	s.tasks[id] = stored
+	out := stored
+	out.Deps = slices.Clone(stored.Deps)
+	return out, nil
 }
 
 // Release 归还认领（凭令牌）：非持有者释放一律被拒，不许静默成功。
@@ -211,6 +245,9 @@ func (s *boardStore) Renew(_ context.Context, id taskboard.TaskID, token string,
 		t.Lease.Until = time.Time{}
 	}
 	t.Seq++
+	// 拷贝义务（issue #379）：续期同样返回板内任务，依赖数组也要各拿一份。
 	s.tasks[id] = t
-	return t, nil
+	out := t
+	out.Deps = slices.Clone(t.Deps)
+	return out, nil
 }

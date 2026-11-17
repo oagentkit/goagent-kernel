@@ -3,12 +3,11 @@ package deadline
 import (
 	"context"
 
-	"github.com/oekit/pkg/errors"
-
 	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/finalize"
 )
 
-// Outcome 三分路由的结论（超时 / 取消 / 停机，见包头表）。
+// Outcome 收尾路由的结论（超时 / 取消 / 停机 / 接管，见包头表）。
 type Outcome int
 
 const (
@@ -24,6 +23,10 @@ const (
 	// OutcomeShutdown 进程停机：**不落终态**（running/waiting_approval 留给
 	// 恢复循环/启动对账收敛），也不写失败报告——停机不是这次编排的结论。
 	OutcomeShutdown
+	// OutcomeTakeover 接管：**不落终态回 created**（载荷与续跑语义归 steer）。
+	//
+	// 追加在末尾而非插在中间：既有取值的数值不变（宿主可能持久化这些整数）。
+	OutcomeTakeover
 )
 
 // String 机读名（进日志与测试断言）。
@@ -37,6 +40,8 @@ func (o Outcome) String() string {
 		return "cancelled"
 	case OutcomeShutdown:
 		return "shutdown"
+	case OutcomeTakeover:
+		return "takeover"
 	}
 	return "unknown"
 }
@@ -52,7 +57,8 @@ type StatusOf func(Outcome) string
 // DefaultStatusOf 缺省映射：**消费 contract 的词表**，不另造一份。
 //
 // 不落终态的两档（None / Shutdown）返回空串：空串即「本轮没有终态要写」，
-// 宿主据此跳过状态迁移，而不是写一个空状态。
+// 宿主据此跳过状态迁移，而不是写一个空状态。接管档落 created（与 finalize
+// 同一口径：接管回起点重排，不是终态）。
 //
 // 独立导出是为了让宿主能「只覆盖个别档、其余仍走缺省」——在注入的
 // StatusOf 里回落本函数即可（见 StatusWith）。
@@ -62,6 +68,9 @@ func DefaultStatusOf(o Outcome) string {
 		return contract.StatusTimedOut
 	case OutcomeCancelled:
 		return contract.StatusCancelled
+	case OutcomeTakeover:
+		// 接管回 created（与 finalize.ActionTakeover.Status 同一口径）。
+		return contract.StatusCreated
 	default:
 		return ""
 	}
@@ -85,39 +94,40 @@ func (o Outcome) StatusWith(mapper StatusOf) string {
 	return mapper(o)
 }
 
-// Route 收尾段的三分路由（判据面；宿主的 finalize 路由表按同一形状实现）。
+// Route 收尾路由的**投影**（issue #355）：判定面在 finalize（收尾路由的
+// 唯一收口），本函数只把它的结论映射成本包的 Outcome。
 //
-// # 次序纪律（硬约束）
+// # 为什么不再自己判
 //
-// **timed_out 臂必须排在停机臂（`ctx.Err() != nil`）之前。** 墙钟到点时
-// ctx 同样已取消（DeadlineExceeded），停机臂的条件对它同样成立——次序写反，
-// 每次会话超时都会被判成停机、不落终态，会话永久滞留 running。
-// Route 的第一臂就是 timed_out，测试里用「已取消 + cause=ErrSessionDeadline」
-// 的 ctx 钉住（该 ctx 同时满足停机臂的条件，走错臂当场红）。
+// 此前本包与 finalize **各写一张收尾路由表**，判据已分叉：同一个接管的 ctx
+// 在两包得到**相反**结论（本包判 shutdown「不落终态」、finalize 判 takeover
+// 「落 created」）——接管场景下该收敛的会话被永久留在 running，而两包零交叉
+// 断言，失效形态是绿的（两边都返回正常值，只是结论相反）。
 //
-// 三分的前提是三者各有自己的 cause：
+// 现在只有一份判据：本函数 = finalize.RouteWith 的投影（Outcome ← Action
+// 一一映射）。**次序纪律（timeout 臂必须先于停机臂）与接管臂的认领**都由
+// finalize 的路由表承担；交叉断言（同一组 ctx 同时喂两包、断言结论一致）
+// 见 finalize 包的用例。
 //
-//   - 墙钟：WithTimeoutCause(..., ErrSessionDeadline)（本包 WithCause）；
-//   - 用户取消：宿主用 context.WithCancelCause(哨兵) 表达，哨兵传进 userCancel；
-//   - 停机：父 ctx 取消传播下来的 cause（或裸 cancel）。
+// # userCancel 变参
 //
-// userCancel 缺省（不传）时没有取消档：非本包 cause 的取消一律判停机——
-// 裸 cancel 与停机在 Cause 上不可分，宿主要区分就必须给取消一个专属 cause。
+// 宿主注入的「用户取消」哨兵原样传给 finalize.RouteWith：注入的哨兵与内核
+// 缺省的 finalize.ErrUserCancelled 同等对待（命中任一即判 cancelled）。
+//
+// 与从前的一处差别：缺省的 finalize.ErrUserCancelled 现在**也**判 cancelled
+// （从前只有宿主显式注入的哨兵才判）。这是「单一判据」的必然结果——同一个
+// 专属 cause 在两包得到不同结论，正是本次要消掉的那类分叉。
 func Route(ctx context.Context, userCancel ...error) Outcome {
-	if ctx.Err() == nil {
+	switch finalize.RouteWith(ctx, userCancel...) {
+	case finalize.ActionTakeover:
+		return OutcomeTakeover
+	case finalize.ActionCancelled:
+		return OutcomeCancelled
+	case finalize.ActionTimedOut:
+		return OutcomeTimedOut
+	case finalize.ActionShutdown:
+		return OutcomeShutdown
+	default:
 		return OutcomeNone
 	}
-	cause := context.Cause(ctx)
-	// ① timed_out 最先（次序纪律）：它同时满足停机臂的条件，必须先被判走。
-	if errors.Is(cause, ErrSessionDeadline) {
-		return OutcomeTimedOut
-	}
-	// ② 用户取消（宿主哨兵，可给多个）。
-	for _, sentinel := range userCancel {
-		if sentinel != nil && errors.Is(cause, sentinel) {
-			return OutcomeCancelled
-		}
-	}
-	// ③ 进程停机：不落终态，留给恢复循环。
-	return OutcomeShutdown
 }

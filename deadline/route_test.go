@@ -8,6 +8,7 @@ import (
 	"github.com/oekit/pkg/errors"
 
 	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/finalize"
 )
 
 // 收尾三分路由的契约判据（issue #170）：超时 / 用户取消 / 进程停机可区分，
@@ -55,53 +56,28 @@ func TestRouteThreeWaySplit(t *testing.T) {
 		t.Fatalf("未取消应判 none, got %s (%q)", got, got.Status())
 	}
 
-	// 不给 userCancel 哨兵时，非本包 cause 的取消一律判停机
-	//（裸 cancel 与停机在 Cause 上不可分——三分的前提是各有 cause）。
+	// 不给 userCancel 哨兵时，只有内核缺省的用户取消哨兵
+	//（finalize.ErrUserCancelled）判 cancelled；其余 cause 一律判停机
+	//（裸 cancel 与停机在 Cause 上不可分——各档的前提是各有 cause）。
 	if got := Route(uctx); got != OutcomeShutdown {
 		t.Fatalf("未声明用户取消哨兵时应保守判停机, got %s", got)
 	}
 }
 
-// TestRouteDeadlineArmBeatsShutdownArm **次序纪律**：墙钟到点的 ctx 同样满足
-// 停机臂的条件（ctx.Err() != nil），timed_out 臂必须先被判走——次序写反，
-// 每次会话超时都会被判成停机、不落终态，会话永久滞留 running。
-//
-// 场景即任务判据：**停机形态的 ctx（已取消）+ 已过期锚点 → timed_out 而非停机臂**。
-func TestRouteDeadlineArmBeatsShutdownArm(t *testing.T) {
-	cfg := Config{Timeout: 30 * time.Minute, Shared: true}
-	// 锚点还有几毫秒余量 → Begin 按剩余时长装饰出携带专属 cause 的轮 ctx。
-	anchor := &Anchor{
-		FirstClaimAt: time.Now().Add(-time.Minute),
-		DeadlineAt:   time.Now().Add(3 * time.Millisecond),
-	}
-	rctx, release, constraint := cfg.Begin(context.Background(), anchor, time.Now())
-	defer release()
-	if constraint.Expired() {
-		t.Fatal("锚点此刻仍有效，不该判过期")
-	}
+// 次序纪律（timeout 臂必须先于停机臂）的断言**只在 finalize 包里**
+//（issue #355）：路由表只有那一份，本包的 Route 是它的投影——两份各写一遍的
+// 判据曾让接管的 ctx 在两包得到相反结论，而零交叉断言时无声发生。
+// 交叉断言（同一组 ctx 同时喂两包、断言结论一致）见 finalize/cross_test.go。
 
-	<-rctx.Done()
-	// 断言点打在「两个臂同时成立」的那一刻：ctx 已取消（停机臂条件），
-	// 且锚点此刻已过期。
-	if rctx.Err() == nil {
-		t.Fatal("前提失效：ctx 应已取消（否则测不到臂序）")
-	}
-	if got := anchor.State(time.Now()); got != StateExpired {
-		t.Fatalf("前提失效：锚点应已过期, got %s", got)
-	}
-	if got := Route(rctx); got != OutcomeTimedOut {
-		t.Fatalf("次序纪律被破坏：已取消 + 锚点过期应走 timed_out 臂而非停机臂, got %s", got)
-	}
-
-	// 对照组：同样已取消，但 cause 来自停机（没有本包哨兵）→ 停机臂。
-	// 两条同时成立才说明「区分靠 cause 与臂序」，不是「取消了一律 timed_out」。
-	pctx, pcancel := context.WithCancel(context.Background())
-	pctx2, c2 := context.WithCancel(pctx)
-	pcancel()
-	<-pctx2.Done()
-	c2()
-	if got := Route(pctx2); got != OutcomeShutdown {
-		t.Fatalf("对照：停机 ctx 应走停机臂, got %s", got)
+// TestRouteRecognizesCanonicalUserCancel 合并后的口径（issue #355）：内核缺省的
+// 用户取消哨兵（finalize.ErrUserCancelled）判 cancelled——从前只有宿主显式注入
+// 的哨兵才判，同一个专属 cause 在两包得到不同结论，正是本次要消掉的那类分叉。
+func TestRouteRecognizesCanonicalUserCancel(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	t.Cleanup(func() { cancel(nil) })
+	cancel(finalize.ErrUserCancelled)
+	if got := Route(ctx); got != OutcomeCancelled {
+		t.Fatalf("内核缺省的用户取消哨兵应判 cancelled, got %s", got)
 	}
 }
 

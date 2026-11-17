@@ -48,6 +48,22 @@ import (
 // NetworkPolicy 对象证明不了数据面生效，答案只能来自了解集群的一方（宿主
 // 按集群选型注入）。实现必须廉价（如读装配配置），Egress() 会在选择期调用
 // 它（结果缓存，答一次即可）。
+//
+// # 接缝契约（宿主实现；内核在 Egress() 的选档路径上同步调用它）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：宿主实现内**不得回查本包**——尤其不得调 K8sJob.Egress()
+//     （它会再进 cniNetworkPolicyEnforced）：内核在 sync.Once.Do 里调用本接口，
+//     而 sync.Once **不可重入**（重入即在 Once 的内部锁上自死锁；自死锁不是
+//     panic，recover 抓不住，进程直接挂住）。
+//   - no-blocking：宿主实现内不得做 I/O、不得等锁、不得等别的回调——本接口在
+//     「挑作业后端」的路径上被同步等待，实现必须廉价（读装配配置即可）。
+//     违反的后果是选档路径被拖住，禁网档迟迟定不下来。
+//   - panic-isolated：**宿主侧兑现**——本包在调用点**没有 recover 边界**：
+//     探测实现的 panic 会沿 Egress() 外溢到选档调用栈（Once 会被标记完成、
+//     之后不再重问，故 panic 只发生一次，但已经外溢）。宿主实现须自行
+//     recover 住，不要把异常抛进内核的选档路径。
 type K8sCNICapability interface {
 	// NetworkPolicyEnforced 返回能力事实：true = CNI 实现 NetworkPolicy；
 	// false = 不实现；error = 答不上来（声明面按兜不住处理）。

@@ -10,6 +10,7 @@ import (
 	"github.com/yi-nology/goagent-kernel/checkpoint"
 	"github.com/yi-nology/goagent-kernel/commitgate"
 	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/deadline"
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
@@ -40,6 +41,12 @@ type runtime struct {
 
 	branch string
 	seq    uint64
+
+	// wall 会话级墙钟（issue #355）：零值 = 关闭直通（本轮不装饰 ctx，
+	// 行为与从前逐字相同）。
+	wall deadline.Config
+	// anchors 锚点持久化接缝（shared 模式：首轮写一次、续跑轮沿用）。
+	anchors deadline.Store
 }
 
 // runReport 一次执行的结果记录。
@@ -55,12 +62,16 @@ type runReport struct {
 // newRuntime 组装运行时。ttl 是每次抢副作用闸时申请的租约有效期。
 func newRuntime(runID string, store *memStore, steps []*stepDef, ttl time.Duration) *runtime {
 	rt := &runtime{
-		runID:  runID,
-		steps:  steps,
-		byID:   map[string]*stepDef{},
-		snaps:  store.snaps,
-		gate:   checkpoint.NewSeqGate(),
-		guard:  commitgate.NewGuard(isTerminalStatus),
+		runID: runID,
+		steps: steps,
+		byID:  map[string]*stepDef{},
+		snaps: store.snaps,
+		gate:  checkpoint.NewSeqGate(),
+		// 终态词表**直接调用 contract 的判定面**，不在本包手抄一份（issue #358）。
+		// 参考实现是宿主照抄的形态示范：示范手抄一份词表，等于把「第四份真相」
+		// 派发给每一个照抄的宿主——contract 新增一个终态时它不会跟着变，
+		// 且没有任何信号。
+		guard:  commitgate.NewGuard(contract.IsTerminalStatus),
 		runner: sideeffect.NewRunner(store.effects, ttl),
 		branch: "worker-1",
 	}
@@ -74,6 +85,52 @@ func newRuntime(runID string, store *memStore, steps []*stepDef, ttl time.Durati
 		rt.byID[s.id] = s
 	}
 	return rt
+}
+
+// withWallClock 装上会话级墙钟（返回自身，便于链式装配）。
+//
+// 墙钟是**可选**的：零值 Config（Timeout<=0）是关闭直通——不装饰 ctx、不写
+// 锚点，行为与从前逐字相同。启用后：
+//
+//   - 本轮 ctx 带 Deadline（墙钟到点时 ctx 被取消，cause 是
+//     deadline.ErrSessionDeadline）；
+//   - shared 模式：首轮写一次锚点、续跑轮沿用（总时限不因续跑轮重置）；
+//   - 锚点已过期：本轮**不进编排**，立即 timed_out 收敛。
+func (r *runtime) withWallClock(cfg deadline.Config, anchors deadline.Store) *runtime {
+	r.wall = cfg
+	r.anchors = anchors
+	return r
+}
+
+// beginWallClock 派生本轮的墙钟 ctx 与本轮时限形态。
+//
+// 三种形态（deadline.Constraint）：关闭直通（Timeout<=0）/ 受约束（ctx 带
+// Deadline）/ 已过期（**不进编排**——调用方立即 timed_out 收敛）。
+//
+// 锚点（shared 模式）：首轮写一次、续跑轮沿用，总时限不因续跑轮重置。读不
+// 出锚点就装饰不了本轮剩余时长，静默回落会给续跑轮新开一段 Timeout（总时限
+// 被静默重置）——内核因此 fail-closed（ErrNoStore），这里原样上抛。
+func (r *runtime) beginWallClock(ctx context.Context) (context.Context, context.CancelFunc, deadline.Constraint, error) {
+	if r.wall.Timeout <= 0 {
+		return ctx, func() {}, deadline.ConstraintOff, nil
+	}
+	var existing *deadline.Anchor
+	if r.wall.Shared {
+		loaded, err := deadline.Restore(ctx, r.anchors)
+		if err != nil {
+			return nil, nil, deadline.ConstraintOff, errors.Wrap(err, "读会话墙钟锚点失败")
+		}
+		existing = loaded
+	}
+	rctx, release, constraint := r.wall.Begin(ctx, existing, time.Now())
+	if constraint == deadline.ConstraintActive && r.wall.Shared {
+		// 首轮认领成功 ≈ 本轮开始执行：把锚点写一次（续跑轮沿用，绝不刷新）。
+		if _, err := deadline.Persist(ctx, r.anchors, r.wall, existing, time.Now()); err != nil {
+			release()
+			return nil, nil, deadline.ConstraintOff, errors.Wrap(err, "写会话墙钟锚点失败")
+		}
+	}
+	return rctx, release, constraint, nil
 }
 
 // run 执行（或续跑）这条链。
@@ -97,13 +154,28 @@ func (r *runtime) run(ctx context.Context, stopAfter int) (*runReport, error) {
 		r.seq = snap.Seq
 	}
 
+	// 会话级墙钟（可选）：本轮 ctx 由墙钟装饰。墙钟到点 ⇒ 本轮**不进编排**
+	//（进去了也只是白跑一段），立即按 timed_out 收敛。
+	rctx, release, constraint, err := r.beginWallClock(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if constraint.Expired() {
+		if cerr := r.commitSnapshot(ctx, done, contract.StatusTimedOut); cerr != nil {
+			return rep, cerr
+		}
+		rep.Status = contract.StatusTimedOut
+		return rep, nil
+	}
+
 	for _, id := range plan.Run {
 		if stopAfter > 0 && len(rep.Executed) >= stopAfter {
 			rep.Interrupted = true
 			break
 		}
 		st := r.byID[id]
-		outcome, _, err := r.runner.Execute(ctx, st.action, st.apply)
+		outcome, _, err := r.runner.Execute(rctx, st.action, st.apply)
 		if err != nil {
 			// 判据与处置之间不能留缝：结果未知时调用方必须自己判一次，
 			// 否则「闸拒了但调用方照样执行」就是重复施加的入口。
@@ -195,17 +267,6 @@ func decideRetry(outcome sideeffect.Outcome) error {
 		return errors.Wrap(sideeffect.ErrOutcomeUnknown, "该键结果未知，必须先对账裁决")
 	}
 	return nil
-}
-
-// isTerminalStatus 某个状态是否已是终态（注入终态闸的词表）。
-func isTerminalStatus(status string) bool {
-	switch status {
-	case contract.StatusSucceeded, contract.StatusFailed,
-		contract.StatusCancelled, contract.StatusTimedOut:
-		return true
-	default:
-		return false
-	}
 }
 
 // callCounter 统计各步骤的执行体被调用了多少次——续跑不重放的证据。
