@@ -71,7 +71,7 @@ func TestSelfCheckRejectsUnmatchableImportRegex(t *testing.T) {
 		ForbidImport: `example\.com/demo/internal/(/|$)`,
 	}
 	var located bool
-	for _, v := range selfCheckViolations(root, &Policy{Rules: []Rule{dead}}) {
+	for _, v := range selfCheckViolations(root, &Policy{Rules: []Rule{dead}, Seams: disabledSeams()}) {
 		if v.Rule == selfCheckRuleID && strings.Contains(v.Text, "t-dead-import") &&
 			strings.Contains(v.Text, "forbid_import_regex") {
 			located = true
@@ -84,7 +84,7 @@ func TestSelfCheckRejectsUnmatchableImportRegex(t *testing.T) {
 	// 反向：正确形态（斜杠属于边界组）不得误报。
 	live := dead
 	live.ForbidImport = `example\.com/demo/internal(/|$)`
-	if vs := selfCheckViolations(root, &Policy{Rules: []Rule{live}}); len(vs) != 0 {
+	if vs := selfCheckViolations(root, &Policy{Rules: []Rule{live}, Seams: disabledSeams()}); len(vs) != 0 {
 		t.Fatalf("正确形态不得报错，实得 %+v", vs)
 	}
 }

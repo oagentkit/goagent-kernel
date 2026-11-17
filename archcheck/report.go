@@ -96,6 +96,10 @@ func WriteReport(w io.Writer, res *Result, opts ReportOptions) error {
 			rw.println("\n阈值超限：结构债已超阈值，先清偿或显式上调阈值再提交。")
 		}
 	}
+	// 接缝清单统计与待补标记清单（下一批任务的补标记清单）。
+	if res.Seams != nil {
+		rw.printSeamSummary(res.Seams, opts.Full)
+	}
 	// 类型感知严格档的运行凭据（issue #103）：开关开着但这里计到 0 而仓库
 	// 有包目录的形态已在 RunWithOptions 显式报错——打印包数是让「跑了」可见，
 	// 与「规则有执行体」自校验同一条纪律。
@@ -126,6 +130,33 @@ func (rw *reportWriter) println(args ...any) {
 		return
 	}
 	_, rw.err = fmt.Fprintln(rw.w, args...)
+}
+
+// printSeamSummary 回显接缝清单统计与待补契约标记清单。
+//
+// 它是**补标记清单**：下一批任务照着「哪个包的哪条接缝缺标记」逐条补即可，
+// 不必重新推导清单（清单的完备性由门禁自己判）。
+func (rw *reportWriter) printSeamSummary(s *SeamSummary, full bool) {
+	rw.printf("\n接缝清单：共 %d 条（func-field %d / func-param %d / iface %d）\n",
+		s.Total, s.ByKind[SeamFuncField], s.ByKind[SeamFuncParam], s.ByKind[SeamIface])
+	if len(s.Packages) == 0 {
+		rw.printf("待补契约标记：无（全部接缝都已写齐）\n")
+		return
+	}
+	rw.printf("待补契约标记（按包分组）：\n")
+	for _, p := range s.Packages {
+		rw.printf("  %s（%d 条待补）\n", p.Package, len(p.Pending))
+		limit := len(p.Pending)
+		if !full && limit > 5 {
+			limit = 5
+		}
+		for _, id := range p.Pending[:limit] {
+			rw.printf("    - %s\n", id)
+		}
+		if !full && len(p.Pending) > limit {
+			rw.printf("    … 另有 %d 条\n", len(p.Pending)-limit)
+		}
+	}
 }
 
 // printRuleViolations 回显一条规则的违反清单；full 为真时看全量，否则截断到 10 条。

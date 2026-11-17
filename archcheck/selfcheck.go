@@ -196,6 +196,11 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 			for _, problem := range exampleCoverageProblems(r) {
 				add(policyPath, 0, "%s", problem)
 			}
+			// 「样例够」还不等于「样例覆盖了正则的每一个分支」：样例通常只覆盖
+			// 第一支，于是删掉其余分支后门禁照样全绿（issue #386）。
+			for _, problem := range branchCoverProblems(r) {
+				add(policyPath, 0, "%s", problem)
+			}
 		}
 
 		// ── import_exempt 项的形状必须可能生效 ──
@@ -339,6 +344,11 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 	//
 	// 判定本体在 tenantgate_selfcheck.go：缺形状时执行体没有判定面，必须变红。
 	out = append(out, tenantGateSelfCheck(root, policyPath, pol.TenantGate)...)
+
+	// ── 接缝门（seams 段）的形状 ──
+	//
+	// 判定本体在 seam_selfcheck.go：缺段 / id 重复 / id 不合法都在这里报红。
+	out = append(out, seamSelfCheck(policyPath, pol)...)
 
 	// ── 例外登记的完整性 ──
 	// 「规则存在」的口径 = policy rules 段的 id ∪ 内置规则 id。

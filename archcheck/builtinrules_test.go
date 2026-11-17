@@ -53,7 +53,9 @@ const policyHead = "version: 1\n" +
 	"thresholds:\n" +
 	"  scan_roots: [x]\n" +
 	"  max_file_lines: 400\n" +
-	"  enforce: false\n"
+	"  enforce: false\n" +
+	"seams:\n" +
+	"  enabled: false\n"
 
 // TestExceptionForBuiltinRuleIsAcceptedAndExcuses 正例：宿主按内核指引登记
 // PTC 未受管逃逸口的例外 ⇒ 豁免**真的生效**（违反被计入 excused，不再阻断）。

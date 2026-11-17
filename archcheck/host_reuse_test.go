@@ -65,6 +65,8 @@ dependency_direction:
   ignore_dirs: [cmd]
   # 受管外部包面（policy 级）：外仓的哪些包纳入本门禁的判定面。
   ext_prefixes: ["github.com/yi-nology/goagent-kernel"]
+seams:
+  enabled: false
 `
 
 // TestHostReuseEndToEnd 宿主仓复用：走完整条链，只该报「未登记包」这一条。

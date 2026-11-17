@@ -113,7 +113,7 @@ func TestStaleScanRootIsBlocking(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"pkg/a.go": "package pkg\n"})
 
-	vs := selfCheckViolations(root, &Policy{Thresholds: Threshold{ScanRoots: []string{"ghost"}, MaxFileLines: 400}})
+	vs := selfCheckViolations(root, &Policy{Thresholds: Threshold{ScanRoots: []string{"ghost"}, MaxFileLines: 400}, Seams: disabledSeams()})
 	var found bool
 	for _, v := range vs {
 		if v.Rule == selfCheckRuleID && strings.Contains(v.Text, "scan_roots") && strings.Contains(v.Text, "ghost") {
@@ -125,7 +125,7 @@ func TestStaleScanRootIsBlocking(t *testing.T) {
 	}
 
 	// 反向：真实目录不得误报——误报会让人关掉这条判据。
-	if vs := selfCheckViolations(root, &Policy{Thresholds: Threshold{ScanRoots: []string{"pkg"}, MaxFileLines: 400}}); len(vs) != 0 {
+	if vs := selfCheckViolations(root, &Policy{Thresholds: Threshold{ScanRoots: []string{"pkg"}, MaxFileLines: 400}, Seams: disabledSeams()}); len(vs) != 0 {
 		t.Fatalf("scan_roots 指向真实目录时不得报错，实得 %+v", vs)
 	}
 }

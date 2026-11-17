@@ -116,24 +116,6 @@ func (t Threshold) forwardingShellLimit() int {
 	return *t.ForwardingShellMaxChars
 }
 
-// Exception 是例外登记：精确豁免某条规则的某处违反。
-//
-// 豁免必须写 until（到期日）与 removal（拆除条件）——没有到期日的豁免等于永久豁免，
-// 没有拆除条件的豁免是赖账。两者都由 policy 自校验强制。
-type Exception struct {
-	Rule      string `yaml:"rule"`
-	Path      string `yaml:"path"`
-	Line      int    `yaml:"line"`
-	Violation string `yaml:"violation"`
-	Reason    string `yaml:"reason"`
-	Until     string `yaml:"until"`
-	Removal   string `yaml:"removal"`
-}
-
-// facadeRuleID 门面包不可变规则的 ID。所有门面包共用一条规则 ID：它们守的是同一条
-// 纪律（转发到上游、不得在本仓长实现），逐包差异体现在 violation 的 path 与 text 里。
-const facadeRuleID = "harness-facade-stays-facade"
-
 // Module 是 modules 段的一条登记：roots 定位包目录，requires 声明**允许**的
 // 依赖方向。
 //
@@ -321,6 +303,12 @@ type Policy struct {
 	// 字段名、共享判定面清单）。段缺省即关闭——形状是判定前提，没有形状
 	// 就判不了；声明了段却漏形状由自校验报红。
 	TenantGate *TenantGate `yaml:"tenant_gate"`
+
+	// Seams 是接缝契约门禁的声明面（接缝清单 + 契约标记要求）。
+	//
+	// 段缺省 = 门禁本体不跑（没有声明面就没有比对面），但 **policy 自校验恒开**：
+	// 缺段由 seamSelfCheck 报红——失败形态仍是红，不是绿。
+	Seams *Seams `yaml:"seams"`
 
 	// RequireRuleExamples 要求每条**有执行体**的规则都自带 examples。
 	//

@@ -38,6 +38,8 @@
 //  2. 跨仓依赖用 `ext:<import 路径前缀>` 表达，如
 //     `ext:github.com/yi-nology/goagent-kernel/netguard`。
 //  3. 报告用 WriteReport；是否阻断用 Result.HasBlocking。
+//  4. 接缝契约门禁（seams 段）要求 policy 显式声明接缝清单；不使用这条门禁的
+//     宿主请显式写 seams: {enabled: false}（缺段会被 policy 自校验报红）。
 //
 // # 调用面禁令与路径白名单怎么表达
 //
@@ -95,6 +97,12 @@ type Result struct {
 	TypeAwarePackages int
 	// Exceptions 是 policy 登记的例外清单（回显用，让债是显式的）。
 	Exceptions []Exception
+
+	// Seams 是接缝清单统计：总数、按三类分布、按包分组的待补标记清单。
+	//
+	// 它是**补标记清单**：下一批任务照着它逐包补契约标记行即可，
+	// 不必重新推导清单（清单的完备性由门禁自己判）。
+	Seams *SeamSummary
 
 	// excused 记下被例外豁免的违反键，报告时不回显它们。
 	excused map[string]bool
@@ -179,10 +187,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	//
 	// 段缺省也算开启：**有后端实现却没登记**必须报出来——「没登记就当没这回事」
 	// 正是这条门禁要防的静默失效。
-	sbox := SandboxProviders{}
-	if pol.SandboxProviders != nil {
-		sbox = *pol.SandboxProviders
-	}
+	sbox := sandboxBox(pol)
 	if sbox.on() {
 		vs, err := sandboxProviderViolations(root, sbox)
 		if err != nil {
@@ -194,10 +199,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	// 执行路径门禁：执行必须经 sandbox 登记簿（execution.go）。
 	//
 	// 段缺省也算开启——「执行必须经登记簿」是默认要求，不是「登记了才管」。
-	execPaths := ExecutionPaths{}
-	if pol.ExecutionPaths != nil {
-		execPaths = *pol.ExecutionPaths
-	}
+	execPaths := executionBox(pol)
 	if execPaths.on() {
 		vs, err := executionPathViolations(root, execPaths)
 		if err != nil {
@@ -227,10 +229,7 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 
 	// 子进程出口门禁：每个 spawn 点都要登记出口档位，要求经代理的必须看得见兑现
 	// （egresspaths.go）。段缺省也算开启——「这个子进程在强制面内吗」必须有人问。
-	egPaths := EgressPaths{}
-	if pol.EgressPaths != nil {
-		egPaths = *pol.EgressPaths
-	}
+	egPaths := egressBox(pol)
 	if egPaths.on() {
 		vs, err := egressPathViolations(root, egPaths)
 		if err != nil {
@@ -251,45 +250,26 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		res.Violations = append(res.Violations, vs...)
 	}
 
+	// 接缝契约门禁：宿主接缝必须写齐「不得重入 / 不得阻塞 / panic 隔离」三条，
+	// 且接缝清单必须与代码事实逐条相等（seam_gate.go）。
+	//
+	// 段缺省 = 门禁不跑（没有声明面就没有比对面），但 **policy 自校验恒开**：
+	// 缺段会由 seamSelfCheck 报红——失败形态仍是红，不是绿。
+	if pol.Seams != nil && pol.Seams.on() {
+		seamVs, seamSummary, err := seamContractViolations(root, pol)
+		if err != nil {
+			return nil, err
+		}
+		res.Violations = append(res.Violations, seamVs...)
+		res.Seams = seamSummary
+	}
+
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
 	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
 	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
 
-	// severity 分流：error 违规阻断，warn 仅报告。
-	sevOf := map[string]string{}
-	for _, r := range pol.Rules {
-		s := r.Severity
-		if s == "" {
-			s = "error"
-		}
-		sevOf[r.ID] = s
-	}
-	for _, fr := range pol.Facades {
-		s := fr.Severity
-		if s == "" {
-			s = "error"
-		}
-		sevOf[facadeRuleID] = s
-	}
-	if pol.DepDir.on() {
-		sevOf[depRuleID] = sevOrError(pol.DepDir.Severity)
-	}
-	if sbox.on() {
-		sevOf[sandboxProviderRuleID] = sevOrError(sbox.Severity)
-	}
-	if execPaths.on() {
-		sevOf[executionPathRuleID] = sevOrError(execPaths.Severity)
-	}
-	if egPaths.on() {
-		sevOf[egressPathRuleID] = sevOrError(egPaths.Severity)
-	}
-	tenantGateSeverities(pol.TenantGate, sevOf)
-	// 未受管逃逸门禁恒为 error：它是 PTC 安全默认（缺判定环即拒）的配套护栏——
-	// 逃逸口若能在生产代码里随手写，它就从「显式声明」退化成「默认路径」。
-	sevOf[unmanagedEscapeRuleID] = "error"
-	// 自校验恒为 error：policy 结构有问题时，门禁必须响亮失败，
-	// 而不是「其他规则都绿就当通过」——那正是它要防的那种静默失效。
-	sevOf[selfCheckRuleID] = "error"
+	// severity 分流：error 违规阻断，warn 仅报告。装配在 result_rules.go。
+	sevOf := ruleSeverities(pol)
 
 	// exceptions 精确豁免：rule + path + line 三元组命中即放行（不做前缀模糊豁免）。
 	//
@@ -323,58 +303,9 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 		}
 	}
 
-	// 规则清单（报告顺序：rules 段 → 门面包 → 依赖方向 → policy 自校验）。
-	for _, r := range pol.Rules {
-		res.Rules = append(res.Rules, RuleInfo{ID: r.ID, Desc: r.Desc, Severity: sevOf[r.ID]})
-	}
-	if len(pol.Facades) > 0 {
-		res.Rules = append(res.Rules, RuleInfo{
-			ID:       facadeRuleID,
-			Desc:     "门面包只允许类型别名/常量别名/单条上游转发，实现归上游仓",
-			Severity: sevOf[facadeRuleID],
-		})
-	}
-	if pol.DepDir.on() {
-		res.Rules = append(res.Rules, RuleInfo{
-			ID:       depRuleID,
-			Desc:     depDirDesc(pol.DepDir),
-			Severity: sevOf[depRuleID],
-		})
-	}
-	if sbox.on() {
-		res.Rules = append(res.Rules, RuleInfo{
-			ID:       sandboxProviderRuleID,
-			Desc:     sandboxProviderDesc(sbox),
-			Severity: sevOf[sandboxProviderRuleID],
-		})
-	}
-	if execPaths.on() {
-		res.Rules = append(res.Rules, RuleInfo{
-			ID:       executionPathRuleID,
-			Desc:     executionPathsDesc(execPaths),
-			Severity: sevOf[executionPathRuleID],
-		})
-	}
-	if egPaths.on() {
-		res.Rules = append(res.Rules, RuleInfo{
-			ID:       egressPathRuleID,
-			Desc:     egressPathsDesc(egPaths),
-			Severity: sevOf[egressPathRuleID],
-		})
-	}
-	res.Rules = append(res.Rules, tenantGateRuleInfos(pol.TenantGate)...)
-	// 未受管逃逸门禁恒开（无 policy 段）：它判的是本仓 API 的既定事实
-	// （PTC 缺判定环即拒），不是各仓可自选的策略。
-	res.Rules = append(res.Rules, RuleInfo{
-		ID:       unmanagedEscapeRuleID,
-		Desc:     "生产代码不得显式选择未受管执行（ptc 的 AllowUnmanaged 逃逸口）",
-		Severity: sevOf[unmanagedEscapeRuleID],
-	})
-	res.Rules = append(res.Rules, RuleInfo{
-		ID:       selfCheckRuleID,
-		Desc:     "policy 自身一致性：规则须有执行体、id 唯一、阈值判定面须覆盖全部登记包、例外须写 until 与拆除条件",
-		Severity: sevOf[selfCheckRuleID],
-	})
+	// 规则清单（报告顺序：rules 段 → 门包 → 依赖方向 → … → 接缝契约）。
+	// 装配在 result_rules.go——「新增结构规则必须同时登记进报告清单」。
+	appendRuleInfos(res, pol, sevOf)
 
 	// ── 阈值门禁（结构债）──
 	th := pol.Thresholds

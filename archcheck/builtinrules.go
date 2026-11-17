@@ -47,6 +47,7 @@ var builtinRuleIDs = []string{
 	tenantSurfaceMissingRuleID,
 	tenantViewerDroppedRuleID,
 	tenantSurfaceDriftRuleID,
+	seamRuleID,
 }
 
 // isBuiltinRule 报告某条规则 id 是否是内置的（不在 policy 的 rules 段里）。

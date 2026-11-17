@@ -71,14 +71,14 @@ modules:
 
   - id: statemachine
     roots: [statemachine]
-    requires: ["ext:github.com/oekit/pkg"] # 哨兵/判定走全仓统一 errors（issue #325）
+    requires: [contract, "ext:github.com/oekit/pkg"] # 哨兵/判定走全仓统一 errors（issue #325）；与 contract 重叠的 6 个状态常量改为**别名**（issue #357，单一真相）
     owner: harness
     managed: true
-    notes: 环节状态机：条件迁移的纯函数件，只依赖 pkg/errors（错误哨兵与判定），无编排依赖
+    notes: 环节状态机：条件迁移的纯函数件，只依赖 pkg/errors（错误哨兵与判定）与 contract（会话/环节共享状态取值的**别名来源**，issue #357），无编排依赖
 
   - id: eventbus
     roots: [eventbus]
-    requires: [subhub, "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/logx"] # onDrop 留痕回调的 panic 隔离复用 subhub（#328）
+    requires: [subhub, "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/logx", "ext:github.com/oekit/pkg"] # onDrop 留痕回调的 panic 隔离复用 subhub（#328）；落库 panic 隔离的哨兵走全仓统一 errors（issue #399）
     owner: harness
     managed: true
     notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责；durable 发布面（#160 写侧）与 event-tail 补灌面（#166 读侧）各为可选接缝，包仍零 DB 依赖
@@ -174,7 +174,7 @@ modules:
 
   - id: watchdog
     roots: [watchdog]
-    requires: [contract, eventbus] # INV3 轮括号的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus
+    requires: [contract, eventbus, trajectory] # INV3 轮括号的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus；缺口 reason 词表消费 trajectory（issue #392，同一事实两份实现）
     owner: harness
     managed: true
     notes: |
@@ -596,7 +596,7 @@ modules:
   # （v0.33.0 起，issue #94）。
   - id: reference-runtime
     roots: [examples/reference-runtime]
-    requires: [checkpoint, commitgate, contract, sideeffect, taskboard, "ext:github.com/oekit/pkg"]
+    requires: [checkpoint, commitgate, contract, deadline, sideeffect, taskboard, "ext:github.com/oekit/pkg"] # deadline 的会话墙钟接缝在本参考运行时里有真实调用点（issue #355 收尾路由合并）
     owner: harness
     managed: true
     notes: |
@@ -746,6 +746,19 @@ modules:
       三个使用方——共用哨兵会让 `errors.Is(err, netguard.ErrNilSubscriber)` 这类
       既有调用点的判定链断掉。
 
+  - id: gosrc
+    roots: [internal/gosrc]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      源码扫描的共享件：把「读目录 → 解析 .go 文件 → 跳过测试文件」收成一处。
+      起因是三处判据各写一遍目录遍历：go/parser 的 ParseDir 自 Go 1.25 起废弃
+      （SA1019）且不考虑构建标签；更要命的是「跳过测试文件」写成了按**包名**判断
+      （ast.File.Name 是包标识符不是文件名）⇒ 判断恒为假，测试文件里的同名常量
+      被当成生产常量收进词表。**零依赖、只被测试面用**：它不参与任何生产判据，
+      生产包不 import 它（依赖方向门禁只看生产代码）。
+
   # 2026-11-13 新增（issue #109 / #110 / #111，本轮清零）：三个 P3 特性单的
   # 机制面。为什么都是**契约 + 判据**而实现放示例：三单的传输/引擎形态都是
   # 宿主资产（容器引擎怎么接、跨进程存储怎么落库、录制格式怎么演化），
@@ -768,7 +781,7 @@ modules:
 
   - id: handoff
     roots: [handoff]
-    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    requires: [delegate, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"] # 回执状态词表以 delegate 为唯一来源（issue #358，同一语义两份实现）
     owner: harness
     managed: true
     notes: |
@@ -913,7 +926,7 @@ modules:
 
   - id: deadline
     roots: [deadline]
-    requires: [contract, "ext:github.com/oekit/pkg"]
+    requires: [contract, finalize, "ext:github.com/oekit/pkg"] # 收尾路由以 finalize 为唯一判据源，deadline.Route 是它的投影（issue #355；次序纪律只存一份）
     owner: harness
     managed: true
     notes: |
@@ -1006,7 +1019,48 @@ rules:
     scope_exclude: [cmd]
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|主机构建|本机|远程主机|集群健康|节点诊断|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|审批单|工单)'
     examples:
+      # 每个词一条 hit 样例：分支覆盖判据要求正则的**每一个分支**至少被一条
+      # hit 样例钉住（issue #386）。少一个词而样例不动 ⇒ 门禁不会变红，
+      # 那个词从此不再被任何样例钉住（失效形态是**变绿**）。
       - text: 'var steps = 故障链判定()'
+        want: hit
+      - text: 'var steps = 巡检流判定()'
+        want: hit
+      - text: 'var steps = 故障诊断判定()'
+        want: hit
+      - text: 'var steps = 告警判定()'
+        want: hit
+      - text: 'var steps = 根因分析判定()'
+        want: hit
+      - text: 'var steps = 运维判定()'
+        want: hit
+      - text: 'var steps = 主机构建判定()'
+        want: hit
+      - text: 'var steps = 本机判定()'
+        want: hit
+      - text: 'var steps = 远程主机判定()'
+        want: hit
+      - text: 'var steps = 集群健康判定()'
+        want: hit
+      - text: 'var steps = 节点诊断判定()'
+        want: hit
+      - text: 'var steps = 内存分析判定()'
+        want: hit
+      # 这条分支含 \s*（零宽）：样例写成不带空格与带空格两种形态都能命中，
+      # 但只有一条样例就够——分支覆盖判据看的是「这一支有没有被钉住」。
+      - text: 'var steps = IO分析判定()'
+        want: hit
+      - text: 'var steps = 网络分析判定()'
+        want: hit
+      - text: 'var steps = 安全基线判定()'
+        want: hit
+      - text: 'var steps = 变更管控判定()'
+        want: hit
+      - text: 'var steps = 处置验证判定()'
+        want: hit
+      - text: 'var steps = 审批单判定()'
+        want: hit
+      - text: 'var steps = 工单判定()'
         want: hit
       - text: 'var buf bytes.Buffer'
         want: miss
@@ -1030,7 +1084,38 @@ rules:
     scope_exclude: [cmd]
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|本机|远程主机|集群健康|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|工单)'
     examples:
+      # 与生产域词规则同款：每个词一条 hit 样例（issue #386 的分支覆盖判据）。
       - text: 'name := "运维Agent"'
+        want: hit
+      - text: 'name := "故障链"'
+        want: hit
+      - text: 'name := "巡检流"'
+        want: hit
+      - text: 'name := "故障诊断"'
+        want: hit
+      - text: 'name := "告警"'
+        want: hit
+      - text: 'name := "根因分析"'
+        want: hit
+      - text: 'name := "本机"'
+        want: hit
+      - text: 'name := "远程主机"'
+        want: hit
+      - text: 'name := "集群健康"'
+        want: hit
+      - text: 'name := "内存分析"'
+        want: hit
+      - text: 'name := "IO分析"'
+        want: hit
+      - text: 'name := "网络分析"'
+        want: hit
+      - text: 'name := "安全基线"'
+        want: hit
+      - text: 'name := "变更管控"'
+        want: hit
+      - text: 'name := "处置验证"'
+        want: hit
+      - text: 'name := "工单"'
         want: hit
       # 断言「不得出现某词」的测试意图必须能写出那个词——negative_follow 的
       # 豁免面在这里被样例钉住：锚点写错一个字，这条会从 miss 变 hit。
@@ -1068,7 +1153,11 @@ rules:
     # 直接引用的那个包。漏掉的形态是门禁变绿，不是变红。
     forbid_import_regex: 'git\.enjoye\.top/enjoydream/bianque(/|$)|github\.com/yi-nology/bianque(/|$)'
     examples:
+      # 两个域名各一条（issue #386 的分支覆盖判据）：只钉住一个域名时，
+      # 另一个域名的分支被删掉门禁也不会红。
       - text: 'github.com/yi-nology/bianque/internal/engine'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/bianque/internal/engine'
         want: hit
       - text: 'github.com/oekit/pkg/errors'
         want: miss
@@ -1088,7 +1177,19 @@ rules:
     scope_exclude: [cmd]
     forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)(/|$)|github\.com/yi-nology/(bianque|ekit|agentkit)(/|$)'
     examples:
+      # 两个域名 × 三个仓各一条（issue #386 的分支覆盖判据）：只钉住其中一格时，
+      # 那一格的分支被改名/删掉门禁不会红。
+      - text: 'git.enjoye.top/enjoydream/bianque/flow'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/ekit/flow'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/agentkit/flow'
+        want: hit
+      - text: 'github.com/yi-nology/bianque/flow'
+        want: hit
       - text: 'github.com/yi-nology/ekit/flow'
+        want: hit
+      - text: 'github.com/yi-nology/agentkit/flow'
         want: hit
       - text: 'github.com/yi-nology/goagent-kernel/protocol'
         want: miss
@@ -1151,7 +1252,15 @@ rules:
     forbid_regex: '\b(logf|logFunc|logFn|logger)\s+func\(\s*(?:[A-Za-z_]\w*\s+)?string\b'
     examples:
       # 最常见的那种形态：首参**带参数名**的 format string。
+      # 四个回调名各一条（issue #386 的分支覆盖判据）：只钉住 logf 时，
+      # 另外三个回调名被改名门禁不会红。
       - text: 'func New(logf func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(logFunc func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(logFn func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(logger func(format string, args ...any)) *X {'
         want: hit
       - text: 'func New(log func(string) error) *X {'
         want: miss
@@ -1180,7 +1289,11 @@ rules:
     scope_exclude: [cmd]
     forbid_import_regex: '^errors$|^github\.com/pkg/errors$'
     examples:
+      # 两套各一条（issue #386 的分支覆盖判据）：只钉住 stdlib 时，
+      # 第二套 errors 的分支被删掉门禁不会红——而那正是本规则收紧的由来。
       - text: 'errors'
+        want: hit
+      - text: 'github.com/pkg/errors'
         want: hit
       # 同一套 errors 在 oekit 里是**允许**的那一套（路径不同即类型不同）。
       - text: 'github.com/oekit/pkg/errors'
@@ -1665,6 +1778,171 @@ thresholds:
   #   2) 接入 CI（本地 gate 会被习惯性绕过，CI 不会）——本门禁在 make check 里，
   #      而 make check 就是 CI 唯一执行物。
   # god object 判据（max_methods_per_type）当前零违规，随本条一并转为阻断。
+
+# ── 接缝契约（宿主接缝清单 + 契约标记）──
+#
+# 接缝 = 宿主实现、内核调用的接地面（宿主填的回调 / 内核调的方法）。
+# 本段是「这条接缝的契约写下来了没有」的声明面，执行体在 archcheck/seam.go
+# （go/ast 判定：这是一个接缝声明吗？它的文档注释里有那三个 token 吗？）。
+#
+# 三类接缝（口径与 archcheck/seam.go 一致）：
+#   - func-field：导出结构体的**导出函数型字段**（宿主填回调、内核调）
+#     ⇒ 接缝 id = <包路径>.<类型>.<字段>
+#   - func-param：**导出函数或方法**（含导出构造函数）的函数型入参
+#     ⇒ 接缝 id = <包路径>.<函数>；方法是 <包路径>.<类型>.<方法>
+#   - iface：**导出接口类型**（宿主实现、内核调；一条接缝覆盖其全部方法）
+#     ⇒ 接缝 id = <包路径>.<接口>
+#
+# 契约标记：接缝声明处的**文档注释**里必须有一行
+#
+#     // @seam: no-reentry no-blocking panic-isolated
+#
+#   - no-reentry：宿主回调内**不得回查本包**（不得重入）
+#   - no-blocking：宿主回调内**不得阻塞**（不做 I/O、不等锁）
+#   - panic-isolated：宿主回调 panic 由**内核隔离**，不外溢
+#
+# ⚠️ 根本局限（不要误读成「过了门禁就等于契约被兑现」）：
+#    标记是**承诺**，不是事实。声明了 no-reentry 而代码仍在锁内调宿主回调，
+#    本门禁照样绿——它保证的是「契约被写下」，不是「契约被兑现」。
+#    兑现面靠契约用例与运行期保证。
+#    「调用点是否在锁内」的纯 AST 扫描（形态 A）本轮**不做**：它的漏判形态
+#    （闭包作用域 / 多出口解锁 / helper 形态 / 接口接缝自实现 / 非 mutex 互斥）
+#    是已知的，做成阻断门禁只会制造假红。
+#
+# registry 里的 id 必须**由扫描器产出后逐条誊入**（archcheck.ScanSeams），
+# 不许手写臆测；清单与代码事实必须**逐条相等**（缺一即红：扫描到没登记 ⇒ 红，
+# 登记了扫描不到 ⇒ 红）。改本段前先跑扫描器重新誊一遍。
+seams:
+  enabled: true
+  severity: error
+  desc: 接缝声明必须写齐三条契约（不得重入 / 不得阻塞 / panic 隔离），且接缝清单必须与代码事实逐条相等
+  registry:
+
+    - id: "github.com/yi-nology/goagent-kernel/backend.Backend"
+    - id: "github.com/yi-nology/goagent-kernel/backend.Capable"
+    - id: "github.com/yi-nology/goagent-kernel/backend.EgressEnforcer"
+    - id: "github.com/yi-nology/goagent-kernel/budget.Archive"
+    - id: "github.com/yi-nology/goagent-kernel/budget.Summarizer"
+    - id: "github.com/yi-nology/goagent-kernel/checkpoint.FencedStoreCAS"
+    - id: "github.com/yi-nology/goagent-kernel/checkpoint.Store"
+    - id: "github.com/yi-nology/goagent-kernel/checkpoint.StoreCAS"
+    - id: "github.com/yi-nology/goagent-kernel/commitgate.NewGuard"
+    - id: "github.com/yi-nology/goagent-kernel/commitgate.NewGuardWithStore"
+    - id: "github.com/yi-nology/goagent-kernel/commitgate.Store"
+    - id: "github.com/yi-nology/goagent-kernel/contract.Clock"
+    - id: "github.com/yi-nology/goagent-kernel/contract.RunContext"
+    - id: "github.com/yi-nology/goagent-kernel/contract.StepSink"
+    - id: "github.com/yi-nology/goagent-kernel/contract.ToolBinder"
+    - id: "github.com/yi-nology/goagent-kernel/contract.Tools"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Adjudicator"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Auditor"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Authorizer"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.AuthorizerOf"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.EffectAuthority"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.EffectResolver"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.HostPlane"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.MemStore.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Plane"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Releaser"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.RunQuerier"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.SideEffectAuthority.ActionOf"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Store"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.TaskAuthority"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.TaskQuerier"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.TaskSource"
+    - id: "github.com/yi-nology/goagent-kernel/controlplane.Terminator"
+    - id: "github.com/yi-nology/goagent-kernel/coord.AtomicDecision"
+    - id: "github.com/yi-nology/goagent-kernel/coord.Backend"
+    - id: "github.com/yi-nology/goagent-kernel/coord.BoardAdapter.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/coord.ClockSource"
+    - id: "github.com/yi-nology/goagent-kernel/coord.LeaseBudget"
+    - id: "github.com/yi-nology/goagent-kernel/coord.SingleMachine"
+    - id: "github.com/yi-nology/goagent-kernel/coord.StoreAdapter.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/deadline.Store"
+    - id: "github.com/yi-nology/goagent-kernel/dispatch.Request.OnEvent"
+    - id: "github.com/yi-nology/goagent-kernel/drain.SessionTurns"
+    - id: "github.com/yi-nology/goagent-kernel/drain.Turns"
+    - id: "github.com/yi-nology/goagent-kernel/egress.EgressVerifier"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.CursorStore"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.Relay"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.Store"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.TailStore"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.WatermarkTailStore"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.WithOnDrop"
+    - id: "github.com/yi-nology/goagent-kernel/eventbus.WithTailOnGap"
+    - id: "github.com/yi-nology/goagent-kernel/examples/containerbackend.K8sCNICapability"
+    - id: "github.com/yi-nology/goagent-kernel/examples/pgstore.BoardStore.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/examples/pgstore.Downstream.WriteFenced"
+    - id: "github.com/yi-nology/goagent-kernel/examples/pgstore.EffectStore.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/examples/reference-runtime.boardStore.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/examples/reference-runtime.effectStore.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/examples/sqlitestore.Store.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/examples/sqlitestore.WithClock"
+    - id: "github.com/yi-nology/goagent-kernel/finalize.Store"
+    - id: "github.com/yi-nology/goagent-kernel/gatecheck.Managed.OpFunc"
+    - id: "github.com/yi-nology/goagent-kernel/guardset.Assembly.Subscribe"
+    - id: "github.com/yi-nology/goagent-kernel/guardset.Assembly.SwapFunc"
+    - id: "github.com/yi-nology/goagent-kernel/guardset.Guard.Check"
+    - id: "github.com/yi-nology/goagent-kernel/guardset.WithSwapRecorder"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.ClockedLedger"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.Ledger"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.MemoryLedger.UseClock"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.Store"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.WithClock"
+    - id: "github.com/yi-nology/goagent-kernel/handoff.WithLedgerClock"
+    - id: "github.com/yi-nology/goagent-kernel/hookengine.Runner"
+    - id: "github.com/yi-nology/goagent-kernel/internal/subhub.Add"
+    - id: "github.com/yi-nology/goagent-kernel/internal/subhub.Do"
+    - id: "github.com/yi-nology/goagent-kernel/internal/subhub.Invoke"
+    - id: "github.com/yi-nology/goagent-kernel/metrics.Recorder"
+    - id: "github.com/yi-nology/goagent-kernel/netguard.DialFunc"
+    - id: "github.com/yi-nology/goagent-kernel/netguard.DialOptions.Lookup"
+    - id: "github.com/yi-nology/goagent-kernel/netguard.Subscribe"
+    - id: "github.com/yi-nology/goagent-kernel/offload.Store"
+    - id: "github.com/yi-nology/goagent-kernel/ownership.Authority"
+    - id: "github.com/yi-nology/goagent-kernel/ownership.Fencer"
+    - id: "github.com/yi-nology/goagent-kernel/pii.Subscribe"
+    - id: "github.com/yi-nology/goagent-kernel/ptc.Binding.Call"
+    - id: "github.com/yi-nology/goagent-kernel/ptc.RunEnv.OnRun"
+    - id: "github.com/yi-nology/goagent-kernel/ptc.ToolTableEntry.Run"
+    - id: "github.com/yi-nology/goagent-kernel/reconcile.FinalizeStore"
+    - id: "github.com/yi-nology/goagent-kernel/reconcile.NewWithClock"
+    - id: "github.com/yi-nology/goagent-kernel/reconcile.Store"
+    - id: "github.com/yi-nology/goagent-kernel/scheduling.Order"
+    - id: "github.com/yi-nology/goagent-kernel/scheduling.QuotaStore"
+    - id: "github.com/yi-nology/goagent-kernel/scheduling.TaskLeaseOracle"
+    - id: "github.com/yi-nology/goagent-kernel/scheduling.TopK"
+    - id: "github.com/yi-nology/goagent-kernel/scheduling.WithQuotaClock"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.Effect.Apply"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.Effect.Prepare"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.FencedSink"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.OwnedResolveStore"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.Runner.Execute"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.Runner.Run"
+    - id: "github.com/yi-nology/goagent-kernel/sideeffect.Store"
+    - id: "github.com/yi-nology/goagent-kernel/sidetest.ClockedStore"
+    - id: "github.com/yi-nology/goagent-kernel/sidetest.SinkProbe"
+    - id: "github.com/yi-nology/goagent-kernel/steer.Store"
+    - id: "github.com/yi-nology/goagent-kernel/taskboard.BatchRenewingBoard"
+    - id: "github.com/yi-nology/goagent-kernel/taskboard.Board"
+    - id: "github.com/yi-nology/goagent-kernel/taskboard.ReadyBoard"
+    - id: "github.com/yi-nology/goagent-kernel/taskboard.RenewingBoard"
+    - id: "github.com/yi-nology/goagent-kernel/taskboard/boardtest.ClockedBoard"
+    - id: "github.com/yi-nology/goagent-kernel/tenant.QuotaSource"
+    - id: "github.com/yi-nology/goagent-kernel/ticket.Backend"
+    - id: "github.com/yi-nology/goagent-kernel/ticket.NewMemoryBackendWithClock"
+    - id: "github.com/yi-nology/goagent-kernel/ticket.NewWithClock"
+    - id: "github.com/yi-nology/goagent-kernel/trajectory.Options.Summarize"
+    - id: "github.com/yi-nology/goagent-kernel/worker.Config.OnLeaseLost"
+    - id: "github.com/yi-nology/goagent-kernel/worker.Config.Pick"
+    - id: "github.com/yi-nology/goagent-kernel/worker.EffectRunner"
+    - id: "github.com/yi-nology/goagent-kernel/worker.Handler"
+    - id: "github.com/yi-nology/goagent-kernel/worker.LeaseSession"
+    - id: "github.com/yi-nology/goagent-kernel/worker.LeasedProgress"
+    - id: "github.com/yi-nology/goagent-kernel/worker.ManagedWork.Snapshot"
+    - id: "github.com/yi-nology/goagent-kernel/worker.Progress"
+    - id: "github.com/yi-nology/goagent-kernel/worker.Registry"
+    - id: "github.com/yi-nology/goagent-kernel/worker.WithRegistryClock"
 
 exceptions: []
 # 当前无例外。
