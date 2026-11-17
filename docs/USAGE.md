@@ -1615,6 +1615,59 @@ hc := &http.Client{Timeout: 5 * time.Second, Transport: tr}
    `NewClient` 会**报错**而不是悄悄放行：拨号发生在传输层内部，挂不上就没有
    拨号层防线。
 
+#### 3.9.1.2 判定要可测：解析器接缝
+
+`netguard` 的判定要**解析域名**才知道答案是公网还是私网——这让「判定对不对」这件事
+被绑在「这台机器此刻能不能解析这个域名」上。真实后果：CI 干净 runner 绿、机器一忙
+就假红（解析器超时后报 `no such host`），而红点看起来像「判定放行了私网」，
+排查方向整个跑偏。
+
+本版（v0.43.0）给了判定面一条**解析器接缝**——同一套判定，解析来源可注入：
+
+```go
+import (
+	"context"
+	"net"
+
+	"github.com/yi-nology/goagent-kernel/netguard"
+)
+
+// 宿主自己的解析器（测试里则是一个表驱动的假解析器）
+type myResolver struct{ table map[string][]net.IP }
+
+func (r myResolver) LookupIP(ctx context.Context, network, host string) ([]net.IP, error) {
+	if ips, ok := r.table[host]; ok {
+		return ips, nil
+	}
+	return nil, &net.DNSError{Err: "no such host", Name: host, IsNotFound: true}
+}
+
+err := netguard.CheckURLWithResolver(ctx, "https://svc.internal/x", netguard.Allow{}, r)
+err = netguard.CheckChainWithResolver(ctx, start, hops, netguard.Allow{}, netguard.DefaultMaxHops, r)
+```
+
+三点取舍：
+
+- **additive，既有入口逐字不变**：`CheckURLWith` / `CheckChainWith` 的行为不变；
+  `r == nil` 等价 `net.DefaultResolver`（缺省路径仍是真实 DNS）。
+- **接缝只换解析来源，不换判定**：名字层、逐 IP、逐跳的次序与结论口径完全不变——
+  注入解析器不会让判定变松，也不会让判定变紧。
+- **链条面也有**：逐跳校验里**每一跳**都要解析一次，所以只给单跳接缝等于留半个洞；
+  `CheckChainWithResolver` 是本版补齐的（issue #412）。
+
+**什么时候该用**：① 你要给判定写**确定性**用例（不能靠真实 DNS）；② 你的宿主自己有
+解析策略（split-horizon DNS、内网解析器），要让判定**跟你的解析器走**而不是跟系统
+解析器走——这两种情况语义不同，安全含义也不同。
+
+**坑**
+
+- **把接缝当成「放宽判定」的后门**。它只换解析来源：注入一个返回公网地址的解析器，
+  判定就会放行。所以**注入的解析器只该出现在测试与宿主自有解析策略里**，
+  绝不能从外部输入构造。
+- **以为传 nil 就能不解析**。`r == nil` 等于「用系统解析器」；想让判定不依赖 DNS，
+  就必须真的注入一个解析器。
+- **只给单跳接缝、忘了链条面**。逐跳校验每一跳都要解析；只迁移单跳用例的话，
+  链条用例仍会在真实 DNS 上假红。
 #### 3.9.2 `pii`：个人信息脱敏
 
 在 `logredact`（凭据类值模式）之外补「个人信息价值面」——大陆手机号与 18 位居民身份证。
@@ -2421,8 +2474,71 @@ if err != nil {
 - **指望 `Local` 做转移**。单区域没有第二权威，转移请求显式
   `ErrSingleRegion`；需要跨区域时换共享权威实现，调用方接口不变。
 
----
+### 3.16 配额账本与悬挂预占回收：`scheduling`（issue #189 / #267）
 
+多副本部署时，进程内的配额账本会**超卖 N 倍**——每个副本各算一份「已占用」，
+真实并发上限 = 副本数 × limit，看起来配额生效了，实际没有。`QuotaStore` 把
+「占用 / 释放 / 回收」做成**存储中立原语**：扣减与归还在**存储侧的一次原子操作**里
+完成，多个副本共享同一份账。调度判据（什么时候该占、占多少）仍在调用方。
+
+**本版（v0.43.0）接口扩了三个方法**——`scheduling` 定级 Experimental、不承诺兼容，
+但**实现方编译期即红**，必须改：
+
+| 方法 | 语义 | 实现方要保证 |
+|---|---|---|
+| `ReserveLease(ctx, QuotaRequest) (QuotaLease, error)` | 带归属与有效期的预占（推荐入口）| 与 `Reserve` 同样原子：余额判定与扣减不可分割，余额不足时**一个额度都不占** |
+| `Reclaim(ctx, QuotaLease) error` | 凭令牌回收**悬挂**预占（Worker 被 SIGKILL 后没人再调 `Release`）| 凭 Token 查存储记录；预占未到期 ⇒ `ErrLeaseNotExpired`；关联任务租约仍有效 ⇒ `ErrLeaseStillHeld`；无判定面 ⇒ `ErrNoLeaseOracle`——三种都**不回收** |
+| `SweepExpired(ctx) (int, error)` | 扫描全部到期预占，逐条走 `Reclaim` 判据 | 返回**实际回收条数**（租约仍有效 / 未到期 / 已归还的不计）|
+
+`Reserve` / `Release` 的语义不变（`Reserve` 等价于不带归属、不带期限的
+`ReserveLease`；`Release` 仍然只认 Token、同一租约至多归还一次）。
+
+**回收为什么还要问任务租约**：到期只说明「可能失联」，**不等于**可以回收——关联
+任务的租约仍有效时，旧任务可能还在真跑，回收额度会让别的调度者超额占用同一份资源。
+判定面 `TaskLeaseOracle` 由宿主提供（通常包装 `taskboard` 的租约 / 续期状态）：
+返回 `alive=true` 表示任务仍被活着持有，此时**不得**回收配额。
+
+**回收与迟到的 Release 的竞争由 Token 保护**：回收即删除存储记录，迟到的旧 Release
+查不到记录 ⇒ `ErrOverRelease` 且**不扣账**（不二次归还、不出负余额）。
+
+```go
+import "github.com/yi-nology/goagent-kernel/scheduling"
+
+store, err := scheduling.NewMemQuotaStore(
+	map[string]int64{"model:opus": 4},
+	scheduling.WithQuotaClock(clock.Now),       // 到期判定读它，便于确定性测
+	scheduling.WithQuotaLeaseOracle(taskOracle), // 回收判据：那个任务的租约还活着吗
+)
+
+lease, err := store.ReserveLease(ctx, scheduling.QuotaRequest{
+	Resource: "model:opus",
+	Amount:   1,
+	TaskID:   taskID,           // 关联任务 ⇒ 回收前可问租约存活
+	TTL:      2 * time.Minute, // 不限期（TTL=0）⇒ 不得回收
+})
+
+err = store.Release(ctx, lease)   // 正常完成：凭 Token 立即归还
+n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
+```
+
+跨副本实现把各方法落到 Redis Lua / PostgreSQL 条件 UPDATE / etcd txn 上，**判据不变**。
+`MemQuotaStore` 是**进程内参考实现**（互斥锁原子），只在单副本内成立。
+
+#### 坑
+
+- **只实现 `Reserve` / `Release`**。本版接口扩了三个方法，不补齐**编译不过**。
+  若你的实现暂时补不齐，先把宿主代码钉在 v0.42.0，补齐再升。
+- **把「到期」当「可以回收」**。`Reclaim` 必须同时确认预占已到期**且**关联任务租约
+  已失效；只判到期会在旧任务还在跑时把额度还给别人 ⇒ 超卖。
+- **忘了注入 `TaskLeaseOracle`**。没有判定面时 `Reclaim` 显式 `ErrNoLeaseOracle`
+  （fail-closed）——这是故意的：判不出失联就不回收，宁可额度卡住也不超卖。
+- **把 `Until` 当任务租约 TTL**。配额预占的有效期只用于**失联判定**，不是任务租约；
+  任务租约仍归 `taskboard.Lease`。
+- **拿 `Resource` / `Amount` 当归还凭据**。归还只认 Token 查到的存储记录；租约里的
+  `Resource` / `Amount` 是**预占时的快照**，带错字段也只会归还那一笔原始预占。
+- **`MemQuotaStore` 上生产**。多副本部署下每个副本各记一份账 ⇒ 超卖 N 倍。
+
+---
 ## 4. 门禁与提交前检查
 
 ### 4.1 一条命令
@@ -2439,18 +2555,25 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 
 | 目标 | 拦什么 |
 |---|---|
+| `versioncheck` | 门禁工具版本口径：`ci.yml` 装的版本与 Makefile 声明的不一致——两处同步（Makefile 的 `LINT_VERSION` / `GOVULNCHECK_VERSION` 是唯一来源）|
+| `cijobname` | `ci.yml` 的 job 名超 90 字节——GitHub 会截断它 ⇒ 分支保护的 required context 永远匹配不上 ⇒ 每个 PR 卡在 BLOCKED 且看不出原因；改短 job 名，并同步分支保护的 required contexts（两者必须逐字相同）|
 | `fmt-check` | gofmt 未格式化（文件集由 git 决定，不递归扫 `.*-work/`） |
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`，当前无豁免；实测值以该目标输出为准）|
-| `vuln` | `govulncheck` 报出可达漏洞（未安装时明确报错退出，不静默跳过）|
+| `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|
 | `architecture-check` | 8 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
+| `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
+| `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
+| `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
+| `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
+| `hygiene` | 仓库**跟踪**了编译产物二进制（本地构建产物留在工作树里是正确状态，判的是「进了版本库」）——`git rm --cached <路径>` + 删掉工作树副本 + 把该路径补进 `.gitignore` |
 
 ```bash
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
@@ -2815,6 +2938,10 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 | 本地全绿但 CI 报 checksum mismatch | 见 §5 的 tag 重写 / 缓存回退两条 |
 | 想临时停掉某条守卫，只能重启进程 | 你在用 `guardset.Stage(set)` 绑死了某一份——改用 `guardset.Assembly`，撤销 = `Without` + `Swap`（换整份，链不用重接）|
 | 撤销某条守卫后，宿主以为降级生效了，实际没有 | `Set.Without` 对不存在的名字**会报错**（`ErrUnknownGuard`）；若你绕过了它去改 `Set`，那是两个真相 |
+| 配额预占泄漏，额度再也回不来，调度慢慢停摆 | 本版 `scheduling.QuotaStore` 扩了 `ReserveLease` / `Reclaim` / `SweepExpired` 三个方法——只实现旧的 `Reserve` / `Release` 编译不过；Worker 失联后没人 `Release` ⇒ 额度永久占用（见 §3.16）|
+| 用户取消被判成停机，会话永久滞留 running | 调了 `finalize.Route(ctx)` 却没传宿主自有取消哨兵——路由表已收口为 `deadline.Route` 唯一一份（#355），须改调 `finalize.Route(ctx, mySentinel)` |
+| 同一族的两个错误用 `==` 比出来不相等 | 跨包哨兵现在**同一实例**（`finalize` / `deadline` 的哨兵是 `contract` 的别名）——`errors.Is` 不受影响，但用 `==` 严格比较的调用点要复核 |
+| 出站判定的用例在本机假红、CI 却绿 | 判定依赖真实 DNS——用 `netguard.CheckURLWithResolver` / `CheckChainWithResolver` 注入解析器（见 §3.9.1.2）|
 
 ---
 
