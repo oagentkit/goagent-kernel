@@ -39,6 +39,17 @@ import (
 //
 // 生产实现必须是运行时同一个 taskboard.Board：强制释放与 Worker 的
 // Renew/Complete 在同一处判定令牌与代次。taskboard.Board 本身满足本接口。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：权威面在**不持内核锁**的位置调用 List / Release。
+// no-blocking：宿主实现内不得无界等待——强释路径带重试循环，阻塞会拖长
+// 那一次介入。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type TaskAuthority interface {
 	// List 权威任务快照（与运行时同一份）。
 	List(ctx context.Context) ([]taskboard.Task, error)
@@ -51,6 +62,16 @@ type TaskAuthority interface {
 //
 // 实现必须把结论落到**副作用闸读取的同一份状态**（sideeffect.Store.
 // ResolveUncertain）；控制面据此观察「同一份」而不是再写一个投影。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：裁决在**不持内核锁**的位置调用本接口。
+// no-blocking：宿主实现内不得无界等待——裁决路径同步等它返回。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type EffectAuthority interface {
 	// ResolveUncertain 裁决一个「结果未知」的副作用键。
 	//
@@ -64,6 +85,17 @@ type EffectAuthority interface {
 //
 // 同一份任务表/同一个任务板必须返回相同的非空来源标识。Store 与
 // TaskAuthority 都实现它时，NewAuthoritativeStorePlane 要求两者相等。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口只在**装配期**被调用（checkTaskSource），不持内核锁、
+// 不在热路径上。
+// no-blocking：宿主实现内不得无界等待——装配期同步调用，阻塞即拖住装配。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（装配期调用，
+// panic 会掀翻装配），宿主实现须自行保证不 panic。
 type TaskSource interface {
 	TaskSourceID() string
 }
@@ -77,6 +109,17 @@ var (
 )
 
 // EffectResolver sideeffect.Store 的裁决子集（structural：完整 Store 自动满足）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：裁决在**不持内核锁**的位置调用本接口（SideEffectAuthority
+// 的 ResolveUncertain 内）。
+// no-blocking：宿主实现内不得无界等待——裁决路径同步等它返回。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type EffectResolver interface {
 	ResolveUncertain(ctx context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error)
 }
@@ -86,7 +129,18 @@ type EffectResolver interface {
 // ActionOf 由宿主提供：把控制面的 EffectKey 映射成 sideeffect.Action
 // （Resource / Payload / RetrySafety 是宿主词表，内核不解释）。
 type SideEffectAuthority struct {
-	Store    EffectResolver
+	Store EffectResolver
+	// ActionOf 把控制面的 EffectKey 映射成 sideeffect.Action（宿主词表，
+	// 内核不解释）。
+	//
+	// # 接缝契约（issue #370 形态 B）
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	//
+	// no-reentry：映射函数内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+	// 内核侧兑现：它在 ResolveUncertain 里**不持内核锁**被调用。
+	// no-blocking：映射函数内不得无界等待——裁决路径同步等它返回。
+	// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic。
 	ActionOf func(key string) (sideeffect.Action, bool)
 }
 

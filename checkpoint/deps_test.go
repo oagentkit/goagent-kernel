@@ -10,6 +10,7 @@ package checkpoint
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -319,15 +320,36 @@ func TestDeclaredModeDeterministic(t *testing.T) {
 	}
 }
 
-// TestDeclaredModeSkipRunNoAlias 声明模式下结果切片同样不得与入参共享底层数组。
+// TestDeclaredModeSkipRunNoAlias 声明模式下结果切片同样不得与入参快照共享
+// 底层数组（issue #393）。
+//
+// 此前断言的源是编排图切片（[]StepDef：元素类型与结果切片不同，且从未
+// 传给 BuildPlan）——结构上不可能失败。
 func TestDeclaredModeSkipRunNoAlias(t *testing.T) {
-	steps := []StepDef{isolated("plug-a"), isolated("plug-b")}
-	s := snap("run", 1, contract.StatusRunning, "plug-b")
+	steps := []StepDef{isolated("plug-a"), depends("plug-b", "plug-a"), isolated("plug-c")}
+	// 完成集顺序与图顺序不同：别名一旦发生，写回的值就与原值不同。
+	s := snap("run", 1, contract.StatusRunning, "plug-c", "plug-a")
+	s.Done = append(make([]string, 0, 8), s.Done...)
 	p := BuildPlan(steps, &s)
+
+	if !reflect.DeepEqual(p.Skip, []string{"plug-a", "plug-c"}) {
+		t.Fatalf("跳过集不对：%v", p.Skip)
+	}
+	if !reflect.DeepEqual(p.Run, []string{"plug-b"}) {
+		t.Fatalf("续跑集不对：%v", p.Run)
+	}
+	// 快照侧：BuildPlan 返回后 Done 逐字不变。
+	if !reflect.DeepEqual(s.Done, []string{"plug-c", "plug-a"}) {
+		t.Fatalf("结果切片与快照的 Done 共享了底层数组：%v", s.Done)
+	}
+	// 互不串 + 底层数组不同。
+	runBefore := slices.Clone(p.Run)
 	p.Skip[0] = "mutated"
-	p.Run[0] = "mutated"
-	if steps[0].ID != "plug-a" || steps[1].ID != "plug-b" {
-		t.Fatalf("结果切片与编排图共享了底层数组: %+v", steps)
+	if !reflect.DeepEqual(p.Run, runBefore) {
+		t.Fatalf("Skip 与 Run 共享了底层数组：Run=%v", p.Run)
+	}
+	if &p.Skip[0] == &p.Run[0] {
+		t.Fatal("Skip 与 Run 共享同一个底层数组")
 	}
 }
 

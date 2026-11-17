@@ -93,27 +93,82 @@ func (r TerminationOf[RID]) Validate() error {
 }
 
 // TaskQuerier 任务视图查询的窄契约：宿主自有任务 ID 与快照 / 问题类型。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在实现 Plane / HostPlane 时调用，内核不直接调它 ⇒ 内核侧无锁可持；外层接缝见 Plane。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：内核不在此设超时；外层接缝见 Plane。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type TaskQuerier[ID comparable, T any, P any] interface {
 	TaskView(ctx context.Context, id ID) (TaskViewOf[T, P], error)
 }
 
 // RunQuerier 运行视图查询的窄契约。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在实现 Plane / HostPlane 时调用，内核不直接调它 ⇒ 内核侧无锁可持；外层接缝见 Plane。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：内核不在此设超时；外层接缝见 Plane。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type RunQuerier[RID comparable, T any, P any] interface {
 	RunView(ctx context.Context, id RID) (RunViewOf[RID, T, P], error)
 }
 
 // Releaser 强制释放的窄契约（目标 ID 用宿主的类型）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在实现 Plane / HostPlane 时调用，内核不直接调它 ⇒ 内核侧无锁可持；外层接缝见 Plane。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：内核不在此设超时；外层接缝见 Plane。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type Releaser[ID comparable] interface {
 	ForceRelease(ctx context.Context, req ForceReleaseOf[ID]) error
 }
 
 // Adjudicator 裁决未知结果的窄契约（效果键是 sideeffect 的字符串契约，
 // 与任务 / 租户类型无关，故可直接复用原生 [Adjudication]）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在实现 Plane / HostPlane 时调用，内核不直接调它 ⇒ 内核侧无锁可持；外层接缝见 Plane。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：内核不在此设超时；外层接缝见 Plane。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type Adjudicator interface {
 	Adjudicate(ctx context.Context, req Adjudication) error
 }
 
 // Terminator 终止运行的窄契约（运行 ID 用宿主的类型）。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在实现 Plane / HostPlane 时调用，内核不直接调它 ⇒ 内核侧无锁可持；外层接缝见 Plane。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：内核不在此设超时；外层接缝见 Plane。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type Terminator[RID comparable] interface {
 	Terminate(ctx context.Context, req TerminationOf[RID]) error
 }
@@ -126,6 +181,18 @@ type Terminator[RID comparable] interface {
 // 租户上下文不在签名里：机制间经 context.Context 传递（tenant.WithContext
 // 是内核的参考载体）。宿主自有租户类型在自己的实现里从 ctx 取用并判定；
 // 鉴权钩子的宿主类型版本见 [AuthorizerOf]。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：HTTP 适配面在**不持任何内核锁**的位置调用本接口（它与
+// Plane 并列，判定纪律相同）。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：调用点不持内核锁，阻塞只拖慢当前请求。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（panic 由
+// net/http 的连接级兜底接住），宿主实现须自行保证不 panic。
 type HostPlane[TID comparable, RID comparable, T any, P any] interface {
 	TaskQuerier[TID, T, P]
 	RunQuerier[RID, T, P]
@@ -139,6 +206,18 @@ type HostPlane[TID comparable, RID comparable, T any, P any] interface {
 //
 // 使用本包 [Handler] 的宿主实现 [Authorizer]（返回 tenant.Context）；
 // 租户体系不是 tenant 的宿主、或自建 HTTP 适配面的宿主实现本接口。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：本接口由宿主在自己的鉴权钩子里调用，内核不直接调它 ⇒
+// 内核侧无锁可持；外层接缝见 Authorizer。
+// no-blocking：宿主实现内不得无界等待——它在请求路径上同步被调用，内核
+// 不设超时；钩子阻塞即该请求挂住。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic，宿主实现须
+// 自行保证不 panic 或自行 recover 后返回 error。
 type AuthorizerOf[C any] interface {
 	Authorize(r *http.Request, act Action, target string) (C, error)
 }

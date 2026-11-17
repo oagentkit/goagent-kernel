@@ -46,24 +46,24 @@ func (t Ticket) Validate() error {
 // Validate 判回执是否自洽（与 delegate.Receipt.Validate 同一条纪律）。
 //
 //   - 状态在词表内；
-//   - done 必须有 Summary，且**不得**带 Failure（带了说明双方对「完成」
-//     的理解不一致，而源方会按「完成」处理）；
+//   - completed 必须有 Summary，且**不得**带 Failure（带了说明双方对
+//     「完成」的理解不一致，而源方会按「完成」处理）；
 //   - failed / refused 必须有 Failure（没有原因就无法决定重交接还是改方案）。
 func (r Receipt) Validate() error {
 	switch r.Status {
 	case ReceiptDone:
 		if strings.TrimSpace(r.Summary) == "" {
-			return errors.New("handoff: done 的回执没有结论——「完成了」但说不出做了什么，无法使用")
+			return errors.New("handoff: completed 的回执没有结论——「完成了」但说不出做了什么，无法使用")
 		}
 		if strings.TrimSpace(r.Failure) != "" {
-			return errors.New("handoff: done 的回执带了 Failure（双方对「完成」的理解不一致）")
+			return errors.New("handoff: completed 的回执带了 Failure（双方对「完成」的理解不一致）")
 		}
 	case ReceiptFailed, ReceiptRefused:
 		if strings.TrimSpace(r.Failure) == "" {
 			return errors.New("handoff: " + string(r.Status) + " 的回执没有原因——没有原因就无从决定重交接还是改方案")
 		}
 	default:
-		return errors.New("handoff: 回执状态 " + string(r.Status) + " 不在词表内（done / failed / refused）")
+		return errors.New("handoff: 回执状态 " + string(r.Status) + " 不在词表内（completed / failed / refused）")
 	}
 	return nil
 }
@@ -128,7 +128,7 @@ func Check(tickets []Ticket, now time.Time) []Problem {
 	}
 
 	for _, t := range byKey {
-		if !t.State.valid() {
+		if !t.State.Valid() {
 			out = append(out, Problem{Key: t.Key, Code: CodeUnknownState,
 				Text: "状态不在词表内（offered / accepted / closed / expired / withdrawn）"})
 			continue

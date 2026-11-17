@@ -11,9 +11,7 @@
 package handoff
 
 import (
-	"cmp"
 	"context"
-	"slices"
 	"time"
 
 	"github.com/oekit/pkg/errors"
@@ -41,6 +39,18 @@ type DeskOption func(*Desk)
 //
 // 注意：跨进程部署时**不要**用进程本地时钟代替存储时钟——截止时刻是
 // 存储侧的事实。注入只用于确定性测试；生产路径应实现 ClockedLedger。
+//
+// 接缝契约（宿主注入的时钟回调；内核在过期判定里调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。Desk.nowAt 直接调用该回调，调用点**不持任何
+// 内核锁**（Desk 无共享可变状态）——回调里重入本包不会自锁；但不得等待
+// 正在进行的交接判定完成。
+// no-blocking：**宿主侧兑现**。回调在过期判定路径上被**高频**同步调用
+// （每次重判都重取时刻），必须廉价有界：不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本回调的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 func WithClock(clock func() time.Time) DeskOption {
 	return func(d *Desk) {
 		if clock != nil {
@@ -203,6 +213,13 @@ func (d *Desk) take(ctx context.Context, key Key, to Agent, expected Epoch) (Han
 			}
 			return Handle{}, errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
 		}
+		// 读不懂就不铸令牌、不改写状态（issue #359）：内核不得在自己读不懂
+		// 的记录上发放执行权。词表外状态若被当成「非终态」放行，接下来的
+		// 状态改写会把原始的词表外状态抹掉——事后无法区分「这单本来就是
+		// 词表外状态」与「正常领取」。
+		if err := requireKnownState(rec, key, "领取"); err != nil {
+			return Handle{}, err
+		}
 		if expected != 0 && rec.Epoch != expected {
 			return Handle{}, errors.Wrap(ErrStaleEpoch, "领取者出示的代次不是当前代",
 				"key", string(key), "epoch", expected, "current", rec.Epoch)
@@ -241,134 +258,3 @@ func (d *Desk) take(ctx context.Context, key Key, to Agent, expected Epoch) (Han
 	}
 	return Handle{}, errors.Wrap(ErrConflict, "handoff: 领取交接单的并发重试已耗尽", "key", string(key))
 }
-
-// Reply 交回执（凭领取令牌；迟到与令牌不匹配都拒收；语义见 Store.Reply）。
-func (d *Desk) Reply(ctx context.Context, key Key, token string, r Receipt) error {
-	if d.ledger == nil {
-		return errors.New("handoff: 未装配持久化存储，无法交回执")
-	}
-	if err := r.Validate(); err != nil {
-		return errors.New("handoff: " + err.Error())
-	}
-	for range casRetries {
-		now, err := d.nowAt(ctx)
-		if err != nil {
-			return err
-		}
-		rec, err := d.ledger.Load(ctx, key)
-		if err != nil {
-			if errors.Is(err, ErrUnknownKey) {
-				return ErrUnknownKey
-			}
-			return errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
-		}
-		if rec.Ticket.State.Terminal() {
-			return ErrAlreadySettled
-		}
-		if rec.Ticket.State != StateAccepted || rec.Token != token {
-			return ErrLeaseLost
-		}
-		if now.After(rec.Ticket.Deadline) {
-			expired := rec
-			expired.Ticket.State = StateExpired // 责任期已过：回执迟到，单落 expired
-			if _, serr := d.ledger.Save(ctx, expired); errors.Is(serr, ErrConflict) {
-				continue
-			} else if serr != nil {
-				return serr
-			}
-			return ErrExpired
-		}
-		next := rec
-		next.Ticket.State = StateClosed
-		next.Ticket.ReceiptAt = now
-		delivery := AddressedReceipt{
-			Key:        key,
-			Generation: uint64(rec.Epoch),
-			Address:    rec.Ticket.ReplyTo,
-			From:       rec.Ticket.From,
-			To:         rec.Ticket.Holder,
-			Receipt:    r,
-			ClosedAt:   now,
-		}
-		next.Receipt = &delivery
-		if _, serr := d.ledger.Save(ctx, next); errors.Is(serr, ErrConflict) {
-			continue
-		} else if serr != nil {
-			return serr
-		}
-		return nil
-	}
-	return errors.Wrap(ErrConflict, "handoff: 交回执的并发重试已耗尽", "key", string(key))
-}
-
-// Cancel 源方收回（仅 StateOffered；语义见 Store.Cancel）。
-func (d *Desk) Cancel(ctx context.Context, key Key, by Agent) error {
-	if d.ledger == nil {
-		return errors.New("handoff: 未装配持久化存储，无法收回交接单")
-	}
-	for range casRetries {
-		rec, err := d.ledger.Load(ctx, key)
-		if err != nil {
-			if errors.Is(err, ErrUnknownKey) {
-				return ErrUnknownKey
-			}
-			return errors.Wrap(err, "handoff: 读取交接单失败", "key", string(key))
-		}
-		if rec.Ticket.State.Terminal() {
-			return ErrAlreadySettled
-		}
-		if rec.Ticket.State == StateAccepted {
-			return ErrTaken
-		}
-		if by != rec.Ticket.From {
-			return ErrNotSource
-		}
-		next := rec
-		next.Ticket.State = StateWithdrawn
-		next.Ticket.Holder = ""
-		if _, serr := d.ledger.Save(ctx, next); errors.Is(serr, ErrConflict) {
-			continue
-		} else if serr != nil {
-			return serr
-		}
-		return nil
-	}
-	return errors.Wrap(ErrConflict, "handoff: 收回交接单的并发重试已耗尽", "key", string(key))
-}
-
-// Snapshot 当前代的全部交接单（按 Key 升序，确定性；语义见 Store.Snapshot）。
-func (d *Desk) Snapshot(ctx context.Context) ([]Ticket, error) {
-	if d.ledger == nil {
-		return nil, errors.New("handoff: 未装配持久化存储，无法读取快照")
-	}
-	recs, err := d.ledger.List(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "handoff: 读取交接单快照失败")
-	}
-	out := make([]Ticket, 0, len(recs))
-	for _, rec := range recs {
-		t := rec.Ticket
-		t.Payload = append([]byte(nil), rec.Ticket.Payload...)
-		out = append(out, t)
-	}
-	slices.SortFunc(out, func(a, b Ticket) int { return cmp.Compare(a.Key, b.Key) })
-	return out, nil
-}
-
-// Deliveries 取回发往 addr 的回执（回执寻址的取件半边）。
-//
-// addr 是挂出时写的 Ticket.ReplyTo 原样值；不解析、不做前缀匹配。回执在
-// 交接单被 Delete 后仍然留存（源方崩溃重启后仍能取回）。
-func (d *Desk) Deliveries(ctx context.Context, addr string) ([]AddressedReceipt, error) {
-	if d.ledger == nil {
-		return nil, errors.New("handoff: 未装配持久化存储，无法取回执")
-	}
-	out, err := d.ledger.Receipts(ctx, addr)
-	if err != nil {
-		return nil, errors.Wrap(err, "handoff: 取回执失败", "address", addr)
-	}
-	return out, nil
-}
-
-// 编译期断言：Desk 实现语义 Store。
-var _ Store = (*Desk)(nil)

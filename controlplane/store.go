@@ -120,6 +120,18 @@ type EffectSnapshot struct {
 //
 // 参考实现 MemStore 见 memstore.go；跨进程实现把三个 Commit 落到数据库
 // 事务（状态行 + 审计行同一事务）或 etcd/Redis 的条件事务上即可。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：StorePlane 在**不持内核锁**的位置调用本接口六个方法。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：调用点不持内核锁，阻塞只拖慢当前介入；乐观并发路径带重试
+// 循环，阻塞会拖长那一次介入。
+// panic-isolated：**宿主侧兑现**——内核不隔离本接口的 panic（StorePlane
+// 无 recover），宿主实现须自行保证不 panic 或自行 recover 后返回 error。
 type Store interface {
 	// SnapshotTask 读任务及其所属 run 的全部任务（一致快照）。
 	SnapshotTask(ctx context.Context, id taskboard.TaskID) (TaskSnapshot, error)

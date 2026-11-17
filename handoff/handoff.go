@@ -52,8 +52,9 @@
 //   - 原子性判结果不判过程：@@ConcurrentTake@@ 跑一遍，赢家必须恰好 1 个
 //     （taskboard.ConcurrentClaim 的同源判据）；
 //   - 令牌由存储铸造、动作凭令牌不凭内容（taskboard 的 v0.33.0 教训）；
-//   - 回执状态三值 done / failed / refused，completed 类结论必填、不得带
-//     失败原因（delegate.Receipt 的同源纪律）；
+//   - 回执状态三值 completed / failed / refused，completed 类结论必填、
+//     不得带失败原因（delegate.Receipt 的同源纪律；取值也同源——见
+//     ReceiptDone 的注释）；
 //   - 重新交接 = 新一代（generation 单调，sideeffect.Fence 的同源口径）。
 package handoff
 
@@ -62,6 +63,8 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/delegate"
 )
 
 // Key 交接单的幂等键（宿主按业务给；同一键的重复挂出是重放不是新单）。
@@ -94,8 +97,18 @@ func (s State) Terminal() bool {
 	return s == StateClosed || s == StateExpired || s == StateWithdrawn
 }
 
-// valid 报告状态是否在词表内。
-func (s State) valid() bool {
+// Valid 报告状态是否在词表内。
+//
+// # 为什么必须导出（issue #359）
+//
+// 此前它是私有的，写路径拿不到一个可用的判据，只能靠 Terminal() 反推——
+// 而 Terminal() 对词表外状态返回 false（「读不懂」不是「终态」），于是
+// 词表外的交接单被当成「待领取」照常领走：内核在自己读不懂的记录上铸造了
+// 领取令牌，还把状态改写成 accepted（原始状态被抹掉，事后无从区分）。
+//
+// 体检面（Check）早已能认出词表外状态并报 CodeUnknownState，写路径必须与它
+// **同向**：读不懂 ⇒ 拒绝写。
+func (s State) Valid() bool {
 	switch s {
 	case StateOffered, StateAccepted, StateClosed, StateExpired, StateWithdrawn:
 		return true
@@ -150,15 +163,23 @@ type Handle struct {
 }
 
 // ReceiptStatus 回执状态（三值——与 delegate.Status 同一条纪律）。
+//
+// 类型**保留**在本包（不改类型身份），但**取值与 delegate 同源**：
+// 回执的「完成 / 尝试过的失败 / 没尝试的拒绝」是同一个语义槽位，此前两包
+// 各写一份且完成态字面量不同（completed vs done），宿主把两边的状态写进
+// 同一张表就会得到两列值域不同却语义相同的数据（issue #358）。
 type ReceiptStatus string
 
 const (
 	// ReceiptDone 交接的工作已完成。
-	ReceiptDone ReceiptStatus = "done"
+	//
+	// 取值 = delegate.StatusCompleted（同一个语义槽位，同一个字面量）：
+	// 跨包引用而不是抄第二份字面量，两边新增/改名时不会各走各的。
+	ReceiptDone ReceiptStatus = ReceiptStatus(delegate.StatusCompleted)
 	// ReceiptFailed 交接的工作失败（接收方做过尝试）。
-	ReceiptFailed ReceiptStatus = "failed"
+	ReceiptFailed ReceiptStatus = ReceiptStatus(delegate.StatusFailed)
 	// ReceiptRefused 拒绝接收（接收方没有尝试）。
-	ReceiptRefused ReceiptStatus = "refused"
+	ReceiptRefused ReceiptStatus = ReceiptStatus(delegate.StatusRefused)
 )
 
 // Receipt 一次交接的回执。
@@ -187,6 +208,21 @@ type Receipt struct {
 //   - @@Reply@@ / @@Cancel@@ **只认身份凭据**（令牌 / 源方身份），不匹配时报
 //     哨兵，不静默成功；
 //   - @@Snapshot@@ 返回**一致快照**（不是边改边读的流）。
+//
+// 接缝契约（宿主实现本接口；调用方在交接流程里**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包是**存储中立契约面**（Desk 与 LocalDesk
+// 实现它，供宿主编排侧调用），调用点不持内核锁：宿主实现不得在方法内回调
+// 本包的其它接缝（不得回调 Offer / Take / Reply / Cancel / Snapshot）——
+// 调用方正同步等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。这些方法落在交接单的持久化路径上，被交接
+// 流程**同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须承接
+// ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时等待
+// 别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 type Store interface {
 	// Offer 挂出交接单。
 	//
@@ -197,18 +233,23 @@ type Store interface {
 	// Take 领取交接单：负责人在这一次原子操作里从 From 变为 to。
 	//
 	// 非指定接收方（ErrNotAddressee）/ 已超时（ErrExpired）/ 已被领取或
-	// 终态（ErrTaken / ErrAlreadySettled）必须报错。令牌与代次由存储
-	// 同一次原子操作铸造。
+	// 终态（ErrTaken / ErrAlreadySettled）/ **状态不在词表内
+	// （ErrUnknownState）**必须报错。令牌与代次由存储同一次原子操作铸造。
+	//
+	// 词表外状态必须在**铸令牌之前**被拒：被拒的领取不得留下任何占用痕迹
+	// （issue #359）。
 	Take(ctx context.Context, key Key, to Agent) (Handle, error)
 	// Reply 交回执（凭领取令牌）。
 	//
 	// 令牌不匹配 → ErrLeaseLost；已超时 → ErrExpired（迟到回执被拒，
-	// 责任期已过）；回执不自洽 → 报错且状态不动。成功 ⇒ 单落 StateClosed。
+	// 责任期已过）；回执不自洽 → 报错且状态不动；**交接单状态不在词表内
+	// → ErrUnknownState**（读不懂的记录不写）。成功 ⇒ 单落 StateClosed。
 	Reply(ctx context.Context, key Key, token string, r Receipt) error
 	// Cancel 源方收回（仅 StateOffered）。
 	//
 	// 非 From（ErrNotSource）/ 已被领取（ErrTaken）/ 已终态
-	// （ErrAlreadySettled）必须报错。成功 ⇒ 单落 StateWithdrawn。
+	// （ErrAlreadySettled）/ **状态不在词表内（ErrUnknownState）**必须报错。
+	// 成功 ⇒ 单落 StateWithdrawn。
 	Cancel(ctx context.Context, key Key, by Agent) error
 	// Snapshot 当前代的全部交接单（一致快照）。
 	Snapshot(ctx context.Context) ([]Ticket, error)
@@ -230,4 +271,13 @@ var (
 	ErrLeaseLost = errors.New("handoff: 领取令牌不匹配")
 	// ErrAlreadySettled 交接单已是终态。
 	ErrAlreadySettled = errors.New("handoff: 交接单已是终态")
+	// ErrUnknownState 交接单状态不在词表内（读不懂 ⇒ 写路径拒绝，不领取）。
+	//
+	// 与 taskboard.ErrUnknownState **同名同义**，但各自包各造一个：跨包共用
+	// 一个 error 值会让「哪一层的判据」变得不可追溯（errors.Is 认得出，
+	// 但排查时看不出是任务板还是交接单在说话）。
+	//
+	// 它与体检面的 CodeUnknownState 指向**同一个事实、同一个方向**：
+	// 内核读不懂这个状态 ⇒ 写路径不得在它上面发放执行权或改写状态。
+	ErrUnknownState = errors.New("handoff: 交接单状态不在词表内")
 )

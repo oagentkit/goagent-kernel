@@ -77,6 +77,18 @@ type RunID string
 // 放行」就是控制面自己开的口子。确需匿名只读（健康检查式读取）的宿主在
 // 实现里**显式**放开（参考实现经 AllowAnonymousRead）并在装配期记录，
 // 不许缺省放行。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：HTTP 适配面在**不持任何内核锁**的位置调用本接口五个方法。
+// no-blocking：宿主实现内不得无界等待（不得等锁 / 等其它回调）。
+// 内核侧兑现：调用点不持内核锁，阻塞只拖慢当前请求；权威介入路径带重试
+// 循环，阻塞会拖长那一次介入。
+// panic-isolated：**宿主侧兑现**——内核此处不设 recover，宿主实现的 panic
+// 由 net/http 的连接级兜底接住（连接断开、进程存活），不变成 4xx/5xx。
 type Plane interface {
 	// ── 查询 ──
 

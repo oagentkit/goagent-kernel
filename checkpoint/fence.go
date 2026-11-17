@@ -63,6 +63,21 @@ var ErrFenceUnsupported = errors.New("checkpoint: 存储不支持栅栏判据（
 //
 // 典型实现形态：进度记录多存一列 fence，一条带双条件的 UPDATE
 // （WHERE seq < :seq AND fence <= :fence）。
+//
+// 接缝契约（宿主实现本接口；内核的 Committer 在提交路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。Committer 的存储往返在 SeqGate 的锁**之外**
+// （闸只保护「取哪个序号」，调用发生在闸外）——回查不会自锁：宿主实现不得
+// 在方法内回调本包的其它接缝（不得回调 Committer / SeqGate）——内核正同步
+// 等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。SaveIfNewerFenced 可能要走网络，「不阻塞」在
+// 此处的准确含义是「**有界**」——必须承接 ctx 的取消/超时并在期限内返回，
+// 不得无限等待、不得在持存储内部锁时等待别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Committer 直接调存储），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error；否则 panic 会掀翻提交方。
 type FencedStoreCAS interface {
 	// SaveIfNewerFenced 在 SaveIfNewer 的全部契约之上增加代次判定：
 	//

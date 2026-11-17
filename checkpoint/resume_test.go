@@ -4,6 +4,7 @@ package checkpoint
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/yi-nology/goagent-kernel/contract"
@@ -181,14 +182,42 @@ func TestPlanDeterministic(t *testing.T) {
 	}
 }
 
-// TestSkipRunNoAlias 结果切片不得与入参共享底层数组（调用方改了会串）。
+// TestSkipRunNoAlias 结果切片不得与**入参快照**共享底层数组（issue #393）。
+//
+// 此前这条用例断言的源是编排图的 id 列表——那个切片从未传给 BuildPlan
+// （graph(ids...) 逐个转成新的 StepDef 值），结构上**不可能**失败：真出现
+// 别名缺陷时它照样绿（区分力为零），且失败文案把排查方向指向了错误的源。
+//
+// 真正的别名面有两个，本用例逐条钉住：
+//
+//  1. 结果切片与快照的 Done（[]string ↔ []string，且真被传入）；
+//  2. Skip 与 Run 互相共享底层数组。
 func TestSkipRunNoAlias(t *testing.T) {
-	ids := []string{"step-alpha", "step-beta", "step-gamma"}
-	s := snap("run", 1, contract.StatusRunning, "step-alpha")
-	p := BuildPlan(graph(ids...), &s)
+	// 完成集顺序与图顺序不同：别名一旦发生，写回的值就与原值不同，
+	// 内容比对能看见（否则「写回同一个值」什么也证明不了）。
+	s := snap("run", 1, contract.StatusRunning, "step-alpha", "step-beta")
+	s.Done = append(make([]string, 0, 8), s.Done...)
+	p := BuildPlan(graph("step-beta", "step-alpha", "step-gamma"), &s)
+
+	if !reflect.DeepEqual(p.Skip, []string{"step-beta", "step-alpha"}) {
+		t.Fatalf("跳过集不对：%v", p.Skip)
+	}
+	if !reflect.DeepEqual(p.Run, []string{"step-gamma"}) {
+		t.Fatalf("续跑集不对：%v", p.Run)
+	}
+	// 快照侧：BuildPlan 返回后 Done 逐字不变。
+	if !reflect.DeepEqual(s.Done, []string{"step-alpha", "step-beta"}) {
+		t.Fatalf("结果切片与快照的 Done 共享了底层数组：%v", s.Done)
+	}
+	// 互不串：改 Skip 不得改 Run。
+	runBefore := slices.Clone(p.Run)
 	p.Skip[0] = "mutated"
-	if ids[0] != "step-alpha" {
-		t.Fatalf("Skip 与编排图共享了底层数组: %v", ids)
+	if !reflect.DeepEqual(p.Run, runBefore) {
+		t.Fatalf("Skip 与 Run 共享了底层数组：Run=%v", p.Run)
+	}
+	// Skip 与 Run 的底层数组不同。
+	if &p.Skip[0] == &p.Run[0] {
+		t.Fatal("Skip 与 Run 共享同一个底层数组")
 	}
 }
 

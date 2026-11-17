@@ -16,10 +16,23 @@ import (
 )
 
 // Action 介入/查询动作种类（留痕的 Action 字段；httpapi 鉴权钩子的判定对象）。
+//
+// # 两套口径（issue #372）
+//
+//   - **查询动作**：ActionQuery —— 不改变任何状态，**不经留痕**；
+//   - **介入动作**：会改变状态的动作（强制释放 / 裁决 / 终止），词表见
+//     AllInterventionActions()。
+//
+// 留痕面只接受**介入动作**词表内的值：词表外的动作名一律拒收
+// （ErrInvalidAudit）——留痕是审计的唯一凭据，「谁做了什么」那一列出现
+// 内核不认的值时，没有任何判据会红；而 ActionQuery 被留痕面拒收不是
+// 意外，是「查询不进留痕账」这条口径的必然结果（契约文本与实现此前
+// 说的不是一回事，本注释把它说清）。
 type Action string
 
 const (
-	// ActionQuery 查询（运行状态视图 / 不变量视图）。
+	// ActionQuery 查询（运行状态视图 / 不变量视图）。**查询动作不经留痕**：
+	// 它不改变任何状态，留痕面只接受 AllInterventionActions() 内的值。
 	ActionQuery Action = "query"
 	// ActionForceRelease 强制释放。
 	ActionForceRelease Action = "force_release"
@@ -36,7 +49,11 @@ type AuditEntry struct {
 	At time.Time
 	// Operator 谁在介入（必填）。
 	Operator string
-	// Action 动作种类（必填，词表见 Action* 常量）。
+	// Action 动作种类（必填）。
+	//
+	// 两套口径：**查询动作（ActionQuery）不经留痕**；留痕面只接受
+	// AllInterventionActions() 内的值——词表外的动作名同样被拒
+	// （ErrInvalidAudit）。
 	Action Action
 	// Target 目标（任务 id / 效果键 / run id，必填）。
 	Target string
@@ -77,7 +94,10 @@ func appendAudit(ctx context.Context, aud Auditor, e AuditEntry) (err error) {
 //     可改写的留痕不是留痕）；
 //   - 收到零值 At 时补实现侧当前时刻；
 //   - 对缺 Operator / Action / Target / Basis 的条目拒绝（ErrInvalidAudit），
-//     不静默补空。
+//     不静默补空；
+//   - **词表外的动作同样拒绝**（ErrInvalidAudit）：留痕面只接受
+//     AllInterventionActions() 内的值（查询动作 ActionQuery 不经留痕，
+//     同样被拒）。
 //
 // # 调用面（issue #327）
 //
@@ -91,6 +111,18 @@ func appendAudit(ctx context.Context, aud Auditor, e AuditEntry) (err error) {
 // 实现 panic 由内核隔离为上抛的 ErrAuditorPanic，状态一字不动。
 //
 // 持久化形态归宿主（表 / 文件 / 只读副本皆可）；MemAuditor 是进程内参考实现。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回调本包的**写面**（不得回调 Commit*）——成功
+// 路径在 commitMu 内调本接口，重入即同 goroutine 死锁；回查 Snapshot* 是
+// 安全的（查询面不经 commitMu）。
+// no-blocking：宿主实现内不得无界等待——appendAudit 在 commitMu 内被调用
+// （写者串行），阻塞会让全部提交者排队。
+// panic-isolated：**内核侧兑现**——appendAudit 用 recover 隔离为上抛的
+// ErrAuditorPanic，状态一字不动（issue #327）。
 type Auditor interface {
 	// Append 追加一条介入留痕。
 	Append(ctx context.Context, e AuditEntry) error
@@ -106,7 +138,7 @@ type MemAuditor struct {
 
 // Append 追加留痕（先判完整性与动作词表，再补时刻，再落账）。
 func (a *MemAuditor) Append(_ context.Context, e AuditEntry) error {
-	if e.Operator == "" || e.Target == "" || e.Basis == "" || !knownAction(e.Action) {
+	if e.Operator == "" || e.Target == "" || e.Basis == "" || !IsKnownInterventionAction(e.Action) {
 		return ErrInvalidAudit
 	}
 	if e.At.IsZero() {
@@ -132,8 +164,30 @@ func (a *MemAuditor) Entries(_ context.Context, target string) ([]AuditEntry, er
 	return out, nil
 }
 
-// actions 介入动作的词表（MemAuditor 校验用；查询动作不经留痕）。
-var actions = []Action{ActionForceRelease, ActionAdjudicate, ActionTerminate}
+// interventionActions 介入动作的词表（**单一事实源**：判定与枚举都读它）。
+//
+// 与 Action* 常量集只差一条：ActionQuery 是**查询**动作，不改变状态，
+// 不进留痕账（issue #372）。此前这份词表是私有的、且与契约文本指向的
+// 「Action* 常量」不是同一份——照契约实现的宿主会多收一类、少拒一类。
+var interventionActions = []Action{ActionForceRelease, ActionAdjudicate, ActionTerminate}
 
-// knownAction 报告动作是否在介入词表内。
-func knownAction(a Action) bool { return slices.Contains(actions, a) }
+// AllInterventionActions 返回**介入动作**词表的全集（排序后的**新切片**）。
+//
+// 宿主据此校验自己写的留痕面，不必手抄常量清单——手抄的清单必然漂移：
+// 内核新增一个介入动作，宿主那份不会跟着变，且没有任何判据会红。
+// 返回的是**副本**：调用方改写它不影响判定面。
+func AllInterventionActions() []Action {
+	out := make([]Action, len(interventionActions))
+	copy(out, interventionActions)
+	slices.Sort(out)
+	return out
+}
+
+// IsKnownInterventionAction 报告动作是否在介入动作词表内。
+//
+// 留痕面（MemAuditor.Append）与宿主的留痕实现都走这一个判据：词表外的
+// 动作名进得了留痕账，「谁做了什么」那一列就出现了内核不认的值，而
+// 没有任何判据会红。
+func IsKnownInterventionAction(a Action) bool {
+	return slices.Contains(interventionActions, a)
+}

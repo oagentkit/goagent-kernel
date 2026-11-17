@@ -159,10 +159,36 @@ const (
 	StatusRefused Status = "refused"
 )
 
-// valid 报告状态是否在词表内。
-func (s Status) valid() bool {
-	return s == StatusCompleted || s == StatusFailed || s == StatusRefused
+// statusAll 回执状态词表（**单一事实源**：判定与枚举都读它）。
+var statusAll = map[Status]bool{
+	StatusCompleted: true,
+	StatusFailed:    true,
+	StatusRefused:   true,
 }
+
+// AllStatuses 返回回执状态词表的全集（排序后的**新切片**）。
+//
+// 宿主据此校验落库值 / 渲染状态选择器，不必手抄常量清单——手抄的清单必然
+// 漂移：内核新增一个取值，宿主那份不会跟着变，且没有任何判据会红。
+// 返回的是**副本**：调用方改写它不影响判定面。
+func AllStatuses() []Status {
+	out := make([]Status, 0, len(statusAll))
+	for s := range statusAll {
+		out = append(out, s)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Valid 报告状态是否在词表内。
+//
+// # 为什么必须导出（issue #358）
+//
+// 此前它是私有的：宿主连「合法值有哪些」都问不到，只能自己抄一份清单，
+// 而那份清单必然与内核漂移（更要命的是完成态的字面量在两处不同：
+// delegate 用 "completed"、handoff 用 "done"——同一个语义槽位两个取值）。
+// 宿主判断合法性必须走内核的判据，不许手抄。
+func (s Status) Valid() bool { return statusAll[s] }
 
 // Receipt 一次委托的回执。
 type Receipt struct {
@@ -185,7 +211,7 @@ type Receipt struct {
 //     「完成」的理解不一致，而委托方会按「完成」处理）；
 //   - failed / refused 必须有 Failure（没有原因就无法决定重试还是改需求）。
 func (r Receipt) Validate() error {
-	if !r.Status.valid() {
+	if !r.Status.Valid() {
 		return fmt.Errorf("delegate: 回执状态 %q 不在词表内（completed / failed / refused）", r.Status)
 	}
 	switch r.Status {

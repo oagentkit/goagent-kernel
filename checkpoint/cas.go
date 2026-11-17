@@ -43,6 +43,21 @@ import (
 // 相对 Store 的唯一增量是 SaveIfNewer；Load 语义相同。宿主实现本接口即自动
 // 获得跨进程的单调保证，SeqGate 退化为进程内的快速过滤（省掉绝大多数注定
 // 失败的数据库往返），不再是唯一的防线。
+//
+// 接缝契约（宿主实现本接口；内核的 Committer 在提交路径上**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。Committer 的存储往返在 SeqGate 的锁**之外**
+// （闸只保护「取哪个序号」，调用发生在闸外）——回查不会自锁：宿主实现不得
+// 在方法内回调本包的其它接缝（不得回调 Committer / SeqGate）——内核正同步
+// 等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。SaveIfNewer 可能要走网络，「不阻塞」在此处的
+// 准确含义是「**有界**」——必须承接 ctx 的取消/超时并在期限内返回，不得无限
+// 等待、不得在持存储内部锁时等待别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Committer 直接调存储），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error；否则 panic 会掀翻提交方。
 type StoreCAS interface {
 	// SaveIfNewer 仅当该 runID **已持久化的序号严格小于** s.Seq 时才写入。
 	//

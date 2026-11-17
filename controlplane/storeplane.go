@@ -305,12 +305,12 @@ func (p *StorePlane) Terminate(ctx context.Context, req Termination) error {
 			return ErrStaleRun
 		}
 		switch classifyRunStatus(snap.Status) {
-		case runStatusTerminal:
+		case contract.StatusTerminal:
 			if aerr := p.audit(ctx, req.Operator, ActionTerminate, target, req.Basis, "运行已是终态"); aerr != nil {
 				return aerr
 			}
 			return errors.Wrap(ErrTerminalRun, "当前状态: "+snap.Status)
-		case runStatusUnknown:
+		case contract.StatusUnknown:
 			// 词表外取值不得按「非终态」放行（issue #334）：它可能是宿主
 			// 自定义终态，改写它就是覆盖历史事实。与 checkpoint 的
 			// statusUnknown 同方向——判不了就阻塞，交宿主显式决定。
@@ -353,29 +353,15 @@ func taskIDsOf(tasks []taskboard.Task) []taskboard.TaskID {
 	return out
 }
 
-// runStatusClass 运行状态的三态归类（与 checkpoint.classifyStatus 同构，
-// issue #334）。两态不够用：「不在终态词表内」把**词表外**取值也吞进
+// classifyRunStatus 把运行状态归入三态。判定单源在 contract.ClassifyStatus
+// ——不在本包另立一份（第二套词表必然漂移，issue #363）。
+//
+// 三态的含义见 contract.StatusClass：StatusOpen（已知过程态，含未声明状态
+// 的空串——崩溃快照的常态）/ StatusTerminal（已知终态）/ StatusUnknown
+// （词表外：语义判不了，按保守侧处置——拒绝终止）。
+//
+// 两态不够用（issue #334）：「不在终态词表内」把**词表外**取值也吞进
 // 「非终态」，宿主自定义终态（如 "aborted"）会被当成可终止并静默改写。
-type runStatusClass int
-
-const (
-	// runStatusOpen 已知过程态（含空状态——崩溃快照的常态，是过程态）。
-	runStatusOpen runStatusClass = iota
-	// runStatusTerminal 已知终态（contract 的词表）。
-	runStatusTerminal
-	// runStatusUnknown 词表外：语义判不了，按保守侧处置（拒绝终止）。
-	runStatusUnknown
-)
-
-// classifyRunStatus 把运行状态归入三态。终态词表取自 contract——不在本包
-// 另立一份（第二套词表必然漂移）。
-func classifyRunStatus(status string) runStatusClass {
-	switch status {
-	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
-		return runStatusOpen
-	}
-	if contract.IsTerminalStatus(status) {
-		return runStatusTerminal
-	}
-	return runStatusUnknown
+func classifyRunStatus(status string) contract.StatusClass {
+	return contract.ClassifyStatus(status)
 }

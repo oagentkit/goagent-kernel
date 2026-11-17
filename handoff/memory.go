@@ -36,6 +36,19 @@ type LedgerOption func(*MemoryLedger)
 //
 // 注入的回调**不会在持有 MemoryLedger 内部锁时被调用**（issue #317）：回调里
 // 重入本包的 Load/Epoch/List 等接口不会与不可重入的互斥锁相撞。
+//
+// 接缝契约（宿主注入的时钟回调；内核在存储侧时刻读取路径上调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。MemoryLedger.Now **先取回调、解锁后再调**
+// （issue #317：锁只保护「取哪个回调」，调用发生在锁外）——回调里重入本包
+// 的 Load / Epoch / List 不会与不可重入的互斥锁相撞。但不得等待正在进行的
+// 读完成。
+// no-blocking：**宿主侧兑现**。回调在过期判定路径上被同步调用，必须有界
+// 返回：不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本回调的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 func WithLedgerClock(clock func() time.Time) LedgerOption {
 	return func(m *MemoryLedger) {
 		if clock != nil {
@@ -60,6 +73,17 @@ func NewMemoryLedger(opts ...LedgerOption) *MemoryLedger {
 }
 
 // UseClock 注入时钟（与 LocalDesk 的 WithClock 同一形态：过期场景可确定性测）。
+//
+// 接缝契约（宿主注入的时钟回调；内核在存储侧时刻读取路径上调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**内核侧兑现**。回调的**调用**发生在 MemoryLedger.Now 的锁外
+// （issue #317：锁只保护「取哪个回调」）——回调里重入本包不会自锁。
+// no-blocking：**宿主侧兑现**。回调在过期判定路径上被同步调用，必须有界
+// 返回：不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本回调的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 func (m *MemoryLedger) UseClock(clock func() time.Time) {
 	if clock == nil {
 		return
@@ -88,6 +112,13 @@ func (m *MemoryLedger) Now(context.Context) (time.Time, error) {
 
 // Save 条件写入（语义见 Ledger.Save 的三形态）。
 func (m *MemoryLedger) Save(_ context.Context, rec Record) (Record, error) {
+	// 落库面是最后一道防线（issue #359）：词表外状态不得进库。
+	// 放它进来，后面每一次读取都要替它猜一个语义——而内核读不懂它。
+	if !rec.Ticket.State.Valid() {
+		return Record{}, errors.Wrap(ErrUnknownState,
+			"状态不在词表内的记录不得落库",
+			"key", string(rec.Ticket.Key), "state", string(rec.Ticket.State))
+	}
 	if err := rec.Ticket.Validate(); err != nil {
 		return Record{}, errors.New("handoff: " + err.Error())
 	}

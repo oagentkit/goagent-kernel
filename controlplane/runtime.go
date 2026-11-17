@@ -88,6 +88,28 @@ func (m *MemStore) SeedEffect(key string, unsafe bool) error {
 //
 // 与 taskboard 的「TTL 由存储自己的时钟推算」同口径：跨进程时调用方的
 // 时钟不可信，参考实现也必须能演示「到期由存储判定」。
+//
+// # 回调的三条约束（issue #367）
+//
+//   - **不得回查本包**：持锁调用它时，宿主只要在回调里读一次快照就撞上
+//     不可重入的互斥锁 ⇒ 永久死锁（静默挂起：没有错误、没有超时兜底）；
+//   - **不得阻塞**：提交序列串行等待它（查询面不受影响，但写者会排队）；
+//   - **panic 由内核隔离**为 ErrClockPanic，状态一字不动。
+//
+// 内核侧也做了兜底：时钟回调在**不持任何内核锁**的位置被调用（见
+// nowAt），所以「回查本包」不会死锁——但那是兜底，不是许可。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：注入的回调内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：回调在**不持任何内核锁**的位置被调用（nowAt 取回调在锁内、
+// 调用在锁外，issue #367）——那是兜底，不是许可。
+// no-blocking：注入的回调内不得无界等待——它在写路径（认领 / 续期）上
+// 同步被调用，阻塞会让提交序列排队。
+// panic-isolated：**内核侧兑现**——callClock 用 recover 隔离为
+// ErrClockPanic，状态一字不动。
 func (m *MemStore) UseClock(clock func() time.Time) {
 	if clock == nil {
 		return
@@ -97,12 +119,38 @@ func (m *MemStore) UseClock(clock func() time.Time) {
 	m.clock = clock
 }
 
-// nowLocked 存储侧当前时刻（持锁调用）。
-func (m *MemStore) nowLocked() time.Time {
-	if m.clock != nil {
-		return m.clock()
+// ErrClockPanic 宿主注入的时钟回调 panic 被内核隔离（issue #367）。
+//
+// 时钟回调是宿主注入的接缝：它的异常不得把一次认领变成进程级事故，
+// 也不得留下半条状态（与 appendAudit 隔离留痕 panic 同一口径）。
+var ErrClockPanic = errors.New("controlplane: 存储时钟回调 panic（已隔离，状态未变）")
+
+// nowAt 存储侧当前时刻（**不持内核锁调用宿主时钟**）。
+//
+// 取「用哪个回调」在锁内、**调用**在锁外（issue #367）：与
+// handoff.MemoryLedger.Now / coord.StoreAdapter.nowAt 同一范式。锁内调用
+// 宿主回调 ⇒ 宿主回调重入本包即永久死锁（sync.Mutex 不可重入）。
+//
+// panic 由内核隔离为 ErrClockPanic。
+func (m *MemStore) nowAt() (time.Time, error) {
+	m.mu.Lock()
+	clock := m.clock
+	m.mu.Unlock()
+	if clock == nil {
+		return time.Now(), nil
 	}
-	return time.Now()
+	return callClock(clock)
+}
+
+// callClock 调用宿主时钟回调并隔离 panic。
+func callClock(clock func() time.Time) (t time.Time, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			t = time.Time{}
+			err = errors.Wrap(ErrClockPanic, "存储时钟回调 panic")
+		}
+	}()
+	return clock(), nil
 }
 
 // List 运行时侧：全部任务的一致快照（按 ID 排序，确定性输出）。
@@ -124,12 +172,23 @@ func (m *MemStore) List(_ context.Context) ([]taskboard.Task, error) {
 }
 
 // Claim 运行时侧：认领（铸造令牌与接管代次，语义对齐 taskboard.Board.Claim
-// ——被**活着**持有 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked）。
+// ——被**活着**持有 ErrTaken / 终态 ErrTerminal / 依赖未完成 ErrBlocked /
+// **状态不在词表内 ErrUnknownState**）。
 //
 // 「仍被持有」必须同时看状态与租约存活（taskboard.LeaseHeld，issue #335）：
 // 只看 State == claimed 会让持有者崩溃后的任务永久不可接管——与 Board.Claim
 // 的「被别人活着持有」契约及三个参考实现方向相反。
+//
+// 状态闸走 taskboard.State.Claimable（**单一判据**，issue #360）：本实现
+// 此前只判终态，词表外状态（脏状态行）照常领到租约并铸令牌——失效形态是
+// 绿的（认领成功、令牌可用、副作用照常施加，没有任何错误也没有告警）。
 func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, ttl time.Duration) (taskboard.Task, error) {
+	// 时钟在**不持任何内核锁**的位置取（issue #367）：宿主回调可能回查本包，
+	// 而 sync.Mutex 不可重入 ⇒ 锁内调用它就是永久死锁。
+	now, err := m.nowAt()
+	if err != nil {
+		return taskboard.Task{}, err
+	}
 	m.commitMu.Lock()
 	defer m.commitMu.Unlock()
 	m.mu.Lock()
@@ -139,12 +198,16 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-	now := m.nowLocked()
-	switch {
-	case taskboard.LeaseHeld(mt.task, now):
+	// 拒绝必须发生在**铸令牌之前**：被拒的认领不得留下任何占用痕迹。
+	if err := mt.task.State.Claimable(); err != nil {
+		if errors.Is(err, taskboard.ErrUnknownState) {
+			return taskboard.Task{}, errors.Wrap(err,
+				"任务状态不在词表内，拒绝认领", "task", string(id), "state", string(mt.task.State))
+		}
+		return taskboard.Task{}, errors.Wrap(err, "任务已是终态", "task", string(id))
+	}
+	if taskboard.LeaseHeld(mt.task, now) {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrTaken, "任务已被他人活着持有")
-	case mt.task.State == taskboard.StateDone:
-		return taskboard.Task{}, errors.Wrap(taskboard.ErrTerminal, "任务已是终态")
 	}
 	for _, d := range mt.task.Deps {
 		dep, ok := m.tasks[d]
@@ -173,6 +236,11 @@ func (m *MemStore) Claim(_ context.Context, id taskboard.TaskID, agent taskboard
 // 契约与 taskboard.Renew 一致：令牌不匹配 / 租约已过期 ⇒ ErrLeaseLost，
 // **不做任何修改**；续期不递增代次、不换令牌。
 func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	// 时钟在**不持任何内核锁**的位置取（issue #367）：与 Claim 同一条纪律。
+	now, err := m.nowAt()
+	if err != nil {
+		return taskboard.Task{}, err
+	}
 	m.commitMu.Lock()
 	defer m.commitMu.Unlock()
 	m.mu.Lock()
@@ -182,7 +250,6 @@ func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, r
 	if !ok {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
 	}
-	now := m.nowLocked()
 	if mt.task.State != taskboard.StateClaimed || token == "" || token != mt.task.Lease.Token {
 		return taskboard.Task{}, errors.Wrap(taskboard.ErrLeaseLost, "租约令牌不匹配（租约已易主或被释放过）")
 	}

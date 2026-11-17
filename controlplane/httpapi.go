@@ -56,6 +56,17 @@ import (
 
 // Authorizer 鉴权钩子（宿主实现）：解析请求 → 判定动作是否可执行 →
 // 返回注入 request context 的租户/权限上下文。返回错误 ⇒ 403，不触达 Plane。
+//
+// # 接缝契约（issue #370 形态 B）
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：宿主实现内不得回查本包（回查即重入内核锁路径 ⇒ 死锁）。
+// 内核侧兑现：钩子在**不持任何内核锁**的位置被调用。
+// no-blocking：宿主实现内不得无界等待——钩子在请求 goroutine 上同步调用，
+// 内核不设超时；钩子阻塞即该请求挂住。
+// panic-isolated：**宿主侧兑现**——内核不隔离（httpapi 无 recover），panic
+// 由 net/http 的连接级兜底接住（连接断开、进程存活），不变成 4xx/5xx。
 type Authorizer interface {
 	Authorize(r *http.Request, act Action, target string) (tenant.Context, error)
 }

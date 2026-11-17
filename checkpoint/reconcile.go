@@ -43,6 +43,8 @@
 // **没有动作的步骤（纯计算）不需要视图**：无副作用就无对账可言。
 package checkpoint
 
+import "slices"
+
 // GateState 闸侧对一个步骤的副作用状态视图（宿主从 sideeffect 对账后注入）。
 type GateState string
 
@@ -100,6 +102,11 @@ const AnomalySideEffectConflict = anomalyKindSideEffectConflict
 
 // Reconcile 恢复前对账：把闸侧视图对进恢复计划（纯函数，无副作用）。
 //
+// 「无副作用」按字面兑现：返回值与入参**不共享** Skip / Run / Anomalies
+// 三个切片的底层数组（issue #380）。此前它们按值收、按值回却是同一份底层
+// 数组——调用方改写 p2.Skip[0] 会改到 p1.Skip[0]，而 addAnomaly 的 append
+// 在有余量时直接写穿入参的底层数组。
+//
 // 判据：计划要 **Skip** 的每一步，闸侧必须是 GateSettled（已结算）或
 // GateAbsent（无副作用动作）。其余一律冲突——快照说「已完成」、闸说
 // 「未知 / 未裁决 / 没做过 / 判不了」都可以同时成立，而按快照跳过会让那个
@@ -131,11 +138,20 @@ func Reconcile(p Plan, views []GateView) Plan {
 		p.addAnomaly(anomalyKindSideEffectConflict, v.Step, reconcileConflictDetail(v))
 	}
 	if conflicts == 0 {
-		return p
+		return clonePlan(p)
 	}
 	// 快照不可信 ⇒ 整个计划作废：宿主先对账，再重建。半截计划比没有计划更危险
 	// ——它会让人以为「只有那几步有问题」，而冲突说明的是**账面与快照脱节**。
 	p.Skip, p.Run = nil, nil
+	return clonePlan(p)
+}
+
+// clonePlan 拷出计划的三个切片：Reconcile 声明「纯函数，无副作用」，
+// 返回值就不得与入参共享底层数组（issue #380）。
+func clonePlan(p Plan) Plan {
+	p.Skip = slices.Clone(p.Skip)
+	p.Run = slices.Clone(p.Run)
+	p.Anomalies = slices.Clone(p.Anomalies)
 	return p
 }
 

@@ -97,6 +97,23 @@ func (s Snapshot) Clone() Snapshot {
 //   - Save 对同一 (RunID, Seq) 重复调用**幂等**，不得产生第二份记录；
 //   - Load 无记录时返回 ErrNotFound，不得返回 (零值, nil)；
 //   - 并发安全（编排可能从多个环节同时落库）。
+//
+// 接缝契约（宿主实现本接口；它是进度快照存取边界的**基础形态**）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。本包生产代码的存储面是 StoreCAS /
+// FencedStoreCAS（Committer 走那两张），它们的调用点在 SeqGate 的锁**之外**
+// （闸只保护「取哪个序号」）；本接口是同一存取边界的基础形态——宿主适配层
+// 与本包的契约用例按它实现。故回查不会自锁：宿主实现不得在方法内回调
+// 本包的其它接缝（不得回调 Committer / SeqGate）——调用方正同步等着它返回，
+// 回查即互相等待。
+// no-blocking：**宿主侧兑现**。落库可能要走网络，「不阻塞」在此处的准确含义
+// 是「**有界**」——必须承接 ctx 的取消/超时并在期限内返回，不得无限等待、
+// 不得在持存储内部锁时等待别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Committer 直接调存储），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error。
 type Store interface {
 	Save(ctx context.Context, s Snapshot) error
 	Load(ctx context.Context, runID string) (Snapshot, error)

@@ -101,9 +101,28 @@ type Record struct {
 //   - @@Load@@ 无记录返回 @@ErrUnknownKey@@，不得返回 (零值, nil)；
 //   - @@Delete@@ 只删当前记录，**保留代次与版本水位**（否则 ABA 封不住）；
 //   - @@Receipts@@ 只返回发给该地址的回执（回执寻址的取件半边）。
+//
+// 接缝契约（宿主实现本接口；内核的 Desk 在交接流程里**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。Desk 自身**无共享可变状态、调用时不持任何锁**，
+// 故内核侧无锁可指：宿主实现不得在方法内回调本包的其它接缝（不得回调
+// Desk 或 Ledger 的方法）——内核正同步等着它返回，回查即互相等待。
+// no-blocking：**宿主侧兑现**。这些方法落在交接单的持久化路径上，被交接
+// 流程**同步**等待：「不阻塞」在此处的准确含义是「**有界**」——必须承接
+// ctx 的取消/超时并在期限内返回，不得无限等待、不得在持存储内部锁时等待
+// 别的回调。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover，Desk 直接调它），宿主实现须自行保证不 panic 或在实现内部
+// recover 成 error；否则 panic 会掀翻调用方。
 type Ledger interface {
 	// Save 写入一条记录并返回**存储定型后**的记录（代次 / 版本 / 令牌可能被铸造）。
 	//
+	// **状态必须在词表内**（offered / accepted / closed / expired /
+	// withdrawn）：词表外状态一律拒收（ErrUnknownState），不得落库——
+	// 落库面是最后一道防线，放它进来，后面每一次读取都要替它猜一个语义
+	// （issue #359）。
 	// 形态一：新建（无当前记录）。Record.Epoch 必须为 0（由 Ledger 铸
 	// 「水位 + 1」），Revision 必须为 0，Ticket.State 必须是 offered。
 	//
@@ -152,6 +171,18 @@ var (
 // 截止时刻与过期判定必须按存储的时钟推算（跨进程不假设时钟一致）——Desk
 // 在装配到这种 Ledger 上时读它；没有该能力时退回 Desk 的注入时钟（单进程
 // 参考实现即满足，跨进程宿主应实现它）。
+//
+// 接缝契约（宿主实现本接口；内核的 Desk 在过期判定里**同步**调用它）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：**宿主侧兑现**。Now 由 Desk.nowAt 直接调用，调用点**不持任何
+// 内核锁**：宿主实现不得在 Now 内回调本包的其它接缝（回查即与正在进行的
+// 过期判定互相等待）。
+// no-blocking：**宿主侧兑现**。Now 在过期判定路径上被**高频**同步调用
+// （每次重判都重取时刻），必须廉价有界：不得等锁、不得做长耗时 I/O。
+// panic-isolated：**宿主侧兑现**——内核**不隔离**本接口的 panic（本包无
+// recover），宿主实现须自行保证不 panic 或在实现内部 recover 成 error。
 type ClockedLedger interface {
 	Ledger
 	Now(ctx context.Context) (time.Time, error)

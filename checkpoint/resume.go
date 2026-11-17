@@ -1,6 +1,10 @@
 package checkpoint
 
-import "github.com/yi-nology/goagent-kernel/contract"
+import (
+	"slices"
+
+	"github.com/yi-nology/goagent-kernel/contract"
+)
 
 // StepDef 编排图中的一个步骤。
 //
@@ -122,7 +126,10 @@ func (p Plan) HasAnomaly(kind AnomalyKind) bool {
 }
 
 func (p *Plan) addAnomaly(kind AnomalyKind, step, detail string) {
-	p.Anomalies = append(p.Anomalies, Anomaly{Kind: kind, Step: step, Detail: detail})
+	// 先拷再 append（issue #380）：append 在切片有余量时会写进**调用方**切片
+	// 的底层数组——BuildPlan 声明「纯函数，无副作用」，而这条 append 会让
+	// 入参的底层数组被改写。
+	p.Anomalies = append(slices.Clone(p.Anomalies), Anomaly{Kind: kind, Step: step, Detail: detail})
 }
 
 // isTerminal 该状态是否为运行终态。判定单源在 contract.IsTerminalStatus——
@@ -132,33 +139,19 @@ func isTerminal(status string) bool {
 	return contract.IsTerminalStatus(status)
 }
 
-// statusClass 快照状态的三态归类。
+// classifyStatus 把快照状态归入三态。判定单源在 contract.ClassifyStatus
+// ——不在本包另立一份（第二套词表必然漂移，issue #363）。
+//
+// 三态的含义见 contract.StatusClass：StatusOpen（已知过程态，或快照没写
+// 状态——崩溃快照的常态，续跑是本包的本职）/ StatusTerminal（已知终态）/
+// StatusUnknown（词表外：语义判不了，不得按「可续跑」放行）。
 //
 // 两态不够用（issue #219）：「非终态」把**词表外**的值也吞进去，而宿主完全
 // 可能把运行落库为自定义终态（"aborted"）——两态判据对它 fail-open，已终结
 // 的运行被当成「可续跑」静默重开。三态让「判不了」显式成为一类，处置对齐
 // Reconcile 的口径：未知按阻塞侧。
-type statusClass int
-
-const (
-	// statusOpen 已知过程态（或快照没写状态——崩溃快照的常态，续跑是本包的本职）。
-	statusOpen statusClass = iota
-	// statusTerminal 已知终态。
-	statusTerminal
-	// statusUnknown 词表外：语义判不了，不得按「可续跑」放行。
-	statusUnknown
-)
-
-// classifyStatus 把快照状态归入三态。词表取自 contract——不在本包另立一份。
-func classifyStatus(status string) statusClass {
-	switch status {
-	case "", contract.StatusCreated, contract.StatusRunning, contract.StatusWaitingApproval:
-		return statusOpen
-	}
-	if isTerminal(status) {
-		return statusTerminal
-	}
-	return statusUnknown
+func classifyStatus(status string) contract.StatusClass {
+	return contract.ClassifyStatus(status)
 }
 
 // BuildPlan 由编排图与（可为 nil 的）进度快照算出恢复计划。纯函数，无副作用。
@@ -286,13 +279,13 @@ func BuildPlan(graph []StepDef, snap *Snapshot) Plan {
 	// 不是放行的理由——按阻塞侧处理（与 Reconcile 对未登记闸态同一条口径），
 	// 而不是 fail-open 成「可续跑」。
 	switch classifyStatus(snap.Status) {
-	case statusTerminal:
+	case contract.StatusTerminal:
 		if len(p.Run) > 0 {
 			p.addAnomaly(AnomalyCompleteWithPending, "",
 				"快照标记运行已终结但仍有未完成步骤，内核不自动重开，需宿主显式决定")
 			p.Skip, p.Run = nil, nil
 		}
-	case statusUnknown:
+	case contract.StatusUnknown:
 		if len(p.Run) > 0 {
 			p.addAnomaly(AnomalyUnknownStatus, "",
 				"快照状态 "+snap.Status+" 不在已知词表内（可能是宿主自定义终态），内核不自动续跑，需宿主显式决定")
