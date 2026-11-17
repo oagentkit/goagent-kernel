@@ -51,8 +51,13 @@
 // ——它是机制间传递的唯一通道，不另设全局变量、不挂到结构体上：前者在
 // 并发请求间串味，后者让「机制收不到上下文」变成装配问题而不是判据问题。
 //
-// Context 是**不可变值**：注入后改写副本不影响机制面拿到的值。提取（From）
-// 对未注入**宽容**（返回零值）——读路径不因缺上下文而崩；写路径用 Require
+// Context 是**不可变值**：注入后改写副本不影响机制面拿到的值。
+//
+// Scopes 是引用字段，故「不可变」靠**逐层拷贝**兑现：注入时与提取时各拷一次
+// （issue #376）。只按值提取只复制切片头——改写副本的**元素**会改穿回 ctx 里
+// 那份，机制面随后拿到的授权面被篡改，Can 的子集判定随之改变 ⇒ 越权放行。
+//
+// 提取（From）对未注入**宽容**（返回零值）——读路径不因缺上下文而崩；写路径用 Require
 // （fail-closed）——静默放行的后果不是「少个功能」：隔离判据各机制各判
 // 一套时，漏判的那个机制就是越权入口。
 //
@@ -90,6 +95,9 @@ type Context struct {
 	//
 	// 判定按精确子集（Can）。刻意不排序、不去重、不校验词形——规范化
 	// 即第二份口径，词表归宿主。
+	//
+	// 引用字段：**注入与提取时各深拷贝一次**（见 Context 的不可变承诺），
+	// 调用方拿到的是自己的副本，改不动已注入的那份。
 	Scopes []string
 }
 
@@ -122,6 +130,10 @@ type ctxKey struct{}
 
 // WithContext 把租户上下文注入 request context（机制间传递的唯一通道）。
 func WithContext(ctx context.Context, c Context) context.Context {
+	// 注入时深拷贝授权面：宿主在注入后改自己的原变量（或复用同一份配置模板
+	// 生成别的规则）不得改穿已注入的上下文——授权面必须在注入时定死
+	// （fail-closed 的前提，issue #376）。
+	c.Scopes = slices.Clone(c.Scopes)
 	return context.WithValue(ctx, ctxKey{}, c)
 }
 
@@ -134,6 +146,9 @@ func From(ctx context.Context) Context {
 		return Context{}
 	}
 	c, _ := ctx.Value(ctxKey{}).(Context)
+	// 提取时深拷贝授权面：只按值返回只复制切片头，改写副本的**元素**会改穿回
+	// ctx 里那份 ⇒ 机制面拿到的授权面可被外部篡改 ⇒ 越权放行（issue #376）。
+	c.Scopes = slices.Clone(c.Scopes)
 	return c
 }
 

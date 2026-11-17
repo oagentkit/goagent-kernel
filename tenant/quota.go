@@ -91,6 +91,17 @@ func (q Quota) Remaining(used cost.Total) map[cost.Kind]int64 {
 }
 
 // QuotaSource 配额声明来源（宿主资产接口）：限额怎么存、怎么变由宿主实现。
+//
+// 接缝契约（宿主实现的声明来源；一条接缝覆盖其全部方法）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+// no-reentry：实现内不得回查本包（不得再走本包的配额判定面）。内核侧兑现
+// 「调用点不持锁」：Enforce 是纯函数面，全程无锁。
+// no-blocking：取声明是**同步**调用，且它在**写路径**上（签发前的判定）——
+// 慢实现拖住整条判定路径，须自行有界。
+// panic-isolated：**宿主侧兑现**——本包不做 recover：实现 panic 会穿到 Enforce
+// 的调用方（宿主实现须自行保证不 panic）。
 type QuotaSource interface {
 	// QuotaFor 返回该租户的配额声明；未配置的租户返回零值 Quota（不设限）。
 	QuotaFor(tenant string) (Quota, error)

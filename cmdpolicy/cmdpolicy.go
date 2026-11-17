@@ -121,6 +121,11 @@ type Verdict struct {
 }
 
 // Policy 一组已自检通过的前缀规则（构造后只读，可并发共享）。
+//
+// **副本口径（全覆盖）**：构造期从宿主入参深拷贝一次（Prefix 逐段拷），出口
+// Rules() 再深拷贝一次。宿主改自己的原变量、或原地改写 Rules() 交出的快照，
+// 都改不动活策略——否则一条 forbidden 规则可被改成 allow（fail-open，
+// issue #385）。
 type Policy struct {
 	rules []compiled
 }
@@ -166,7 +171,11 @@ func New(rules []Rule) (*Policy, error) {
 				}
 			}
 		}
-		out = append(out, compiled{rule: r, tokens: r.Prefix})
+		// 构造期深拷贝：宿主在 New 之后改自己的原变量不得改穿活策略
+		// （issue #385）。tokens 与 rule.Prefix 指向**同一份**副本——判定面读的
+		// 就是它，出口面 Rules() 必须再拷一次才能隔开宿主。
+		cr := cloneRule(r)
+		out = append(out, compiled{rule: cr, tokens: cr.Prefix})
 	}
 	p := &Policy{rules: out}
 	if err := p.selfCheckExamples(); err != nil {
@@ -277,6 +286,23 @@ func (p *Policy) DecideCommand(cmdline string) (Verdict, error) {
 	return v, nil
 }
 
+// cloneRule 深拷贝一条规则（副本口径，与 tooldisclose 同款）。
+//
+// Prefix 是**两层**切片：只拷一层（slices.Clone(Prefix)）只复制外层数组，内层
+// 各段仍与原件共享 ⇒ 改写 snap[0].Prefix[0][0] 会改穿活策略。故**逐段**拷贝。
+func cloneRule(r Rule) Rule {
+	if len(r.Prefix) > 0 {
+		prefix := make(Prefix, len(r.Prefix))
+		for i, seg := range r.Prefix {
+			prefix[i] = slices.Clone(seg)
+		}
+		r.Prefix = prefix
+	}
+	r.Match = slices.Clone(r.Match)
+	r.NotMatch = slices.Clone(r.NotMatch)
+	return r
+}
+
 // matchPrefix 返回命中的 token 数。
 func matchPrefix(prefix [][]string, argv []string) (int, bool) {
 	if len(argv) < len(prefix) {
@@ -298,10 +324,14 @@ func matchPrefix(prefix [][]string, argv []string) (int, bool) {
 }
 
 // Rules 返回已加载规则的快照（按名字排序），供宿主自检与报告使用。
+//
+// 快照是**深拷贝**：Prefix 逐段拷贝、Match/NotMatch 逐项拷贝——只按值复制结构体
+// 只复制切片头，宿主原地改写快照会改穿活策略（forbidden 可被改成 allow，
+// fail-open，issue #385）。拷贝后快照与活策略互不影响。
 func (p *Policy) Rules() []Rule {
 	out := make([]Rule, 0, len(p.rules))
 	for _, c := range p.rules {
-		out = append(out, c.rule)
+		out = append(out, cloneRule(c.rule))
 	}
 	slices.SortFunc(out, func(a, b Rule) int { return strings.Compare(a.Name, b.Name) })
 	return out

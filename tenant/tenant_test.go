@@ -56,11 +56,16 @@ func TestContextPassing(t *testing.T) {
 	if got := From(ctx); got.Tenant != "acme" || got.Subject != "op-1" {
 		t.Fatalf("注入/提取往返漂移： %+v", got)
 	}
-	// 不可变值：改写提取出的副本不牵动已注入的上下文
+	// 不可变值：改写提取出的副本不牵动已注入的上下文（issue #376）。
+	//
+	// 改写手法必须是**下标赋值**：append 在 len==cap 时必然重新分配 ⇒ 写入的是
+	// 一个全新数组，**结构上不可能改穿**。用 append 的断言在「共享切片」与
+	// 「真拷贝」两种实现下都绿（假绿），证明不了这条承诺。防这条回归见
+	// TestImmutabilityAssertionIsDiscriminating。
 	got := From(ctx)
-	got.Scopes = append(got.Scopes, scopeOperate)
+	got.Scopes[0] = scopeOperate
 	got.Tenant = "改写"
-	if again := From(ctx); again.Tenant != "acme" || len(again.Scopes) != 1 {
+	if again := From(ctx); again.Tenant != "acme" || len(again.Scopes) != 1 || again.Scopes[0] != scopeRead {
 		t.Fatalf("上下文被改写： %+v", again)
 	}
 	// 未注入：读路径宽容（零值，不报错）

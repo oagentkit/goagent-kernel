@@ -204,13 +204,19 @@ func TestWorkspacesReturnsDefensiveCopy(t *testing.T) {
 	before := len(p.Conflicts())
 
 	ws := p.Workspaces()
-	ws[0].Writable = append(ws[0].Writable, "lib/") // 伪造与 beta 的可写重叠
-	ws[1].ID = "gamma"                              // 伪造 ID 改写
+	// 改写必须用**下标赋值**（issue #387）：append 在 len==cap 时必然重新分配
+	// ⇒ 写入的是一个全新数组，**结构上不可能写穿**。这条用例原本用 append，
+	// 于是「拷贝」与「不拷贝」两种实现下都绿（假绿）——它证明不了任何东西。
+	// 下标赋值是原地写：共享即改穿。
+	ws[0].Writable[0] = "lib/" // 伪造与 beta 的可写重叠
+	ws[1].ID = "gamma"         // 伪造 ID 改写
 
 	if got := len(p.Conflicts()); got != before {
-		t.Fatalf("改写返回值不得影响计划结论：改前 %d 条冲突，改后 %d 条", before, got)
+		t.Fatalf("改写返回值不得影响计划结论（改写返回值影响到了计划本体）：改前 %d 条冲突，改后 %d 条", before, got)
 	}
-	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 {
+	// 内容断言：坏实现改的是**元素值**不是长度 ⇒ 只查 len 同样恒绿。
+	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 ||
+		again[0].Writable[0] != "src/" {
 		t.Fatalf("计划本体不得被写穿: %+v", again[0])
 	}
 }

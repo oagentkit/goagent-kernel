@@ -105,6 +105,19 @@ type Outcome struct {
 }
 
 // Runner 执行一条 hook 的**唯一接缝**（传输归宿主）。
+//
+// 接缝契约（宿主实现，内核在派发路径上同步调用）：
+//
+// @seam: no-reentry no-blocking panic-isolated
+//
+//   - no-reentry：不得回查本包（不得在 Run 里再调 e.Dispatch）——派发按名字
+//     序跑阻塞 hook 且「第一个拒绝即刻收口」，嵌套派发会让次序语义失效
+//     （内层的拒绝盖掉外层）。
+//   - no-blocking：阻塞 hook 有 ctx 期限（Hook.Timeout）、非阻塞 hook 有
+//     硬上限（本包常量），Runner **必须承接 ctx** 并在期限内返回——内核
+//     同步等它，故不得忽略 ctx 无限等待。
+//   - panic-isolated：宿主侧兑现——本包**不做 recover**；Runner panic 会
+//     掀翻整次派发。
 type Runner interface {
 	Run(ctx context.Context, h Hook, p Payload) (Outcome, error)
 }
@@ -179,6 +192,10 @@ func New(hooks []Hook, r Runner) (*Engine, error) {
 		h.Name = name
 		h.Event = event
 		h.ToolPrefix = strings.TrimSpace(h.ToolPrefix)
+		// 深拷贝参数：宿主在 New 之后改自己的原变量（同份配置模板再生成别的
+		// 规则是最常见写法）不得改穿活 hook——hook 是检查层，参数变了等于
+		// **检查内容变了**，Blocking hook 的裁决直接决定放行/拒绝（issue #390）。
+		h.Args = slices.Clone(h.Args)
 		out = append(out, h)
 	}
 	// 求值顺序必须确定：hook 集合常常来自 map / 文件遍历，顺序不定会让

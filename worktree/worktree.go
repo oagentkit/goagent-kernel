@@ -104,6 +104,12 @@ func New(ws []Workspace) (*Plan, error) {
 			}
 		}
 		w.ID = id
+		// 构造期深拷贝：宿主在 New 之后改自己的原变量不得改穿计划
+		// （issue #397）——与出口方向同一把尺子（Workspaces 深拷贝交付，
+		// issue #225）。只读/可写边界是**隔离声明**，改穿后两边的读者会
+		// 得出不同结论。
+		w.ReadOnly = slices.Clone(w.ReadOnly)
+		w.Writable = slices.Clone(w.Writable)
 		out = append(out, w)
 	}
 	slices.SortStableFunc(out, func(a, b Workspace) int { return strings.Compare(a.ID, b.ID) })

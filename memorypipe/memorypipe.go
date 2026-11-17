@@ -161,6 +161,10 @@ func Build(entries []Entry, q Query) (Result, error) {
 			}
 			usedBytes += len(text)
 		}
+		// 深拷贝标签：Entry 自称「值类型」，而只按值拷贝结构体只复制切片头
+		// ⇒ Result 与调用方入参共享 Tags 的底层数组，两边同步（issue #394）。
+		// 标签是 AND 匹配的判据，改穿即匹配结果变。
+		e.Tags = slices.Clone(e.Tags)
 		res.Pieces = append(res.Pieces, Piece{Entry: e, Text: text})
 	}
 	if len(res.Pieces) == 0 && len(res.Dropped) == 0 {

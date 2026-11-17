@@ -53,6 +53,11 @@ type Skill struct {
 }
 
 // Catalog 已登记的技能集合。
+//
+// **副本口径（全覆盖）**：Skill.Resources 与 Skill.Tags 是引用字段。构造期从
+// 宿主入参深拷贝一次；Disclose 交出前再深拷贝一次（issue #377，与 tooldisclose
+// 同款口径）。调用方拿到的都是自己的副本——原地改写披露结果、或构造后改写
+// 宿主原变量，都改不动目录。
 type Catalog struct {
 	skills []entry
 	byName map[string]Skill
@@ -68,7 +73,8 @@ type Catalog struct {
 // 慢路径（unicode.lookupCaseRange），实测 100 技能 × 8 词的中文目录每次披露要
 // 1.6–2.4 ms，改造后降到几十微秒。
 //
-// 目录成员在 New 之后不再变化（没有任何增删入口），故这份派生值算一次即与真相同寿。
+// 目录成员在 New 之后不再变化（没有任何增删入口；构造期已与宿主入参深拷贝
+// 解耦，宿主改自己的原变量改不穿目录），故这份派生值算一次即与真相同寿。
 // 内存代价：只有**真含大写**的串才多占一份（strings.ToLower 在无字符改变时原样
 // 返回入参），中文为主的描述因此与原文共用同一份字节。
 type entry struct {
@@ -105,6 +111,10 @@ func New(skills []Skill) (*Catalog, error) {
 			}
 		}
 		s.Name = name
+		// 深拷贝：宿主在构造后改自己的原变量不得改穿目录（issue #377）。
+		// 目录内的两份持有（c.skills 与 c.byName）拿的是**同一份副本**，
+		// 目录自身因此自洽——否则两处会被分别改穿、互相对不上。
+		s = cloneSkill(s)
 		c.skills = append(c.skills, entry{
 			skill:          s,
 			lowerName:      strings.ToLower(name),
@@ -165,6 +175,9 @@ type Scored struct {
 }
 
 // Result 披露结果。
+//
+// **副本口径（全覆盖）**：Skills 与 Scored 里的 Skill 都是目录成员的深拷贝，
+// 改写披露结果改不动目录（issue #377）。
 type Result struct {
 	// Skills 按分数降序（同分按名字）挑出的技能。
 	Skills []Skill
@@ -208,7 +221,8 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		if score == 0 {
 			continue
 		}
-		scored = append(scored, Scored{Skill: e.skill, Score: score})
+		// 交出前深拷贝：改写披露结果不得改穿目录（issue #377）。
+		scored = append(scored, Scored{Skill: cloneSkill(e.skill), Score: score})
 	}
 	slices.SortStableFunc(scored, func(a, b Scored) int {
 		if c := cmp.Compare(b.Score, a.Score); c != 0 {
@@ -278,9 +292,20 @@ func (c *Catalog) Disclose(q Query, b Budget) (Result, error) {
 		}
 	}
 	for _, sc := range picked {
-		res.Skills = append(res.Skills, sc.Skill)
+		// 同款：交出的是副本，不是目录内部那份。
+		res.Skills = append(res.Skills, cloneSkill(sc.Skill))
 	}
 	return res, nil
+}
+
+// cloneSkill 拷贝一条技能的引用字段（副本口径，与 tooldisclose 同款）。
+//
+// Resources 与 Tags 都是切片：只按值拷贝结构体只复制**切片头**，底层数组仍共享
+// ⇒ 改写副本的元素会改穿回原件。逐字段 slices.Clone 才是深拷贝。
+func cloneSkill(s Skill) Skill {
+	s.Resources = slices.Clone(s.Resources)
+	s.Tags = slices.Clone(s.Tags)
+	return s
 }
 
 // allExcluded 目录内技能是否全部被 Exclude 排除（用于区分空结果的两种原因）。
