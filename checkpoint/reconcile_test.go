@@ -153,6 +153,44 @@ func TestReconcileDeterministic(t *testing.T) {
 	}
 }
 
+// TestReconcileDoesNotAliasInputSlices 返回的 Plan 不得与入参共享 Skip / Run /
+// Anomalies 的底层数组（issue #380：「纯函数，无副作用」的字面承诺）。
+func TestReconcileDoesNotAliasInputSlices(t *testing.T) {
+	// Skip / Run：无冲突路径原样带回，但必须是独立切片。
+	p1 := Plan{Skip: []string{"s1"}, Run: []string{"s2"}}
+	p2 := Reconcile(p1, []GateView{{Step: "s1", State: GateSettled}})
+	if len(p2.Skip) != 1 || len(p2.Run) != 1 {
+		t.Fatalf("好组合应保持计划: %+v", p2)
+	}
+	p2.Skip[0] = "MUTATED_SKIP"
+	p2.Run[0] = "MUTATED_RUN"
+	if p1.Skip[0] != "s1" || p1.Run[0] != "s2" {
+		t.Fatalf("返回值与入参共享 Skip/Run：%v / %v", p1.Skip, p1.Run)
+	}
+
+	// Anomalies：冲突路径会 addAnomaly。入参留一份余量（len=1 cap=2），
+	// 用窗口观察 append 是否写进入参底层数组。
+	p3 := Plan{
+		Skip:      []string{"s1"},
+		Run:       []string{"s2"},
+		Anomalies: make([]Anomaly, 1, 2),
+	}
+	p3.Anomalies[0] = Anomaly{Kind: "prior", Step: "s0", Detail: "原有异常"}
+	sibling := p3.Anomalies[:cap(p3.Anomalies)]
+
+	p4 := Reconcile(p3, []GateView{{Step: "s1", State: GateUncertain}})
+	if !p4.Blocked() {
+		t.Fatal("冲突应阻塞")
+	}
+	if sibling[1] != (Anomaly{}) {
+		t.Fatalf("addAnomaly 的 append 写穿了入参底层数组: %+v", sibling[1])
+	}
+	p4.Anomalies[0].Detail = "MUTATED_ANOMALY"
+	if p3.Anomalies[0].Detail != "原有异常" {
+		t.Fatalf("返回值与入参共享 Anomalies: %+v", p3.Anomalies[0])
+	}
+}
+
 // TestReconcileDoesNotMutateInput 输入计划不被就地改写（调用方拿原计划
 // 做对照时不能被偷改）。
 func TestReconcileDoesNotMutateInput(t *testing.T) {
