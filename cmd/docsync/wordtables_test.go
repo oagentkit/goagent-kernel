@@ -215,3 +215,54 @@ func containsProblem(problems []string, parts ...string) bool {
 	}
 	return false
 }
+
+// TestCheckWordTablesResolvesSingleSourceSelectors 单源化后的派生路径（issue #392）：
+// watchdog 的 reason 引用 eventbus / trajectory 的导出常量时，门禁必须顺着
+// `pkg.Const` 与 `string(pkg.Const)` 解析到真实字面量，而不是报「无法派生」。
+//
+// 反向验证：把引用指向不存在的包/常量 ⇒ deriveWordTable 报错。
+func TestCheckWordTablesResolvesSingleSourceSelectors(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module github.com/example/kernel\n\ngo 1.27\n",
+		"eventbus/pairing.go": `package eventbus
+
+const PairingReasonDeclaredNotExecuted = "declared_not_executed"
+`,
+		"trajectory/trajectory.go": `package trajectory
+
+type Pairing string
+
+const PairingUnpairedResult Pairing = "unpaired_result"
+`,
+		"watchdog/watchdog.go": `package watchdog
+
+import (
+	"github.com/example/kernel/eventbus"
+	"github.com/example/kernel/trajectory"
+)
+
+const (
+	ReasonDeclaredNotExecuted = eventbus.PairingReasonDeclaredNotExecuted
+	ReasonUnpairedResult      = string(trajectory.PairingUnpairedResult)
+)
+`,
+	}
+	wordTableFixture(t, files)
+	rows := []row{{pkg: "watchdog", desc: "缺口按 declared_not_executed / unpaired_result 告警"}}
+	problems, err := checkWordTables(rows)
+	if err != nil {
+		t.Fatalf("单源引用无法派生: %v", err)
+	}
+	if len(problems) != 0 {
+		t.Fatalf("一致时不该有问题: %v", problems)
+	}
+
+	// 漏列仍要红：派生成功不等于判据失效。
+	problems, err = checkWordTables([]row{{pkg: "watchdog", desc: "缺口按 declared_not_executed 告警"}})
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if !containsProblem(problems, "watchdog", "漏列", "unpaired_result") {
+		t.Fatalf("应报 watchdog 漏列 unpaired_result，实得 %v", problems)
+	}
+}

@@ -174,7 +174,7 @@ modules:
 
   - id: watchdog
     roots: [watchdog]
-    requires: [contract, eventbus] # INV3 轮括号的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus
+    requires: [contract, eventbus, trajectory] # INV3 的 status 终态词表消费 contract（不自立第二套）；告警广播走 eventbus；配对缺口 reason 引用 trajectory.Pairing（#392，同一事实不得两份实现）
     owner: harness
     managed: true
     notes: |
@@ -184,10 +184,15 @@ modules:
       INV1/INV2 是工具调用级配对（声明↔结果）；配对键与 trajectory 同源
       （eventbus.ToolCallID：全局 call_id，不含 step）——step 是归属信息而不是
       配对键，结果可跨环节到达、同号声明可跨环节重试，按 step 分段会产出假红
-      （issue #336）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
+      （issue #336）。INV1/INV2 的 reason 词表直接引用 trajectory.Pairing——
+      unpaired_result/duplicate_result/duplicate_call 三条逐字同名，
+      declared_not_executed 是 missing_result 的注册别名（eventbus 侧映射，
+      issue #392）。INV1 的判定时刻是会话收口（session_finished）或 TTL 清扫，
       不是每个 step_finished。INV3（issue #171）是它的外层——
       轮级括号配对：turn_started 开括号、turn_ended 闭合，闭合必须带归因
-      （closed_by ∈ 宿主注册词表，缺省 loop|recovery|boot-reconcile|panic）与
+      （closed_by ∈ 宿主注册词表，缺省见 eventbus.ClosedByDefaults：
+      loop|recovery|boot-reconcile|panic|recovery:dead-owner|recovery:dead-lease
+      ——生产方 reconcile 的四路归因与消费方缺省表同源，issue #391）与
       contract 终态词表内的 status；停机留开放=合法态（Run 退出不扫尾告警）、
       开放超时=open_leak（与既有 openIdleTTL/sweep 同款 TTL 清扫）。
       closed_by 词表开放给宿主注册，内核只判「有没有（在册的）归因」，
@@ -498,7 +503,9 @@ modules:
       启动孤儿对账与心跳租约死主回收：三路判定（boot-anchor / event-silence /
       heartbeat-lease）+ 宽限窗 + CAS 收敛编排，与 drain 成对（drain=计划内、
       reconcile=非计划死）。状态词表复用 contract（终态语义不定义两次），
-      收尾事件走 eventbus 词表；存储事实全经 Store 接缝注入，包零 DB/gorm 依赖。
+      收尾事件走 eventbus 词表，四路归因值引用 eventbus.ClosedBy*（与消费方
+      watchdog 的缺省表同源，issue #391）；存储事实全经 Store 接缝注入，
+      包零 DB/gorm 依赖。
 
   - id: commitgate
     roots: [commitgate]
@@ -1450,12 +1457,16 @@ dependency_direction:
   #   cmd/releasecheck                        发版纪律门禁（2026-11-17）：判 annotated tag /
   #                                            CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装
   #                                            提交；读 git 历史与 CHANGELOG 是工具职责，同上。
-  #   cmd/deploymatrix                        部署配方能力清单门禁（2026-11-17，issue #277）：
-  #                                            判 docs/DEPLOY-MATRIX.yaml 的证据可解析、
-  #                                            state/readiness 由证据推导、USAGE 机器口径块
-  #                                            逐行一致；解析 Go 符号与 Makefile 是工具职责。
-  #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, docs]
+#   cmd/deploymatrix                        部署配方能力清单门禁（2026-11-17，issue #277）：
+#                                            判 docs/DEPLOY-MATRIX.yaml 的证据可解析、
+#                                            state/readiness 由证据推导、USAGE 机器口径块
+#                                            逐行一致；解析 Go 符号与 Makefile 是工具职责。
+#   cmd/seamcheck                           接缝契约成文率统计与棘轮（2026-11-17，issue #400）：
+#                                            类型感知扫描导出 interface / 回调函数类型，
+#                                            输出声明/调用点/三条约束写齐数；扫描各包是
+#                                            工具职责，不形成机制依赖。
+#   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/seamcheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1567,7 +1578,7 @@ sandbox_providers:
   # 逐包列举，理由同 dependency_direction（issue #35）：前缀豁免会**无声地**把
   # 将来新增的 cmd 子包一起盖住。这些是工具，它们不实现 sandbox.Provider
   # （cmd/apilifecheck 为 issue #113/#104 的生命周期门禁，2026-11-12 登记同批）。
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/seamcheck, docs]
   providers:
     - id: gatecheck-managed
       level: LevelProcess

@@ -41,6 +41,7 @@ package eventbus
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -50,16 +51,23 @@ import (
 // Store 持久化存储接缝（宿主实现；issue #160，形态与 #145 的
 // commitgate.Store / ticket.Backend 同风格）。
 //
-// 契约三条：
+// 契约五条（含 #400 要求的三条接缝约束）：
 //   - **游标由存储铸造**：Insert 返回的 uint64 是权威游标 ID（bq_event 式
 //     自增/序列），单调唯一由实现保证；传入事件的 ev.ID 是输入侧遗留值，
 //     一律忽略（DurablePublisher 在入口已清零，防御陈旧游标流入）。
 //   - **基础设施故障 ⇒ error**：本包收到 error 即放弃广播——「不广播 +
 //     onDrop」是契约的一部分，不是本包的实现选择；实现不得在 error 时
 //     仍然写入了行（部分写入由实现的事务性负责）。
-//   - **不得重入**：Insert 不得回调 DurablePublisher.Publish——发布全程
-//     持锁（见 DurablePublisher 的并发序说明），重入即死锁；与 Hub.Relay
-//     的「不得回流」同款红线。
+//   - **不得重入**：Insert 不得回调 DurablePublisher.Publish——发布按 ticket
+//     串行（见 DurablePublisher 的并发序说明），重入等价于排在自身之后等待，
+//     即自死锁；与 Hub.Relay 的「不得回流」同款红线。
+//   - **不得阻塞**：Insert 在发布轮次内同步调用；实现须遵守 ctx 的超时/取消
+//     并自行设上界，不得无限等待——发布面按 ticket 串行，一次挂起会拖住
+//     后续全部发布（慢存储的代价已被显式接受，无上界的阻塞不被接受）。
+//   - **panic 隔离**：Insert 的 panic 由内核 recover 成 error（走「不广播 +
+//     onDrop」路径），宿主驱动/连接池/序列化异常不得掀翻调用方；实现仍应
+//     以事务性保证 error/panic 时不留半行（与上一条「error 不得仍写入行」
+//     同一要求）。
 //
 // # 与尾随读侧的配对（issue #264）
 //
@@ -119,24 +127,33 @@ func (s *MemoryStore) Insert(_ context.Context, ev Event) (uint64, error) {
 //
 // # 并发序：广播序 == 游标序（比宿主拷贝强的一档，代价写明）
 //
-// 发布全程持一把锁：并发 Publish 的广播顺序与游标顺序严格一致——每个订阅者
-// 看到的 ID 严格递增，SSE after 游标的「唯一单调空间」在**实时面**同样成立
-// （宿主两份拷贝只能保证各自先 insert 后 broadcast，并发下广播序与游标序
-// 可能交错：A insert=1 → B insert=2 → B 广播 → A 广播，订阅者先见 2 后见 1）。
-// 代价是 Insert 被串行化：事件是人的可读留痕而非高频指标，串行不是瓶颈；
-// 但 Insert 慢（DB 抖动）时全体发布排队等它——这是次序保证的固有代价，
-// 不藏。广播本身非阻塞（满缓冲丢帧计数），持锁广播不会卡在慢订阅者上。
+// 发布按 **ticket 串行**：并发 Publish 领号后依次获得「调用 Insert 并广播」
+// 的独占轮次，广播顺序与游标顺序严格一致——每个订阅者看到的 ID 严格递增，
+// SSE after 游标的「唯一单调空间」在**实时面**同样成立（宿主两份拷贝只能
+// 保证各自先 insert 后 broadcast，并发下广播序与游标序可能交错：
+// A insert=1 → B insert=2 → B 广播 → A 广播，订阅者先见 2 后见 1）。
+//
+// 锁内只留判定（issue #399）：mu 只保护领号、轮次判定与广播簿记；宿主
+// Store.Insert 在**锁外**调用——慢存储（DB 抖动）不再把互斥锁按在宿主
+// 调用上，宿主 panic 也不会在锁内掀翻（panic 已转成 error，见 insertStore）。
+// 代价是 Insert 仍被串行化：事件是人的可读留痕而非高频指标，串行不是瓶颈；
+// 但 Insert 慢时全体发布排队等它——这是次序保证的固有代价，不藏。广播本身
+// 非阻塞（满缓冲丢帧计数），持锁广播不会卡在慢订阅者上。
 //
 // 零值不可用，用 NewDurablePublisher 构造。
 type DurablePublisher struct {
 	bus   *Bus
 	store Store
 
-	// mu 发布临界区：insert→ID→broadcast 的原子次序与并发单调序都由它保证
-	// （见并发序说明）。onDrop 在该临界区**之外**调用——失败路径的旁路留痕
-	// 不参与次序不变量，把它拖进锁内只会让宿主钩子的慢/重入/panic 波及
-	// 整个发布面（issue #328）。
-	mu     sync.Mutex
+	// mu 排队簿记锁：nextTicket/serving 与广播次序由它保护。**不覆盖宿主
+	// Store.Insert**（issue #399：锁内只留判定）；onDrop 也在任何锁之外
+	// 调用——失败路径的旁路留痕不参与次序不变量（issue #328）。
+	mu   sync.Mutex
+	cond *sync.Cond // 轮次信号：serving 推进时唤醒下一位（与 mu 绑定）
+
+	nextTicket uint64 // 下一张待发票号（Publish 入口在 mu 内领取）
+	serving    uint64 // 当前持有独占轮次的票号（锁内推进）
+
 	onDrop func(ev Event, cause error)
 }
 
@@ -146,7 +163,7 @@ type DurableOption func(*DurablePublisher)
 // WithOnDrop 注入落库失败留痕钩子（缺省 nil ⇒ 静默丢弃，与宿主拷贝的
 // onDrop 可选形一致）。
 //
-// 同步调用、在发布临界区**之外**（失败不广播，onDrop 不参与次序不变量）：
+// 同步调用、在发布轮次**之外**（失败不广播，onDrop 不参与次序不变量）：
 // 回调可以安全查询发布面；但仍不得回调 Publish/Insert——那会再走一次落库，
 // 失败时递归 onDrop。panic 已由本包隔离（与 internal/subhub 的回调纪律同款）
 // ——宿主留痕钩子的异常不得掀翻发布面。本包不重试——重试会把「失败不广播」
@@ -168,6 +185,7 @@ func NewDurablePublisher(b *Bus, store Store, opts ...DurableOption) *DurablePub
 		panic("eventbus: DurablePublisher 需要 Store（nil store 即广播无铸造游标的帧——伪造游标）")
 	}
 	p := &DurablePublisher{bus: b, store: store}
+	p.cond = sync.NewCond(&p.mu)
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -178,15 +196,18 @@ func NewDurablePublisher(b *Bus, store Store, opts ...DurableOption) *DurablePub
 // 供调用方直接用作 SSE 游标；失败 ⇒ 零值事件 + insert 错误，不广播
 // （onDrop 已留痕）。
 //
+// 宿主 Store.Insert 的 panic 由本包隔离成 error（issue #399）——失败路径与
+// 返回 error 的路径完全一致，不掀翻调用方。
+//
 // 字段口径（归一发生在 Insert 之前，落库行与广播帧同一内容）：
 //   - ev.ID 输入侧一律**清零忽略**——游标由存储铸造（Store 契约），
 //     调用方拷贝里的陈旧 ID 不得流入广播帧；
 //   - Level 空 ⇒ info，OccurredAt 零值 ⇒ 当前时刻——与 Bus.Publish 的
 //     既有缺省行为同口径，本包不新增字段语义。
 func (p *DurablePublisher) Publish(ctx context.Context, ev Event) (Event, error) {
-	ev, err := p.publishLocked(ctx, ev)
+	ev, err := p.publishSerialized(ctx, ev)
 	if err != nil {
-		// 失败路径的旁路留痕在临界区之外（issue #328）：钩子慢不占发布锁、
+		// 失败路径的旁路留痕在任何锁之外（issue #328）：钩子慢不占发布锁、
 		// 钩子 panic 由 subhub.Do 隔离，不得掀翻发布面。
 		p.drop(ev, err)
 		return Event{}, err
@@ -194,14 +215,26 @@ func (p *DurablePublisher) Publish(ctx context.Context, ev Event) (Event, error)
 	return ev, nil
 }
 
-// publishLocked 发布临界区：insert→铸造 ID→广播。返回的 Event 在失败路径
-// 是**归一后**的事件（onDrop 要看到的形态），成功路径是广播帧。
-func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, error) {
+// publishSerialized 一次发布轮次：领号排队 →（锁外）归一 + Insert →（锁内）
+// 广播 + 放行下一位。
+//
+// 返回的 Event 在失败路径是**归一后**的事件（onDrop 要看到的形态），成功
+// 路径是广播帧。锁内只做簿记（issue #399）；宿主 Insert 的 panic 由
+// insertStore 转为 error，轮次照常推进——不会把后续发布一起卡死。
+func (p *DurablePublisher) publishSerialized(ctx context.Context, ev Event) (Event, error) {
+	// 锁内：领号并等轮到自己。同步 Cond 的 Wait 在等待期间释放 mu，
+	// 因此排队不持有排他锁；轮次推进由前一位在锁内 Broadcast。
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	ticket := p.nextTicket
+	p.nextTicket++
+	for p.serving != ticket {
+		p.cond.Wait()
+	}
+	p.mu.Unlock()
 
-	// 入口深拷贝：发布方在 Publish 返回后复用入参 map 是常见写法，返回帧、
-	// 落库行、广播帧都不得与它共享（issue #378）。
+	// 锁外：入口深拷贝 + 归一 + 宿主 Insert（panic 隔离在此发生）。
+	// 深拷贝（issue #378）：发布方在 Publish 返回后复用入参 map 是常见写法，
+	// 返回帧、落库行、广播帧都不得与它共享。
 	ev = ev.Clone()
 	ev.ID = 0 // 游标由存储铸造：输入侧 ID 一律忽略（防御陈旧游标伪造）
 	if ev.Level == "" {
@@ -215,13 +248,38 @@ func (p *DurablePublisher) publishLocked(ctx context.Context, ev Event) (Event, 
 	// 之后还要用 ev 广播与返回——两份数据不得互相改穿（Store 契约不要求实现
 	// 深拷贝调用方入参，故边界拷贝由本包负责）。
 	stored := ev.Clone()
-	id, err := p.store.Insert(ctx, stored)
+	id, err := insertStore(ctx, p.store, stored)
+
+	// 锁内：广播帧（成功路径）并放行下一位。广播不调用宿主代码，
+	// 满缓冲丢帧计数、不阻塞在慢订阅者上。
+	p.mu.Lock()
+	if err == nil {
+		ev.ID = id
+		p.bus.Broadcast(ev)
+	}
+	p.serving++
+	p.cond.Broadcast()
+	p.mu.Unlock()
+
 	if err != nil {
 		return ev, err
 	}
-	ev.ID = id
-	p.bus.Broadcast(ev)
 	return ev, nil
+}
+
+// insertStore 调用宿主存储并把 panic 转成 error（issue #399）。
+//
+// 与 onDrop 的 subhub.Do 同一条纪律：宿主接缝的异常不得掀翻发布面。区别是
+// Insert 有返回值，故 recover 必须转成 error（走「不广播 + onDrop」路径），
+// 不能像 onDrop 那样静默吞掉——否则失败会变成一条「成功」的发布。
+func insertStore(ctx context.Context, store Store, ev Event) (id uint64, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("eventbus: Store.Insert panic 已隔离: %v", r)
+			id = 0
+		}
+	}()
+	return store.Insert(ctx, ev)
 }
 
 // drop 落库失败留痕（nil 钩子静默跳过）。panic 隔离与 internal/subhub 的

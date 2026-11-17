@@ -284,8 +284,11 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 			defer t.Stop()
 			select {
 			case <-t.C:
-				cleanupJobWithUID(k, ctx, ns, name, jobUID)
+				// 先取消再删：删除会让并发中的 await GET 返回 not-found，
+				// 若取消在后，收场会被误判成 job_not_found（CI 上实测的竞态）。
+				// cleanup 用外层 ctx，取消 runCtx 不影响它把 Job 删干净。
 				cancel(errWallClock)
+				cleanupJobWithUID(k, ctx, ns, name, jobUID)
 			case <-runCtx.Done():
 			}
 		})

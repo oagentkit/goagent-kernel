@@ -95,8 +95,9 @@ const (
 	// 释放」纪律）：turn_started 在会话认领成功后立即落库，turn_ended 在收尾漏斗出口
 	// 落库——「有 start 无 end」的残留=中断轮的可检测孤儿态（发版重启/进程死亡不再依赖
 	// 事件静默启发式定性，时间线与诊断大脑可直接读出轮边界与中断点）。停机路径不落
-	// turn_ended（轮括号留给恢复循环/启动对账以 closed_by=recovery|boot-reconcile 关闭，
-	// 谎报「正常收尾」比留开放括号更伤审计）。
+	// turn_ended（轮括号留给恢复循环/启动对账以 closed_by 归因关闭，词表见
+	// closedby.go 的 ClosedBy* 与 ClosedByDefaults——生产方 reconcile 与消费方
+	// watchdog 共用这一份，issue #391；谎报「正常收尾」比留开放括号更伤审计）。
 	EventTurnStarted = "turn_started"
 	EventTurnEnded   = "turn_ended"
 	// EventReportSuperseded 终报覆写版本尾迹（批次一百三十七）：成功收尾覆写 final_report
@@ -271,8 +272,10 @@ const (
 	// 工具身份守卫事件（spec 2026-09-15-tool-identity-otel-guard-design P4）：
 	// violation 为热路径守卫实锤（requested/resolved/checksum/violation 随 payload）；
 	// pairing_leak 为被动 watcher 配对不变量告警（reason=declared_not_executed|
-	// unpaired_result|duplicate_result|duplicate_call）。配对键经 ToolCallID 单源
-	// 读取（issue #336：两包各写一份配对键 ⇒ 同一事件流两个相反结论）。
+	// unpaired_result|duplicate_result|duplicate_call；declared_not_executed 是
+	// trajectory.PairingMissingResult 的注册别名，见 pairing.go 的
+	// CanonicalPairingReason，issue #392）。配对键经 ToolCallID 单源读取
+	// （issue #336：两包各写一份配对键 ⇒ 同一事件流两个相反结论）。
 	EventToolIdentityViolation = "tool_identity_violation"
 	EventToolPairingLeak       = "tool_pairing_leak"
 	// 轮级括号不变量告警（watchdog INV3，issue #171）：turn_started/turn_ended

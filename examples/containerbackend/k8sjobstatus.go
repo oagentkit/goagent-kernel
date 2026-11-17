@@ -20,6 +20,12 @@ func (k *K8sJob) await(ctx context.Context, ns, name string) (backend.Result, er
 			return backend.Result{}, err
 		}
 		if !found {
+			// 墙钟 watcher 先取消再删 Job：若「查不到」与取消同时发生，
+			// 按取消处理（Exec 会把 errWallClock 归入 wall_clock 预算）；
+			// 否则墙钟到点删 Job 的正常收场会被报成 job_not_found。
+			if ctx.Err() != nil {
+				return backend.Result{}, k8sWaitError(ctx)
+			}
 			return k.unknown(ns, name, "job_not_found"), nil
 		}
 		if job.Metadata.DeletionTimestamp != nil {

@@ -100,7 +100,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -315,7 +315,7 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 # 单测一条命令跑完，本地改完代码先跑它。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync apilifecheck modreplace modwork cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck modreplace modwork cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -344,6 +344,12 @@ bench: ## 性能基线复跑（issue #101；独立目标，不在 check——基
 
 docsync: ## README 包表 ↔ 仓库实际（生产行数 / 外部依赖）一致性门禁
 	$(EXPORT) $(GOENV) go run ./cmd/docsync
+
+seamcheck: ## 接缝契约成文率统计与棘轮（声明 / 调用点 / 三条写齐数，issue #400）
+	@# 统计口径与棘轮规则见 cmd/seamcheck 包头：接缝集合与基线逐条相等，
+	@# 每个接缝已写的约束只增不减，fully_written 只允许上升。基线文件
+	@# seam-baseline.json 是**机器生成**的清单，改代码后先跑 -update 评审。
+	$(EXPORT) $(GOENV) go run ./cmd/seamcheck
 
 releasecheck: ## 发版纪律门禁（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间无混装提交）
 	@# 只在 **tag 快照** 上判：HEAD 无 exact tag（普通提交 / PR 分支）时显式跳过
@@ -438,7 +444,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync apilifecheck deploycheck releasecheck modreplace modwork
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck releasecheck modreplace modwork
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

@@ -32,7 +32,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -163,6 +162,7 @@ func deriveWordTable(wt readmeWordTable) ([]string, error) {
 	}
 
 	fset := token.NewFileSet()
+	resolver := newConstResolver(".")
 	parsed := make(map[string]string) // 常量名 → 值
 	for _, file := range files {
 		if strings.HasSuffix(file, "_test.go") {
@@ -172,6 +172,7 @@ func deriveWordTable(wt readmeWordTable) ([]string, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("%s: 解析 %s 失败: %w", wt.pkg, file, perr)
 		}
+		imports := fileImports(f)
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)
 			if !ok || gd.Tok != token.CONST {
@@ -190,9 +191,9 @@ func deriveWordTable(wt readmeWordTable) ([]string, error) {
 					if expr == nil {
 						return nil, fmt.Errorf("%s: 常量 %s 没有可派生的字符串值", wt.pkg, name.Name)
 					}
-					val, ok := constString(expr, parsed)
+					val, ok := resolver.constString(expr, wt.sourceDir, imports, parsed)
 					if !ok {
-						return nil, fmt.Errorf("%s: 常量 %s 不是字符串字面量，无法从代码派生词表", wt.pkg, name.Name)
+						return nil, fmt.Errorf("%s: 常量 %s 不是可派生的字符串值（字面量 / 同包常量 / 单源引用），无法从代码派生词表", wt.pkg, name.Name)
 					}
 					parsed[name.Name] = val
 				}
@@ -243,25 +244,5 @@ func constExpr(vs *ast.ValueSpec, i int) ast.Expr {
 		return vs.Values[0]
 	default:
 		return nil
-	}
-}
-
-// constString 把字符串字面量或同块内已解析的常量名还原为值。
-func constString(expr ast.Expr, parsed map[string]string) (string, bool) {
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		if e.Kind != token.STRING {
-			return "", false
-		}
-		v, err := strconv.Unquote(e.Value)
-		if err != nil {
-			return "", false
-		}
-		return v, true
-	case *ast.Ident:
-		v, ok := parsed[e.Name]
-		return v, ok
-	default:
-		return "", false
 	}
 }

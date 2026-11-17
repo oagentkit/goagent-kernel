@@ -1,0 +1,500 @@
+{
+  "schema": 1,
+  "declarations": 92,
+  "callsites": 437,
+  "fully_written": 5,
+  "seams": [
+    {
+      "id": "backend.Backend",
+      "kind": "interface",
+      "callsites": 13
+    },
+    {
+      "id": "backend.Capable",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "backend.EgressEnforcer",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "backend.Handler",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "budget.Archive",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "budget.Summarizer",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "checkpoint.FencedStoreCAS",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "checkpoint.Store",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "checkpoint.StoreCAS",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "commitgate.SeedWarn",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "commitgate.Store",
+      "kind": "interface",
+      "callsites": 6
+    },
+    {
+      "id": "contract.Clock",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "contract.RunContext",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "contract.StepSink",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "contract.ToolBinder",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "contract.Tools",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.Adjudicator",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.Auditor",
+      "kind": "interface",
+      "callsites": 2,
+      "written": [
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "controlplane.Authorizer",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "controlplane.AuthorizerOf",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.EffectAuthority",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "controlplane.EffectResolver",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "controlplane.HostPlane",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.Plane",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "controlplane.Releaser",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.RunQuerier",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.Store",
+      "kind": "interface",
+      "callsites": 8
+    },
+    {
+      "id": "controlplane.TaskAuthority",
+      "kind": "interface",
+      "callsites": 3
+    },
+    {
+      "id": "controlplane.TaskQuerier",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "controlplane.TaskSource",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "controlplane.Terminator",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "coord.AtomicDecision",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "coord.Backend",
+      "kind": "interface",
+      "callsites": 20
+    },
+    {
+      "id": "coord.ClockSource",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "coord.LeaseBudget",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "coord.SingleMachine",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "deadline.StatusOf",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "deadline.Store",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "dispatch.AttemptFunc",
+      "kind": "func",
+      "callsites": 2
+    },
+    {
+      "id": "dispatch.CandidatesFunc",
+      "kind": "func",
+      "callsites": 2
+    },
+    {
+      "id": "drain.SessionTurns",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "drain.Turns",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "egress.EgressVerifier",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "eventbus.CursorStore",
+      "kind": "interface",
+      "callsites": 4
+    },
+    {
+      "id": "eventbus.Relay",
+      "kind": "interface",
+      "callsites": 1,
+      "written": [
+        "blocking"
+      ]
+    },
+    {
+      "id": "eventbus.Store",
+      "kind": "interface",
+      "callsites": 1,
+      "written": [
+        "reentry",
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "eventbus.TailStore",
+      "kind": "interface",
+      "callsites": 2,
+      "written": [
+        "reentry",
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "eventbus.WatermarkTailStore",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "examples/containerbackend.K8sCNICapability",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "finalize.Store",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "guardset.SwapGate",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "handoff.ClockedLedger",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "handoff.Ledger",
+      "kind": "interface",
+      "callsites": 13
+    },
+    {
+      "id": "handoff.Store",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "hookengine.Runner",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "metrics.Recorder",
+      "kind": "interface",
+      "callsites": 3
+    },
+    {
+      "id": "offload.Store",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "ownership.Authority",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "ownership.Fencer",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "ptc.Discoverer",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "reconcile.FinalizeDispatcher",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "reconcile.FinalizeStore",
+      "kind": "interface",
+      "callsites": 3
+    },
+    {
+      "id": "reconcile.Pub",
+      "kind": "func",
+      "callsites": 2,
+      "written": [
+        "reentry",
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "reconcile.Store",
+      "kind": "interface",
+      "callsites": 8,
+      "written": [
+        "reentry",
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "retryplan.Classifier",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "scheduling.QuotaStore",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "scheduling.TaskLeaseOracle",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "sideeffect.FencedSink",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "sideeffect.OwnedResolveStore",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "sideeffect.Store",
+      "kind": "interface",
+      "callsites": 139
+    },
+    {
+      "id": "sidetest.ClockedStore",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "sidetest.Factory",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "sidetest.SinkFactory",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "sidetest.SinkProbe",
+      "kind": "interface",
+      "callsites": 22
+    },
+    {
+      "id": "steer.Store",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "taskboard.BatchRenewingBoard",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "taskboard.Board",
+      "kind": "interface",
+      "callsites": 76
+    },
+    {
+      "id": "taskboard.ReadyBoard",
+      "kind": "interface",
+      "callsites": 0
+    },
+    {
+      "id": "taskboard.RenewingBoard",
+      "kind": "interface",
+      "callsites": 19
+    },
+    {
+      "id": "taskboard/boardtest.ClockedBoard",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "taskboard/boardtest.Factory",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "taskboard/boardtest.TenantFactory",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "tenant.QuotaSource",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "ticket.Backend",
+      "kind": "interface",
+      "callsites": 4
+    },
+    {
+      "id": "watchdog.Pub",
+      "kind": "func",
+      "callsites": 2,
+      "written": [
+        "reentry",
+        "blocking",
+        "panic"
+      ]
+    },
+    {
+      "id": "worker.EffectRunner",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "worker.Handler",
+      "kind": "interface",
+      "callsites": 2
+    },
+    {
+      "id": "worker.HandlerFunc",
+      "kind": "func",
+      "callsites": 1
+    },
+    {
+      "id": "worker.LeaseSession",
+      "kind": "interface",
+      "callsites": 5
+    },
+    {
+      "id": "worker.LeasedProgress",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "worker.Progress",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "worker.Registry",
+      "kind": "interface",
+      "callsites": 3
+    }
+  ]
+}
