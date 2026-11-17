@@ -106,7 +106,8 @@ const (
 	ExecKindCheckpoint = "checkpoint"
 )
 
-// 执行语义状态三值（「缺省是 unset 不是 error」与 trajectory 同源）。
+// 执行语义状态三值（「缺省是 unset 不是 error」与 trajectory.SpanStatus 同源；
+// align_test.go 逐值比对，上游加状态即红）。
 const (
 	ExecStatusUnset = "unset"
 	ExecStatusOK    = "ok"
@@ -127,7 +128,8 @@ const (
 )
 
 // 租约拒绝形态：contended=「还没轮上我」（等一等再来），
-// uncertain=「可能已施加，须先对账」（硬阻塞）。语义来自 sideeffect.Outcome。
+// uncertain=「可能已施加，须先对账」（硬阻塞）。语义来自 sideeffect.Outcome
+// （int 枚举，align_test.go 比对 String()）。
 const (
 	LeaseOutcomeContended = "contended"
 	LeaseOutcomeUncertain = "uncertain"
