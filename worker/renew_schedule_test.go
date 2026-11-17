@@ -4,9 +4,12 @@
 //   - 续期按每条任务自己的到期时刻调度（不是每拍全量扫描）；
 //   - 批量续期接口存在时，存储往返次数显著少于任务数；
 //   - 单条续期超时只影响该任务，不阻断同拍其它任务；
-//   - 超时与普通失败分开计数；
-//   - 200 在途 × 单次续期 100ms × TTL 15s ⇒ 无一任务在续期前失格
-//     （串行全量实现一轮 20s，后段任务必过期——反向验证的靶子）。
+//   - 超时与普通失败分开计数。
+//
+// 「200 在途的续期压力」这条判据已挪到 renew_concurrency_test.go：它原先把
+// 「有界并发」与「到期前续上」两件事塞进一个墙钟窗口，机器一慢就假红
+// （issue #411）。拆开后的两条断言与本文件同属续期语义，但尺子不同：
+// 一条量并发计数，一条量续期时刻。
 package worker
 
 import (
@@ -230,96 +233,6 @@ func TestRenewTimeoutOnlyAffectsThatTask(t *testing.T) {
 	cancel()
 	if err := <-done; err != nil && !errors.Is(err, ErrLeaseUnconfirmed) {
 		t.Fatalf("单条超时到阈值只应让驱动按 ErrLeaseUnconfirmed 收刀（实得 %v）", err)
-	}
-}
-
-// slowRenewBoard 让每次续期花 delay（判「续期轮是否在 TTL 内完成」）。
-type slowRenewBoard struct {
-	*coord.BoardAdapter
-	delay  time.Duration
-	renews atomic.Int64
-	failed atomic.Int64
-}
-
-func (b *slowRenewBoard) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
-	b.renews.Add(1)
-	time.Sleep(b.delay)
-	task, err := b.BoardAdapter.Renew(ctx, id, token, req)
-	if err != nil {
-		b.failed.Add(1)
-	}
-	return task, err
-}
-
-// TestLoopHighConcurrencyRenewalBeforeExpiry 200 在途 × 100ms × TTL 15s。
-//
-// 旧实现每拍串行全量续期：一轮 20s > TTL，后段任务在轮到它之前就过期。
-// 本用例跑过 TTL 窗口后断言零失格、每一条都续过。
-func TestLoopHighConcurrencyRenewalBeforeExpiry(t *testing.T) {
-	if testing.Short() {
-		t.Skip("15s 窗口的续期压力用例在 -short 下跳过")
-	}
-	const (
-		n     = 200
-		delay = 100 * time.Millisecond
-		ttl   = 15 * time.Second
-	)
-	realBoard, err := coord.NewBoardAdapter(coord.NewMemoryBackend())
-	if err != nil {
-		t.Fatal(err)
-	}
-	realBoard.UseClock(time.Now)
-	board := &slowRenewBoard{BoardAdapter: realBoard, delay: delay}
-	tasks := make([]taskboard.Task, 0, n)
-	for i := 0; i < n; i++ {
-		tasks = append(tasks, taskboard.Task{
-			ID:    taskboard.TaskID("t" + itoa(i)),
-			State: taskboard.StateOpen,
-		})
-	}
-	board.Seed(tasks...)
-
-	reg := newMemRegistry(time.Now)
-	handler := HandlerFunc(func(ctx context.Context, _ taskboard.Task) error {
-		<-ctx.Done()
-		return ctx.Err()
-	})
-	var lost atomic.Int64
-	loop, err := NewLoop(board, reg, handler, Config{
-		Agent: "w-1", TTL: ttl, PollInterval: time.Millisecond, Concurrency: n,
-		HeartbeatInterval: ttl / 3,
-		RenewMargin:       ttl / 3,
-		RenewTimeout:      ttl / 4,
-		RenewConcurrency:  DefaultRenewConcurrency,
-		OnLeaseLost:       func(taskboard.TaskID, LeaseLostCause) { lost.Add(1) },
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- loop.Run(ctx) }()
-
-	// 跑满 TTL + 1s：全部任务都经历过「到期前必须续上」的窗口。
-	time.Sleep(ttl + time.Second)
-	if got := lost.Load(); got != 0 {
-		t.Fatalf("高并发续期不得有任务失格（实得 %d 条 OnLeaseLost）", got)
-	}
-	if got := board.failed.Load(); got != 0 {
-		t.Fatalf("续期不得因过期被拒（实得 %d 次失败）", got)
-	}
-	if got := board.renews.Load(); got < n {
-		t.Fatalf("每条在途租约都应至少续期一次（%d/%d）", got, n)
-	}
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("优雅退出应 nil: %v", err)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("等待驱动退出超时")
 	}
 }
 
