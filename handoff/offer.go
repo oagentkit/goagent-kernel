@@ -83,4 +83,3 @@ func beginGeneration(t Ticket, now time.Time, epoch Epoch) Ticket {
 	fresh.ReceiptAt = time.Time{}
 	return fresh
 }
-
