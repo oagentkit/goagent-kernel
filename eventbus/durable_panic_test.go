@@ -24,14 +24,14 @@ func (s *panicStore) Insert(_ context.Context, _ Event) (uint64, error) {
 
 // publishSafely 包一层 recover：用例要判「panic 没逃出 Publish」，直接调用
 // 会让测试进程崩掉、看不出断言意图。
-func publishSafely(p *DurablePublisher, ev Event) (out Event, err error, panicked any) {
+func publishSafely(p *DurablePublisher, ev Event) (out Event, panicked any, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			panicked = r
 		}
 	}()
 	out, err = p.Publish(context.Background(), ev)
-	return out, err, nil
+	return
 }
 
 // TD7 宿主 Insert panic 不得逃出 Publish：转成 error、不广播、走 drop 留痕。
@@ -44,7 +44,7 @@ func TestDurablePublishInsertPanicIsolated(t *testing.T) {
 	ch, cancel := p.bus.Subscribe(context.Background())
 	defer cancel()
 
-	out, err, panicked := publishSafely(p, Event{SessionID: "s1", Type: EventStepStarted})
+	out, panicked, err := publishSafely(p, Event{SessionID: "s1", Type: EventStepStarted})
 	if panicked != nil {
 		t.Fatalf("Insert panic 逃出了 Publish: %v", panicked)
 	}
@@ -87,7 +87,7 @@ func TestDurablePublishInsertPanicDoesNotLeakGate(t *testing.T) {
 	boom := &panicStore{}
 	p := NewDurablePublisher(New(), boom)
 
-	if _, _, panicked := publishSafely(p, Event{SessionID: "s1", Type: EventStepStarted}); panicked != nil {
+	if _, panicked, _ := publishSafely(p, Event{SessionID: "s1", Type: EventStepStarted}); panicked != nil {
 		t.Fatalf("首次 panic 逃出 Publish: %v", panicked)
 	}
 

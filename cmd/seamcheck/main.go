@@ -35,7 +35,6 @@ package main
 import (
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -90,7 +89,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	report, err := collect(*root)
 	if err != nil {
-		fmt.Fprintf(stderr, "seamcheck: 扫描失败: %v\n", err)
+		reportf(stderr, "seamcheck: 扫描失败: %v\n", err)
 		return 1
 	}
 
@@ -98,32 +97,32 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if !*force {
 			if old, lerr := loadBaseline(*baselinePath); lerr == nil {
 				if rerr := ratchetOnlyUp(old, report); rerr != nil {
-					fmt.Fprintf(stderr, "seamcheck: 拒绝写入回退的基线（棘轮只允许上升；确需下调用 -force）:\n%v\n", rerr)
+					reportf(stderr, "seamcheck: 拒绝写入回退的基线（棘轮只允许上升；确需下调用 -force）:\n%v\n", rerr)
 					return 1
 				}
 			}
 		}
 		if werr := writeBaseline(*baselinePath, report); werr != nil {
-			fmt.Fprintf(stderr, "seamcheck: 写基线失败: %v\n", werr)
+			reportf(stderr, "seamcheck: 写基线失败: %v\n", werr)
 			return 1
 		}
 		printReport(stdout, report, nil)
-		fmt.Fprintf(stdout, "  已写入基线 %s\n", *baselinePath)
+		reportf(stdout, "  已写入基线 %s\n", *baselinePath)
 		return 0
 	}
 
 	base, err := loadBaseline(*baselinePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			fmt.Fprintf(stderr, "seamcheck: 基线 %s 不存在；先运行 go run ./cmd/seamcheck -update 生成并评审\n", *baselinePath)
+			reportf(stderr, "seamcheck: 基线 %s 不存在；先运行 go run ./cmd/seamcheck -update 生成并评审\n", *baselinePath)
 			return 1
 		}
-		fmt.Fprintf(stderr, "seamcheck: 读基线失败: %v\n", err)
+		reportf(stderr, "seamcheck: 读基线失败: %v\n", err)
 		return 1
 	}
 	printReport(stdout, report, &base)
 	if verr := compare(base, report); verr != nil {
-		fmt.Fprintf(stderr, "seamcheck: 接缝契约基线不通过:\n%v\n", verr)
+		reportf(stderr, "seamcheck: 接缝契约基线不通过:\n%v\n", verr)
 		return 1
 	}
 	return 0

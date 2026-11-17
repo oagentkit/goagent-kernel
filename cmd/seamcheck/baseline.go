@@ -128,16 +128,22 @@ func writeBaseline(path string, r Report) error {
 
 // printReport 人类可读的三行摘要（数字与基线并列，便于对照）。
 func printReport(w io.Writer, cur Report, base *Report) {
-	fmt.Fprintf(w, "seamcheck: 接缝声明 %d / 调用点 %d / 三条约束写齐 %d\n",
+	reportf(w, "seamcheck: 接缝声明 %d / 调用点 %d / 三条约束写齐 %d\n",
 		cur.Declarations, cur.Callsites, cur.FullyWritten)
-	fmt.Fprintf(w, "  约束覆盖：不得重入 %d / 不得阻塞 %d / panic 隔离 %d\n",
+	reportf(w, "  约束覆盖：不得重入 %d / 不得阻塞 %d / panic 隔离 %d\n",
 		countWritten(cur, constraintReentry), countWritten(cur, constraintBlocking), countWritten(cur, constraintPanic))
 	if base != nil {
-		fmt.Fprintf(w, "  基线：声明 %d / 调用点 %d / 写齐 %d\n", base.Declarations, base.Callsites, base.FullyWritten)
+		reportf(w, "  基线：声明 %d / 调用点 %d / 写齐 %d\n", base.Declarations, base.Callsites, base.FullyWritten)
 		if delta := cur.Callsites - base.Callsites; delta != 0 {
-			fmt.Fprintf(w, "  调用点变化 %+d（基线是快照；确认无遗漏后用 -update 刷新）\n", delta)
+			reportf(w, "  调用点变化 %+d（基线是快照；确认无遗漏后用 -update 刷新）\n", delta)
 		}
 	}
+}
+
+// reportf 往 w 写报告并显式丢弃写入错误（报告面就是最终输出，写不出去没有
+// 可做的事；与 cmd/pkgcov 同一条口径，避免 errcheck 的静默豁免）。
+func reportf(w io.Writer, format string, args ...any) {
+	_, _ = fmt.Fprintf(w, format, args...)
 }
 
 func countWritten(r Report, constraint string) int {
