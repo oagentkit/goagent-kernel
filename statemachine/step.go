@@ -191,7 +191,9 @@ func RequiresApproval(t StepType) bool {
 // 写法变体先归一（与 Valid / CanTransition 同口径）。词表外的值不是终态：
 // 「读不懂」不能被当成「不可再变」。
 func IsTerminal(s StepStatus) bool {
-	return s == StatusRejected || s == StatusExpired || s == StatusSucceeded ||
-		s == StatusInterrupted ||
-		s == StatusSkipped || s == StatusRolledBack || s == StatusCancelled
+	n := s.normalized()
+	if !n.Valid() {
+		return false
+	}
+	return len(transitions[n]) == 0
 }
