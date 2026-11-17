@@ -105,9 +105,9 @@ func renderRejection(rej goja.Value) (text, kind string) {
 // 故 errors.Is 穿得进去——这里与 failFrom 走同一份判据，不另立口径。
 func interruptMessage(ie *goja.InterruptedError) (string, string) {
 	if errors.Is(ie, errDeadline) {
-		return errDeadline.Error(), "deadline"
+		return errDeadline.Error(), ErrorKindDeadline
 	}
-	return fmt.Sprintf("执行被中断: %v", ie.Value()), "runtime"
+	return fmt.Sprintf("执行被中断: %v", ie.Value()), ErrorKindRuntime
 }
 
 // rejectionKindOf 探测调用错误自带的分类（toolfail 口径）。

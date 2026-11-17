@@ -61,20 +61,6 @@ var (
 	errBudgetByte = errors.New("ptc budget: binding output bytes exceeded")
 )
 
-// Binding 一个宿主函数绑定（工具即绑定）：Call 收程序传来的 JSON 参数文本，回工具
-// 输出原文（不截断——与模型直读同一信任级；注入嫌疑扫描在装饰链上照常生效）。
-//
-// Signature 可选，给出后模型按普通函数调用而不必手写 JSON：`get_logs(host, count)`
-// 会被挂成 `host.get_logs(host, count)`，ptc 负责把形参打包成 JSON 再交给 Call。
-// 为空则退化为 `host.<name>(argsJSON)`，与既有行为逐字一致。详见 signature.go。
-type Binding struct {
-	Name string
-	// Signature JS 调用形态，如 "get_logs(host, count)"。由宿主用自己的工具目录
-	// 翻译而来——ptc 不认识任何 schema 类型。
-	Signature string
-	Call      func(ctx context.Context, argsJSON string) (string, error)
-}
-
 // Discovered 程序内发现到的一个工具。
 type Discovered struct {
 	Name        string `json:"name"`
@@ -158,12 +144,10 @@ type CallRecord struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// Result 执行结果：失败是结果字段不是异常。ErrorKind：
-// ""=成功 / deadline / budget_calls / budget_bytes / runtime（JS 异常或拒绝）/
-// pending（await 永不落定——VM 无定时器，此类程序永不完成）/ bad_result（return 值
-// 不可 JSON 序列化）/ syntax（程序体语法错误，预检期即拒，带 goja 行号）/
-// binding_collision（绑定撞名，见 findBindingCollision）/
-// stage_denied（判定环判定拒绝）/ stage_failed（判定环自身故障，见 stageOutcome）。
+// Result 执行结果：失败是结果字段不是异常。ErrorKind 取值见 AllErrorKinds()
+// （本包所有产出点都引用那些常量）；""=成功。宿主带来的 toolfail 分类
+// （transient / permanent / …）也是合法取值——那已是处置口径，原样透传
+// （见 kindForErrorKind）。
 //
 // stage_denied 与 stage_failed 分开不是分类洁癖：前者是**正常裁决**，程序改不掉它，
 // 只能换工具或走审批；后者是**宿主门禁自己坏了**，程序更不该改它。合成一个
@@ -280,7 +264,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 				pe := panicError(r)
 				res = Result{
 					Error:     fmt.Sprintf("宿主绑定 panic（这不是程序错误，是宿主侧要修的）: %s", pe.Error()),
-					ErrorKind: "host_panic",
+					ErrorKind: ErrorKindHostPanic,
 					// 已执行步骤留痕： panic 前成功的调用照常记账——
 					// 半途痕迹是审计要的，收口不留等于没发生过。
 					Calls:   res.Calls,
@@ -312,7 +296,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 	if ident, first, dup, ok := findBindingCollision(bindings); ok {
 		res.Error = fmt.Sprintf("绑定标识符冲突：工具 %q 与 %q 净化后同为 host.%s，程序无法区分二者，故拒绝执行",
 			first, dup, ident)
-		res.ErrorKind = "binding_collision"
+		res.ErrorKind = ErrorKindBindingCollision
 		return res
 	}
 
@@ -325,7 +309,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		ps, serr := parseSignature(b.Signature)
 		if serr != nil {
 			res.Error = fmt.Sprintf("绑定 %q 的调用形态非法: %v", b.Name, serr)
-			res.ErrorKind = "binding_signature"
+			res.ErrorKind = ErrorKindBindingSignature
 			return res
 		}
 		// 形态里的函数名必须等于绑定名净化后的标识符。不一致就静默取其中一个的话，
@@ -334,7 +318,7 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 		if id := toolname.Normalize(b.Name); ps.name != id {
 			res.Error = fmt.Sprintf("绑定 %q 的调用形态函数名 %q 与其在 host 下的名字 %q 不一致",
 				b.Name, ps.name, id)
-			res.ErrorKind = "binding_signature"
+			res.ErrorKind = ErrorKindBindingSignature
 			return res
 		}
 	}
@@ -347,15 +331,15 @@ func Run(ctx context.Context, program string, bindings []Binding, opts Options) 
 func failFrom(res Result, err error) Result {
 	switch {
 	case errors.Is(err, errDeadline):
-		res.Error, res.ErrorKind = errDeadline.Error(), "deadline"
+		res.Error, res.ErrorKind = errDeadline.Error(), ErrorKindDeadline
 	case errors.Is(err, errBudgetCall):
-		res.Error, res.ErrorKind = errBudgetCall.Error(), "budget_calls"
+		res.Error, res.ErrorKind = errBudgetCall.Error(), ErrorKindBudgetCalls
 	case errors.Is(err, errBudgetByte):
-		res.Error, res.ErrorKind = errBudgetByte.Error(), "budget_bytes"
+		res.Error, res.ErrorKind = errBudgetByte.Error(), ErrorKindBudgetBytes
 	default:
 		var intErr *goja.InterruptedError
 		if errors.As(err, &intErr) {
-			res.Error, res.ErrorKind = fmt.Sprintf("执行被中断: %v", intErr.Value()), "runtime"
+			res.Error, res.ErrorKind = fmt.Sprintf("执行被中断: %v", intErr.Value()), ErrorKindRuntime
 			return res
 		}
 		if loc := locationOfException(err, wrapLines); loc.Valid() {
@@ -364,7 +348,7 @@ func failFrom(res Result, err error) Result {
 		} else {
 			res.Error = err.Error()
 		}
-		res.ErrorKind = "runtime"
+		res.ErrorKind = ErrorKindRuntime
 	}
 	return res
 }

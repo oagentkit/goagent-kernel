@@ -17,6 +17,28 @@ import (
 	"github.com/yi-nology/goagent-kernel/toolname"
 )
 
+// Binding 一个宿主函数绑定（工具即绑定）：Call 收程序传来的 JSON 参数文本，回工具
+// 输出原文（不截断——与模型直读同一信任级；注入嫌疑扫描在装饰链上照常生效）。
+//
+// Signature 可选，给出后模型按普通函数调用而不必手写 JSON：`get_logs(host, count)`
+// 会被挂成 `host.get_logs(host, count)`，ptc 负责把形参打包成 JSON 再交给 Call。
+// 为空则退化为 `host.<name>(argsJSON)`，与既有行为逐字一致。详见 signature.go。
+type Binding struct {
+	Name string
+	// Signature JS 调用形态，如 "get_logs(host, count)"。由宿主用自己的工具目录
+	// 翻译而来——ptc 不认识任何 schema 类型。
+	Signature string
+	// Call 宿主实现的工具调用（VM 直调宿主，见 binding.go）。
+	//
+	// @seam: no-reentry no-blocking panic-isolated
+	// no-reentry：工具实现内不得回查本包（不得再走判定环/预算闸）；内核侧兑现
+	// 「调用点不持锁」——调用发生在 VM 内执行期，本包不持任何锁。
+	// no-blocking：同步调用；三闸只管次数/字节/墙钟，阻塞由随调用带出的 ctx 断。
+	// panic-isolated：**内核侧兑现**——ptc.Run 收口 recover，宿主 panic 收敛为
+	// host_panic 结果（不掀翻宿主进程，见 ptc.go 的收口注释）。
+	Call func(ctx context.Context, argsJSON string) (string, error)
+}
+
 // bindingCaller 一次绑定调用的执行面。
 //
 // # 为什么抽出这一层
@@ -177,7 +199,7 @@ func mountBindings(
 			if werr != nil {
 				return &Result{
 					Error:     fmt.Sprintf("绑定 %q 的调用形态包装失败: %v", b.Name, werr),
-					ErrorKind: "binding_signature",
+					ErrorKind: ErrorKindBindingSignature,
 				}
 			}
 			mountable = w
@@ -185,7 +207,7 @@ func mountBindings(
 		if err := host.Set(name, mountable); err != nil {
 			return &Result{
 				Error:     fmt.Sprintf("绑定 %q 挂载失败: %v", b.Name, err),
-				ErrorKind: "runtime",
+				ErrorKind: ErrorKindRuntime,
 			}
 		}
 	}
@@ -194,7 +216,7 @@ func mountBindings(
 	// 程序内工具发现：装配了才挂，没装配就不存在这个全局。
 	// 发现结果同样是宿主数据入口，故与 host.<tool> 共用同一套三预算闸（#200）。
 	if derr := mountDiscover(vm, discover, res, maxCalls, maxBytes); derr != nil {
-		return &Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: "runtime"}
+		return &Result{Error: fmt.Sprintf("发现入口挂载失败: %v", derr), ErrorKind: ErrorKindRuntime}
 	}
 
 	return nil
@@ -249,7 +271,7 @@ func stageOutcome(serr error) (kind, prefix string) {
 		return "", "" // 与判定环无关（宿主/程序侧错误），不做判定环归因
 	}
 	if errors.Is(serr, invoke.ErrStageFailed) || errors.Is(serr, invoke.ErrEmptyName) {
-		return "stage_failed", "判定环故障"
+		return ErrorKindStageFailed, "判定环故障"
 	}
-	return "stage_denied", "判定环拒绝"
+	return ErrorKindStageDenied, "判定环拒绝"
 }

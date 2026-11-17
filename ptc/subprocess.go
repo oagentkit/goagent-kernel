@@ -37,6 +37,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/oagentkit/guardx/invoke"
@@ -119,7 +120,16 @@ type SubprocessProvider struct {
 }
 
 // NewSubprocessProvider 构造子进程后端。
+//
+// # 为什么克隆绑定清单与判定环（issue #398）
+//
+// Bindings 是**模型可调用工具集的授权面**：按值存 opts 只复制了切片头，底层
+// 数组仍被装配期持有——宿主事后改写 opts.Bindings[0]（换工具名 / 签名 /
+// 执行体）就会改穿 provider 派生出的绑定面，等于换了子进程里模型能调到的东西。
+// Stages 是判定环，同理：装配期那一组才是这个后端被授权时的那一组。
 func NewSubprocessProvider(opts SubprocessOptions) *SubprocessProvider {
+	opts.Bindings = slices.Clone(opts.Bindings)
+	opts.Stages = slices.Clone(opts.Stages)
 	return &SubprocessProvider{opts: opts}
 }
 
@@ -176,8 +186,9 @@ func (p *SubprocessProvider) Exec(ctx context.Context, req sandbox.Request) (san
 	// 父侧此刻不判，这次执行就已经把「无人判定」的事实变成既成事实。
 	if reason := unmanagedRefusal(p.opts.Bindings, p.opts.Stages, p.opts.AllowUnmanaged); reason != "" {
 		// Kind 与进程内 Provider 同走 kindForErrorKind（issue #151）：两后端
-		// 的 sandbox.Failure.Kind 必须是同一词表（toolfail 分类），unmanaged
-		// 不在映射表内 → unknown（不可分类 = 不可重试，保守侧）。
+		// 的 sandbox.Failure.Kind 必须是同一词表（toolfail 分类）。unmanaged
+		// 在映射表里有**专属分类**（permanent：没接判定环这件事不会因重试而
+		// 改变），不落 unknown 桶——落进去就等于说「不可分类」，而它是可分类的。
 		return sandbox.Outcome{}, &sandbox.Failure{Kind: kindForErrorKind(ErrorKindUnmanaged), Message: reason}
 	}
 	// 预算收口（issue #66）：装配期配置与每请求预算逐项取严后写 Start 帧。
