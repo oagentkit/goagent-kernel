@@ -1015,6 +1015,44 @@ rules:
     examples:
       - text: 'var steps = 故障链判定()'
         want: hit
+      # 分支覆盖（issue #386）：词表里**每一个**备选词各一条正例。
+      # 只钉第一条时，其余词被删掉/改名后门禁仍然全绿——失效形态是变绿。
+      - text: 'var s = "巡检流"'
+        want: hit
+      - text: 'var s = "故障诊断"'
+        want: hit
+      - text: 'var s = "告警"'
+        want: hit
+      - text: 'var s = "根因分析"'
+        want: hit
+      - text: 'var s = "运维"'
+        want: hit
+      - text: 'var s = "主机构建"'
+        want: hit
+      - text: 'var s = "本机"'
+        want: hit
+      - text: 'var s = "远程主机"'
+        want: hit
+      - text: 'var s = "集群健康"'
+        want: hit
+      - text: 'var s = "节点诊断"'
+        want: hit
+      - text: 'var s = "内存分析"'
+        want: hit
+      - text: 'var s = "IO 分析"'
+        want: hit
+      - text: 'var s = "网络分析"'
+        want: hit
+      - text: 'var s = "安全基线"'
+        want: hit
+      - text: 'var s = "变更管控"'
+        want: hit
+      - text: 'var s = "处置验证"'
+        want: hit
+      - text: 'var s = "审批单"'
+        want: hit
+      - text: 'var s = "工单"'
+        want: hit
       - text: 'var buf bytes.Buffer'
         want: miss
 
@@ -1038,6 +1076,38 @@ rules:
     forbid_regex: '(故障链|巡检流|故障诊断|告警|根因分析|运维|本机|远程主机|集群健康|内存分析|IO\s*分析|网络分析|安全基线|变更管控|处置验证|工单)'
     examples:
       - text: 'name := "运维Agent"'
+        want: hit
+      # 分支覆盖（issue #386）：词表里**每一个**备选词各一条正例。
+      # 「运维」由上面那条正例钉住；下面补齐其余词。
+      - text: 'name := "故障链"'
+        want: hit
+      - text: 'name := "巡检流"'
+        want: hit
+      - text: 'name := "故障诊断"'
+        want: hit
+      - text: 'name := "告警"'
+        want: hit
+      - text: 'name := "根因分析"'
+        want: hit
+      - text: 'name := "本机"'
+        want: hit
+      - text: 'name := "远程主机"'
+        want: hit
+      - text: 'name := "集群健康"'
+        want: hit
+      - text: 'name := "内存分析"'
+        want: hit
+      - text: 'name := "IO 分析"'
+        want: hit
+      - text: 'name := "网络分析"'
+        want: hit
+      - text: 'name := "安全基线"'
+        want: hit
+      - text: 'name := "变更管控"'
+        want: hit
+      - text: 'name := "处置验证"'
+        want: hit
+      - text: 'name := "工单"'
         want: hit
       # 断言「不得出现某词」的测试意图必须能写出那个词——negative_follow 的
       # 豁免面在这里被样例钉住：锚点写错一个字，这条会从 miss 变 hit。
@@ -1077,6 +1147,14 @@ rules:
     examples:
       - text: 'github.com/yi-nology/bianque/internal/engine'
         want: hit
+      # 分支覆盖（issue #386）：旧私有域与 github 两个前缀、以及 (/|$) 两种
+      # 结尾都必须各有一条正例。只钉 github 子包时，私有域分支被删掉门禁无感。
+      - text: 'git.enjoye.top/enjoydream/bianque/internal/engine'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/bianque'
+        want: hit
+      - text: 'github.com/yi-nology/bianque'
+        want: hit
       - text: 'github.com/oekit/pkg/errors'
         want: miss
 
@@ -1096,6 +1174,22 @@ rules:
     forbid_import_regex: 'git\.enjoye\.top/enjoydream/(bianque|ekit|agentkit)(/|$)|github\.com/yi-nology/(bianque|ekit|agentkit)(/|$)'
     examples:
       - text: 'github.com/yi-nology/ekit/flow'
+        want: hit
+      # 分支覆盖（issue #386）：2 域 × 3 仓 × 2 结尾。每个域名、每个仓名、
+      # 每种结尾都至少被一条正例钉住——删掉任意一支都必须有正例变红。
+      - text: 'git.enjoye.top/enjoydream/bianque/internal/flow'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/ekit/internal/flow'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/agentkit/internal/flow'
+        want: hit
+      - text: 'git.enjoye.top/enjoydream/ekit'
+        want: hit
+      - text: 'github.com/yi-nology/bianque/internal/flow'
+        want: hit
+      - text: 'github.com/yi-nology/agentkit/internal/flow'
+        want: hit
+      - text: 'github.com/yi-nology/ekit'
         want: hit
       - text: 'github.com/yi-nology/goagent-kernel/protocol'
         want: miss
@@ -1160,6 +1254,15 @@ rules:
       # 最常见的那种形态：首参**带参数名**的 format string。
       - text: 'func New(logf func(format string, args ...any)) *X {'
         want: hit
+      # 分支覆盖（issue #386）：4 个回调名各一条正例。regexp/syntax 会把
+      # logf|logFunc|logFn|logger 做公因子分解，只钉 logf 时其余名字被删掉
+      # 门禁不会变红。
+      - text: 'func New(logFunc func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(logFn func(format string, args ...any)) *X {'
+        want: hit
+      - text: 'func New(logger func(format string, args ...any)) *X {'
+        want: hit
       - text: 'func New(log func(string) error) *X {'
         want: miss
 
@@ -1188,6 +1291,11 @@ rules:
     forbid_import_regex: '^errors$|^github\.com/pkg/errors$'
     examples:
       - text: 'errors'
+        want: hit
+      # 分支覆盖（issue #386）：第二套 errors 包必须自己有一条正例。
+      # 只钉 stdlib 时，把 `^github\.com/pkg/errors$` 删掉门禁仍然全绿——
+      # 「只允许一套」的收紧会静默退回「只拦 stdlib」。
+      - text: 'github.com/pkg/errors'
         want: hit
       # 同一套 errors 在 oekit 里是**允许**的那一套（路径不同即类型不同）。
       - text: 'github.com/oekit/pkg/errors'

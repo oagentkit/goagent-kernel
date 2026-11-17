@@ -196,6 +196,12 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 			for _, problem := range exampleCoverageProblems(r) {
 				add(policyPath, 0, "%s", problem)
 			}
+			// 双向覆盖仍不等于**每个分支**都被钉住：多分支正则里未被样例命中的
+			// 那一支被删掉/改名时，门禁不会变红（见 exampleBranchCoverageProblems
+			// 头注，issue #386）。
+			for _, problem := range exampleBranchCoverageProblems(r) {
+				add(policyPath, 0, "%s", problem)
+			}
 		}
 
 		// ── import_exempt 项的形状必须可能生效 ──
