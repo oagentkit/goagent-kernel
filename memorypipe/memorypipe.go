@@ -161,6 +161,10 @@ func Build(entries []Entry, q Query) (Result, error) {
 			}
 			usedBytes += len(text)
 		}
+		// 值类型承诺（issue #394）：Entry 自称「值类型」，但 Tags 是切片。
+		// 按值放进 Piece 只复制切片头，底层数组仍与调用方入参共享——改标签
+		// 等于改 AND 匹配的判据，两边的匹配结果随之变。
+		e.Tags = slices.Clone(e.Tags)
 		res.Pieces = append(res.Pieces, Piece{Entry: e, Text: text})
 	}
 	if len(res.Pieces) == 0 && len(res.Dropped) == 0 {
