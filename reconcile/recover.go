@@ -31,12 +31,16 @@ func (r *Reconciler) RecoverBootOrphans(ctx context.Context) (int, error) {
 	if r.cfg.Boot.IsZero() {
 		return 0, nil // 无启动锚点（零值构造宿主）：防零锚点误收全量
 	}
+	// 启动即补做上一进程留下的终态事件（Outbox 行跨重启不丢）。
+	var errs error
+	if _, ferr := r.FlushFinalizeOutbox(ctx); ferr != nil {
+		errs = errors.Append(errs, ferr)
+	}
 	// 扫描面提示收窄到本实例（含无主行，见 Store 契约）；判定仍按 Owner 复核。
 	sessions, err := r.store.ListRunning(ctx, r.cfg.InstanceID)
 	if err != nil {
-		return 0, errors.Wrap(err, "列 running 会话失败")
+		return 0, errors.Append(errs, errors.Wrap(err, "列 running 会话失败"))
 	}
-	var errs error
 	n := 0
 	for i := range sessions {
 		s := sessions[i]
@@ -86,12 +90,17 @@ func (r *Reconciler) RecoverBootOrphans(ctx context.Context) (int, error) {
 // 心跳面读失败**降级不停车**：全体走事件静默判定（恢复不因观测面抖动停摆），
 // 错误随返回值带出留痕。LeaseTTL < 0（conf 关闭心跳面）则根本不读 ListBeats。
 func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
+	// 每轮先补做待投递的终态事件：上一轮「Finalize 已提交、Flush 未完成」
+	// 或进程重启留下的 Outbox 行在这里重试（issue #272，稳定 ID 幂等）。
+	var errs error
+	if _, ferr := r.FlushFinalizeOutbox(ctx); ferr != nil {
+		errs = errors.Append(errs, ferr)
+	}
 	sessions, err := r.store.ListRunning(ctx, "")
 	if err != nil {
-		return 0, errors.Wrap(err, "列 running 会话失败")
+		return 0, errors.Append(errs, errors.Wrap(err, "列 running 会话失败"))
 	}
 	var beats map[string]time.Time
-	var errs error
 	if r.lease > 0 {
 		beats, err = r.store.ListBeats(ctx)
 		if err != nil {
@@ -155,12 +164,18 @@ func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
 
 // reclaim 收敛体（三路共用，动作序固定）：
 //
-//	ConvergeCAS（failed 终态 + 恢复说明报告 + 排队结算 + 悬挂环节收口，原子）
-//	  → CloseBracket（turn 括号关闭，closed_by = Cause.By；错误并入返回值）
-//	  → Pub(session_finished)
+//	FinalizeStore 路径（issue #272）：
+//	  Finalize（failed 终态 + 报告/结算 + Outbox 行，同一事务）
+//	    → CloseBracket（turn 括号关闭；错误并入返回值）
+//	    → FlushFinalizeOutbox（投递终态事件，失败保留行待补做）
 //
-// CAS 返回 false（他方已处理）或 error 时**后续动作一律不发生**——收尾动作
-// 只属于赢下条件迁移的那一次，双写轮括号/事件比不写更伤审计。
+//	旧 Store 路径：
+//	  ConvergeCAS（failed 终态 + 恢复说明报告 + 排队结算 + 悬挂环节收口，原子）
+//	    → CloseBracket（turn 括号关闭，closed_by = Cause.By；错误并入返回值）
+//	    → Pub(session_finished)
+//
+// CAS/Finalize 返回 false（他方已处理）或 error 时**后续动作一律不发生**——
+// 收尾动作只属于赢下条件迁移的那一次，双写轮括号/事件比不写更伤审计。
 //
 // CAS 命中后的收尾两步**不再互相吞错**（issue #184）：CloseBracket 失败并入
 // 返回值由宿主留痕/补偿（括号是审计面的轮边界，吞掉等于永久留一个读不出的
@@ -168,6 +183,11 @@ func (r *Reconciler) RecoverInterrupted(ctx context.Context) (int, error) {
 // 下游（清理、通知、计费）不因审计面故障停摆。返回 (true, err) = 收敛成立但
 // 收尾有失败面，调用方两边都处理（计数 + 聚合错误）。
 func (r *Reconciler) reclaim(ctx context.Context, s Session, cause Cause) (bool, error) {
+	// 终态事件与终态写入同事务（issue #272）：Store 声明了 FinalizeStore
+	// 就走 Outbox 路径，事件失败只影响「已投递」标记，不影响终态事实。
+	if r.finalizer != nil {
+		return r.reclaimFinalize(ctx, s, cause)
+	}
 	ok, err := r.store.ConvergeCAS(ctx, s.ID, contract.StatusRunning, contract.StatusFailed, cause)
 	if err != nil {
 		return false, errors.Wrap(err, "条件收敛失败", "session", s.ID)

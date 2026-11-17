@@ -139,6 +139,38 @@ func resolveNow(b Backend, injected func() time.Time, ctx context.Context) (time
 	return time.Now(), nil
 }
 
+// AtomicDecision 后端的**原子判定**接缝（issue #271，可选能力）。
+//
+// 普通 Backend 的判定路径是「先读存储时刻 → 快照 → 判定 → 条件事务」：
+// 读时刻与提交是两次后端交互，中间有时间窗口。窗口内租约可能已经到期，
+// 而本副本仍按旧快照把续期提交成功——这不是「两个真相」，是「承诺的
+// 时间上界说不清」。
+//
+// 实现本接口 = 承诺下面这件事在**一次存储事务内**完成：
+//
+//	取存储时刻 now → 交给 decide 读快照并给出断言/写入 → 条件提交
+//
+// decide 收到的 now 就是该事务的提交时刻（实现必须取事务内时间，
+// 例如 PostgreSQL 的 clock_timestamp()、Redis Lua 的 TIME），read 返回的
+// 快照必须属于同一事务。断言失败返回 applied=false（正常结论，什么都没写）；
+// error 只表示基础设施故障。
+//
+// 实现了本接口的后端，租约判定与提交的窗口为 0（见 LeasePrecision）；
+// 未实现的后端走误差预算降级路径（见 DefaultLeaseErrorBudget）。
+type AtomicDecision interface {
+	// DecideTx 在一次事务内取存储时刻、读快照、执行判定并条件提交。
+	DecideTx(ctx context.Context, decide func(now time.Time, read func(keys ...string) (map[string]Entry, error)) (asserts []Assert, mutations []Mutation, err error)) (applied bool, at time.Time, err error)
+}
+
+// LeaseBudget 后端可声明的**判定—提交窗口预算**（issue #271，可选能力）。
+//
+// 未实现时适配器按 DefaultLeaseErrorBudget 承诺。实现本接口的后端应当
+// 按自己的真实事务往返（含存储时钟读取）声明上界；返回值 <= 0 视作未声明。
+// 只能声明、不能验证——实际窗口由 LeaseVerdict 在每次判定后观测。
+type LeaseBudget interface {
+	LeaseErrorBudget() time.Duration
+}
+
 // Backend 协调后端的最小原语契约。
 //
 // 实现方必须保证（这四条是「接上协调契约」的全部硬要求）：

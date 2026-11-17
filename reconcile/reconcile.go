@@ -50,6 +50,28 @@
 // 它回答「这次是谁、按哪条路把它收掉的」——审计与排障靠它分辨「发版重启的
 // 正常收割」与「他副本心跳丢失的死主回收」，**不许把四条路写成同一个标识**。
 //
+// # 终态事件与结算：FinalizeStore + Outbox（issue #272）
+//
+// 旧 Store 路径能保证「终态写入 + 结算」原子（ConvergeCAS 的宿主实现），
+// 但终态事件是 **ConvergeCAS 之后** 的独立 Pub：发布失败时状态已终态、
+// 事件永久缺失，而会话已不在 running，下一轮扫描不会再发——本包用
+// TestSettlementEventSplitReproduced 把这条分裂钉成可跑事实（结论：坐实）。
+//
+// 修法不是给 Pub 加重试（进程死了重试也无处可存），而是把**终态事件变成
+// 与终态写入同一事务的 Outbox 行**：
+//
+//   - Store 可选实现 FinalizeStore：Finalize 原子完成「条件迁移 + 结算 +
+//     Outbox 行写入」，返回 false = 他方已处理（零写入）；
+//   - 投递由 FlushFinalizeOutbox 承担：成功才 MarkFinalEventDelivered；
+//     投递/标记失败时行保留，下一轮或进程重启后幂等补做（Event.ID 稳定，
+//     订阅方按 ID 去重 ⇒ 至少一次投递、不丢不重复生效）；
+//   - 未实现 FinalizeStore 的宿主仍走旧路径，FinalizeGuarantee 会如实报
+//     Atomic=false / ConfirmedDelivery=false——**降级必须是可查事实**，
+//     不能把「终态事件归宿主」写成一句注释就当作边界清楚。
+//
+// CloseBracket（turn 括号）仍不在这条事务里：它是审计面的轮边界，不是
+// 终态事实本身；失败并回聚合错误，但终态事件不因它停摆（issue #184 口径）。
+//
 // # 划界（与既有同域包互指；issue #165 划界段逐条）
 //
 //   - **vs `checkpoint`**（AGENTS.md 已定案不接，恢复语义相反）：checkpoint
@@ -152,6 +174,10 @@ type Store interface {
 	// ListBeats 副本心跳表（instanceID → 最后打点时刻）。
 	ListBeats(ctx context.Context) (map[string]time.Time, error)
 	// ConvergeCAS 条件收敛（from→to，原子带报告与结算；false = 他方已处理）。
+	//
+	// 注意：本方法**不包含终态事件**——终态事件与状态同事务要靠 FinalizeStore
+	// （issue #272）。只实现 Store 的宿主走旧路径：状态终态后事件发布失败
+	// 没有补做入口（见 FinalizeGuarantee 的降级声明）。
 	ConvergeCAS(ctx context.Context, sessionID, from, to string, cause Cause) (bool, error)
 	// CloseBracket 关闭开放的 turn 括号（closedBy = Cause.By）。
 	// 返回 error = 关闭失败（内核并入聚合错误带出，不吞）。
@@ -182,6 +208,13 @@ type Config struct {
 	// BootGrace 启动路额外宽限（>0=更保守，last < boot-grace 才收；
 	// 0=无额外宽限；**负=整体关闭启动路**，回落纯静默路径）。
 	BootGrace time.Duration
+	// FinalizeDispatch 终态事件的可确认投递面（issue #272 Outbox 补做）。
+	//
+	// 返回 error = 未投递（Outbox 行保留，下一轮/进程重启后补做）；
+	// 返回 nil = 已投递（内核随后 MarkFinalEventDelivered）。未配置时回退
+	// 到 Pub（fire-and-forget，行直接标记已投递）——FinalizeGuarantee 会
+	// 如实报告 ConfirmedDelivery=false，不把降级伪装成保证。
+	FinalizeDispatch FinalizeDispatcher
 }
 
 // Reconciler 三路扫描与收敛编排（零值不可用，用 New / NewWithClock 构造）。
@@ -192,6 +225,10 @@ type Reconciler struct {
 	store Store
 	pub   Pub
 	cfg   Config
+
+	// finalizer 非 nil = 宿主的 Store 实现了 FinalizeStore：终态写入与
+	// 终态事件同事务（issue #272）。nil 走旧路径并由 FinalizeGuarantee 报降级。
+	finalizer FinalizeStore
 
 	// 阈值归一在构造期冻结（Config 本就按值传入，宿主 conf 变更走重建）。
 	stall     time.Duration
@@ -226,6 +263,12 @@ func NewWithClock(store Store, pub Pub, cfg Config, now func() time.Time) *Recon
 		now = time.Now
 	}
 	r := &Reconciler{store: store, pub: pub, cfg: cfg, now: now}
+	// 终态事件与结算同事务的能力在装配期定档（issue #272）：运行时不再
+	// 按调用点猜「这个 Store 有没有 Outbox」——降级与否是 FinalizeGuarantee
+	// 报告的事实。
+	if fs, ok := store.(FinalizeStore); ok {
+		r.finalizer = fs
+	}
 	// 阈值归一（与宿主 conf 旋钮同语义：0=缺省、LeaseTTL 负=关闭）。
 	r.stall = cfg.Stall
 	if r.stall <= 0 {

@@ -52,6 +52,11 @@ func (m *MemoryBackend) SingleMachine() bool { return true }
 func (m *MemoryBackend) Snapshot(_ context.Context, keys ...string) (map[string]Entry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.snapshotLocked(keys...), nil
+}
+
+// snapshotLocked 持锁快照读（Snapshot 与事务内判定回调共用同一份实现）。
+func (m *MemoryBackend) snapshotLocked(keys ...string) map[string]Entry {
 	out := make(map[string]Entry, len(keys))
 	for _, k := range keys {
 		e, ok := m.kv[k]
@@ -64,14 +69,18 @@ func (m *MemoryBackend) Snapshot(_ context.Context, keys ...string) (map[string]
 			out[k] = Entry{Key: k, Ver: e.ver, Val: append([]byte(nil), e.val...), Exists: true}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // Txn 条件事务：断言全过才提交（锁内原子），任一失败则一个都不执行。
 func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mutation) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.txnLocked(asserts, mutations), nil
+}
 
+// txnLocked 持锁条件事务（Txn 与事务内判定回调共用同一份实现）。
+func (m *MemoryBackend) txnLocked(asserts []Assert, mutations []Mutation) bool {
 	for _, a := range asserts {
 		e, ok := m.kv[a.Key]
 		cur := VerMissing
@@ -79,7 +88,7 @@ func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mut
 			cur = e.ver
 		}
 		if cur != a.Ver {
-			return false, nil // 正常结论：断言不成立，什么都没发生
+			return false // 正常结论：断言不成立，什么都没发生
 		}
 	}
 	for _, mu := range mutations {
@@ -106,7 +115,7 @@ func (m *MemoryBackend) Txn(_ context.Context, asserts []Assert, mutations []Mut
 		e.del = false
 		m.kv[mu.Key] = e
 	}
-	return true, nil
+	return true
 }
 
 // Keys 前缀列键（锁内快照语义，结果按键名排序保证确定性）。
