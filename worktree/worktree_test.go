@@ -204,13 +204,17 @@ func TestWorkspacesReturnsDefensiveCopy(t *testing.T) {
 	before := len(p.Conflicts())
 
 	ws := p.Workspaces()
-	ws[0].Writable = append(ws[0].Writable, "lib/") // 伪造与 beta 的可写重叠
-	ws[1].ID = "gamma"                              // 伪造 ID 改写
+	// 必须**原地写**：`append` 在对 len==cap 的切片（slices.Clone 的产物）
+	// 上必然重新分配，写的是一个全新数组，与计划本体零关联——那样的断言
+	// 在「交出内部数组」的坏实现下也恒绿（issue #387）。
+	ws[0].Writable[0] = "lib/" // 伪造与 beta 的可写重叠
+	ws[1].ID = "gamma"         // 伪造 ID 改写
 
 	if got := len(p.Conflicts()); got != before {
 		t.Fatalf("改写返回值不得影响计划结论：改前 %d 条冲突，改后 %d 条", before, got)
 	}
-	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 {
+	// 断言落在**元素值**上：坏实现改穿的是元素，不是长度。
+	if again := p.Workspaces(); again[0].ID != "alpha" || len(again[0].Writable) != 1 || again[0].Writable[0] != "src/" {
 		t.Fatalf("计划本体不得被写穿: %+v", again[0])
 	}
 }
