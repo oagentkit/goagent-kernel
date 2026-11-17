@@ -103,7 +103,7 @@ const (
 	StateClaimed State = "claimed"
 	// StateDone 已完成（终态）。
 	StateDone State = "done"
-	// StateFailed 已失败（终态；但允许重新认领——失败的工作通常要重做）。
+	// StateFailed 已失败（**非终态**——允许重新认领：失败的工作通常要重做）。
 	StateFailed State = "failed"
 )
 
@@ -111,6 +111,10 @@ const (
 //
 // 只有 done 是终态：failed 的任务必须能重做，否则一次失败就把子任务永久钉死，
 // 而宿主的补救路径（重新派一个人）会静默失效。
+//
+// **failed 在词表上非终态，这是刻意的**（见 StateFailed 的常量注释，issue #375）：
+// 常量注释曾写「终态」，与本函数相反；两处现在逐字对齐。体检面同样按本函数
+// 判：failed + 残留 owner 不报 CodeTerminalClaimed，failed 也不算「依赖已完成」。
 func (s State) Terminal() bool { return s == StateDone }
 
 // Valid 报告状态是否在内核词表内。

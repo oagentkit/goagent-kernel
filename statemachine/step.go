@@ -49,13 +49,23 @@ const (
 	TypeVerify   StepType = "verify"
 )
 
-// Valid 报告状态是否在本状态机词表内（词表 = 全部状态常量）。
+// normalized 写法归一：状态值可能来自库 / 配置 / 外部来源，大小写与空白
+// 是常见漂移。与 StepType.normalized 同形——同包两个枚举必须用同一套
+// 「写法差异算不算同一个值」的约定（issue #373）。
+func (s StepStatus) normalized() StepStatus {
+	return StepStatus(strings.ToLower(strings.TrimSpace(string(s))))
+}
+
+// Valid 报告状态是否在本状态机词表内（归一化后判定；词表 = 全部状态常量）。
 //
 // 词表外的值代表「内核读不懂这个状态」，与「状态合法但迁移非法」是两种
 // 不同的现场：前者排障应查数据来源/版本，后者查迁移代码。MustTransition
 // 据此分成两条可判定的错误（issue #325）。
+//
+// 大小写/空白变体与规范形态同结论（issue #373）：它们是同一个状态，不是
+// 「读不懂」——误诊会把宿主导向错误的数据来源排查。
 func (s StepStatus) Valid() bool {
-	switch s {
+	switch s.normalized() {
 	case StatusCreated, StatusRunning, StatusWaitingApproval, StatusApproved,
 		StatusRejected, StatusExpired, StatusSucceeded, StatusFailed,
 		StatusInterrupted, StatusRolledBack, StatusSkipped, StatusCancelled:
@@ -66,19 +76,23 @@ func (s StepStatus) Valid() bool {
 }
 
 // transitions 合法转移表。
+//
+// **终态不在这张表里另列清单**：无出边即终态，IsTerminal 直接读本表派生
+// （issue #374）。给某个状态加/删出边时，终态结论自动跟随。
 var transitions = map[StepStatus][]StepStatus{
 	StatusCreated:         {StatusRunning, StatusSkipped},
 	StatusRunning:         {StatusSucceeded, StatusFailed, StatusInterrupted, StatusWaitingApproval},
 	StatusWaitingApproval: {StatusApproved, StatusRejected, StatusExpired, StatusCancelled},
 	StatusApproved:        {StatusRunning},
 	StatusFailed:          {StatusRolledBack},
-	// rejected/expired/succeeded/interrupted/skipped/rolled_back/cancelled 为终态
+	// rejected/expired/succeeded/interrupted/skipped/rolled_back/cancelled 无出边（终态）
 }
 
-// CanTransition 判定 from→to 是否合法。
+// CanTransition 判定 from→to 是否合法（两边先归一：写法变体与规范形态
+// 走同一张转移表，issue #373）。
 func CanTransition(from, to StepStatus) bool {
-	for _, next := range transitions[from] {
-		if next == to {
+	for _, next := range transitions[from.normalized()] {
+		if next == to.normalized() {
 			return true
 		}
 	}
@@ -165,16 +179,21 @@ func RequiresApproval(t StepType) bool {
 
 // IsTerminal 是否终态。
 //
-// # 词表边界（issue #159）
+// # 词表边界（issue #159 / #374）
 //
-// 本函数是**本状态机**的终态判据，词表以转移表为准：failed 在这里不是终态
-// （它还有出边 → rolled_back，回滚是失败后的正常去向），degraded 不在本包
-// 词表中。contract.StepSink.Finish 的 status 是宿主自定义词表（那边举例
-// succeeded/failed/degraded/skipped），与本表是**两套口径**——两包组合使用
-// 时（如把本函数注入 commitgate 当终态判定），宿主须让落库的 status 取值
-// 跟随本表，不要按 contract 注释的举例词表灌进来。
+// 本函数是**本状态机**的终态判据，**直接读转移表**：无出边 = 终态。
+// failed 在这里不是终态（它还有出边 → rolled_back，回滚是失败后的正常去向），
+// degraded 不在本包词表中。contract.StepSink.Finish 的 status 是宿主自定义
+// 词表（那边举例 succeeded/failed/degraded/skipped），与本表是**两套口径**——
+// 两包组合使用时（如把本函数注入 commitgate 当终态判定），宿主须让落库的
+// status 取值跟随本表，不要按 contract 注释的举例词表灌进来。
+//
+// 写法变体先归一（与 Valid / CanTransition 同口径）。词表外的值不是终态：
+// 「读不懂」不能被当成「不可再变」。
 func IsTerminal(s StepStatus) bool {
-	return s == StatusRejected || s == StatusExpired || s == StatusSucceeded ||
-		s == StatusInterrupted ||
-		s == StatusSkipped || s == StatusRolledBack || s == StatusCancelled
+	n := s.normalized()
+	if !n.Valid() {
+		return false
+	}
+	return len(transitions[n]) == 0
 }

@@ -182,7 +182,9 @@ func TestStepStatusValid(t *testing.T) {
 			t.Errorf("StepStatus(%q).Valid() 应为 true", s)
 		}
 	}
-	for _, s := range []StepStatus{"", "bogus", "RUNNING", "running "} {
+	// "RUNNING" / "running " 是合法状态 running 的写法变体（issue #373），
+	// 归一后为 true；真词表外用 bogus / degraded 这类形态。
+	for _, s := range []StepStatus{"", "bogus", "RUNNNG", "degraded", "status "} {
 		if s.Valid() {
 			t.Errorf("StepStatus(%q).Valid() 应为 false", s)
 		}

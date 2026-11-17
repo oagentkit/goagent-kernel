@@ -15,34 +15,40 @@ func (r *Report) Validate() ([]string, error) {
 	// —— 必填与枚举 ——
 	if strings.TrimSpace(r.Confidence) == "" {
 		critical = append(critical, "confidence 缺失")
-	} else if !confidenceAll[r.Confidence] {
+	} else if !IsConfidenceValid(r.Confidence) {
 		critical = append(critical, fmt.Sprintf("confidence 不在白名单: %q", r.Confidence))
 	}
 	// —— verdicts.stance 白名单兜底（宽容解码只挡条目畸形；直构/手工构造报告在此拦截） ——
 	for _, v := range r.Verdicts {
-		if !stanceAll[v.Stance] {
+		if !IsStanceValid(v.Stance) {
 			critical = append(critical, fmt.Sprintf("verdicts.stance 非法: %q（agent=%s）", v.Stance, v.Agent))
 		}
 	}
-	if r.Decision != "" && !decisionAll[r.Decision] {
+	if r.Decision != "" && !IsDecisionValid(r.Decision) {
 		critical = append(critical, fmt.Sprintf("decision 不在白名单: %q", r.Decision))
 	}
-	if r.Scope != "" && !scopeAll[r.Scope] {
+	if r.Scope != "" && !IsScopeValid(r.Scope) {
 		// warn 与 critical 同时留痕：归一化面不再把词表外值改写成 "in"，
 		// 宿主必须能在「归一化后仍词表外」这件事上看到信号，而不是只拿到
 		// 一条整份拒绝。
 		warns = append(warns, fmt.Sprintf("scope 不在白名单: %q（保持原值，未归一为 in/out）", r.Scope))
 		critical = append(critical, fmt.Sprintf("scope 不在白名单: %q", r.Scope))
 	}
-	if r.Scope == "out" && strings.TrimSpace(r.Redirect) == "" {
+	// 红线判据与谓词共用同一归一口径：scope="OUT" 与 "out" 都是转出路由，
+	// redirect 必填的结论必须一致（issue #371）。
+	scope := normalizeEnum(r.Scope)
+	if scope == ScopeOut && strings.TrimSpace(r.Redirect) == "" {
 		critical = append(critical, "scope=out 时 redirect 必填")
 	}
 
 	// —— recommendation 白名单与治理铁律 ——
 	if rec := r.Recommendation; rec != nil {
-		isExec := rec.RequiresExecution || (rec.Action != "" && rec.Action != ActionNone)
+		// isExec 的语义判定也走归一：action="NONE" 是「免审」，不得因为
+		// 大写形态被当成执行类动作（否则同一字段被白名单与治理铁律两套解读）。
+		action := normalizeEnum(rec.Action)
+		isExec := rec.RequiresExecution || (action != "" && action != ActionNone)
 		switch {
-		case rec.Action != "" && !actionWhitelist[rec.Action]:
+		case rec.Action != "" && !IsActionValid(rec.Action):
 			critical = append(critical, fmt.Sprintf("action 不在白名单: %q", rec.Action))
 		case isExec && !rec.RequiresApproval:
 			critical = append(critical, "执行类动作 requires_approval 必须为 true")
@@ -70,7 +76,7 @@ func (r *Report) Validate() ([]string, error) {
 	}
 
 	// —— 审批决策一致性 ——
-	if r.Decision == DecisionPending {
+	if normalizeEnum(r.Decision) == DecisionPending {
 		if r.Recommendation == nil || !r.Recommendation.RequiresApproval {
 			critical = append(critical, "decision=pending_approval 时 requires_approval 必须为 true")
 		}
