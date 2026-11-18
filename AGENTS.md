@@ -1282,6 +1282,49 @@ v0.16.0 就发布了，有 CHANGELOG 条目、有 `TestBudget`/`TestShutdownBudg
    `time.Duration(...)` ⇒ 过。两条都验过：一条证明护栏在，一条证明红的**位置**
    就是护栏而不是相邻的偶然原因。
 
+### 平台专属的失败语义要抽成平台无关的判据（2026-11-18，Windows 写锁占用 errno 误判实录）
+
+v0.46.0 的 tag CI 里 `windows (真跑测试)` 红了，而**同一提交**在 main 推送的
+同一条作业是绿的 ⇒ 时序偶发，不是本轮改动引入（`examples/sqlitestore` 本轮
+根本没被碰过，最后一次改动是 #188）。失败原文只有一句：
+
+    store_test.go:277: 非争用类错误（判据无法给出结论）：[sqlitestore: 创建锁文件失败:
+    open C:\Users\RUNNER~1\AppData\Local\Temp\...\tasks.lock: Access is denied.]
+
+根因是**判据只认一种错误表达**：Windows 的跨进程写锁用「独占创建锁文件」实现
+（标准库不暴露 `LockFileEx`），而「锁正被占用」在 Windows 上有**三种** errno
+——`ERROR_FILE_EXISTS`（文件在）、`ERROR_SHARING_VIOLATION`（持有者还开着
+句柄）、`ERROR_ACCESS_DENIED`（上一位持有者正在释放的 delete-pending 窗口，
+或文件被扫描程序短暂占用）。原判据只把第一种当「被占用」，另两种当**硬故障**
+⇒ 20 路并发认领里有 1 路撞上瞬时占用，整条用例判失败。
+
+这类缺陷在本仓最贵的地方不是「错判一次」，而是**判定面不在本机**：
+macOS / Linux 走 flock 路径，永远绿；判据只在目标平台的 CI 上说话 ⇒ 本地改完
+也无法验证，且没人能确定它修没修好。由此四条纪律：
+
+1. **平台差异只留在「取值」层，判定结构放平台无关的文件里。** 本轮把占用判定
+   抽成 `examples/sqlitestore/lock.go` 的 `classifyLockBusy(err, busyErrnos)`，
+   errno 由平台注入（Windows 绑 `syscall.ERROR_ACCESS_DENIED` 与
+   `ERROR_SHARING_VIOLATION`）⇒ **判据在任何机器上被真跑**，不必等 Windows CI。
+   与「门禁执行体必须可被宿主复用」同源：判据与**取值**分离，判定面才落得住。
+2. **平台专属分支必须有专属用例**（`//go:build windows`）。Windows 的 errno 绑定
+   由 `lock_windows_test.go` 钉住；只有「交叉编译过」而没有专属用例的分支，
+   等于「编得过但没人跑」。
+3. **同一个语义在不同平台有多种错误表达时，判据要按语义集合写，不能按某一个码
+   写。** 只认一种 = 把并发误判成故障 = **错指路比不指路更坏**（排查的人会被引到
+   「权限问题」上，而真因是「有人在用锁」）。
+4. **获取路径与释放路径共享同一类瞬时故障 ⇒ 释放也要退避重试。** 删除锁文件同样
+   会撞上瞬时占用，删不掉 ⇒ 锁文件残留 ⇒ 后续写者要等陈旧阈值（20s）才能接管，
+   一次瞬时故障把整台存储卡住。本轮抽出 `removeWithRetry(path, budget)`（平台无关，
+   本地可测），Windows 侧用它释放。
+
+**验证**：6 条变异（去掉 accessDenied 分支 / 去掉 sharingViolation 分支 / 屏蔽
+`os.IsExist` / 把 nil 判成占用 / 释放时不认「文件已不存在」/ 释放后谎报未删除）
+**全部打红**，还原后全绿；`GOOS=windows` 的包与**用例二进制**交叉编译均绿；
+数据级负对照（CI 日志里的真实 errno 在修复前判成「不是占用」⇒ 硬失败，修复后判成
+「占用」⇒ 退避重试）。Windows 侧的真跑验证只能由 CI 的 `windows (真跑测试)` 作业
+承担——那正是它唯一说话的地方；本地（本机走 flock 路径）**判不到这条分支**。
+
 ## 发版纪律（2026-10-20 补齐）
 
 本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/goagent-kernel@vX.Y.Z`），
