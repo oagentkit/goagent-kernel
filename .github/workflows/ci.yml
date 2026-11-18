@@ -53,7 +53,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # fetch-depth: 0 —— releasecheck 的「区间内混装提交」判定要读**上一个
+      # tag**（git describe --tags --abbrev=0 <version>^）；浅克隆（默认
+      # depth=1）里没有父提交历史 ⇒ 那条判定只能「显式跳过」⇒ tag 推送时
+      # 四条发版纪律只判三条。501 个提交 / 51M 的历史，代价可忽略。
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod

@@ -365,9 +365,16 @@ integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不�
 #
 # unit：静态门禁 + 全量单测（排除故障注入）。快速路径——fmt / vet / lint /
 # 单测一条命令跑完，本地改完代码先跑它。
+#
+# ⚠️ 这一层必须**覆盖 make check 里的每一条静态门禁**：CI 执行的是**分层目标**
+# （unit / race / contract / fault-injection / gates / integration），**不是**
+# `make check` 本身 ⇒ 只挂在 `check` 上而没进任何分层目标的门禁，**CI 上从来
+# 不会跑**（2026-11-18 实测发现 deploycheck / releasecheck 就是这样）。本层现在
+# 带上 deploycheck / ledgercheck / releasecheck（后者在非 tag 提交上显式跳过，
+# 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck modreplace modwork hygiene cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
