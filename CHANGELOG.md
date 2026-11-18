@@ -2,6 +2,42 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.46.1] — 2026-11-18
+
+### 修复(sqlitestore)：Windows 写锁「占用」按语义集合判——修 v0.46.0 的 Windows CI 失败
+
+v0.46.0 的 tag CI 里 `windows (真跑测试)` 红了，而**同一提交**在 main 推送的
+同一条作业是绿的 ⇒ 时序偶发，非本轮改动引入（examples/sqlitestore 本轮未被
+触碰，最后一次改动是 #188）。失败原文只有一句：
+    store_test.go:277: 非争用类错误（判据无法给出结论）：[sqlitestore: 创建锁文件失败:
+    open C:\Users\RUNNER~1\AppData\Local\Temp\...\tasks.lock: Access is denied.]
+根因：**判据只认一种错误表达**。Windows 的跨进程写锁用「独占创建锁文件」实现
+（标准库不暴露 LockFileEx），而「锁正被占用」在 Windows 上有三种 errno：
+ERROR_FILE_EXISTS（文件在）/ ERROR_SHARING_VIOLATION（持有者还开着句柄）/
+ERROR_ACCESS_DENIED（上一位持有者正在释放的 delete-pending 窗口，或文件被扫描
+程序短暂占用）。原判据只把第一种当「被占用」，另两种当**硬故障** ⇒ 20 路并发
+认领里有 1 路撞上瞬时占用就判失败。错指路比不指路更坏：排查的人会被引到
+「权限问题」上，而真因是「有人在用锁」。
+改动：
+- 占用判定抽到**平台无关**文件 examples/sqlitestore/lock.go
+  （classifyLockBusy + busyErrnos，errno 由平台注入）⇒ 判据在任何机器上被真跑，
+  不必等 Windows CI；同时抽出平台无关的 removeWithRetry(path, budget)。
+- Windows 侧绑齐三类占用 errno；释放路径改退避重试（删除同样会撞上瞬时占用，
+  残留锁会把后续写者卡到陈旧阈值 20s）；等待超时错误补 last_error（别把权限
+  问题报成「别人持有锁」）。
+- 用例：平台无关的占用判定 6 例 + 释放重试 2 例 + 锁可复用 1 例；Windows 专属
+  用例（errno 绑定 + 事务结束后锁文件已删）。
+- 文档：AGENTS.md 新增纪律段「平台专属的失败语义要抽成平台无关的判据」；
+  docs/AI-GUIDE.md 新增 §5.17 同款失败模式；README 工程底座三项按 docsync 重算。
+验证：
+- 坏实现必红：6 条变异（去掉 accessDenied 分支 / 去掉 sharingViolation 分支 /
+  屏蔽 os.IsExist / 把 nil 判成占用 / 释放时不认「文件已不存在」/ 释放后谎报
+  未删除）全部打红，还原后全绿。
+- 数据级负对照：CI 日志里的真实 errno（Windows ERROR_ACCESS_DENIED = 5）在修复前
+  判成「不是占用」（⇒ 硬失败），修复后判成「占用」（⇒ 退避重试）。
+- GOOS=windows 的包与**用例二进制**交叉编译均绿；本地全量 make check 绿。
+无破坏性变更（未导出面变化，未新增依赖，依赖地板不变）。
+
 ## [v0.46.0] — 2026-11-18
 
 ### 新增(archcheck)：判定词表登记门禁第十三阶段——同形关系锚定到具体常量
