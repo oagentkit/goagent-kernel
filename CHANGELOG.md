@@ -2,6 +2,92 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.47.0] — 2026-11-18
+
+### 新增(harness)：判定词表登记门禁第十四阶段 + 台账单号状态派生（第十五阶段）
+
+台账 §22 的三条建议（第十四阶段）与 §15 的第七阶段建议 1（第十五阶段）逐条落地。
+一、第十四阶段：关系的覆盖面与族归属，都由声明面派生
+- 新增 all 锚点形态（word_tables.relations[].anchors: [{all: true}]）：一条关系
+  可以锚住**两端共有取值的全集**，不必逐个写锚点常量。语义是「共有取值的集合」
+  （不是「全部取值」）⇒ 一端多出来的取值不属于这条关系；四条锚点判据原样复用。
+- all 形态下「本端没有常量」与「常量解析不出」分两个 kind
+  （word_table_anchor_no_constant / word_table_anchor_missing）——报告要能区分
+  **哪种**事实没成立，否则判据坏掉也看不出。
+- 族归属改由**表自己声明**：not_registered 段新增 pkg + prefixes 字段，归属按
+  **最长匹配前缀**派生（未登记但声明了前缀的表也算归属方——不登记 ≠ 没人管）。
+- family_exclude 字段废弃：字段保留（删字段会让宿主 policy 静默失效），但
+  policy 自校验会**阻断报红**并写明迁移路径。
+- 建议 2（名字必须可达）的核验结论：现判据已是**出现点级**，「命名过却仍写
+  字面量」必红 ⇒ 台账担心的「假放行」不成立；go/types 档已实测驳回 ⇒ 不新增
+  判据，只写明边界。
+二、第十五阶段：单号状态从台账派生（internal/ledgerstatus）
+- 台账（docs/DISTRIBUTED-EVOLUTION-*.md）是**单号状态的唯一真相**。此前「这条
+  单清了没」只活在散文里，机器读不出来 ⇒ 台账 §15 形态 (a) 记着一次真实翻车：
+  一批单早已由 8 个 PR 合入主干，接手的人按「单还挂着 open 标签」判断「还没人
+  做」，整条工作树作废。
+- 新增 internal/ledgerstatus：登记列 / 状态列 / 散文标记三处约定 ⇒ 单号 →
+  已合入 / 仍开着 / 派生不出 + 关闭 PR 号。解析容错（表格歪了收进 Problems()
+  而不是让整份台账读不出来——「解析不出来却不说话」= 判据静默失效）。
+  PR 号不进单号视图（落文档 PR 与被登记的单是两种号，撞车时合并结果没意义）。
+- 新增 cmd/ledgercheck（make ledgercheck，挂进 check 链）：台账自身的四条判据
+  （同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态 / 无主单号）
+  + 一条结构判据（表格列数不齐要报出来）。台账缺失 ⇒ 退出码 2（给不出结论
+  不等于通过）。
+- cmd/deploymatrix：issue 证据**只有在对应单号仍开着时**才算缺口 ⇒ 台账里早已
+  「✅ 已合入」的单不再被算成缺口（此前矩阵在骗宿主：说「你还缺这个」而它早
+  有了）。派生不出状态的单按仍开着计（保守方向：宁可说还缺，不许默默说齐了）。
+- 声明面接线：architecture-policy.yaml 登记新包（modules + scan_roots +
+  ignore_dirs）、api-lifecycle.yaml 登记 internal/ledgerstatus、Makefile 新增
+  ledgercheck 目标并挂进 check 链。
+三、本仓实测命中并清偿
+- 台账自身 7 处违反（6 处「单号漂浮、无主」+ 1 处表格形状）逐处清偿，详见台账 §24。
+- 部署矩阵四处 partial 里两处是**假缺口**：ownership-epoch / partition-write-fencing
+  按 #273 已由 PR #352 合入的事实转 available（证据改指 ownership/ 包）；另两处
+  是**真残留**，改挂新开的 #418（真集群实测）/ #419（单一存储覆盖全状态）。
+
+### 修复(ci)：三条门禁在 CI 上从来没跑过——接进 unit 层
+
+CI 的七个作业执行的是**分层目标**（unit / race / contract / fault-injection /
+gates / integration），**没有任何一个执行 make check 本身** ⇒ 只挂在 check 上、
+没进任何分层目标的门禁，CI 上一次都不会跑。
+实测被漏掉的是两条：deploycheck（部署清单门禁，issue #277）与 releasecheck
+（发版纪律门禁）——它们一直只挂在 check 上。后果：矩阵漂了 CI 不会知道；tag
+推送时那四条发版纪律（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间内
+混装提交）也**没人判**。
+修法：把 deploycheck / ledgercheck / releasecheck 接进 unit 层。**不改编排目标
+的层次结构**——job 名一改，分支保护的 required contexts 就对不上，PR 会永远卡
+BLOCKED（改名的同步成本见 docs/AI-GUIDE.md §4 的 job 名纪律）。
+另外给 unit 层的 checkout 加 fetch-depth: 0：releasecheck 的「区间内混装提交」
+判定要读**上一个 tag**（git describe --tags --abbrev=0 <version>^），浅克隆里
+没有父提交历史 ⇒ 那条判定只能显式跳过 ⇒ tag 推送时只判三条。501 个提交 / 51M
+历史，代价可忽略。
+
+- 文档：手册与台账补到 v0.47.0 的实际状态（词表门禁第十四阶段 + 台账派生第十五阶段）
+
+- AGENTS.md：新增三条纪律段——「关系的覆盖面与族归属，都要由声明面派生」
+  （第十四阶段）、「单号状态是机器可查的事实，缺口必须挂一个仍开着的单」
+  （第十五阶段），以及「『接进 make check』不等于 CI 会跑它」（本轮实测发现：
+  deploycheck / releasecheck 一直只挂在 check 上，而 CI 从不执行 check）。
+- docs/AI-GUIDE.md：门禁表补 ledgercheck 行；纠正「CI 只执行 make check」的
+  说法（CI 执行的是分层目标），写清新增门禁要两处都接（check + CI 跑的分层目标）。
+- docs/USAGE.md：部署矩阵机器口径块随状态推导更新（跨区域多集群 → available）；
+  生命周期登记数 60 → 61（新增 internal/ledgerstatus）。
+- docs/api-compat.md：生命周期登记数 60 → 61。
+- README：工程底座三项数字随代码重算（70615 行 / 368 文件 / 453 个测试文件）；
+  下游升级须知补 v0.47.0 行（family_exclude 废弃会阻断宿主 policy，附迁移路径）；
+  门禁总览补 ledgercheck 与「issue 证据只在单号仍开着时才算缺口」。
+- 演化台账 §23（第十四轮台账）/ §24（第十五轮台账）：落点表、四条判据、
+  假缺口的逐条重判与两处真残留开单、台账自身 7 处违反与清偿、20 条变异全红、
+  两个自伤（「夹具里两条路径同时命中时第二条路径是隐形的」与「变异脚本锚点被
+  Python 词法器吃掉半个引号」）、CI 执行面缺口，以及下一阶段的三条建议。
+
+- 文档(agends)：回执 v0.46.1 的 windows (真跑测试) 作业已真跑绿
+
+tag v0.46.0 的同名作业红在「Windows 上『锁被占用』只认一种 errno」上（判据在
+Windows 文件里 ⇒ 本机判不到，只能由该作业说话）。v0.46.1 修完后该作业在 main
+推送与 tag 快照各绿一次（tag run 7/7）⇒ 回执进纪律段，避免下轮又按「待验证」读。
+
 ## [v0.46.1] — 2026-11-18
 
 ### 修复(sqlitestore)：Windows 写锁「占用」按语义集合判——修 v0.46.0 的 Windows CI 失败
