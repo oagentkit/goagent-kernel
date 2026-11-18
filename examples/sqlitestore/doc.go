@@ -1,6 +1,8 @@
 // Package sqlitestore Standalone 部署形态的**单机持久化参考实现**：
-// taskboard.Board + taskboard.RenewingBoard 的「单写者 + WAL 语义 + 崩溃重放」
-// 形态，与 examples/pgstore 同构（同一批共享契约套件判它）。
+// 任务板（taskboard.Board + RenewingBoard）、副作用闸（sideeffect.Store）、
+// 进度快照（checkpoint.StoreCAS）、事件面（eventbus.Store + TailStore +
+// WatermarkTailStore）**四个面共用一份事务域**——同一把锁、同一个日志、
+// 一次提交。
 //
 // 生命周期: Experimental（v0.39.0 定级）——参考实现，随契约套件与参考部署
 // 演进，不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级
@@ -24,12 +26,32 @@
 //     宿主在自己的 module 里加驱动后可以逐条照抄；
 //   - **可运行的最小文件后端**：`Store` 用 **flock 串行化 + JSONL 追加 +
 //     fsync** 实现同一套语义。它不是 SQLite，但它是**同一份契约的另一种
-//     落法**——boardtest 全套判据在它身上真跑，证明这些语义在本机单写者
-//     形态下可满足。
+//     落法**——boardtest 与 sidetest 全套判据在它身上真跑，证明这些语义
+//     在本机单写者形态下可满足。
 //
 // 明确不承诺：本包不是多副本共享协调库。数据目录放 NFS / 对象存储让多台
 // 机器共同写，等于让「单写者」前提失效——多副本协调一律用 PG（与
 // examples/pgstore 的分工）。
+//
+// # 四个面与一份事务域（issue #419）
+//
+// 四个面不是四份数据，而是**同一份事务日志重放出来的四个投影**：
+//
+//	面            契约                        入口
+//	任务板        taskboard.Board/Renewing   Store.Claim / Complete / …
+//	副作用闸      sideeffect.Store            Store.Effects().Acquire / …
+//	进度快照      checkpoint.StoreCAS         Store.Snapshots().SaveIfNewer / …
+//	事件面        eventbus.Store/TailStore    Store.Events().Insert / ListAfter / …
+//
+// 它们共用一把进程内 mutex + 一把跨进程 flock、一个日志文件、一次 fsync。
+// 更要紧的是：**跨面的变更能落在同一次提交里**（`Store.Apply`）——任务
+// 状态、副作用闸、进度快照、事件行写在日志的**同一行**里（journal.go 的
+// v2 批次格式）。⇒ 跨面不会出现「一半已提交」：要么整批可见，要么整批
+// 不可见。
+//
+// 事件 ID 取自**已提交水位线**（铸造序 == 提交序，回滚不烧号）⇒ 序列空洞
+// 结构性地不存在 ⇒ TailStore 的「无空洞推进」硬要求由构造满足，而不是靠
+// 「读的时候小心别跳过」这种约定。
 //
 // # SQLite 落库形态（宿主抄这一节）
 //
@@ -42,7 +64,7 @@
 // 连接池只有**一个**写连接（database/sql 的 db.SetMaxOpenConns(1)；读可以
 // 另开只读连接池，WAL 允许读写并发）。所有写事务用 `BEGIN IMMEDIATE` 开局
 // ——它是「先拿写锁再干活」，避免 defer 到 COMMIT 才升级锁导致的
-// SQLITE_BUSY 半途失败。表：
+// SQLITE_BUSY 半途失败。四个面各自的表（宿主按自己的字段裁剪）：
 //
 //	CREATE TABLE IF NOT EXISTS board_task (
 //	    id         TEXT PRIMARY KEY,
@@ -68,6 +90,10 @@
 //   - 到期时刻用**数据库时钟**（`unixepoch('subsec')*1000` 或 Go 侧传入的
 //     存储时钟），不用进程本地 time.Now——跨进程不假设时钟一致。
 //
+// 副作用闸的两级状态（Key 级 / 资源级）见 pgstore 的 effect*.go；进度快照
+// 的单调写见 checkpoint/cas.go；事件面的水位线见 eventbus/tail.go。三者的
+// 判据都不在本包重写——本包只提供**落库形态**。
+//
 // 本包文件后端的对应关系：
 //
 //	SQLite WAL 帧 + fsync        ⇔ tasks.jsonl 的一行 + file.Sync()
@@ -75,20 +101,25 @@
 //	崩溃后 WAL 重放              ⇔ 打开/写入前重放 JSONL，截断未换行的残尾
 //	db.SetMaxOpenConns(1)        ⇔ 进程内 mutex（跨进程靠 flock）
 //	PRAGMA busy_timeout          ⇔ lockTimeout（拿不到锁显式报错，不丢写）
+//	一个事务 = 一行              ⇔ journal.go 的 v2 批次（跨面原子性）
 //
-// # 范围：只承担 taskboard 的两面
+// # 已知边界（宿主照抄时要一起带上）
 //
-// 本包实现 taskboard.Board + taskboard.RenewingBoard（与 pgstore 的 board.go
-// 同一范围）。sideeffect.Store / checkpoint.StoreCAS / eventbus.TailStore 各有
-// 自己的契约与判据套件（sidetest / checkpoint 用例 / boardtest），不在本示例
-// 的落库范围里——一个示例同时塞四套契约会变成「哪段判据归哪把锁」都读不清的
-// 大文件，而每套契约的原子性要求并不相同。宿主接线时按契约分别实现（或直接
-// 用 pgstore 那一套跨进程形态）。
+//   - **重放是 O(n)**：每次事务都从头重放整个日志。参考实现够用，生产宿主
+//     用 SQLite 就是 O(1) 索引查找——这不是语义差别，是量级差别。
+//   - **载荷的数字会变成 float64**：事件载荷经 JSON 往返后数字统一为
+//     float64（"计数": 3 读回来是 3.0）。与 examples/pgstore 的 JSONB 同款；
+//     需要整数保真就走字符串或宿主自己的序列化。
+//   - **日志文件名没改**：文件里现在装的不止任务（四个面的批次），但名字
+//     仍是 tasks.jsonl——改名会让宿主已有数据目录看起来是空的（比报错更难
+//     查）。
+//   - **写入粒度是整个事务**：一个批次一行 ⇒ 文件会随事务数线性增长，
+//     且没有日志压缩。生产宿主用 SQLite 的表结构。
 //
 // # 它是什么、不是什么
 //
-// 是：单机 + 可恢复形态的**契约级参考**（重启后任务状态、令牌、代次都在；
-// 半截写被丢弃；并发认领只有一个赢家）。不是：SQLite 本身的绑定、查询
-// 优化、多副本协调。宿主的生产实现应照「SQLite 落库形态」一节写，而不是
-// 把本包的 JSONL 文件格式当成生产存储协议。
+// 是：单机 + 可恢复形态的**契约级参考**（重启后四个面的状态都在；半截写
+// 被丢弃；并发认领只有一个赢家；跨面变更同生共死）。不是：SQLite 本身的
+// 绑定、查询优化、多副本协调。宿主的生产实现应照「SQLite 落库形态」一节
+// 写，而不是把本包的 JSONL 文件格式当成生产存储协议。
 package sqlitestore

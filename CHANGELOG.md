@@ -2,6 +2,95 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.48.0] — 2026-11-18
+
+### 新增(examples/sqlitestore)：接线与包文档——四个面的声明面 + 部署矩阵转 available（#419）
+
+- architecture-policy.yaml：sqlitestore 的 requires 增 sideeffect / checkpoint /
+  eventbus（先改声明面再写代码，纪律要求）。
+- 部署清单能力 single-store-full-state：partial → available，证据改指四个面的
+  真实符号（Store.Apply / EffectStore / SnapshotStore / EventStore），
+  delivered_by: "#419"；场景 single-host-persistent 随之转 available；
+  docs/USAGE.md 的机器口径块逐行一致（deploycheck 判）。
+- README 工程底座三项按实测重算（docsync 判相等，不留容差）。
+- examples/sqlitestore：日志格式升级为 v2 批次（一行 = 一个事务批次，v1 旧
+  格式仍可读）、任务面改走统一事务域（Claim 的「状态可认领」判据留在方法体
+  里——它是唯一入口，判据只有一个主人）、包文档改写为四个面的契约级依据。
+
+### 新增(examples/sqlitestore)：四个面共用一份事务域，补齐副作用 / 事件 / 快照的单机落库形态（#419）
+
+部署清单能力 single-store-full-state 从 partial 转 available（#188 的残留由本 PR 清偿）。
+一、一份事务域（同一把锁、同一个日志、一次提交）
+- 日志升级为「一行 = 一个事务批次」：跨面的变更在磁盘上是同一条记录 ⇒ 跨面
+  不会出现「一半已提交」。v1 旧格式（一行 = 一条任务记录）仍可读，旧目录不必
+  迁移，读进来的记录与新记录走同一条应用路径。
+- 四个面共享同一把进程内 mutex + 同一把跨进程 flock、同一个日志文件、同一次
+  fsync：任务板（既有）/ 副作用闸（sideeffect.Store + OwnedResolveStore）/
+  进度快照（checkpoint.StoreCAS）/ 事件面（eventbus.Store + TailStore +
+  WatermarkTailStore）。
+- 状态只从日志重放，不在内存里长期累积 ⇒ 重启后四个面的状态都在。
+二、事件游标取自已提交水位线
+- 事件 ID = 已提交水位线 + 1：水位线只随提交推进，回滚既不推它也不烧号 ⇒
+  铸造序 == 提交序 ⇒ 序列空洞结构性地不存在 ⇒ TailStore 的「无空洞推进」硬
+  要求由构造满足（日志层另有连续性判据，跳号即响亮失败）。
+- 实现 WatermarkTailStore 即声明本存储是 Outbox 形态（唯一被承诺支持的生产
+  形态）；「自增/序列 ID 直读」显式不支持。
+三、跨面同一次提交
+- 新增 Store.Apply / Tx：四个面的变更可落在同一次提交里（任务状态 + 副作用
+  闸 + 进度快照 + 事件行写在日志的同一行）。
+- 事务内某个面判失败 ⇒ 整批作废（提交闸是唯一判定点；调用方吞掉错误也不
+  会留下半截事务）。
+四、契约套件与反向验证
+- boardtest 全套 + sidetest 全套（33 条）在本实现上真跑；快照 / 事件面与跨面
+  原子性自写用例（这两面无共享套件，边界在包注释里写明）。
+- 14 条变异全部打红（变异脚本先断言「变异落地」再读测试结果，编译失败单独
+  报 BUILD）。其中两条打红的是**自伤**：三项联查与提交闸原先各写两份 ⇒ 改
+  一处测试看不出区别 ⇒ 已把每条判据收成单一判据点。
+五、接线
+- architecture-policy.yaml：sqlitestore 的 requires 增 sideeffect / checkpoint /
+  eventbus（先改声明面再写代码）。
+- 部署矩阵：single-store-full-state 转 available + delivered_by #419；
+  场景 single-host-persistent 转 available；docs/USAGE.md 的机器口径块逐行一致。
+- README 工程底座三项按实测重算（docsync 判相等，不留容差）。
+
+- 文档(deploy)：部署矩阵能力 single-store-full-state 转 available + README/USAGE 口径重算（#419）
+
+- 部署清单能力 single-store-full-state：partial → available，证据改指四个面的
+  真实符号（Store.Apply / EffectStore / SnapshotStore / EventStore），
+  delivered_by: "#419"；场景 single-host-persistent 随之转 available；
+  docs/USAGE.md 的机器口径块逐行一致（deploycheck 判）。
+- architecture-policy.yaml：sqlitestore 的 requires 增 sideeffect / checkpoint /
+  eventbus（先改声明面再写代码，纪律要求）。
+- README 工程底座三项按实测重算（docsync 判相等，不留容差）。
+
+- 文档(ledger)：第十六轮台账——#419 清偿（四个面共用一份事务域）
+
+- §25 记录本轮形态：#419 补的不是「一个包」而是**跨面原子性**（日志升级为
+  「一行 = 一个事务批次」）；事件游标从已提交水位线派生 ⇒ 结构性满足
+  TailStore 的「无空洞推进」；快照 / 事件面**没有共享契约套件**这条边界写明。
+- §24 的残留单表：#419 由「仍开着」转为「已合入 (#421)」，#418 仍开着
+  （需要一台装了 NetworkPolicy CNI 的真集群，本机没有 ⇒ 如实留 open）。
+- 本轮的两个自伤也记进台账：三项联查与提交闸原先各写两份 ⇒ 改一处测试
+  看不出区别 ⇒ 已各收成唯一判据点。
+
+- 文档(agends)：回执 v0.47.0 的 tag run 7/7 绿，且 releasecheck 第一次在 CI 上真被判
+
+tag v0.47.0 的 run 7/7 全绿（unit / race / contract / fault-injection / gates /
+windows / integration）。更值得记的是 unit 层日志里那三行：
+- 「部署矩阵校验通过：6 个场景 / 20 项能力」——deploycheck 第一次在 CI 上被跑；
+- 「台账校验通过：124 个单号 / 305 处出现点」——ledgercheck 第一次在 CI 上被跑；
+- 「releasecheck: v0.47.0 发版纪律 ✓（annotated tag / CHANGELOG 含本版段 /
+  无编码损坏 / 区间内无混装提交）」——**不是**从前那句「HEAD 无 exact tag ⇒ 跳过」。
+⇒ 从前这三条只在本机 make check 里被judged过；CI 上「unit」层跑的是分层目标，
+而这三条此前没进任何分层目标 ⇒ 它们在 CI 上一次都没跑过（矩阵漂了没人知道，
+tag 推送时的四条发版纪律也没人判）。本版把它们接进 unit 层后，tag run 的日志
+第一次给出这三行 ⇒ 回执进纪律段，避免下轮又按「CI 不管这些」读。
+
+- 文档(readme)：下游升级须知 v0.47.0 行的版本措辞与其它行对齐（已发版）
+
+tag 已打、Release 已发 ⇒ 该行从「待发版」改为「已发版」，与 v0.45.0 / v0.43.0
+等既有行的措辞一致（读者据此判断这一行对应的是已落地的版本还是待发版内容）。
+
 ## [v0.47.0] — 2026-11-18
 
 ### 新增(harness)：判定词表登记门禁第十四阶段 + 台账单号状态派生（第十五阶段）

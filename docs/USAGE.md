@@ -2363,7 +2363,7 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | 场景 | 推荐存储 | Worker 模式 | 必需能力 | 当前状态 |
 |---|---|---|---|---|
 | `single-process-agent` 单进程 Agent | memory | single-process | 幂等键作用域、Context 取消 | available |
-| `single-host-persistent` 单机持久化 | examples/sqlitestore | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | partial |
+| `single-host-persistent` 单机持久化 | examples/sqlitestore | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
 | `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
 | `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | partial |
 | `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |

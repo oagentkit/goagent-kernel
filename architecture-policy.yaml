@@ -659,15 +659,29 @@ modules:
   # 宿主在自己 module 加驱动后照抄即可。
   - id: sqlitestore
     roots: [examples/sqlitestore]
-    requires: [taskboard, "ext:github.com/oekit/pkg"]
+    requires: [taskboard, sideeffect, checkpoint, eventbus, "ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
-      taskboard.Board（含 RenewingBoard）的单机持久化参考实现：进程内 mutex +
-      跨进程 flock 单写者，JSONL 追加 + fsync 为提交点，打开/写入前重放并
-      截断残尾。WAL/SQLite 的落库形态（PRAGMA / BEGIN IMMEDIATE / 单连接写
-      串行化 / 存储时钟）写在 doc.go，是宿主生产实现的契约级依据。
-      boardtest 全套契约判据在本实现上真跑（与 pgstore 同一段判据）。
+      单机持久化参考实现：进程内 mutex + 跨进程 flock 单写者，JSONL 追加 +
+      fsync 为提交点，打开/写入前重放并截断残尾。WAL/SQLite 的落库形态
+      （PRAGMA / BEGIN IMMEDIATE / 单连接写串行化 / 存储时钟）写在 doc.go，
+      是宿主生产实现的契约级依据。
+
+      2026-11-18 起覆盖**四个面**（issue #419）：taskboard.Board（含
+      RenewingBoard）/ sideeffect.Store / checkpoint.StoreCAS /
+      eventbus.Store+TailStore。四面**共用一份事务域**（同一把锁、同一个
+      日志、一次提交）——这是「单一存储覆盖全部状态」这条能力（部署清单
+      `single-store-full-state`）的机器形态：任务状态、副作用闸、进度快照、
+      事件行（Outbox）在**同一次提交**里落盘，跨面不会出现「一半已提交」。
+      事件 ID 取自**已提交水位线**（铸造序 == 提交序，回滚不烧号）⇒ 结构性地
+      满足 TailStore 的「无空洞推进」硬要求。
+
+      四个面各自是一个类型（sideeffect.Store.Complete 与 taskboard.Board.Complete
+      签名不同 ⇒ 不能塞进同一个类型），但**共享同一份事务域**。
+
+      契约套件：boardtest 全套判据在本实现的 taskboard 面上真跑；
+      sidetest 全套（33 条）在 sideeffect 面上真跑（与 pgstore 同一段判据）。
 
   # 容器执行后端参考实现（2026-11-13 新增，issue #109）：backend.Backend 的
   # 容器形态落点。
