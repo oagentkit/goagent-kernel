@@ -126,6 +126,34 @@ type WordTableRelation struct {
 	B WordTableRef `yaml:"b"`
 	// Relation 是同形取值的语义关系：same（同一概念）/ distinct（不同概念）。
 	Relation string `yaml:"relation"`
+	// Anchors 把这条关系锚到**具体常量**上（可选）。
+	//
+	// 为什么要有：关系本身是**人写的事实**（「会话失败 ≠ 任务失败」是人判的）。
+	// 主人包若改了某个取值的**含义**（不是拼写），关系不会跟着变 ⇒ 一条
+	// **说谎**的关系会安静地留着。锚点让四条原本没人判的事实当天即红：
+	// 锚点常量改名/被删、锚点取值不再属于它那张表、两端锚定取值不成对、
+	// distinct 的两端锚点解析到同一处声明。
+	//
+	// 为什么是**可选**：键是字面量、根本没有常量可锚的表写不出锚点；
+	// 强制要求会把那种表逼成「登记不进来」（门禁逼人造假比没有锚点更坏）。
+	// 但**半边锚点没有配对语义** ⇒ 要写就两端都写（自校验当天即红）。
+	Anchors *WordTableAnchors `yaml:"anchors"`
+}
+
+// WordTableAnchors 是一条关系两端各自的锚点列表。
+type WordTableAnchors struct {
+	// A 是第一张表（a 端）的锚点。
+	A []WordTableAnchor `yaml:"a"`
+	// B 是第二张表（b 端）的锚点。
+	B []WordTableAnchor `yaml:"b"`
+}
+
+// WordTableAnchor 是关系上的一个**锚点**：关系锚定的那个具体常量。
+type WordTableAnchor struct {
+	// Pkg 是锚点常量所在包（必须等于该端表的主人包）。
+	Pkg string `yaml:"pkg"`
+	// Const 是锚点常量名（主人包里的包级常量）。
+	Const string `yaml:"const"`
 }
 
 // WordTableRef 是一张登记词表的**引用**（主人包 + 导出枚举出口）。

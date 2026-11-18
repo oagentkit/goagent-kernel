@@ -1933,29 +1933,60 @@ word_tables:
   # 表身份用 **pkg + enum**（枚举出口是每张表唯一的对外身份——protocol 一个包
   # 里就有五张表，包名不足以区分它们）。关系是**对称**的，写反了等价。
   #
-  # 下面这五对是**实测**出来的（撞车判据跑真门禁报出来的），不是估的：
+  # 下面这五对是**实测**出来的（撞车判据跑真门禁报出来的），不是估的。
+  #
+  # 每条关系都带 **anchors**：把关系锚到**具体常量**上。
+  #
+  # 为什么：关系本身是**人写的事实**（「会话失败 ≠ 任务失败」是人判的）。
+  # 主人包若改了某个取值的**含义**（不是拼写），关系不会跟着变 ⇒ 一条
+  # **说谎**的关系会安静地留着。锚点让四条原本没人判的事实当天即红：
+  #   ① 锚点常量**改名或被删**（声明指向了不存在的东西 = 登记漂移）；
+  #   ② 锚点常量的取值**不再属于它那张表**（锚点说的是别的表的词）；
+  #   ③ 两端锚定的**取值不成对**（关系的前提「同形」不成立）；
+  #   ④ distinct 关系的两端锚点**解析到同一处声明**（同一处声明不可能是
+  #      两个概念 ⇒ 「不同概念」是说谎的，指路会要求本包另起名字）。
+  #
+  # 锚点**按取值成对**：a 侧锚定的每个取值，b 侧必须有同名值的锚点。
+  # 锚点是**可选的加固**——键是字面量、根本没有常量可锚的表不写锚点；
+  # 但**半边锚点没有配对语义** ⇒ 要写就两端都写（自校验当天即红）。
   relations:
     # statemachine 的环节状态常量是 contract 会话状态的**别名**
     # （StatusCreated = contract.StatusCreated）⇒ 同一概念，引用任一家都对。
+    # 锚点两端解析到**同一处声明** ⇒「同一概念」是机器证过的事实。
     - a: {pkg: contract, enum: AllStatuses}
       b: {pkg: statemachine, enum: AllStepStatuses}
       relation: same
+      anchors:
+        a: [{pkg: contract, const: StatusFailed}]
+        b: [{pkg: statemachine, const: StatusFailed}]
     # 会话失败 ≠ 任务失败（taskboard 的 failed 允许重新认领，非终态）。
     - a: {pkg: contract, enum: AllStatuses}
       b: {pkg: taskboard, enum: AllStates}
       relation: distinct
+      anchors:
+        a: [{pkg: contract, const: StatusFailed}]
+        b: [{pkg: taskboard, const: StateFailed}]
     # 会话状态「已批准」≠ 报告决策「已批准」：一个是生命周期，一个是判定结论。
     - a: {pkg: contract, enum: AllStatuses}
       b: {pkg: protocol, enum: AllDecisions}
       relation: distinct
+      anchors:
+        a: [{pkg: contract, const: StatusApproved}]
+        b: [{pkg: protocol, const: DecisionApproved}]
     # 同上（statemachine 的环节状态与 contract 同族，故与 taskboard / protocol
     # 也都是不同概念）。
     - a: {pkg: statemachine, enum: AllStepStatuses}
       b: {pkg: taskboard, enum: AllStates}
       relation: distinct
+      anchors:
+        a: [{pkg: statemachine, const: StatusFailed}]
+        b: [{pkg: taskboard, const: StateFailed}]
     - a: {pkg: statemachine, enum: AllStepStatuses}
       b: {pkg: protocol, enum: AllDecisions}
       relation: distinct
+      anchors:
+        a: [{pkg: statemachine, const: StatusApproved}]
+        b: [{pkg: protocol, const: DecisionApproved}]
   # not_registered：**有意不登记**的判定词表候选（与 exceptions 同款纪律）。
   #
   # 为什么要有这份清单：登记面是稀疏的，而稀疏本身没人记——「这张表我们

@@ -165,6 +165,52 @@ func wordTableSelfCheck(root string, policyPath string, seg *WordTables) []Viola
 			continue
 		}
 		seenPair[key] = r.Relation
+
+		// 锚点声明面（relations[].anchors）：四条判据，全是**声明面内部矛盾**
+		// ——它们在这一个文件里就能判出来，不该等到执行体。
+		//
+		//  1. 锚点的 pkg 必须等于该端表的主人包（锚错对象 ⇒ 锚点说的不是那张表）；
+		//  2. 锚点的 const 不得为空（没有常量名锚不到任何东西）；
+		//  3. 同一端内不得有重复锚点（同一个常量锚两次 = 声明自己跟自己配对）；
+		//  4. 两端锚点必须**同时有或同时没有**（半边锚点没有配对语义）。
+		if r.Anchors == nil {
+			continue
+		}
+		for _, side := range []struct {
+			name string
+			pkg  string
+			list []WordTableAnchor
+		}{
+			{"a", r.A.Pkg, r.Anchors.A},
+			{"b", r.B.Pkg, r.Anchors.B},
+		} {
+			seenAnchor := map[string]bool{}
+			for _, an := range side.list {
+				if strings.TrimSpace(an.Const) == "" {
+					add("word_tables.relations 里 %s 与 %s 的 %s 侧锚点没写 const："+
+						"锚点必须是**具体常量**，没有常量名锚不到任何东西",
+						r.A.Pkg, r.B.Enum, side.name)
+					continue
+				}
+				if an.Pkg != side.pkg {
+					add("word_tables.relations 里 %s 与 %s 的 %s 侧锚点 %s.%s 的包名与该端表的主人包 %s 不符——"+
+						"锚点必须落在该端那张表上（锚错对象 ⇒ 锚点说的不是那张表的词）",
+						r.A.Pkg, r.B.Enum, side.name, an.Pkg, an.Const, side.pkg)
+				}
+				k := an.Pkg + "|" + an.Const
+				if seenAnchor[k] {
+					add("word_tables.relations 里 %s 与 %s 的 %s 侧锚点 %s 重复："+
+						"同一个常量锚两次（= 声明自己跟自己配对）",
+						r.A.Pkg, r.B.Enum, side.name, an.Const)
+				}
+				seenAnchor[k] = true
+			}
+		}
+		if (len(r.Anchors.A) == 0) != (len(r.Anchors.B) == 0) {
+			add("word_tables.relations 里 %s 与 %s 只给了一端写锚点——"+
+				"锚点按取值成对，半边锚点没有配对语义：要写就两端都写，或都别写",
+				r.A.Pkg, r.B.Enum)
+		}
 	}
 
 	// 「有意不登记」的清单：每个条目都要写明**是什么**与**为什么**。

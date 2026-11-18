@@ -54,6 +54,13 @@ const (
 // wordTableCollisionRuleID 同形撞车判据的规则 id。
 const wordTableCollisionRuleID = "harness-word-table-value-collision"
 
+// wordTableAnchorRuleID 关系**锚点漂移**判据的规则 id。
+//
+// 为什么单独一条规则：撞车判据问的是「这对表有没有关系声明」，锚点判据问的
+// 是「这条声明**指向的东西**还对不对」——两件事，同形但不同源。
+// 合成一条 ⇒ 读者分不清自己踩的是「没声明」还是「声明烂了」。
+const wordTableAnchorRuleID = "harness-word-table-relation-anchor-drift"
+
 // wordTableRelations 是「两张表之间是什么关系」的查表。
 type wordTableRelations struct {
 	byPair map[string]string // 无序对键 → 关系值
@@ -137,6 +144,163 @@ func wordTableCollisionViolations(facts []wordTableFacts, rels *wordTableRelatio
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Text < out[j].Text })
+	return out
+}
+
+// wordTableAnchorViolations 判「关系锚点与代码事实是否一致」。
+//
+// 判定面是**锚点常量本身**（存在性 / 取值 / 根声明）——都是事实，不需要类型信息。
+//
+// # 四条判据（都只在这一层判，别处不判同一件事）
+//
+//  1. **锚点常量必须存在**（且取值可解析为非空字符串）——改名或被删当天即红。
+//  2. **锚点常量的取值必须属于它那一端的表**——锚点说的是这张表的词。
+//  3. **两端锚定的取值必须成对**——a 侧每个取值，b 侧必须有同名值的锚点。
+//  4. **distinct 的两端锚点必须解析到不同处声明**——同一处声明不可能是
+//     两个概念（「不同概念」是说谎的，指路会要求本包另起名字，而正确做法
+//     是引用主人常量）。
+//
+// # 为什么 same 不要求「根声明相同」
+//
+// 根声明相同（别名同源）⇒「同一概念」是**机器证过**的；但两张表**各自独立**
+// 定义同一个词形且含义相同，也是合法的 same（机器判不了语义）⇒ 强制要求
+// 根声明相同会把那种表逼成假红（门禁逼人造假比没有锚点更坏）。
+// ⇒ same 只受判据 1~3：取值漂了、锚点烂了，仍会红。
+func wordTableAnchorViolations(idx *wordRepo, facts []wordTableFacts, rels []WordTableRelation, policyPath string) []Violation {
+	var out []Violation
+	byRef := wordTableFactsIndex(facts)
+	for _, r := range rels {
+		if r.Anchors == nil {
+			// 没写锚点 ⇒ 这条关系没有加固层（撞车 / 失真两条判据仍在）。
+			continue
+		}
+		aFact := byRef[r.A.Pkg+"|"+r.A.Enum]
+		bFact := byRef[r.B.Pkg+"|"+r.B.Enum]
+		if aFact == nil || bFact == nil {
+			// 表没派生出来 ⇒ 漂移已由登记面判据报出（同一件事不重复报两次）。
+			continue
+		}
+		aVals, aBad := wordTableAnchorSide(idx, aFact, r, "a", policyPath)
+		bVals, bBad := wordTableAnchorSide(idx, bFact, r, "b", policyPath)
+		out = append(out, aBad...)
+		out = append(out, bBad...)
+
+		// 判据 3：两端锚定的取值必须**成对**。
+		for _, v := range sortedWordNames(aVals) {
+			if wordTableAnchorUnpaired(v, bVals) {
+				out = append(out, Violation{
+					Rule: wordTableAnchorRuleID,
+					Path: policyPath,
+					Text: fmt.Sprintf("关系 %s.%s ↔ %s.%s 的锚点取值 %q 只在 a 侧出现——"+
+						"锚点必须成对（a 侧每个取值，b 侧要有同名值的锚点）："+
+						"补上 b 侧的锚点，或删掉 a 侧这个锚点",
+						r.A.Pkg, r.A.Enum, r.B.Pkg, r.B.Enum, v),
+					Kind: "word_table_anchor_unpaired",
+				})
+			}
+		}
+		for _, v := range sortedWordNames(bVals) {
+			if wordTableAnchorUnpaired(v, aVals) {
+				out = append(out, Violation{
+					Rule: wordTableAnchorRuleID,
+					Path: policyPath,
+					Text: fmt.Sprintf("关系 %s.%s ↔ %s.%s 的锚点取值 %q 只在 b 侧出现——"+
+						"锚点必须成对（a 侧每个取值，b 侧要有同名值的锚点）："+
+						"补上 a 侧的锚点，或删掉 b 侧这个锚点",
+						r.A.Pkg, r.A.Enum, r.B.Pkg, r.B.Enum, v),
+					Kind: "word_table_anchor_unpaired",
+				})
+			}
+		}
+
+		// 判据 4：distinct ⇒ 同一取值在两端的锚点必须解析到**不同处声明**。
+		if r.Relation != wordTableRelationDistinct {
+			continue
+		}
+		for _, v := range sortedWordNames(aVals) {
+			bRoot, ok := bVals[v]
+			if !ok {
+				continue // 已由判据 3 报出（同一件事不报两次）
+			}
+			if bRoot != aVals[v] {
+				continue
+			}
+			out = append(out, Violation{
+				Rule: wordTableAnchorRuleID,
+				Path: policyPath,
+				Text: fmt.Sprintf("关系 %s.%s ↔ %s.%s 声明为 distinct（不同概念），"+
+					"但两端锚点（取值 %q）解析到**同一处声明**——同一处声明不可能是两个概念，"+
+					"这条声明在说谎（手抄指路会要求本包另起名字，而正确做法是引用主人常量）："+
+					"改判为 same，或把锚点指向真正属于各自的那张表的常量",
+					r.A.Pkg, r.A.Enum, r.B.Pkg, r.B.Enum, v),
+				Kind: "word_table_anchor_same_declaration",
+			})
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Text < out[j].Text })
+	return out
+}
+
+// wordTableAnchorUnpaired 报告某个锚点取值是否**只**出现在一侧。
+//
+// 为什么两个方向共用一个谓词：a 侧多出来的取值与 b 侧多出来的取值是**两个**
+// 毛病，但它们是同一条判据 ⇒ 判据本体只应有一处（两处各写一遍，早晚漂成
+// 「只判一个方向」的半盲判据）。
+func wordTableAnchorUnpaired(value string, other map[string]string) bool {
+	_, ok := other[value]
+	return !ok
+}
+
+// wordTableAnchorSide 解析一端的锚点：取值 → 根声明。
+//
+// 返回的违反覆盖两条判据：锚点常量不存在（改名/被删）、锚点常量的取值
+// 不在它那张表里。
+func wordTableAnchorSide(idx *wordRepo, f *wordTableFacts, r WordTableRelation, side, policyPath string) (map[string]string, []Violation) {
+	vals := map[string]string{}
+	var out []Violation
+	anchors := r.Anchors.A
+	if side == "b" {
+		anchors = r.Anchors.B
+	}
+	for _, a := range anchors {
+		rootPkg, rootName, value, ok := idx.resolveConstRoot(f.pkg, a.Const, 0)
+		if !ok || value == "" {
+			out = append(out, Violation{
+				Rule: wordTableAnchorRuleID,
+				Path: policyPath,
+				Text: fmt.Sprintf("关系 %s.%s ↔ %s.%s 的 %s 侧锚点常量 %s.%s 不存在"+
+					"（或不是字符串常量）——锚点指向了不存在的东西（改名/被删）＝ 登记漂移："+
+					"改锚点指向现存的常量，或改那张表的常量名",
+					r.A.Pkg, r.A.Enum, r.B.Pkg, r.B.Enum, side, a.Pkg, a.Const),
+				Kind: "word_table_anchor_missing",
+			})
+			continue
+		}
+		if _, inTable := f.values[value]; !inTable {
+			out = append(out, Violation{
+				Rule: wordTableAnchorRuleID,
+				Path: policyPath,
+				Text: fmt.Sprintf("关系 %s.%s ↔ %s.%s 的 %s 侧锚点常量 %s.%s 的取值 %q "+
+					"不在 %s.%s 这张表里——锚点说的是别的表的词："+
+					"换成这张表里真实存在的常量，或改这张表",
+					r.A.Pkg, r.A.Enum, r.B.Pkg, r.B.Enum, side, a.Pkg, a.Const, value,
+					f.pkg, f.enum),
+				Kind: "word_table_anchor_not_member",
+			})
+			continue
+		}
+		vals[value] = rootPkg + "|" + rootName
+	}
+	return vals, out
+}
+
+// wordTableFactsIndex 按「包 + 枚举出口」索引派生事实。
+func wordTableFactsIndex(facts []wordTableFacts) map[string]*wordTableFacts {
+	out := make(map[string]*wordTableFacts, len(facts))
+	for i := range facts {
+		f := &facts[i]
+		out[f.pkg+"|"+f.enum] = f
+	}
 	return out
 }
 

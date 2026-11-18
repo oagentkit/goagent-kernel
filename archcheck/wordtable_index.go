@@ -279,6 +279,47 @@ func (idx *wordRepo) resolveConst(rel, name string, depth int) (string, bool) {
 	return "", false
 }
 
+// resolveConstRoot 解析一个常量的**根声明**（别名链的尽头）与其取值。
+//
+// 为什么需要它：「这两个常量是不是同一处声明」是机器判「同一概念」的依据
+// ——statemachine 的 StatusFailed 是 contract.StatusFailed 的**别名**
+// （StatusFailed = contract.StatusFailed）⇒ 根声明相同 ⇒ 「同一概念」是
+// **证过**的事实，而不是人说的。反过来也成立：同一处声明**不可能**是
+// 两个概念（distinct 的两端锚点若根声明相同，那条「不同概念」就是说谎的）。
+//
+// 解析不出（常量不在本仓、或不是字符串常量）⇒ ok=false ⇒ 调用方报红：
+// 「解析不出」若被当成「没有锚点」，门禁就是静默空转。
+func (idx *wordRepo) resolveConstRoot(rel, name string, depth int) (string, string, string, bool) {
+	if depth > 8 {
+		return "", "", "", false
+	}
+	p := idx.byRel[rel]
+	if p == nil {
+		return "", "", "", false
+	}
+	def, ok := p.consts[name]
+	if !ok {
+		return "", "", "", false
+	}
+	switch {
+	case def.literal != "":
+		return rel, name, def.literal, true
+	case def.localRef != "":
+		return idx.resolveConstRoot(rel, def.localRef, depth+1)
+	case def.aliasPkg != "" && def.aliasName != "":
+		pth, ok := p.imports[def.aliasPkg]
+		if !ok {
+			return "", "", "", false
+		}
+		tp := idx.byPath[pth]
+		if tp == nil {
+			return "", "", "", false
+		}
+		return idx.resolveConstRoot(tp.rel, def.aliasName, depth+1)
+	}
+	return "", "", "", false
+}
+
 // referencesOwner 报告 p 是否引用了主人包 ownerRel 里名为 constName 的常量。
 //
 // 「引用」的形态是限定选择器（owner.Const）：它不是字面量，天然不构成

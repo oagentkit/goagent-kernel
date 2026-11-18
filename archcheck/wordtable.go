@@ -136,6 +136,8 @@ func wordTableViolations(root string, pol *Policy) ([]Violation, error) {
 	// 同形撞车判据：两张判定词表同形却没有声明关系 ⇒ 没人说得清
 	// 「这处字面量想说的是哪张表」，手抄指路只能瞎猜。
 	out = append(out, wordTableCollisionViolations(facts, rels, policyPath)...)
+	// 关系锚点判据：声明指向的具体常量还对不对（改名/被删/取值漂了/说谎了）。
+	out = append(out, wordTableAnchorViolations(idx, facts, seg.Relations, policyPath)...)
 	// 函数面判据：判定谓词与输入归一出口是否与代码事实一致
 	// （登记了就得守住；input 类缺归一出口也红）。
 	out = append(out, wordTableFuncFaceViolations(root, idx, pol, seg)...)

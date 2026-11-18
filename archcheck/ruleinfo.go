@@ -42,6 +42,7 @@ func severityMap(pol *Policy) map[string]string {
 		sevOf[wordTableHandCopyRuleID] = sev
 		sevOf[wordTableFamilyRuleID] = sev
 		sevOf[wordTableCollisionRuleID] = sev
+		sevOf[wordTableAnchorRuleID] = sev
 		sevOf[wordTablePredicateRuleID] = sev
 		sevOf[wordTableNormalizerRuleID] = sev
 	}
@@ -122,6 +123,11 @@ func ruleInfos(pol *Policy, sevOf map[string]string) []RuleInfo {
 			ID:       wordTableCollisionRuleID,
 			Desc:     "两张判定词表有同形取值时必须显式声明关系（same=同一概念 / distinct=不同概念）",
 			Severity: sevOf[wordTableCollisionRuleID],
+		})
+		out = append(out, RuleInfo{
+			ID:       wordTableAnchorRuleID,
+			Desc:     "同形关系的锚点必须仍指向真实存在的常量，且两端成对、distinct 不同源",
+			Severity: sevOf[wordTableAnchorRuleID],
 		})
 		out = append(out, RuleInfo{
 			ID:       wordTablePredicateRuleID,
