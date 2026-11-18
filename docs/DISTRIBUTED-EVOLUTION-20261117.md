@@ -1205,6 +1205,8 @@ contract 会话状态的别名），一刀切「互斥」会把别名关系判�
    （不是拼写），关系不会跟着变 ⇒ 一条**说谎**的关系会安静地留着。
    可考虑：关系声明能引用**具体常量**（至少 `same` 关系要），让「常量改名/
    常量被删」当天即红。
+   > 已在 §22 落地（关系可带 `anchors` 锚到具体常量；新增
+   > `harness-word-table-relation-anchor-drift` 判据与 8 条新变异）。
 2. **手抄判据问的还是「有没有名字」，不是「在不在判定路径上」**：后者要
    `go/types` 档的类型信息（`RunOptions.TypeAware`）。当前口径是**故意**的
    （「判定位置」这个语法特征推不出「它在判定哪个概念」——同一个 "error" 至少
@@ -1213,3 +1215,75 @@ contract 会话状态的别名），一刀切「互斥」会把别名关系判�
    可考虑给表加**自己的前缀声明**（这张表只收某个前缀下的常量），让归属由
    表自己声明而不是由族的豁免口反推。
 
+
+## 22. 第十三轮台账（2026-11-18）：同形关系**锚定到具体常量**
+
+### 落点
+
+| 面 | 落点 | 判据 |
+|---|---|---|
+| 锚点声明面 | policy `word_tables.relations[].anchors`（`{a: [{pkg, const}], b: [...]}`）+ `archcheck/policy_wordtable.go` 的 `WordTableAnchor` / `WordTableAnchors` | 声明两端各自的锚点常量 |
+| 别名链根解析 | `archcheck/wordtable_index.go` 的 `resolveConstRoot` | 沿别名链追到**根声明**（包 + 常量名）与取值 |
+| 锚点判据 | `archcheck/wordtable_overlap.go`（新规则 `harness-word-table-relation-anchor-drift`） | 四条：存在性 / 成员性 / 成对 / distinct 不同源 |
+| 锚点自校验 | `archcheck/selfcheck_wordtable.go` | 四条：包名须是该端 / const 非空 / 同端不重复 / 两端同时有或同时没有 |
+
+### 建议 1 的落地：**关系锚到常量，于是「说谎的关系」当天即红**
+
+§21 建议 1 的原文是「关系声明能引用**具体常量**（至少 `same` 关系要），让『常量改名/
+常量被删』当天即红」。本轮落地为 `relations[].anchors` 段，四条判据：
+
+| # | 判据 | 拦的是 |
+|---|---|---|
+| 1 | 锚点常量必须**存在**且取值可解析 | 常量**改名 / 被删**（= 登记漂移）|
+| 2 | 锚点常量的取值必须**属于它那一端的表** | 锚点说的是**别的表**的词 |
+| 3 | 两端锚定的取值必须**成对** | 关系的前提「同形」不成立了（两端漂开）|
+| 4 | `distinct` 的两端锚点必须解析到**不同处声明** | 「不同概念」是**说谎**的 |
+
+判据 4 的机器依据是**别名链的根声明**：`statemachine.StatusFailed = contract.StatusFailed` ⇒
+两端锚点解析到**同一处声明** ⇒「同一概念」是**证过**的事实，不是人说的；反过来，
+`distinct` 若两端锚到同一处声明，同一处声明就不可能是两个概念 ⇒ 那条声明在
+说谎 ⇒ 手抄指路会要求本包另起名字，而正确做法是引用主人常量。
+
+### 两处**故意不对称**的设计（别当成疏漏）
+
+1. **`same` 不要求根声明相同**：两张表**各自独立**定义同一个词形且含义相同，
+   也是合法的 `same`（机器判不了语义）⇒ 强制要求根声明相同会把那种表逼成假红
+   ——**门禁逼人造假比没有锚点更坏**。`same` 只受判据 1~3（取值漂了、锚点烂了仍会红）。
+2. **锚点是可选的**：键是字面量、根本没有常量可锚的表**写不出**锚点 ⇒ 不强制。
+   但**半边锚点没有配对语义** ⇒ 要写就两端都写（自校验当天即红）。
+
+### 本仓落地：5 条关系全部带上锚点
+
+| 一对 | 关系 | 锚点 | 机器读出的事实 |
+|---|---|---|---|
+| contract ↔ statemachine | same | `contract.StatusFailed` ↔ `statemachine.StatusFailed` | 两端**同一处声明**（别名同源）⇒ 同一概念**证过** |
+| contract ↔ taskboard | distinct | `contract.StatusFailed` ↔ `taskboard.StateFailed` | 两端**不同处声明** ⇒ 确实是两个概念 |
+| contract ↔ protocol | distinct | `contract.StatusApproved` ↔ `protocol.DecisionApproved` | 同上 |
+| statemachine ↔ taskboard | distinct | `statemachine.StatusFailed` ↔ `taskboard.StateFailed` | 同上 |
+| statemachine ↔ protocol | distinct | `statemachine.StatusApproved` ↔ `protocol.DecisionApproved` | 同上 |
+
+### 反向验证（23 条变异全部打红）
+
+本轮新增 8 条（锚点存在性 / 成员性 / 成对 / `distinct` 不同源 / 自校验四条），
+累计 23 条。脚本仍先断言「变异落地」再读测试结果，断言落在**判据**上。
+
+**本轮踩到的一个自伤**：我把「`distinct` 不同源检查失效」的变异**直接写进了源码**，
+用例当场转红（`TestWordTableRelationDistinctAnchorSameDeclarationIsRed`）——这正是
+「用例是承重的」的样子；改回来即绿。⇒ 变异**只该进脚本**，进源码就是改坏实现。
+
+### 负对照（policy 层面的实机验证）
+
+把 policy 里一个锚点改成不存在的常量名 → 真门禁当场报 **2 处**违反
+（`word_table_anchor_missing` + `word_table_anchor_unpaired`），还原即绿。
+⇒ 判据**真的在判**，不是「照常报绿却什么都没判」。
+
+### 下一阶段（第十四阶段）建议
+
+1. **关系仍然只能表达「整张表的关系」**：一条关系覆盖 12 个同形取值，而锚点只锚住其中
+   一两个 ⇒ 其余取值漂了要靠族覆盖 / 派生漂移判据兜。要么让锚点支持「锚住全部同形取值」
+   （如 `anchors: {a: all, b: all}`），要么接受「锚点是抽样锚定」并在文档里写明。
+2. **手抄判据问的还是「有没有名字」，不是「在不在判定路径上」**：后者要 `go/types` 档的
+   类型信息（`RunOptions.TypeAware`）。当前口径是**故意**的（「判定位置」这个语法特征推不出
+   「它在判定哪个概念」），但「名字放在一个根本没人读的包里」这类假放行仍在。
+3. **族归属仍靠手写豁免**：`family_exclude` 按前缀手写；一族分表变多时要逐段手写。
+   可考虑给表加**自己的前缀声明**（这张表只收某个前缀下的常量），让归属由表自己声明。

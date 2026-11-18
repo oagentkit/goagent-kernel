@@ -2609,6 +2609,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-word-table-handcopy` | 别的包手抄了登记词表的取值 | 引用主人常量，或在本包把它声明成自己的常量 |
 | `harness-word-table-family-uncovered` | 登记的词表没覆盖它那一族常量的全部取值（常量加了、表没加）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或写明 `family_exclude` 理由 |
 | `harness-word-table-value-collision` | 两张判定词表有同形取值却没声明关系；或声明了关系却没撞车（声明失真）| `policy.yaml` 的 `word_tables` 段 `relations`（`same` / `distinct`）|
+| `harness-word-table-relation-anchor-drift` | 同形关系的锚点指向的东西不再对（常量改名/被删、取值不再属于那张表、两端不成对、distinct 却锚到同一处声明）| `policy.yaml` 的 `word_tables.relations` 段 `anchors` |
 | `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
 | `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）| `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
@@ -2829,6 +2830,20 @@ word_tables:
    声明了关系却**没撞车** ⇒ 报红（**声明失真**：今天没关系，将来一旦同形就会无声生效）。
    表身份用 `pkg` + `enum`（一个包里可能有多张表）；关系是**对称**的（用无序对
    做键，否则「同一对表声明两次」会被漏判）。
+7. **@@harness-word-table-relation-anchor-drift@@** —— 同形关系的**锚点**必须仍指向真实存在的东西。
+   关系声明本身是**人写的事实**（「会话失败 ≠ 任务失败」是人判的）⇒ 主人包若改了某个
+   取值的**含义**（不是拼写），关系不会跟着变 ⇒ 一条**说谎**的关系会安静地留着。
+   ⇒ 关系的 `anchors` 段把关系绑到**具体常量**上，四条判据当天即红：
+
+   - 锚点常量**改名或被删**（= 登记漂移）；
+   - 锚点常量的取值**不再属于它那张表**（锚点说的是别的表的词）；
+   - 两端锚定的取值**不成对**（关系的前提「同形」不成立）；
+   - `distinct` 的两端锚点**解析到同一处声明**（同一处声明不可能是两个概念 ⇒
+     「不同概念」是说谎的，指路会要求本包另起名字，而正确做法是引用主人常量）。
+
+   锚点是**可选的加固**：键是字面量、根本没有常量可锚的表写不出锚点（强制要求会把
+   那种表逼成「登记不进来」⇒ 门禁逼人造假比没有锚点更坏）。但**半边锚点没有配对
+   语义** ⇒ 要写就两端都写（自校验当天即红）。
 
 **登记与不登记都要留痕**：登记面是稀疏的，而稀疏本身没人记——「这张表我们决定
 不登记」若只留在某个人脑子里，下一个人会重新调研一遍，甚至直接把它登记进去。
