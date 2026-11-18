@@ -41,6 +41,7 @@ func severityMap(pol *Policy) map[string]string {
 		sevOf[wordTableEnumRuleID] = sev
 		sevOf[wordTableHandCopyRuleID] = sev
 		sevOf[wordTableFamilyRuleID] = sev
+		sevOf[wordTableCollisionRuleID] = sev
 		sevOf[wordTablePredicateRuleID] = sev
 		sevOf[wordTableNormalizerRuleID] = sev
 	}
@@ -116,6 +117,11 @@ func ruleInfos(pol *Policy, sevOf map[string]string) []RuleInfo {
 			ID:       wordTableFamilyRuleID,
 			Desc:     "登记的词表必须覆盖它那一族常量的全部取值（常量加了、表没加当天即红）",
 			Severity: sevOf[wordTableFamilyRuleID],
+		})
+		out = append(out, RuleInfo{
+			ID:       wordTableCollisionRuleID,
+			Desc:     "两张判定词表有同形取值时必须显式声明关系（same=同一概念 / distinct=不同概念）",
+			Severity: sevOf[wordTableCollisionRuleID],
 		})
 		out = append(out, RuleInfo{
 			ID:       wordTablePredicateRuleID,

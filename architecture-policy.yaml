@@ -1901,6 +1901,61 @@ word_tables:
       enum: AllChartStatusWords
       normalizer: ChartStatus
       desc: 图表状态归一输入词表（分组形状；判出口、归一出口与表同源）
+    # controlplane 的介入动作词表：**常量切片**形状（[]Action{...}）。
+    #
+    # 此前它登记不进来（第十一轮的实测结论写在本文件末尾的 not_registered 段）：
+    # 当时的执行体把「切片」一律当成分组表。第十一阶段实测发现切片有两种形状——
+    # 元素是**常量名**（扁平表，取值可派生）/ 元素是**复合字面量**（分组表，
+    # 取值在组内）——形状不决定判不判，只决定**能不能派生取值**。
+    - pkg: controlplane
+      backing: interventionActions
+      enum: AllInterventionActions
+      predicate: IsKnownInterventionAction
+      family: Action
+      family_exclude:
+        - prefix: ActionQuery
+          reason: 查询动作不经留痕（它不是一次介入，不改变运行状态），不属于介入动作词表
+      desc: 介入动作词表（3 值：force_release/adjudicate/terminate）
+  # relations：**同形取值的两张表之间的关系**声明（中心清单）。
+  #
+  # 为什么需要它：同一个拼写可能是**多张判定词表**的取值，而它们的**含义**
+  # 可能相同也可能不同（contract 的 "failed" 是会话失败、taskboard 的 "failed"
+  # 是任务失败——后者还允许重新认领，根本不是终态）。
+  #
+  # 手抄判据只按「值在不在表里」判 ⇒ 它分不出「这处字面量想说的是哪张表」
+  # ⇒ 修法文案若只指向某一张表，就可能把人引到**错误的概念**上
+  #（把任务失败改成引用会话失败常量 = 语义损坏）。
+  #
+  # ⇒ 凡两张登记的**判定词表**有同形取值，必须在这里显式声明关系：
+  #   - same     ：同一概念（一张表的别名/子集），引用任一家都对；
+  #   - distinct ：不同概念（同形只是拼写巧合），手抄方必须**在本包命名**。
+  #
+  # 表身份用 **pkg + enum**（枚举出口是每张表唯一的对外身份——protocol 一个包
+  # 里就有五张表，包名不足以区分它们）。关系是**对称**的，写反了等价。
+  #
+  # 下面这五对是**实测**出来的（撞车判据跑真门禁报出来的），不是估的：
+  relations:
+    # statemachine 的环节状态常量是 contract 会话状态的**别名**
+    # （StatusCreated = contract.StatusCreated）⇒ 同一概念，引用任一家都对。
+    - a: {pkg: contract, enum: AllStatuses}
+      b: {pkg: statemachine, enum: AllStepStatuses}
+      relation: same
+    # 会话失败 ≠ 任务失败（taskboard 的 failed 允许重新认领，非终态）。
+    - a: {pkg: contract, enum: AllStatuses}
+      b: {pkg: taskboard, enum: AllStates}
+      relation: distinct
+    # 会话状态「已批准」≠ 报告决策「已批准」：一个是生命周期，一个是判定结论。
+    - a: {pkg: contract, enum: AllStatuses}
+      b: {pkg: protocol, enum: AllDecisions}
+      relation: distinct
+    # 同上（statemachine 的环节状态与 contract 同族，故与 taskboard / protocol
+    # 也都是不同概念）。
+    - a: {pkg: statemachine, enum: AllStepStatuses}
+      b: {pkg: taskboard, enum: AllStates}
+      relation: distinct
+    - a: {pkg: statemachine, enum: AllStepStatuses}
+      b: {pkg: protocol, enum: AllDecisions}
+      relation: distinct
   # not_registered：**有意不登记**的判定词表候选（与 exceptions 同款纪律）。
   #
   # 为什么要有这份清单：登记面是稀疏的，而稀疏本身没人记——「这张表我们
@@ -1924,8 +1979,6 @@ word_tables:
       reason: 实测登记后 2 处命中（dispatch 的 "deadline"、protocol 的 "pending"）——两处都是**别的**错误分类口径，同形不同义
     - subject: delegate.AllStatuses（委派回执状态：completed/failed/refused）
       reason: 实测登记后 1 处命中（dispatch 的 "refused" 属另一套拒绝口径）；且 "failed"/"completed" 与 contract 的会话状态同形
-    - subject: controlplane.interventionActions（介入动作）
-      reason: 表的形状是**分组**（切片字面量），当前执行体的取值派生只认扁平表——待执行体支持分组形状的判定表再登记
     - subject: 门禁严重度词表（error/warn）
       reason: 与 HTTP 结果码、图表状态同形 ⇒ 要求命名会变成对**键名**也要求命名，噪声大于价值（第十轮结论）
     - subject: 协议字段名（JSON 响应里的 "error" 等键）

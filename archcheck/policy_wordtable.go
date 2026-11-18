@@ -14,6 +14,13 @@
 // 失败形态是门禁变绿。故 policy 只声明「哪张表、在哪个包、枚举出口叫什么」。
 package archcheck
 
+import (
+	"fmt"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
 // WordTables 是 word_tables 段的配置。
 type WordTables struct {
 	// Enabled 段级开关（缺省启用；显式 false 才关）。
@@ -31,6 +38,21 @@ type WordTables struct {
 	IgnoreDirs []string `yaml:"ignore_dirs"`
 	// Tables 登记的词表清单。
 	Tables []WordTable `yaml:"tables"`
+	// Relations 是**同形取值的两张表之间的关系**声明。
+	//
+	// 为什么需要它：同一个拼写可能是多张判定词表的取值，而它们的**含义**
+	// 可能相同也可能不同（contract 的 "failed" 是会话失败、taskboard 的
+	// "failed" 是任务失败）。手抄判据只按「值在不在表里」判 ⇒ 它分不出
+	// 「这处字面量想说的是哪张表」⇒ 修法文案若只指向某一张表，就可能把人
+	// 引到**错误的概念**上（把任务失败改成引用会话失败常量 = 语义损坏）。
+	//
+	// ⇒ 凡两张登记的**判定词表**有同形取值，必须在这里显式声明关系：
+	//   - same     ：同一概念（一张表的别名/子集），引用任一家都对；
+	//   - distinct ：不同概念（同形只是拼写巧合），手抄方必须**在本包命名**。
+	//
+	// 为什么用**中心清单**而不是各表自己声明：关系是**两张表之间**的事，
+	// 写在任一方都会引出「两边都声明了但不一致」的第三种状态。
+	Relations []WordTableRelation `yaml:"relations"`
 	// NotRegistered 是**有意不登记**的判定词表候选清单。
 	//
 	// 为什么要有它：登记面是稀疏的，而稀疏本身没人记——「这张表我们决定
@@ -38,6 +60,81 @@ type WordTables struct {
 	// 甚至直接把它登记进去（把几十处假阳引进门禁）。
 	// 不登记也要留痕，与 exceptions 段同款纪律。
 	NotRegistered []WordTableNotRegistered `yaml:"not_registered"`
+}
+
+// FamilyPrefixes 是族前缀的声明面：**一个或多个**前缀。
+//
+// 形态兼容：YAML 里既可写字符串（family: Status）也可写列表
+// （family: [Status, Phase]）——单前缀是常态，列表是「一族跨了两个前缀」
+// 时的写法。
+//
+// 为什么允许多前缀：一族的常量**不一定**共享同一个前缀（"StatusXxx" 与
+// "PhaseXxx" 同族），单前缀会漏掉一族的一半 ⇒ 漏掉的那半永远没人管
+// （它不在表里 ⇒ 手抄判据判不到它；它不在枚举出口里 ⇒ 宿主看不到它）。
+type FamilyPrefixes []string
+
+// UnmarshalYAML 接受字符串或列表两种形态。
+//
+// 为什么自己实现：yaml.v3 默认只认一种形态，而 policy 是**声明面**——
+// 声明面多一种写法就多一种「宿主写不出来只能改执行体」的风险。
+func (f *FamilyPrefixes) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		var s string
+		if err := value.Decode(&s); err != nil {
+			return err
+		}
+		if s == "" {
+			return nil
+		}
+		*f = FamilyPrefixes{s}
+		return nil
+	case yaml.SequenceNode:
+		var list []string
+		if err := value.Decode(&list); err != nil {
+			return err
+		}
+		*f = FamilyPrefixes(list)
+		return nil
+	default:
+		return fmt.Errorf("family 只能是字符串或字符串列表")
+	}
+}
+
+// match 报告某个常量名是否落在族前缀内（**任一**前缀命中即算族成员）。
+//
+// 为什么是「任一」：族前缀是**形状**声明，一族跨两个前缀时两个都是。
+func (f FamilyPrefixes) match(name string) bool {
+	for _, p := range f {
+		if p != "" && strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// String 把族前缀渲染成一行（报告文案用）。
+func (f FamilyPrefixes) String() string {
+	return strings.Join(f, " / ")
+}
+
+// WordTableRelation 是两张登记词表之间的**同形关系**声明。
+type WordTableRelation struct {
+	// A 是第一张表（主人包 + 导出枚举出口）。
+	A WordTableRef `yaml:"a"`
+	// B 是第二张表（主人包 + 导出枚举出口）。
+	B WordTableRef `yaml:"b"`
+	// Relation 是同形取值的语义关系：same（同一概念）/ distinct（不同概念）。
+	Relation string `yaml:"relation"`
+}
+
+// WordTableRef 是一张登记词表的**引用**（主人包 + 导出枚举出口）。
+//
+// 为什么用枚举出口而不是表名：枚举出口是每张表**唯一**的对外身份
+// （一个包里有多张表时，pkg 不足以区分它们）。
+type WordTableRef struct {
+	Pkg  string `yaml:"pkg"`
+	Enum string `yaml:"enum"`
 }
 
 // WordTableNotRegistered 一张**有意不登记**的判定词表候选。
@@ -125,7 +222,7 @@ type WordTable struct {
 	// 为什么用「前缀」而不是「列出常量名」：列出常量名就是**第二份会漂的真相**
 	// ——policy 里抄一份清单，清单自己会漂，而它漂的方向恰好是「门禁判的和
 	// 代码跑的不是一套词表」。前缀是**形状**声明，与 backing / enum / predicate 同类。
-	Family string `yaml:"family"`
+	Family FamilyPrefixes `yaml:"family"`
 	// FamilyExclude 是族内**有意不进这张表**的一段常量（按前缀豁免）。
 	//
 	// 为什么要豁免口：同一族里常含**另一张表**的常量（protocol 的 Decision*

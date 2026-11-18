@@ -53,7 +53,7 @@ func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath
 	var out []Violation
 	for i := range facts {
 		f := &facts[i]
-		if f.family == "" {
+		if len(f.family) == 0 {
 			// 没声明族 ⇒ 这张表不判反向覆盖。
 			// 「派生不出」若被当成「已覆盖」，门禁就是静默空转——
 			// 所以这里只是**不判**，不是「判它覆盖了」。
@@ -97,7 +97,7 @@ func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath
 
 		// 判据 2：表 ⊆ 族（表的键必须属于族前缀）。
 		for _, name := range sortedWordSet(f.keyNames) {
-			if strings.HasPrefix(name, f.family) {
+			if f.family.match(name) {
 				continue
 			}
 			out = append(out, Violation{
@@ -127,7 +127,7 @@ func wordTableFamilyMembers(idx *wordRepo, f *wordTableFacts) map[string]string 
 		return out
 	}
 	for name := range owner.consts {
-		if !strings.HasPrefix(name, f.family) {
+		if !f.family.match(name) {
 			continue
 		}
 		v, ok := idx.resolveConst(f.pkg, name, 0)

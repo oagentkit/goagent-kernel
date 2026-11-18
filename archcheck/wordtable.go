@@ -86,7 +86,8 @@ type wordTableFacts struct {
 	// （表里的键必须属于族前缀），所以键名要单独留着。
 	keyNames map[string]bool
 	// family 族前缀（policy 的 family 字段）：主人包里同族常量的前缀。
-	family string
+	// 形态是**一个或多个**前缀——一族的常量不一定共享同一个前缀。
+	family FamilyPrefixes
 	// familyExclude 族内有意不进这张表的一段常量（按前缀豁免）。
 	familyExclude []WordTableFamilyExclude
 	// defRanges 这张表的**定义处**区间：主人包在这段区间里写下的字面量
@@ -128,9 +129,13 @@ func wordTableViolations(root string, pol *Policy) ([]Violation, error) {
 		}
 		facts = append(facts, f)
 	}
-	out = append(out, wordTableHandCopies(root, idx, facts, seg)...)
+	rels := buildWordTableRelations(seg.Relations)
+	out = append(out, wordTableHandCopies(root, idx, facts, seg, rels)...)
 	// 族覆盖判据（反向派生）：族成员漏进表 ⇒ 它的消费侧从此没人管。
 	out = append(out, wordTableFamilyViolations(idx, facts, policyPath)...)
+	// 同形撞车判据：两张判定词表同形却没有声明关系 ⇒ 没人说得清
+	// 「这处字面量想说的是哪张表」，手抄指路只能瞎猜。
+	out = append(out, wordTableCollisionViolations(facts, rels, policyPath)...)
 	// 函数面判据：判定谓词与输入归一出口是否与代码事实一致
 	// （登记了就得守住；input 类缺归一出口也红）。
 	out = append(out, wordTableFuncFaceViolations(root, idx, pol, seg)...)
@@ -195,38 +200,56 @@ func deriveWordTable(idx *wordRepo, t WordTable) (wordTableFacts, string) {
 	if t.Backing != "" {
 		lit := backingLit
 		if _, ok := lit.Type.(*ast.ArrayType); ok {
-			if f.kind == wordTableKindDecision {
-				return f, "word_tables 段登记的判定词表 " + t.Pkg + "." + t.Backing +
-					" 是**分组形状**（切片字面量）：取值派生只认扁平表——" +
-					"若这张表是输入归一词表，请写 kind: input"
+			// 切片载体有两种形状，**必须按元素形状分**：
+			//
+			//  - 元素是**常量名**（[]Action{ActionForceRelease, ...}）：
+			//    这是一张**扁平表**——取值就是那些常量，可派生，与 map 形状
+			//    （键→取值）等价，可以登记成判定词表；
+			//  - 元素是**复合字面量**（[]struct{...}{{...}}）：这才是**分组表**
+			//    （一张表分成若干组），取值在组内，顶层派生不出。
+			//
+			// 之前把两者混为一谈 ⇒ controlplane 的介入动作表（常量切片）
+			// 被误判成「分组表」而登记不进来。形状不决定判不判，
+			// 只决定**能不能派生取值**。
+			if !sliceHoldsConstNames(lit) {
+				if f.kind == wordTableKindDecision {
+					return f, "word_tables 段登记的判定词表 " + t.Pkg + "." + t.Backing +
+						" 是**分组形状**（切片元素不是常量名）：取值派生只认扁平表——" +
+						"若这张表是输入归一词表，请写 kind: input"
+				}
+				// 分组形状的**输入归一词表**：词形在分组内部，顶层派生不出取值。
+				// 不派生 ≠ 不判——上面已判「表在、出口在、出口读同一张表」。
+				return f, ""
 			}
-			// 分组形状的**输入归一词表**：词形在分组内部，顶层派生不出取值。
-			// 不派生 ≠ 不判——上面已判「表在、出口在、出口读同一张表」。
-			return f, ""
-		}
-		for _, kv := range lit.Elts {
-			kve, ok := kv.(*ast.KeyValueExpr)
-			if !ok {
-				continue
+			if drift := f.deriveConstNames(idx, owner.rel, lit.Elts,
+				"word_tables 段登记的词表 "+t.Pkg+"."+t.Backing+" 里的常量 "); drift != "" {
+				return f, drift
 			}
-			switch key := kve.Key.(type) {
-			case *ast.BasicLit:
-				if key.Kind != token.STRING {
+		} else {
+			for _, kv := range lit.Elts {
+				kve, ok := kv.(*ast.KeyValueExpr)
+				if !ok {
 					continue
 				}
-				v, err := strconv.Unquote(key.Value)
-				if err != nil || v == "" {
-					continue
+				switch key := kve.Key.(type) {
+				case *ast.BasicLit:
+					if key.Kind != token.STRING {
+						continue
+					}
+					v, err := strconv.Unquote(key.Value)
+					if err != nil || v == "" {
+						continue
+					}
+					f.values[v] = "" // 键是字面量 ⇒ 主人包里没有对应常量可引
+				case *ast.Ident:
+					v, ok := idx.resolveConst(owner.rel, key.Name, 0)
+					if !ok || v == "" {
+						return f, "word_tables 段登记的词表 " + t.Pkg + "." + t.Backing +
+							" 的键 " + key.Name + " 解析不出字符串取值（常量不在本仓、或不是字符串常量）"
+					}
+					f.values[v] = key.Name
+					f.keyNames[key.Name] = true
 				}
-				f.values[v] = "" // 键是字面量 ⇒ 主人包里没有对应常量可引
-			case *ast.Ident:
-				v, ok := idx.resolveConst(owner.rel, key.Name, 0)
-				if !ok || v == "" {
-					return f, "word_tables 段登记的词表 " + t.Pkg + "." + t.Backing +
-						" 的键 " + key.Name + " 解析不出字符串取值（常量不在本仓、或不是字符串常量）"
-				}
-				f.values[v] = key.Name
-				f.keyNames[key.Name] = true
 			}
 		}
 	} else {
@@ -240,18 +263,9 @@ func deriveWordTable(idx *wordRepo, t WordTable) (wordTableFacts, string) {
 			start: lit.Pos(),
 			end:   lit.End(),
 		})
-		for _, el := range lit.Elts {
-			id, ok := el.(*ast.Ident)
-			if !ok {
-				continue
-			}
-			v, ok := idx.resolveConst(owner.rel, id.Name, 0)
-			if !ok || v == "" {
-				return f, "枚举出口 " + t.Pkg + "." + t.Enum + " 里的常量 " + id.Name +
-					" 解析不出字符串取值"
-			}
-			f.values[v] = id.Name
-			f.keyNames[id.Name] = true
+		if drift := f.deriveConstNames(idx, owner.rel, lit.Elts,
+			"枚举出口 "+t.Pkg+"."+t.Enum+" 里的常量 "); drift != "" {
+			return f, drift
 		}
 	}
 	if len(f.values) == 0 {
@@ -275,6 +289,49 @@ func wordTableIgnored(dirs []string, rel string) bool {
 		}
 	}
 	return false
+}
+
+// sliceHoldsConstNames 报告切片字面量的元素是否**全是常量名**。
+//
+// 为什么形状要分：切片承载的词表有两种形态——
+//
+//   - []Action{ActionForceRelease, ...}：元素是常量名 ⇒ **扁平表**，
+//     取值就是那些常量，可派生（与 map 形状等价）；
+//   - []struct{...}{{...}, {...}}：元素是复合字面量 ⇒ **分组表**，
+//     一张表分成若干组，取值在组内，顶层派生不出。
+//
+// 两者混为一谈 ⇒ 常量切片被误判成分组表而登记不进来
+// （实测：controlplane 的介入动作表就是这样被挡住的）。
+func sliceHoldsConstNames(lit *ast.CompositeLit) bool {
+	if len(lit.Elts) == 0 {
+		return false
+	}
+	for _, el := range lit.Elts {
+		if _, ok := el.(*ast.Ident); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// deriveConstNames 从一组常量名派生取值（扁平表的两种载体共用）。
+//
+// 解析不出取值时返回一句 drift 文案（不是 error）：调用方据此报红——
+// 「派生不出」若被当成「没有手抄」，门禁就是**静默空转**。
+func (f *wordTableFacts) deriveConstNames(idx *wordRepo, rel string, elems []ast.Expr, label string) string {
+	for _, el := range elems {
+		id, ok := el.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		v, ok := idx.resolveConst(rel, id.Name, 0)
+		if !ok || v == "" {
+			return label + id.Name + " 解析不出字符串取值（常量不在本仓、或不是字符串常量）"
+		}
+		f.values[v] = id.Name
+		f.keyNames[id.Name] = true
+	}
+	return ""
 }
 
 // funcReturnsSlice 判函数的返回值是不是切片。

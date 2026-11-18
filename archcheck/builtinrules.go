@@ -53,6 +53,7 @@ var builtinRuleIDs = []string{
 	wordTableEnumRuleID,
 	wordTableHandCopyRuleID,
 	wordTableFamilyRuleID,
+	wordTableCollisionRuleID,
 	wordTablePredicateRuleID,
 	wordTableNormalizerRuleID,
 }
@@ -91,7 +92,7 @@ func builtinRuleEnforced(pol *Policy, id string) bool {
 	case tenantSurfaceMissingRuleID, tenantViewerDroppedRuleID, tenantSurfaceDriftRuleID:
 		// 租户门要有形状声明才有判定面（与 facade 同款例外）：段缺省即关闭。
 		return pol.TenantGate != nil && pol.TenantGate.on()
-	case wordTableEnumRuleID, wordTableHandCopyRuleID, wordTableFamilyRuleID, wordTablePredicateRuleID, wordTableNormalizerRuleID:
+	case wordTableEnumRuleID, wordTableHandCopyRuleID, wordTableFamilyRuleID, wordTableCollisionRuleID, wordTablePredicateRuleID, wordTableNormalizerRuleID:
 		// 词表门禁要有 word_tables 段才有判定面（与 facade 同款例外）：
 		// 段缺省即关闭——判哪几张表由各仓自己登记。
 		return pol.WordTables != nil && pol.WordTables.on()

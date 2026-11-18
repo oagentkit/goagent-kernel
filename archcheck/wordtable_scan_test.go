@@ -34,31 +34,41 @@ func wordTablePolicyKind(kind string) *Policy {
 	}
 }
 
-// wordTableGroupedOwnerPkg 合成仓的主人包：一张**分组**词表（切片字面量）。
+// wordTableGroupedOwnerPkg 合成仓的主人包：一张**分组**词表。
 //
 // 形状差异不是装饰：protocol 的图表词表就是分组形状（三档 × 若干词形），
 // 而取值派生只认扁平表——故分组形状必须显式写成 kind: input，
 // 否则门禁得能说清「你该改 kind」而不是含糊地报「派生不出取值」。
+//
+// ⚠️ 夹具必须是**真正的分组形状**（切片元素是复合字面量）。第十二阶段实测：
+// 切片有两种形状——元素是**常量名**（[]string{wordFailed, wordOK}）时那是
+// **扁平表**，取值可派生、可以登记成判定词表；元素是**复合字面量**时才是
+// 分组表。夹具写错形状 ⇒ 用例测的其实是另一条路径 ⇒ 门禁的覆盖出现盲区。
 const wordTableGroupedOwnerPkg = `package owner
 
-const (
-	wordFailed = "failed"
-	wordOK     = "ok"
-)
-
-var statusAll = []string{wordFailed, wordOK}
+var statusAll = []struct {
+	name  string
+	words []string
+}{
+	{name: "failed", words: []string{"failed", "fatal"}},
+	{name: "ok", words: []string{"ok"}},
+}
 
 func AllStatuses() []string {
 	out := make([]string, 0, len(statusAll))
-	out = append(out, statusAll...)
+	for _, g := range statusAll {
+		out = append(out, g.words...)
+	}
 	return out
 }
 
 // Normalize 归一出口（input 类必须有）：读同一张表。
 func Normalize(s string) string {
-	for _, w := range statusAll {
-		if w == s {
-			return wordOK
+	for _, g := range statusAll {
+		for _, w := range g.words {
+			if w == s {
+				return g.name
+			}
 		}
 	}
 	return ""

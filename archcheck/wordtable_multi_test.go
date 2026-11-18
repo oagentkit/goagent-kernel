@@ -61,10 +61,19 @@ func TestWordTableHandCopyNamesAllOwningTables(t *testing.T) {
 func f() string { return "failed" }
 `,
 	})
-	pol := &Policy{WordTables: &WordTables{Tables: []WordTable{
-		{Pkg: "ownerA", Backing: "statusAll", Enum: "AllStatuses"},
-		{Pkg: "ownerB", Backing: "stateAll", Enum: "AllStates"},
-	}}}
+	pol := &Policy{WordTables: &WordTables{
+		Tables: []WordTable{
+			{Pkg: "ownerA", Backing: "statusAll", Enum: "AllStatuses"},
+			{Pkg: "ownerB", Backing: "stateAll", Enum: "AllStates"},
+		},
+		// 两张表同形（都是 "failed"）但**不同概念** ⇒ 必须显式声明关系，
+		// 否则撞车判据先报「没声明关系」，本用例就分不清「报了几条」。
+		Relations: []WordTableRelation{{
+			A:        WordTableRef{Pkg: "ownerA", Enum: "AllStatuses"},
+			B:        WordTableRef{Pkg: "ownerB", Enum: "AllStates"},
+			Relation: wordTableRelationDistinct,
+		}},
+	}}
 	vs, err := wordTableViolations(root, pol)
 	if err != nil {
 		t.Fatal(err)

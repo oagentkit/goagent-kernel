@@ -100,13 +100,71 @@ func wordTableSelfCheck(root string, policyPath string, seg *WordTables) []Viola
 					pkg, ex.Prefix)
 			}
 		}
-		key := pkg + "|" + t.Backing + "|" + t.Family
+		key := pkg + "|" + t.Backing + "|" + t.Family.String()
 		if _, dup := seenTable[key]; dup {
 			add("word_tables 段把 %s 这张表登记了两次（backing=%q family=%q）："+
 				"两张登记会各自派生一份取值，而「这张表有哪些取值」只该有一个答案",
 				pkg, t.Backing, t.Family)
 		}
 		seenTable[key] = pkg
+	}
+
+	// 同形关系声明（word_tables.relations）：四条判据，全部是**声明面内部
+	// 矛盾**——它们在 policy 这一个文件里就能判出来，不该等到执行体。
+	//
+	//  1. 关系值域封闭：只有 same / distinct（写错的关系名会被落进
+	//     「不同概念」那一档 ⇒ 手抄指路把人引向错误的常量 = 语义损坏）；
+	//  2. 两端都必须指向**已登记**的表（按 pkg+enum 认表）；
+	//  3. 两端必须都是**判定词表**（输入归一词表的词形是外部输入，同形是
+	//     常态，声明了关系也不会生效）；
+	//  4. 同一对表不许声明两次（关系只该有一个答案）。
+	byIdentity := map[string]WordTable{}
+	for _, t := range seg.Tables {
+		if t.Enum == "" {
+			continue
+		}
+		byIdentity[t.Pkg+"|"+t.Enum] = t
+	}
+	seenPair := map[string]string{}
+	for _, r := range seg.Relations {
+		aID := r.A.Pkg + "|" + r.A.Enum
+		bID := r.B.Pkg + "|" + r.B.Enum
+		if r.A.Pkg == "" || r.A.Enum == "" || r.B.Pkg == "" || r.B.Enum == "" {
+			add("word_tables.relations 有条目没写全两端（pkg + enum）：不知道它说的是哪两张表")
+			continue
+		}
+		if aID == bID {
+			add("word_tables.relations 里的关系指向同一张表（%s）：一张表跟自己的关系没有意义", aID)
+			continue
+		}
+		switch r.Relation {
+		case wordTableRelationSame, wordTableRelationDistinct:
+		default:
+			add("word_tables.relations 里 %s 与 %s 的关系 %q 不是已知取值"+
+				"（只有 %s / %s）——写错的关系名会让「不同概念」被当成「同一概念」，"+
+				"手抄指路把人引向错误的常量（= 语义损坏）",
+				r.A.Pkg, r.B.Enum, r.Relation, wordTableRelationSame, wordTableRelationDistinct)
+			continue
+		}
+		at, aok := byIdentity[aID]
+		bt, bok := byIdentity[bID]
+		if !aok || !bok {
+			add("word_tables.relations 里的关系指向了未登记的词表（%s / %s）："+
+				"那张表不在 tables 段里 ⇒ 这条关系永远不生效", aID, bID)
+			continue
+		}
+		if at.wordTableKind() != wordTableKindDecision || bt.wordTableKind() != wordTableKindDecision {
+			add("word_tables.relations 里的关系（%s / %s）有一端不是判定词表："+
+				"输入归一词表的词形是外部输入，同形是常态，这条关系永远不会生效", aID, bID)
+			continue
+		}
+		key := wordTablePairKey(r.A, r.B)
+		if _, dup := seenPair[key]; dup {
+			add("word_tables.relations 把同一对表声明了两次（%s / %s）：关系只该有一个答案",
+				aID, bID)
+			continue
+		}
+		seenPair[key] = r.Relation
 	}
 
 	// 「有意不登记」的清单：每个条目都要写明**是什么**与**为什么**。

@@ -39,7 +39,7 @@ import (
 // 局限（写明判不了什么）：本判据问的是「有没有名字」，不是
 // 「这段字面量在不在判定路径上」——后者要 go/types 档的类型信息
 // （RunOptions.TypeAware），本轮做不到。
-func wordTableHandCopies(root string, idx *wordRepo, facts []wordTableFacts, seg WordTables) []Violation {
+func wordTableHandCopies(root string, idx *wordRepo, facts []wordTableFacts, seg WordTables, rels *wordTableRelations) []Violation {
 	// 主人表自己的**定义处**：主人用自己的词是定义，不是手抄。
 	ownDefs := map[string][]wordRange{}
 	for _, f := range facts {
@@ -78,7 +78,7 @@ func wordTableHandCopies(root string, idx *wordRepo, facts []wordTableFacts, seg
 				// 主人表自身的定义处。
 				continue
 			}
-			out = append(out, wordTableHandCopyViolation(root, idx, p, hits, lit))
+			out = append(out, wordTableHandCopyViolation(root, idx, p, hits, rels, lit))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -94,7 +94,19 @@ func wordTableHandCopies(root string, idx *wordRepo, facts []wordTableFacts, seg
 //
 // 文案必须**点名**可落地的修法：读者看到「手抄了 failed」不知道该写什么，
 // 看到「本包已把它命名成常量 StateFailed——改用那个常量」才知道。
-func wordTableHandCopyViolation(root string, idx *wordRepo, p *wordPkg, hits []*wordTableFacts, lit stringLit) Violation {
+//
+// # 指路必须按**概念**分，不能按**表**分
+//
+// 同一个拼写可能是多张表的取值，而那些表可能是**同一个概念**
+// （contract 的状态与 statemachine 的别名）也可能是**不同概念**
+// （contract 的会话失败 vs taskboard 的任务失败）。
+//
+//   - 同一概念 ⇒ 引用任一家都对 ⇒ 指路给候选常量；
+//   - 不同概念 ⇒ 引用任一家都可能是**语义损坏**（把任务失败写成会话失败）
+//     ⇒ 指路必须说「在本包另起一个名字」，而不是把人引到某一张表。
+//
+// 这就是 relations 段存在的理由：没有它，指路只能瞎猜，而**错误指路比不指路更坏**。
+func wordTableHandCopyViolation(root string, idx *wordRepo, p *wordPkg, hits []*wordTableFacts, rels *wordTableRelations, lit stringLit) Violation {
 	rel, _ := filepath.Rel(root, lit.path)
 	// 归属表与候选常量：同一个取值可能同时属多张表（contract 的 failed 与
 	// taskboard 的 failed 同形不同义），文案必须把全部归属列出来。
@@ -106,19 +118,28 @@ func wordTableHandCopyViolation(root string, idx *wordRepo, p *wordPkg, hits []*
 			cands = append(cands, f.pkg+"."+c)
 		}
 	}
+	groups := wordTableConceptGroups(hits, rels)
 	hint := "在本包把它声明成自己的常量"
 	switch {
 	case p.ownConsts[lit.value] != "":
 		// 命名过了却还在写字面量——这条比「没命名」更该改。
 		hint = "本包已把它命名成常量 " + p.ownConsts[lit.value] + "——改用那个常量"
-	case len(hits) == 1 && idx.referencesOwner(p, hits[0].pkg, hits[0].values[lit.value]):
+	case len(groups) == 1 && wordTableGroupReferenced(idx, p, groups[0], lit.value) != "":
 		// 已经引用了主人常量却还写字面量：改用那个引用。
-		hint = "你已经引用了 " + hits[0].pkg + "." + hits[0].values[lit.value] + "——改用它"
-	case len(hits) > 1 && len(cands) > 0:
-		// 多张表同形 ⇒ 指路必须给全部候选，否则会把人引到另一张表的常量上。
-		hint = "引用你要表达的那张表的常量（" + strings.Join(cands, " / ") + "）"
-	case len(cands) > 0:
-		hint = "引用 " + strings.Join(cands, " / ")
+		hint = "你已经引用了 " + wordTableGroupReferenced(idx, p, groups[0], lit.value) + "——改用它"
+	case len(groups) == 1 && len(cands) > 0:
+		// 同一概念 ⇒ 引用任一家都对，指路给全部候选。
+		hint = "引用那张表的常量（" + strings.Join(cands, " / ") + "）"
+	case len(groups) > 1:
+		// 多个概念 ⇒ 指路必须说清「可能是哪几个意思」，并要求在本包命名：
+		// 引用任一家都可能是语义损坏。
+		labels := make([]string, 0, len(groups))
+		for _, g := range groups {
+			labels = append(labels, wordTableGroupLabel(g, lit.value))
+		}
+		hint = "它同时属 " + strconv.Itoa(len(groups)) + " 个概念（" +
+			strings.Join(labels, " / ") + "）：在本包把它声明成自己的常量" +
+			"（引用任一家都可能是语义损坏）"
 	}
 	text := fmt.Sprintf("手抄了 %s 的词表取值 %s（裸字面量）——%s；"+
 		"裸字面量只允许出现在常量定义处：命名可以，写字面量不行",
@@ -135,6 +156,24 @@ func wordTableHandCopyViolation(root string, idx *wordRepo, p *wordPkg, hits []*
 		Text: text,
 		Kind: "word_table_handcopy",
 	}
+}
+
+// wordTableGroupReferenced 报告这个包是否已引用该概念组里某个主人常量，
+// 返回那个「包.常量」的引用名（没引用过则空串）。
+//
+// 为什么按**组**查而不是按第一张表查：同一概念的表有多个（contract 与
+// statemachine 的别名），引用了任一家都算「已经知道主人那张表」。
+func wordTableGroupReferenced(idx *wordRepo, p *wordPkg, g []*wordTableFacts, value string) string {
+	for _, f := range g {
+		c := f.values[value]
+		if c == "" {
+			continue
+		}
+		if idx.referencesOwner(p, f.pkg, c) {
+			return f.pkg + "." + c
+		}
+	}
+	return ""
 }
 
 // inWordRanges 报告某处字面量是否落在给定区间内。

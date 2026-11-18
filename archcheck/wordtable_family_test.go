@@ -107,7 +107,7 @@ func TestWordTableFamilyUncoveredIsRed(t *testing.T) {
 		"owner/owner.go": wordTableFamilyOwner,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestWordTableFamilyCoveredIsGreen(t *testing.T) {
 		"owner/owner.go": wordTableFamilyOwnerComplete,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestWordTableFamilyExcludeApplies(t *testing.T) {
 		"owner/owner.go": wordTableFamilyOwner,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 		FamilyExclude: []WordTableFamilyExclude{
 			{Prefix: "StatusCreated", Reason: "属于另一张表的族"},
 		},
@@ -176,7 +176,7 @@ func TestWordTableFamilyExcludeStaleIsRed(t *testing.T) {
 		"owner/owner.go": wordTableFamilyOwnerComplete,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 		FamilyExclude: []WordTableFamilyExclude{
 			{Prefix: "StatusGone", Reason: "常量已改名"},
 		},
@@ -201,7 +201,7 @@ func TestWordTableFamilyKeyOutsideIsRed(t *testing.T) {
 		"owner/owner.go": wordTableFamilyOwnerComplete,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Step",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Step"},
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +251,7 @@ func TestWordTableFamilyAliasResolved(t *testing.T) {
 		"other/other.go": wordTableFamilyOther,
 	})
 	vs, err := wordTableViolations(root, wordTableFamilyPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 	}))
 	if err != nil {
 		t.Fatal(err)

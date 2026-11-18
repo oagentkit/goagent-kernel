@@ -91,7 +91,7 @@ func TestWordTableSelfCheckFamilyExcludeNeedsReason(t *testing.T) {
 		"owner/owner.go": wordTableOwnerPkg,
 	})
 	vs := selfCheckViolations(root, wordTableSelfCheckPolicy(WordTable{
-		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: "Status",
+		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 		FamilyExclude: []WordTableFamilyExclude{{Prefix: "StatusOther", Reason: "  "}},
 	}, nil))
 	if len(vs) != 1 || vs[0].Rule != selfCheckRuleID {
