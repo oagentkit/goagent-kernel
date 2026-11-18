@@ -473,11 +473,20 @@ H1，把版本段的标题层级压平。改成粗体即可（与「编码损坏
 
 ## 4. 门禁速查：红了就查这里
 
-一条命令跑全套（CI 只执行它）：
+一条命令跑全套：
 
 ```bash
 make check
 ```
+
+> **CI 执行面（2026-11-18 实测补记，别按旧文理解）**：CI 的七个作业执行的是
+> `unit` / `race` / `contract` / `fault-injection` / `gates` / `integration`
+> 这些**分层目标**，**没有任何一个执行 `make check` 本身**
+> ⇒ **只挂在 `check` 上、没进任何分层目标的门禁，CI 上一次都不会跑**
+> （实测被漏掉的是 `deploycheck` 与 `releasecheck`——本轮已接进 `unit` 层）。
+> ⇒ **新增门禁时两处都要接**：接进 `check`（本地一条命令跑全）**还要**接进
+> CI 跑的那个分层目标（否则 CI 不判）。改 job 名要同步分支保护的 required
+> contexts（逐字相同），所以优先**不动 job 名**、只动分层目标里的门禁清单。
 
 | 目标 | 拦什么 | 红了怎么修 |
 |---|---|---|
@@ -495,7 +504,8 @@ make check
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |
 | `apilifecheck` | API 生命周期四方一致性：`api-lifecycle.yaml` ↔ 包注释标记 ↔ 生产包覆盖（漏登记/幽灵登记）↔ Deprecated 替代指向存在性；外加错误哨兵登记表 ↔ 代码双向判等（issue #113/#104）| 新包补登记 + 包注释 `// 生命周期:` 标记；改级别两处同步；Deprecated 补真实存在的 replacement；新增哨兵登记进 `docs/error-semantics.md`；口径见 `docs/api-compat.md` |
-| `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符 / USAGE 逐行不一致（issue #277）| 见 `docs/DEPLOY-MATRIX.yaml` |
+| `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符 / USAGE 逐行不一致（issue #277）| 见 `docs/DEPLOY-MATRIX.yaml`；**issue 证据只有在对应单号仍开着时才算缺口**（单号状态由台账派生） |
+| `ledgercheck` | 演进台账自身的纪律：同一单号各处状态矛盾 / 已合入却没给关闭 PR 号 / 关闭 PR 号形态不对 / 正文引用的单号没进登记面（单号漂浮 = 无主）| 台账 `docs/DISTRIBUTED-EVOLUTION-20261117.md`；单号 → 状态的派生器是 `internal/ledgerstatus`（登记列 / 状态列 / 散文标记三处约定）；PR 号要写成 `PR #N` 才不进单号视图 |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
@@ -536,9 +546,9 @@ make check
 | `harness-word-table-handcopy` | 别的包在生产代码里**手抄**了登记**判定词表**的取值（那处字面量没有名字：既不在主人表定义处、也不在常量声明处）| 引用主人常量（`contract.StatusFailed`），或在本包把该取值**声明成自己的常量**（同一个拼写、不同概念时用后者）|
 | `harness-word-table-predicate-drift` | 登记的**判定谓词**不存在，或它不读登记的那张表（判定与词表分叉）| 补谓词（包级函数或 `Type.Method` 形态）并让它读**登记的那张表**；判定面改名了就同步 `word_tables` 段 |
 | `harness-word-table-normalizer-missing` | **输入归一词表**没有**导出**的归一出口，或归一出口不读登记的那张表；判定词表却声明了归一出口 | 补一个**导出**的归一函数并让它读那张表；判定词表的归一出口声明删掉（那是 input 类的属性）|
-| `harness-word-table-family-uncovered` | 登记的词表**没有覆盖它那一族常量的全部取值**（主人包新增了同族常量却忘了加进表 ⇒ 那个新取值的消费侧从此没人管）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或写明 `family_exclude` 理由 |
+| `harness-word-table-family-uncovered` | 登记的词表**没有覆盖它那一族常量的全部取值**（主人包新增了同族常量却忘了加进表 ⇒ 那个新取值的消费侧从此没人管）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或让**归属别处**的那张表（哪怕未登记）声明自己拥有的前缀（第十四阶段起族归属按**最长匹配前缀**派生，`family_exclude` 已废弃）|
 | `harness-word-table-value-collision` | 两张**判定词表**有同形取值却**没声明关系**（撞车没登记 ⇒ 没人说得清「这处字面量想说的是哪张表」，手抄指路只能瞎猜）；或**声明了关系却没撞车**（声明失真：今天没关系，将来一旦同形就会无声生效）| 在 `word_tables` 段的 `relations` 清单里声明这对表的关系（`same` = 同一概念 / `distinct` = 不同概念）；或删掉失真的声明 |
-| `harness-word-table-relation-anchor-drift` | 同形关系的**锚点**指向的东西不再对：锚点常量**改名或被删**（= 登记漂移）；锚点常量的取值**不再属于它那张表**；两端锚定的取值**不成对**（关系的前提「同形」不成立）；`distinct` 却锚到**同一处声明**（同一处声明不可能是两个概念 ⇒ 「不同概念」是说谎的）| 改锚点指向现存的常量；或让两端锚点按取值成对；或把 `distinct` 改成 `same` |
+| `harness-word-table-relation-anchor-drift` | 同形关系的**锚点**指向的东西不再对：锚点常量**改名或被删**（= 登记漂移）；锚点常量的取值**不再属于它那张表**；两端锚定的取值**不成对**（关系的前提「同形」不成立）；`distinct` 却锚到**同一处声明**（同一处声明不可能是两个概念 ⇒ 「不同概念」是说谎的）；**all 形态**下：共有取值在本端没有对应常量，或 `distinct` 的**每一个**共有取值都解析到同一处声明 | 改锚点指向现存的常量；或让两端锚点按取值成对；或改用 `{all: true}` 锚住两端共有取值的全集；或把 `distinct` 改成 `same` |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录**、租户门缺形状、**词表登记面自相矛盾**（包名 / 类别写错、归一出口挂错表、重复登记、豁免缺理由）| 补执行体 / 改声明 / 删陈旧包根 |
 
 > 最后一条的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——

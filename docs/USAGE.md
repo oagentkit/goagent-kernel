@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 24 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **59** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **60** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **60** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **61** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **59** 个包目录。
+> `architecture-policy.yaml` 的 `modules` 段登记 **60** 个包目录。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -2367,7 +2367,7 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
 | `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | partial |
 | `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |
-| `cross-region-multi-cluster` 跨区域多集群 | regional-authority | regional-workers | Ownership Epoch、分区写入 fence、可靠交接 | partial |
+| `cross-region-multi-cluster` 跨区域多集群 | regional-authority | regional-workers | Ownership Epoch、分区写入 fence、可靠交接 | available |
 <!-- deploy-matrix:end -->
 
 **怎么用**：先按目标场景选存储 / Worker 模式，再把 `required` 列里的能力逐条
@@ -2607,9 +2607,9 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `tenant-policy-missing` | 含租户字段的模型映射出的物理表不在 `tenant_tables_manifest` 清单里（漏登记 = 隔离策略不覆盖该表） | `policy.yaml` 的 `tenant_gate` 段 + `archcheck/tenantmanifest.go` |
 | `harness-word-table-enum-missing` | 登记的判定词表没有导出枚举出口 / 出口读的是另一张表 / 登记与事实已偏离 | `policy.yaml` 的 `word_tables` 段 + `archcheck/wordtable.go` |
 | `harness-word-table-handcopy` | 别的包手抄了登记词表的取值 | 引用主人常量，或在本包把它声明成自己的常量 |
-| `harness-word-table-family-uncovered` | 登记的词表没覆盖它那一族常量的全部取值（常量加了、表没加）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或写明 `family_exclude` 理由 |
+| `harness-word-table-family-uncovered` | 登记的词表没覆盖它那一族常量的全部取值（常量加了、表没加）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或让**归属别处**的那张表（哪怕未登记）声明自己拥有的前缀（第十四阶段起族归属按最长匹配前缀派生，`family_exclude` 已废弃）|
 | `harness-word-table-value-collision` | 两张判定词表有同形取值却没声明关系；或声明了关系却没撞车（声明失真）| `policy.yaml` 的 `word_tables` 段 `relations`（`same` / `distinct`）|
-| `harness-word-table-relation-anchor-drift` | 同形关系的锚点指向的东西不再对（常量改名/被删、取值不再属于那张表、两端不成对、distinct 却锚到同一处声明）| `policy.yaml` 的 `word_tables.relations` 段 `anchors` |
+| `harness-word-table-relation-anchor-drift` | 同形关系的锚点指向的东西不再对（常量改名/被删、取值不再属于那张表、两端不成对、distinct 却锚到同一处声明）；**all 形态**下：共有取值在本端没有对应常量，或 distinct 的**每一个**共有取值都解析到同一处声明 | `policy.yaml` 的 `word_tables.relations` 段 `anchors`（`{all: true}` = 锚住两端共有取值的全集）|
 | `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
 | `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）| `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
@@ -2844,6 +2844,13 @@ word_tables:
    锚点是**可选的加固**：键是字面量、根本没有常量可锚的表写不出锚点（强制要求会把
    那种表逼成「登记不进来」⇒ 门禁逼人造假比没有锚点更坏）。但**半边锚点没有配对
    语义** ⇒ 要写就两端都写（自校验当天即红）。
+
+   **all 形态（第十四阶段）**：抽样锚定只钉住一两个取值 ⇒ 其余**共有**取值漂了没人判。
+   `a: [{all: true}]` / `b: [{all: true}]` 把锚定面换成「两张表的共有取值集合」
+   ⇒ 四条判据原样复用，但覆盖面从抽样变成全覆盖：每个共有取值在本端必须有对应常量，
+   且 `distinct` 的**每一个**共有取值都要解析到不同处声明。
+   实测同一句谎话（把 distinct 指向同源的两张表）：抽样形态报 1 条，all 形态报 **12 条**
+   （每个共有取值各一条）⇒ 覆盖面的差别是可数的，不是修辞。
 
 **登记与不登记都要留痕**：登记面是稀疏的，而稀疏本身没人记——「这张表我们决定
 不登记」若只留在某个人脑子里，下一个人会重新调研一遍，甚至直接把它登记进去。
