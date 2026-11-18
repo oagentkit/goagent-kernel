@@ -132,7 +132,7 @@ func wordTableViolations(root string, pol *Policy) ([]Violation, error) {
 	rels := buildWordTableRelations(seg.Relations)
 	out = append(out, wordTableHandCopies(root, idx, facts, seg, rels)...)
 	// 族覆盖判据（反向派生）：族成员漏进表 ⇒ 它的消费侧从此没人管。
-	out = append(out, wordTableFamilyViolations(idx, facts, policyPath)...)
+	out = append(out, wordTableFamilyViolations(idx, facts, seg, policyPath)...)
 	// 同形撞车判据：两张判定词表同形却没有声明关系 ⇒ 没人说得清
 	// 「这处字面量想说的是哪张表」，手抄指路只能瞎猜。
 	out = append(out, wordTableCollisionViolations(facts, rels, policyPath)...)

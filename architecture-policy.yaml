@@ -753,6 +753,29 @@ modules:
       三个使用方——共用哨兵会让 `errors.Is(err, netguard.ErrNilSubscriber)` 这类
       既有调用点的判定链断掉。
 
+  # 2026-11-18 新增（台账 §15 第七阶段建议 1）：单号状态的**派生器**。
+  #
+  # 为什么进内核而不是留在某个 cmd 里：单号 → 状态这个事实被两处消费
+  # （台账门禁 cmd/ledgercheck、部署清单 cmd/deploymatrix），两处各解析一遍
+  # markdown，结论必然分叉——而分叉的方向恰好是「门禁判的和台账写的不是一套」。
+  # 派生器下沉为可导入包，两个消费方读同一份事实。
+  #
+  # 为什么是机制面而不是资产：它不认识任何宿主领域——输入是一份 markdown
+  # 台账，输出是「单号 → 状态 / 关闭 PR 号」；判据形态（哪些表头算登记列、
+  # 哪些词算状态标记）是**本仓文档约定**，不是运维词表。
+  - id: ledgerstatus
+    roots: [internal/ledgerstatus]
+    requires: ["ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      演进台账（docs/DISTRIBUTED-EVOLUTION-*.md）的单号视图：登记列 / 状态列 /
+      散文标记三处约定派生出「单号 → 已合入 / 仍开着 / 派生不出」。
+      解析容错：表格形状歪了收进 Problems() 而不是让整份台账读不出来
+      （「解析不出来却不说话」= 判据静默失效）。
+      **PR 号不进单号视图**：落文档的 PR #N 与被登记的单 #N 是两种号，
+      混成一种后撞车时合并结果没有意义。
+
   # 2026-11-13 新增（issue #109 / #110 / #111，本轮清零）：三个 P3 特性单的
   # 机制面。为什么都是**契约 + 判据**而实现放示例：三单的传输/引擎形态都是
   # 宿主资产（容器引擎怎么接、跨进程存储怎么落库、录制格式怎么演化），
@@ -1468,8 +1491,14 @@ dependency_direction:
 #   cmd/hygiene                         仓库卫生门禁（issue #413，2026-11-18）：
 #                                            判「被跟踪的文件里不得有编译产物二进制」；
 #                                            读 git 索引与文件头是工具职责，不形成机制依赖。
+#   cmd/ledgercheck                      台账纪律门禁（2026-11-18，台账 §15 建议 1）：
+#                                            判台账自身的单号状态一致 / 关闭 PR 号形态 /
+#                                            无主单号；读台账 markdown 是工具职责，不形成
+#                                            机制依赖。它与 cmd/deploymatrix 共读
+#                                            internal/ledgerstatus（单号状态的唯一派生器），
+#                                            两处各解析一遍必然漂移。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/seamcheck, cmd/hygiene, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1861,18 +1890,12 @@ word_tables:
       enum: AllConfidences
       predicate: IsConfidenceValid
       family: Confidence
-      family_exclude:
-        - prefix: ConfidenceKind
-          reason: 置信语义种类是另一张表（confidenceKinds）的族，不属于置信档位
       desc: 置信档位词表（3 值：high/medium/low）
     - pkg: protocol
       backing: decisionAll
       enum: AllDecisions
       predicate: IsDecisionValid
       family: Decision
-      family_exclude:
-        - prefix: DecisionSource
-          reason: 判定来源是另一张表（decisionSources）的族，不属于决策档位
       desc: 决策词表（3 值：pending_approval/approved/rejected）
     - pkg: protocol
       backing: scopeAll
@@ -1912,9 +1935,6 @@ word_tables:
       enum: AllInterventionActions
       predicate: IsKnownInterventionAction
       family: Action
-      family_exclude:
-        - prefix: ActionQuery
-          reason: 查询动作不经留痕（它不是一次介入，不改变运行状态），不属于介入动作词表
       desc: 介入动作词表（3 值：force_release/adjudicate/terminate）
   # relations：**同形取值的两张表之间的关系**声明（中心清单）。
   #
@@ -1957,36 +1977,36 @@ word_tables:
       b: {pkg: statemachine, enum: AllStepStatuses}
       relation: same
       anchors:
-        a: [{pkg: contract, const: StatusFailed}]
-        b: [{pkg: statemachine, const: StatusFailed}]
+        a: [{all: true}]
+        b: [{all: true}]
     # 会话失败 ≠ 任务失败（taskboard 的 failed 允许重新认领，非终态）。
     - a: {pkg: contract, enum: AllStatuses}
       b: {pkg: taskboard, enum: AllStates}
       relation: distinct
       anchors:
-        a: [{pkg: contract, const: StatusFailed}]
-        b: [{pkg: taskboard, const: StateFailed}]
+        a: [{all: true}]
+        b: [{all: true}]
     # 会话状态「已批准」≠ 报告决策「已批准」：一个是生命周期，一个是判定结论。
     - a: {pkg: contract, enum: AllStatuses}
       b: {pkg: protocol, enum: AllDecisions}
       relation: distinct
       anchors:
-        a: [{pkg: contract, const: StatusApproved}]
-        b: [{pkg: protocol, const: DecisionApproved}]
+        a: [{all: true}]
+        b: [{all: true}]
     # 同上（statemachine 的环节状态与 contract 同族，故与 taskboard / protocol
     # 也都是不同概念）。
     - a: {pkg: statemachine, enum: AllStepStatuses}
       b: {pkg: taskboard, enum: AllStates}
       relation: distinct
       anchors:
-        a: [{pkg: statemachine, const: StatusFailed}]
-        b: [{pkg: taskboard, const: StateFailed}]
+        a: [{all: true}]
+        b: [{all: true}]
     - a: {pkg: statemachine, enum: AllStepStatuses}
       b: {pkg: protocol, enum: AllDecisions}
       relation: distinct
       anchors:
-        a: [{pkg: statemachine, const: StatusApproved}]
-        b: [{pkg: protocol, const: DecisionApproved}]
+        a: [{all: true}]
+        b: [{all: true}]
   # not_registered：**有意不登记**的判定词表候选（与 exceptions 同款纪律）。
   #
   # 为什么要有这份清单：登记面是稀疏的，而稀疏本身没人记——「这张表我们
@@ -2003,6 +2023,8 @@ word_tables:
     - subject: protocol.escalationReasons（升级原因：low_confidence/error/timeout/unavailable/unknown）
       reason: 实测登记后 28 处命中，全是通用词（"error"/"timeout"/"unknown" 在全仓随处可见）⇒ 判据会退化成拼写匹配器
     - subject: protocol.decisionSources（判定来源：rule/llm/classifier/clarify/fallback/manual/unknown）
+      pkg: protocol
+      prefixes: [DecisionSource]
       reason: 实测登记后 11 处命中，全部因 "unknown" 是通用词
     - subject: protocol.actionWhitelist（动作：kill_and_restart/tune/none）
       reason: 实测登记后 4 处命中，全部因 "none" 是通用词
@@ -2014,6 +2036,10 @@ word_tables:
       reason: 与 HTTP 结果码、图表状态同形 ⇒ 要求命名会变成对**键名**也要求命名，噪声大于价值（第十轮结论）
     - subject: 协议字段名（JSON 响应里的 "error" 等键）
       reason: 它们不是取值是**键名**（判据的排除面已处理结构体标签与 import 路径）
+    - subject: controlplane.ActionQuery（查询动作：不介入、不留痕）
+      pkg: controlplane
+      prefixes: [ActionQuery]
+      reason: 查询动作不经留痕（它不是一次介入，不改变运行状态）⇒ 不属于介入动作词表。声明归属前缀后，介入词表不必再手写豁免段
 
 # ── 全局阈值 ──
 thresholds:
@@ -2055,7 +2081,7 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, internal/ledgerstatus, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

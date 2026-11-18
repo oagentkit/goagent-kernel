@@ -94,11 +94,19 @@ func TestWordTableSelfCheckFamilyExcludeNeedsReason(t *testing.T) {
 		Pkg: "owner", Backing: "statusAll", Enum: "AllStatuses", Family: FamilyPrefixes{"Status"},
 		FamilyExclude: []WordTableFamilyExclude{{Prefix: "StatusOther", Reason: "  "}},
 	}, nil))
-	if len(vs) != 1 || vs[0].Rule != selfCheckRuleID {
-		t.Fatalf("族豁免缺理由应报 1 条自校验违反，实得 %v", vs)
+	// 第十四阶段起 family_exclude 已废弃 ⇒ 同一份声明还会多报一条「已废弃」
+	// （两条是**两件事**：缺理由 / 该字段本身已不需要），但「缺理由」这条
+	// 仍必须单独出现且点名那个豁免。
+	found := false
+	for _, v := range vs {
+		if v.Rule == selfCheckRuleID &&
+			strings.Contains(v.Text, "缺少理由") &&
+			strings.Contains(v.Text, "StatusOther") {
+			found = true
+		}
 	}
-	if !strings.Contains(vs[0].Text, "StatusOther") {
-		t.Fatalf("违规文案必须点名缺理由的豁免：%q", vs[0].Text)
+	if !found {
+		t.Fatalf("族豁免缺理由应报自校验违反，实得 %v", vs)
 	}
 }
 

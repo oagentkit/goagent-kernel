@@ -82,14 +82,23 @@ func loadMatrix(root string) (*Matrix, error) {
 }
 
 // checkMatrix 全部判据的聚合（只聚合不截断：报错成本在「人要去改」）。
-func checkMatrix(root string, m *Matrix) ([]string, error) {
+//
+// 返回 (违反, 说明, 错误)。说明是「派生不出 / 推导过程里值得说一声」的事，
+// 它们**不阻断**判定，但必须打出来——派生状态的理由不给人看，
+// 就等于让人自己重推一遍。
+func checkMatrix(root string, m *Matrix) ([]string, []string, error) {
 	var probs []string
+	var notes []string
 	if m.Version != 1 {
 		probs = append(probs, fmt.Sprintf("%s: version 必须为 1，实得 %d", matrixPath, m.Version))
 	}
 	issueCorpus, err := loadIssueCorpus(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	ledger, err := loadLedger(root)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	caps := map[string]Capability{}
@@ -109,10 +118,13 @@ func checkMatrix(root string, m *Matrix) ([]string, error) {
 		}
 		evProbs, err := checkEvidence(root, c, issueCorpus)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		probs = append(probs, evProbs...)
-		want := computeState(c.Evidence)
+		want, stateNotes := computeState(c.Evidence, ledger)
+		for _, n := range stateNotes {
+			notes = append(notes, fmt.Sprintf("能力 %s 的 %s", c.ID, n))
+		}
 		if want == "" {
 			probs = append(probs, where+": 没有任何 contract/gate/issue 证据（不可查的能力不算能力）")
 		} else if c.State != want {
@@ -165,9 +177,9 @@ func checkMatrix(root string, m *Matrix) ([]string, error) {
 
 	usageProbs, err := checkUsageBlock(root, m)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return append(probs, usageProbs...), nil
+	return append(probs, usageProbs...), notes, nil
 }
 
 // checkEvidence 逐条校验证据可解析。
@@ -315,25 +327,36 @@ func loadIssueCorpus(root string) (map[string]bool, error) {
 }
 
 // computeState 由证据形态推导能力状态（禁止手写）。
-func computeState(evs []Evidence) string {
+//
+// 口径：**issue 证据只有在对应单号「仍开着」时才算缺口**（台账是单号状态的
+// 唯一真相）。已清偿的单不是缺口——把它算成缺口，能力就永远停在 partial，
+// 等于对宿主说「你还缺这个」而它其实早有了。
+func computeState(evs []Evidence, ledger *ledgerView) (string, []string) {
 	strong, gaps := 0, 0
+	var notes []string
 	for _, e := range evs {
 		switch e.Kind {
 		case "contract", "gate":
 			strong++
 		case "issue":
-			gaps++
+			gap, note := ledger.issueGap(e.Ref)
+			if note != "" {
+				notes = append(notes, note)
+			}
+			if gap {
+				gaps++
+			}
 		}
 	}
 	switch {
 	case strong > 0 && gaps == 0:
-		return StateAvailable
+		return StateAvailable, notes
 	case strong > 0:
-		return StatePartial
+		return StatePartial, notes
 	case gaps > 0:
-		return StateMissing
+		return StateMissing, notes
 	default:
-		return ""
+		return "", notes
 	}
 }
 
