@@ -211,7 +211,7 @@ func checkOwnedResolveRequiresValidHolder(st sideeffect.Store, clock *FakeClock)
 	}
 	if _, _, err := owned.ResolveUncertainOwned(ctx, b, sideeffect.Resolution{
 		Applied: true,
-		Result:  sideeffect.Result{Payload: []byte("done")},
+		Result:  sideeffect.Result{Payload: []byte(payloadDone)},
 		Reason:  "查实已生效",
 	}, fourth.Holder); err != nil {
 		return fmt.Errorf("有效凭据的裁决应成功: %w", err)
@@ -224,7 +224,7 @@ func checkOwnedResolveRequiresValidHolder(st sideeffect.Store, clock *FakeClock)
 	if err != nil {
 		return fmt.Errorf("已完成的重放不应被凭据拒（读既有结果无害）: %w", err)
 	}
-	if out != sideeffect.OutcomeReplayed || string(res.Payload) != "done" {
+	if out != sideeffect.OutcomeReplayed || string(res.Payload) != payloadDone {
 		return fmt.Errorf("应返回 OutcomeReplayed + 既有结果（实得 %v / %q）", out, res.Payload)
 	}
 

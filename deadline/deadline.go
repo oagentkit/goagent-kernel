@@ -114,17 +114,35 @@ const (
 	StateExpired
 )
 
+// 状态与约束的机读名（进日志与测试断言）。
+//
+// 为什么要有名字：这些字符串是**本包自己的**词表——与 contract 的会话状态
+// 取值同形，但不是同一个概念（本包的 "expired" 指「余量耗尽」，contract 的
+// 指「环节过期」）。命名之后两个概念在代码里显形区分，也才判得出
+// 「这段字面量属于哪张词表」（harness-word-table-handcopy 门禁的判定面）。
+const (
+	stateNameUnwritten = "unwritten"
+	stateNameLive      = "live"
+	stateNameExpired   = "expired"
+	stateNameUnknown   = "unknown"
+
+	constraintNameOff     = "off"
+	constraintNameActive  = "active"
+	constraintNameExpired = "expired"
+	constraintNameUnknown = "unknown"
+)
+
 // String 机读名（进日志与测试断言）。
 func (s State) String() string {
 	switch s {
 	case StateUnwritten:
-		return "unwritten"
+		return stateNameUnwritten
 	case StateLive:
-		return "live"
+		return stateNameLive
 	case StateExpired:
-		return "expired"
+		return stateNameExpired
 	}
-	return "unknown"
+	return stateNameUnknown
 }
 
 // State 判定锚点三态（纯函数；now 为当前时刻）。
@@ -177,13 +195,13 @@ const (
 func (c Constraint) String() string {
 	switch c {
 	case ConstraintOff:
-		return "off"
+		return constraintNameOff
 	case ConstraintActive:
-		return "active"
+		return constraintNameActive
 	case ConstraintExpired:
-		return "expired"
+		return constraintNameExpired
 	}
-	return "unknown"
+	return constraintNameUnknown
 }
 
 // Constrained 本轮是否有墙钟保护（受约束或已过期都算——已过期只是余量为 0）。

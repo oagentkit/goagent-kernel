@@ -345,6 +345,12 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 	}
 
+	// ── 词表登记面（word_tables 段）的声明面一致性 ──
+	// 声明面自相矛盾（包名写错、类别写错、归一出口挂错表、重复登记……）
+	// 归自校验：它恒开、且提交前就拦；代码事实类（谓词还在不在、出口读不读
+	// 那张表）留在词表执行体。同一件事只由一个主人判。
+	out = append(out, wordTableSelfCheck(root, policyPath, pol.WordTables)...)
+
 	// ── 租户门（tenant_gate 段）的形状 ──
 	//
 	// 判定本体在 tenantgate_selfcheck.go：缺形状时执行体没有判定面，必须变红。

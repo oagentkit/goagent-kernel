@@ -77,7 +77,7 @@ func chartNodes(raw []map[string]any) []ChartNode {
 		out = append(out, ChartNode{
 			ID:     id,
 			Label:  label,
-			Status: chartStatus(chartText(chartField(m, "status", "state", "health"))),
+			Status: ChartStatus(chartText(chartField(m, "status", "state", "health"))),
 			Group:  chartText(chartField(m, "group", "layer", "zone", "tier", "cluster")),
 		})
 	}
@@ -100,7 +100,7 @@ func chartEvents(raw []map[string]any) []ChartEvent {
 		out = append(out, ChartEvent{
 			Time:   chartText(chartField(m, "time", "t", "at", "when", "timestamp")),
 			Label:  label,
-			Status: chartStatus(chartText(chartField(m, "status", "state", "health"))),
+			Status: ChartStatus(chartText(chartField(m, "status", "state", "health"))),
 			Desc:   desc,
 		})
 		if len(out) >= 40 {
@@ -123,7 +123,7 @@ func chartEdges(raw []map[string]any) []ChartEdge {
 			From:   from,
 			To:     to,
 			Label:  chartText(chartField(m, "label", "name")),
-			Status: chartStatus(chartText(chartField(m, "status", "state", "health"))),
+			Status: ChartStatus(chartText(chartField(m, "status", "state", "health"))),
 		})
 	}
 	return out

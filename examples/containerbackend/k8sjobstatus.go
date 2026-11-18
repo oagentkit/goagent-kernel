@@ -63,6 +63,18 @@ func (k *K8sJob) await(ctx context.Context, ns, name string) (backend.Result, er
 	}
 }
 
+// K8s Job 终态结论的理由（本后端自己的词表）。
+//
+// 为什么要有名字：这些字符串与 contract 的会话状态取值同形（"succeeded" /
+// "failed"），但它们说的是**K8s Job 的终态**不是会话状态——命名之后两个概念
+// 在代码里显形区分（harness-word-table-handcopy 门禁的判定面）。
+const (
+	reasonJobComplete        = "complete"
+	reasonJobFailedCondition = "failed_condition"
+	reasonJobSucceeded       = "succeeded"
+	reasonJobFailed          = "failed"
+)
+
 // classifyK8sJob 把 Job 状态映射成终态结论（false = 还没到终态）。
 //
 // 判定只认 conditions 与计数：Complete=True / succeeded>0 ⇒ 成功；
@@ -76,18 +88,18 @@ func classifyK8sJob(st k8sJobStatus) (bool, backend.Result, string) {
 		case "Failed":
 			reason := c.Reason
 			if reason == "" {
-				reason = "failed_condition"
+				reason = reasonJobFailedCondition
 			}
 			return true, backend.Result{OK: false}, reason
 		case "Complete":
-			return true, backend.Result{OK: true}, "complete"
+			return true, backend.Result{OK: true}, reasonJobComplete
 		}
 	}
 	if st.Succeeded > 0 {
-		return true, backend.Result{OK: true}, "succeeded"
+		return true, backend.Result{OK: true}, reasonJobSucceeded
 	}
 	if st.Failed > 0 && st.Active == 0 {
-		return true, backend.Result{OK: false}, "failed"
+		return true, backend.Result{OK: false}, reasonJobFailed
 	}
 	return false, backend.Result{}, ""
 }

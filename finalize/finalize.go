@@ -108,19 +108,34 @@ const (
 	ActionShutdown
 )
 
+// 路由臂的机读名（String() 的取值）。
+//
+// 与 contract 状态词表**同形**的三档（cancelled / timed_out / failed）
+// 直接引用 contract 的常量：Action.Status() 把这三档映射到同一批词，
+// 两处各写一份拼写就是「同一取值两份真相」——判定词表登记门禁
+// （harness-word-table-handcopy）会当场报红。
+// takeover / shutdown 是路由臂自有词，不在 contract 词表里。
+const (
+	actionNameTakeover  = "takeover"
+	actionNameCancelled = contract.StatusCancelled
+	actionNameTimedOut  = contract.StatusTimedOut
+	actionNameShutdown  = "shutdown"
+	actionNameFailed    = contract.StatusFailed
+)
+
 // String 路由臂的人类可读形态（留痕与测试失败信息用）。
 func (a Action) String() string {
 	switch a {
 	case ActionTakeover:
-		return "takeover"
+		return actionNameTakeover
 	case ActionCancelled:
-		return "cancelled"
+		return actionNameCancelled
 	case ActionTimedOut:
-		return "timed_out"
+		return actionNameTimedOut
 	case ActionShutdown:
-		return "shutdown"
+		return actionNameShutdown
 	default:
-		return "failed"
+		return actionNameFailed
 	}
 }
 

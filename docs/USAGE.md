@@ -2605,9 +2605,12 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `viewer-dropped` | 带授权上下文形参却完全不用（授权上下文被丢弃） | 同上 |
 | `shared-surface-missing` | 登记在册的共享隔离判定面在代码里不存在（清单漂移 = 登记失效） | 同上 |
 | `tenant-policy-missing` | 含租户字段的模型映射出的物理表不在 `tenant_tables_manifest` 清单里（漏登记 = 隔离策略不覆盖该表） | `policy.yaml` 的 `tenant_gate` 段 + `archcheck/tenantmanifest.go` |
+| `harness-word-table-enum-missing` | 登记的判定词表没有导出枚举出口 / 出口读的是另一张表 / 登记与事实已偏离 | `policy.yaml` 的 `word_tables` 段 + `archcheck/wordtable.go` |
+| `harness-word-table-handcopy` | 别的包手抄了登记词表的取值 | 引用主人常量，或在本包把它声明成自己的常量 |
+| `harness-word-table-family-uncovered` | 登记的词表没覆盖它那一族常量的全部取值（常量加了、表没加）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或写明 `family_exclude` 理由 |
 | `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
 | `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
-| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 | `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）| `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。
@@ -2748,6 +2751,106 @@ egress_paths:
 
 **本仓自己的实例**：`ptc/childpipes.go` 的 `newChildPipes` 登记为 `proxy`，
 兑现方式是把 `SubprocessOptions.Egress` 交给 `spec.Env(base)` 生成子进程环境（失败即不起子进程）。
+
+#### 同族第三条：判定词表登记（`word_tables`）
+
+`execution_paths` 管「进程内执行不许绕开登记簿」，`egress_paths` 管「子进程起来之后往哪儿连」，
+`word_tables` 管第三件事：**判定词表的取值不许散落成无名字字面量**。
+
+词表是**决定结论**的取值集合（会话状态、任务状态、环节类别……）。内核侧已补齐导出枚举出口
+（`contract.AllStatuses()` 等），但**消费侧**仍各写一份字面量：内核新增一个取值，消费方那份
+不会跟着变，且没有任何判据会红——同一个状态在两处得到相反结论。
+
+```yaml
+# 宿主仓的 architecture-policy.yaml
+word_tables:
+  enabled: true
+  severity: error
+  tables:
+    - pkg: contract         # 主人包（相对仓根）
+      backing: statusClass  # 承载取值的那张表（map 字面量；键是常量名）
+      enum: AllStatuses     # 导出枚举出口（必须读同一张表）
+      predicate: IsKnownStatus   # 判定谓词（可选；声明了就得存在且读同一张表）
+      # kind: decision       # 缺省即 decision：取值决定结论 ⇒ 判消费方
+      # kind: input          # 取值只是外部喂进来的词形 ⇒ 不判消费方，只判出口同源
+      # normalizer: ChartStatus   # 仅 kind: input：导出的归一出口（必须读同一张表）
+      # family: Status       # 族前缀：主人包里以它开头的字符串常量都属于这张表
+      # family_exclude:      # 族内有意不进这张表的一段（按前缀豁免，必须写理由）
+      #   - prefix: DecisionSource
+      #     reason: 判定来源是另一张表的族，不属于决策档位
+  # not_registered:           # 有意不登记的判定词表候选（与 exceptions 同款纪律）
+  #   - subject: protocol.severityAll（严重度：info/low/medium/high/critical）
+  #     reason: 实测登记后 5 处命中，全是跨概念同形（日志级别的 info）
+```
+
+五条判据：
+
+1. **`harness-word-table-enum-missing`** —— 登记的词表必须有导出枚举出口，且该出口读
+   **同一张表**（读别的 map 就是第二个真相源：出口那份清单会与判定用的表漂移，而下游会信出口）。
+   登记与事实偏离（包改名 / 表改名）当天即红——**陈旧的登记就是失管的登记**。
+2. **`harness-word-table-handcopy`** —— 别的包在生产代码里手抄了登记**判定词表**的取值。
+   判据是**出现点级**的：豁免精确到**那一处字面量**——
+
+   - 它落在**主人表自身的定义处**（那是这张表的定义，不是抄）；
+   - 它在**常量声明**里（本包给这个取值起了名字）；
+   - 它不是字面量而是 `owner.Const` 这样的**引用**（结构性放行：限定选择器本就不是字面量）。
+
+   三者都不是 ⇒ 红。
+3. **`harness-word-table-predicate-drift`** —— 登记的**判定谓词**必须存在，且必须读
+   **登记的那张表**。为什么要有这一面：枚举出口读同一张表只保证「表 ↔ 出口」不漂，
+   而**判定面**（`IsKnownStatus` / `StepStatus.Valid` / `State.Valid`）是另一个
+   独立读表的地方——它若另抄一份清单，判定就会与词表分叉，而没有任何判据会红。
+   谓词形态：包级函数写函数名，方法写 `类型名.方法名`。
+4. **`harness-word-table-normalizer-missing`** —— **输入归一词表**必须有一个**导出的**
+   归一出口（`normalizer`），且它读登记的那张表。没有归一出口，消费方只能**自己**判
+   这个输入词形 ⇒ 同一个输入词在不同消费方得到不同结论（漂移发生在输入侧而不是判定侧）。
+   归一出口必须**导出**：宿主要用它，未导出的函数等于没有出口。
+   （判定词表不该声明 `normalizer`——那是 input 类的属性；留着无用声明不如报错。）
+5. **`harness-word-table-family-uncovered`** —— 登记的词表必须**覆盖它那一族常量的全部取值**。
+   取值派生只有「表 → 取值」一个方向 ⇒ 主人包**新增**一个同族常量却忘了加进表，
+   那个新取值的消费侧从此**没人管**（它不在表里 ⇒ 手抄判据判不到它；它不在枚举
+   出口里 ⇒ 宿主看不到它），而它在主人包里是个正经的导出常量 ⇒ 谁看代码都以为
+   它受管。⇒ 声明 `family`（族**前缀**，不是常量名清单——后者是第二份会漂的真相），
+   判据两条：**族 ⊆ 表**（族成员漏进表当天即红）与**表 ⊆ 族**（族前缀写错当天即红）。
+   同族里常含**另一张表**的常量（`protocol` 的 `Decision*` 同时含两张表的成员）
+   ⇒ 给按前缀的豁免口 `family_exclude`，**必须写理由**，且**豁免失效即红**
+   （豁免今天什么都没豁免，却会在将来出现同名常量时无声生效）。
+
+**登记与不登记都要留痕**：登记面是稀疏的，而稀疏本身没人记——「这张表我们决定
+不登记」若只留在某个人脑子里，下一个人会重新调研一遍，甚至直接把它登记进去。
+⇒ policy 的 `not_registered` 段逐张写明**是什么**与**为什么不登记**（自校验要求
+理由非空）。登记与否**由实测决定**：单表注册 → 跑真门禁 → 数手抄命中量。本轮实测
+12 张候选表：5 张命中 0（登记），7 张命中 1~28 处且**全是跨概念同形**（日志级别的
+"info"、门禁严重度的 "error"、到处都有的 "unknown"）⇒ 不登记——判据退化成拼写
+匹配器时，判红到没人信它，它就等于没有。
+
+**多表同形要全部点名**：同一个取值可能属多张表（`contract` 的 "failed" 是会话状态、
+`taskboard` 的 "failed" 是任务状态）⇒ 同一处只报一次，但文案必须列出**全部归属**——
+只报第一张表是**错误指路**（把人引到另一张表的常量上），比不报更坏。
+
+**为什么是出现点级而不是包级**：包级判据会放过「同一个包里既定义了常量、又写了同一
+取值的裸字面量」——而那正是**命名过了却还写字面量**，名字就在眼前却不用，
+比「压根没命名」更该改。
+
+**为什么允许「本包自有常量」**：同一个拼写在不同包里可以是不同概念（`contract` 的 "failed"
+是会话状态，`delegate` 的 "failed" 是回执状态）。要求它**命名**，而不是要求它**不许用**——
+否则合法用法也会被判红，而判红到没人信它，它就等于没有。
+
+**两类词表（`kind`）**：`decision`（缺省）判消费方；`input` 只判「表在 + 出口在 +
+出口读同一张表」，**不判消费方**——输入归一词表的取值是外部喂进来的词形（healthy / down /
+正常 / 宕机……），消费方自由使用它们，那是输入数据不是判定依据。
+不分的代价是实测出来的：把 43 个图表词形按判定词表登记会命中 17 处，大半是假阳
+（`{"error": ...}` 这类 JSON 键、HTTP `"ok"` 体）——判据成了拼写匹配器。
+`kind` 的值域是**封闭**的（只有 `decision` / `input`）：写错的类别名若被当成
+「不是 decision」，这条登记就静默降级成「不判消费方」——未知类别当天即红。
+
+**取值由代码派生，policy 里不写取值清单**：清单本身是第二份会漂移的真相，而它漂移的方向恰好是
+「门禁判的和代码跑的不是一套词表」——失败形态是门禁变绿。
+
+**判不了什么**：只判**字面量**形态（常量 / 枚举 / 映射键都判不到——它们已经是名字了）；
+判定面只含**生产代码**（测试夹具是临时的）；判据问的是「**有没有名字**」，不是
+「这段字面量在不在**判定路径**上」——后者要 `go/types` 档的类型信息
+（`archcheck` 的 `RunOptions.TypeAware`），本轮做不到。
 
 ### 4.5 租户过滤漏拼门：`tenant_gate`
 

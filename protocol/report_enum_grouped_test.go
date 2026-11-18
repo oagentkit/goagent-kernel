@@ -43,7 +43,7 @@ var groupedVocabularyCases = []groupedVocabularyCase{
 		buckets:    AllChartStatuses,
 		words:      ChartStatusWords,
 		allWords:   AllChartStatusWords,
-		normalizes: func(word, bucket string) bool { return chartStatus(word) == bucket },
+		normalizes: func(word, bucket string) bool { return ChartStatus(word) == bucket },
 	},
 }
 

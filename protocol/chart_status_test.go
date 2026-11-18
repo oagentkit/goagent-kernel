@@ -65,7 +65,7 @@ func TestChartStatusWordsFollowsTheTable(t *testing.T) {
 			t.Fatal("全部词形出口仍含已从词表删除的取值（出口是另抄的一份清单）")
 		}
 	}
-	if got := chartStatus("healthy"); got != "" {
+	if got := ChartStatus("healthy"); got != "" {
 		t.Fatalf("词表删除后归一结果 = %q，want 空串（未识别词保持空）", got)
 	}
 }

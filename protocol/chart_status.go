@@ -13,15 +13,15 @@
 // # 单一事实源
 //
 // 档名与词形都只在本文件写一次：chartStatusGroups 是**唯一**的归一输入
-// 词表，chartStatus（归一判定）与三个导出出口（AllChartStatuses /
-// ChartStatusWords / AllChartStatusWords）全部读它。新增一个词或一档只需
-// 改这一处。
+// 词表，ChartStatus（归一判定，**已导出**——宿主拿不到归一能力就只能自己判
+// 词形）与三个导出出口（AllChartStatuses / ChartStatusWords /
+// AllChartStatusWords）全部读它。新增一个词或一档只需改这一处。
 //
 // # 与其它枚举出口的形状差异
 //
 // 这里的「合法值集合」是**分组**的：三档 × 若干词形，不是一张扁平词表。
-// 故导出分三个：档名集合、某档的词形、全部词形。protocol 的词表登记门禁
-// （report_enum_test.go）为此单列一格「分组词表」登记面。
+// 故导出分四个：归一判定（ChartStatus）、档名集合、某档的词形、全部词形。
+// protocol 的词表登记门禁（report_enum_test.go）为此单列一格「分组词表」登记面。
 package protocol
 
 import (
@@ -29,11 +29,126 @@ import (
 	"strings"
 )
 
+// chartWord* 图表状态的输入词形（归一输入词表的全部 43 个词形）。
+//
+// # 为什么每个词形都要有名字
+//
+// 词表取值一旦散落成**无名字字面量**，它与别的词表同形时就分不清是哪个概念——
+// 「failed」既是会话终态（contract.StatusFailed），也是图表故障档的输入词形；
+// 「running」同理。两者在代码里长一个样，于是「这个词属于哪张表」只能靠猜。
+//
+// 逐个命名之后，两个概念在代码里**显形区分**：本包的 chartWordFailed 与
+// contract.StatusFailed 是两个不同的标识符——这正是
+// harness-word-table-handcopy 门禁据以把「手抄」与「本包自有词表」分开的那一刀。
+//
+// # 为什么不是引用 contract 的常量
+//
+// 图表状态是**健康度**词表（ok/warn/down），contract 的是**生命周期**词表：
+// 「running」在前者说的是「节点在跑」，在后者说的是「会话在跑」。
+// 引用会把两个概念并成一个——那比手抄更糟：手抄至少是「两份各自独立的真相」，
+// 引用则是「一份被强行合并的真相」。
+const (
+	// ok 档词形。
+	chartWordOK        = "ok"
+	chartWordHealthy   = "healthy"
+	chartWordHealth    = "health"
+	chartWordNormal    = "normal"
+	chartWordUp        = "up"
+	chartWordRunning   = "running"
+	chartWordOnline    = "online"
+	chartWordActive    = "active"
+	chartWordGreen     = "green"
+	chartWordPass      = "pass"
+	chartWordGood      = "good"
+	chartWordNormalCN  = "正常"
+	chartWordHealthyCN = "健康"
+	chartWordOnlineCN  = "在线"
+
+	// warn 档词形。
+	chartWordWarn       = "warn"
+	chartWordWarning    = "warning"
+	chartWordDegraded   = "degraded"
+	chartWordPending    = "pending"
+	chartWordYellow     = "yellow"
+	chartWordSlow       = "slow"
+	chartWordBusy       = "busy"
+	chartWordWarnCN     = "警告"
+	chartWordDegradedCN = "降级"
+	chartWordSlowCN     = "缓慢"
+
+	// down 档词形。
+	chartWordDown        = "down"
+	chartWordError       = "error"
+	chartWordCritical    = "critical"
+	chartWordCrit        = "crit"
+	chartWordFailed      = "failed"
+	chartWordFail        = "fail"
+	chartWordCrash       = "crash"
+	chartWordCrashed     = "crashed"
+	chartWordOffline     = "offline"
+	chartWordDead        = "dead"
+	chartWordRed         = "red"
+	chartWordUnreachable = "unreachable"
+	chartWordStopped     = "stopped"
+	chartWordDownCN      = "宕机"
+	chartWordFaultCN     = "故障"
+	chartWordAbnormalCN  = "异常"
+	chartWordFailedCN    = "失败"
+	chartWordStoppedCN   = "停止"
+	chartWordOfflineCN   = "离线"
+)
+
 // 状态词白名单（实弹模型词形：healthy/down/error/正常/宕机…）。
 var (
-	chartStatusOK   = map[string]bool{"ok": true, "healthy": true, "health": true, "normal": true, "up": true, "running": true, "online": true, "active": true, "green": true, "pass": true, "good": true, "正常": true, "健康": true, "在线": true}
-	chartStatusWarn = map[string]bool{"warn": true, "warning": true, "degraded": true, "pending": true, "yellow": true, "slow": true, "busy": true, "警告": true, "降级": true, "缓慢": true}
-	chartStatusDown = map[string]bool{"down": true, "error": true, "critical": true, "crit": true, "failed": true, "fail": true, "crash": true, "crashed": true, "offline": true, "dead": true, "red": true, "unreachable": true, "stopped": true, "宕机": true, "故障": true, "异常": true, "失败": true, "停止": true, "离线": true}
+	chartStatusOK = map[string]bool{
+		chartWordOK:        true,
+		chartWordHealthy:   true,
+		chartWordHealth:    true,
+		chartWordNormal:    true,
+		chartWordUp:        true,
+		chartWordRunning:   true,
+		chartWordOnline:    true,
+		chartWordActive:    true,
+		chartWordGreen:     true,
+		chartWordPass:      true,
+		chartWordGood:      true,
+		chartWordNormalCN:  true,
+		chartWordHealthyCN: true,
+		chartWordOnlineCN:  true,
+	}
+	chartStatusWarn = map[string]bool{
+		chartWordWarn:       true,
+		chartWordWarning:    true,
+		chartWordDegraded:   true,
+		chartWordPending:    true,
+		chartWordYellow:     true,
+		chartWordSlow:       true,
+		chartWordBusy:       true,
+		chartWordWarnCN:     true,
+		chartWordDegradedCN: true,
+		chartWordSlowCN:     true,
+	}
+	chartStatusDown = map[string]bool{
+		chartWordDown:        true,
+		chartWordError:       true,
+		chartWordCritical:    true,
+		chartWordCrit:        true,
+		chartWordFailed:      true,
+		chartWordFail:        true,
+		chartWordCrash:       true,
+		chartWordCrashed:     true,
+		chartWordOffline:     true,
+		chartWordDead:        true,
+		chartWordRed:         true,
+		chartWordUnreachable: true,
+		chartWordStopped:     true,
+		chartWordDownCN:      true,
+		chartWordFaultCN:     true,
+		chartWordAbnormalCN:  true,
+		chartWordFailedCN:    true,
+		chartWordStoppedCN:   true,
+		chartWordOfflineCN:   true,
+	}
 )
 
 // chartStatusGroups 图表状态的归一输入词表：档名 → 该档的输入词形。
@@ -49,8 +164,19 @@ var chartStatusGroups = []struct {
 	{name: "down", words: chartStatusDown},
 }
 
-// chartStatus 状态词归一为 ok|warn|down|空；未识别词保持空（前端按未知态渲染，不臆断）。
-func chartStatus(s string) string {
+// ChartStatus 状态词归一为 ok|warn|down|空；未识别词保持空（前端按未知态渲染，不臆断）。
+//
+// # 为什么导出（第十轮）
+//
+// 图表状态词形是**外部喂进来的**（Prometheus / k8s / 各家看板的写法各不相同）：
+// 归一表归 protocol 管，可**归一出口**必须让宿主够得着——
+// 否则宿主只能自己判这个词形，于是同一个输入词在不同消费方得到不同结论，
+// 而这正是判定词表登记门禁要防的漂移（只是发生在输入侧而不是判定侧）。
+//
+// 判定词表登记门禁（harness-word-table-normalizer-missing）要求：
+// 输入归一词表必须声明一个**导出**的归一出口，且它读**同一张表**
+// （chartStatusGroups）——归一到哪一档由那张表说了算。
+func ChartStatus(s string) string {
 	t := strings.ToLower(strings.TrimSpace(s))
 	if t == "" {
 		return ""

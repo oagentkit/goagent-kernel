@@ -50,6 +50,11 @@ var builtinRuleIDs = []string{
 	seamContractRuleID,
 	seamLockHeldRuleID,
 	seamPanicEscapeRuleID,
+	wordTableEnumRuleID,
+	wordTableHandCopyRuleID,
+	wordTableFamilyRuleID,
+	wordTablePredicateRuleID,
+	wordTableNormalizerRuleID,
 }
 
 // isBuiltinRule 报告某条规则 id 是否是内置的（不在 policy 的 rules 段里）。
@@ -86,6 +91,10 @@ func builtinRuleEnforced(pol *Policy, id string) bool {
 	case tenantSurfaceMissingRuleID, tenantViewerDroppedRuleID, tenantSurfaceDriftRuleID:
 		// 租户门要有形状声明才有判定面（与 facade 同款例外）：段缺省即关闭。
 		return pol.TenantGate != nil && pol.TenantGate.on()
+	case wordTableEnumRuleID, wordTableHandCopyRuleID, wordTableFamilyRuleID, wordTablePredicateRuleID, wordTableNormalizerRuleID:
+		// 词表门禁要有 word_tables 段才有判定面（与 facade 同款例外）：
+		// 段缺省即关闭——判哪几张表由各仓自己登记。
+		return pol.WordTables != nil && pol.WordTables.on()
 	case seamContractRuleID, seamLockHeldRuleID, seamPanicEscapeRuleID:
 		// 接缝门是新判据（#369/#370）：seams 段缺省即关闭；段存在且未显式
 		// 关段时，三个子门禁按各自 enabled 判定（缺省启用）。

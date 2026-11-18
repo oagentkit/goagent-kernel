@@ -112,16 +112,16 @@ func checkUnsafeForceRetryableExplicit(st sideeffect.Store) error {
 		return fmt.Errorf("对照动作释放资源闸失败: %w", err)
 	}
 	outcome2, res2, err := st.ResolveUncertain(ctx, b, sideeffect.Resolution{
-		Applied: true, Result: sideeffect.Result{Payload: []byte("done")}, Reason: "对账确认已生效",
+		Applied: true, Result: sideeffect.Result{Payload: []byte(payloadDone)}, Reason: "对账确认已生效",
 	})
 	if err != nil {
 		return fmt.Errorf("「确认已生效」的裁决对 Unsafe 动作应有效（不涉及重试）: %w", err)
 	}
-	if outcome2 != sideeffect.OutcomeReplayed || string(res2.Payload) != "done" {
+	if outcome2 != sideeffect.OutcomeReplayed || string(res2.Payload) != payloadDone {
 		return fmt.Errorf("「确认已生效」应记为已完成并重放结果，实得 outcome=%v res=%v", outcome2, res2)
 	}
 	outcome3, _, got, err := st.Acquire(ctx, b, time.Minute)
-	if err != nil || outcome3 != sideeffect.OutcomeReplayed || string(got.Payload) != "done" {
+	if err != nil || outcome3 != sideeffect.OutcomeReplayed || string(got.Payload) != payloadDone {
 		return fmt.Errorf("裁决后的 Acquire 应重放既有结果，实得 outcome=%v res=%v err=%v", outcome3, got, err)
 	}
 	return nil

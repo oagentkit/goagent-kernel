@@ -1784,6 +1784,153 @@ seams:
     wrappers: [subhub.Do, subhub.Invoke, async.GoSafe, async.RunSafe,
                async.GoSafeWithErr, async.GoSafeWithContext]
 
+# ── 判定词表登记面（issue #356 / #363 的共同根因）──
+#
+# 词表是**决定结论**的取值集合。此前内核侧补齐了导出枚举出口（#356），
+# 但**消费侧**仍各写一份字面量：内核新增一个取值，消费方那份不会跟着变，
+# 且没有任何判据会红——同一个状态在两处得到相反结论。
+#
+# 这一段把「消费方必须**引用**而不是手抄」变成机器判据：
+#   - 取值属登记词表 ⇒ 出现它的那个包须**自有常量**（自己命名这个概念）
+#     或**引用主人常量**（owner.Const）；两者都没有 ⇒ 手抄 ⇒ 红；
+#   - 登记与事实偏离（包改名 / 表改名 / 枚举出口读的是另一张表）当天即红。
+#
+# 登记面只写「哪张表、在哪个包、枚举出口叫什么」——**不写取值清单**：
+# 取值由代码派生（表的键 → 常量声明 → 常量取值），policy 里抄一份就是
+# 第二份会漂移的真相，而它漂移的方向恰好是「门禁判的和代码跑的不是一套词表」。
+word_tables:
+  enabled: true
+  severity: error
+  desc: 判定词表的取值必须被引用，别的包不得手抄
+  # ignore_dirs：不参与手抄判定的目录（含子目录）。本仓**不用**这个口子——
+  # 它是给宿主的（如 vendored 示例），且每个条目都必须在 policy 里写明理由：
+  # 豁免若没有理由，就等于让那棵子树重新变成「没人管的真相」。
+  # ignore_dirs: []
+  tables:
+    # 会话轴 + 环节轴共 13 个状态取值（主人是 contract）。
+    - pkg: contract
+      backing: statusClass
+      enum: AllStatuses
+      # 判定面（IsKnownStatus / ClassifyStatus 都读 statusClass）：
+      # 声明了就得守住——判定面若另抄一份清单，判定与词表会分叉。
+      predicate: IsKnownStatus
+      # 族前缀：主人包里以 Status 开头的字符串常量都属于这张表。
+      # 声明了它，反向派生才成立——「常量加了、表没加」当天即红
+      # （否则那个新取值的消费侧从此没人管）。
+      family: Status
+      desc: 会话/环节状态词表（13 值）
+    # 环节轴 12 值：statemachine 的常量是 contract 的**别名**
+    # （StatusCreated = contract.StatusCreated），取值解析必须能跨包追——
+    # 这正是本段执行体的难点，也是「派生不出取值」必须报红的原因：
+    # 派生不出若被当成「没有手抄」，门禁就是静默空转。
+    - pkg: statemachine
+      backing: stepStatusAll
+      enum: AllStepStatuses
+      predicate: StepStatus.Valid
+      family: Status
+      desc: 环节状态词表（12 值）
+    - pkg: statemachine
+      backing: stepTypeAll
+      enum: AllStepTypes
+      predicate: StepType.Valid
+      family: Type
+      desc: 环节类别词表（5 值）
+    - pkg: taskboard
+      backing: taskStateAll
+      enum: AllStates
+      predicate: State.Valid
+      family: State
+      desc: 任务状态词表（4 值）
+    # ── protocol 的五张判定词表（第十一轮实测后登记）──
+    #
+    # 登记前**逐张实测**过手抄命中量（单表注册 → 跑真门禁 → 数命中）：
+    # 这五张的命中量都是 0 ⇒ 登记它们不会给仓库带来噪声，
+    # 而它们此前处于「有枚举出口却没人管」的状态。
+    #
+    # 同批实测里另 7 张表命中 1~28 处，**全是跨概念同形**（日志级别
+    # "info"、门禁严重度 "error"、通用词 "unknown"）⇒ 不登记，
+    # 理由逐条写在下面的 not_registered 段。
+    - pkg: protocol
+      backing: stanceAll
+      enum: AllStances
+      predicate: IsStanceValid
+      family: Verdict
+      desc: 报告立场词表（3 值：adopt/dispute/reject）
+    - pkg: protocol
+      backing: confidenceAll
+      enum: AllConfidences
+      predicate: IsConfidenceValid
+      family: Confidence
+      family_exclude:
+        - prefix: ConfidenceKind
+          reason: 置信语义种类是另一张表（confidenceKinds）的族，不属于置信档位
+      desc: 置信档位词表（3 值：high/medium/low）
+    - pkg: protocol
+      backing: decisionAll
+      enum: AllDecisions
+      predicate: IsDecisionValid
+      family: Decision
+      family_exclude:
+        - prefix: DecisionSource
+          reason: 判定来源是另一张表（decisionSources）的族，不属于决策档位
+      desc: 决策词表（3 值：pending_approval/approved/rejected）
+    - pkg: protocol
+      backing: scopeAll
+      enum: AllScopes
+      predicate: IsScopeValid
+      family: Scope
+      desc: 范围词表（2 值：in/out）
+    - pkg: protocol
+      backing: confidenceKinds
+      enum: AllConfidenceKinds
+      predicate: IsConfidenceKindValid
+      family: ConfidenceKind
+      desc: 置信语义种类词表（4 值）
+    # protocol 的图表状态**输入归一词表**：词形是外部喂进来的（healthy / down /
+    # 正常 / 宕机……），消费方自由使用——那是输入数据，不是判定依据。
+    # 判它的是「这张表有导出枚举出口，且出口读的是同一张表」：
+    # 归一表归 protocol 管这件事不许漂（漂了＝归一判定与出口各说各话）。
+    # 写成 kind: input 而不是 decision，是实测出来的：按 decision 登记会命中
+    # 17 处，大半是 JSON 键、HTTP 体这类无关上下文（判据成了拼写匹配器）。
+    # normalizer：输入归一词表**必须有归一出口**——没有它，消费方只能自己
+    # 判这个词形，同一输入词在不同消费方得到不同结论。
+    # 判据要求它**导出**（宿主要用；未导出等于没有出口）且读同一张表。
+    - pkg: protocol
+      kind: input
+      backing: chartStatusGroups
+      enum: AllChartStatusWords
+      normalizer: ChartStatus
+      desc: 图表状态归一输入词表（分组形状；判出口、归一出口与表同源）
+  # not_registered：**有意不登记**的判定词表候选（与 exceptions 同款纪律）。
+  #
+  # 为什么要有这份清单：登记面是稀疏的，而稀疏本身没人记——「这张表我们
+  # 决定不登记」若只留在某个人脑子里，下一个人会重新调研一遍，甚至直接
+  # 把它登记进去。**不登记也要留痕**，且理由要写「为什么不登记」。
+  #
+  # 下面每条理由里的命中数都是**实测值**（单表注册 → 跑真门禁 → 数命中），
+  # 不是估计：登记这些表会把**跨概念同形**的通用词拖进判据
+  # （日志级别的 "info"、门禁严重度的 "error"、到处都有的 "unknown"），
+  # 于是手抄判据退化成拼写匹配器——判红到没人信它，它就等于没有。
+  not_registered:
+    - subject: protocol.severityAll（严重度：info/low/medium/high/critical）
+      reason: 实测登记后 5 处命中，全是跨概念同形（eventbus 的日志级别 "info"、budget 的 "critical"）——按值匹配的判据会把日志级别也拖进协议词表
+    - subject: protocol.escalationReasons（升级原因：low_confidence/error/timeout/unavailable/unknown）
+      reason: 实测登记后 28 处命中，全是通用词（"error"/"timeout"/"unknown" 在全仓随处可见）⇒ 判据会退化成拼写匹配器
+    - subject: protocol.decisionSources（判定来源：rule/llm/classifier/clarify/fallback/manual/unknown）
+      reason: 实测登记后 11 处命中，全部因 "unknown" 是通用词
+    - subject: protocol.actionWhitelist（动作：kill_and_restart/tune/none）
+      reason: 实测登记后 4 处命中，全部因 "none" 是通用词
+    - subject: ptc.errorKindTable（PTC 错误种类 14 值）
+      reason: 实测登记后 2 处命中（dispatch 的 "deadline"、protocol 的 "pending"）——两处都是**别的**错误分类口径，同形不同义
+    - subject: delegate.AllStatuses（委派回执状态：completed/failed/refused）
+      reason: 实测登记后 1 处命中（dispatch 的 "refused" 属另一套拒绝口径）；且 "failed"/"completed" 与 contract 的会话状态同形
+    - subject: controlplane.interventionActions（介入动作）
+      reason: 表的形状是**分组**（切片字面量），当前执行体的取值派生只认扁平表——待执行体支持分组形状的判定表再登记
+    - subject: 门禁严重度词表（error/warn）
+      reason: 与 HTTP 结果码、图表状态同形 ⇒ 要求命名会变成对**键名**也要求命名，噪声大于价值（第十轮结论）
+    - subject: 协议字段名（JSON 响应里的 "error" 等键）
+      reason: 它们不是取值是**键名**（判据的排除面已处理结构体标签与 import 路径）
+
 # ── 全局阈值 ──
 thresholds:
   max_file_lines: 400

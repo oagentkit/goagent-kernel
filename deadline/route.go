@@ -38,19 +38,34 @@ const (
 	OutcomeTakeover
 )
 
+// 结论的机读名（String() 的取值）。
+//
+// 与 contract 状态词表**同形**的两档（timed_out / cancelled）直接引用
+// contract 的常量：本包的 DefaultStatusOf 也把这两档映射到同一批词，
+// 两处各写一份拼写就是「同一取值两份真相」——判定词表登记门禁
+// （harness-word-table-handcopy）会当场报红。
+// 另三档（none / shutdown / takeover）是收尾结论自有词，不在 contract 词表里。
+const (
+	outcomeNameNone      = "none"
+	outcomeNameTimedOut  = contract.StatusTimedOut
+	outcomeNameCancelled = contract.StatusCancelled
+	outcomeNameShutdown  = "shutdown"
+	outcomeNameTakeover  = "takeover"
+)
+
 // String 机读名（进日志与测试断言）。
 func (o Outcome) String() string {
 	switch o {
 	case OutcomeNone:
-		return "none"
+		return outcomeNameNone
 	case OutcomeTimedOut:
-		return "timed_out"
+		return outcomeNameTimedOut
 	case OutcomeCancelled:
-		return "cancelled"
+		return outcomeNameCancelled
 	case OutcomeShutdown:
-		return "shutdown"
+		return outcomeNameShutdown
 	case OutcomeTakeover:
-		return "takeover"
+		return outcomeNameTakeover
 	}
 	return "unknown"
 }

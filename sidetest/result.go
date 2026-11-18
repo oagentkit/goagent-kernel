@@ -10,6 +10,13 @@ import (
 	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
+// payloadDone 裁决结果里的载荷内容（本套件的共享夹具值）。
+//
+// 为什么要有名字："done" 与 taskboard.StateDone 同形，但不是同一个概念——
+// 这里是「这次副作用的结果内容」（不透明载荷），那里是「任务板上的任务状态」。
+// 命名之后两者在代码里显形区分（harness-word-table-handcopy 门禁的判定面）。
+const payloadDone = "done"
+
 // 本文件是**结果判据**一族的契约场景（幂等键 / 栅栏 / 资源独占）。
 //
 // 这一族判的是「这个动作做过没有、该不该做」——与 renew.go（资格）、
