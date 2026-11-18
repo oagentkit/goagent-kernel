@@ -1,4 +1,4 @@
-// store.go —— taskboard.Board + RenewingBoard 的文件后端实现。
+// store.go —— 存储实例入口 + 任务面（taskboard.Board + RenewingBoard）。
 //
 // 每个公开方法都是一次「加锁 → 重放 → 判 → 追加 → fsync」的事务：
 //
@@ -6,6 +6,10 @@
 //   - 判定读的是**重放后的最新状态**，不依赖进程内缓存——重启后第一件事
 //     就是重放，崩溃不会让「谁占着任务」这件事出现两个答案；
 //   - 令牌随机 128 位（跨进程不复用），接管代次是独立水位（释放/完成不清）。
+//
+// 任务面之外，Store 还给出另外三个面（Effects / Snapshots / Events）——
+// 它们**共享同一份事务域**（同一把锁、同一个日志），并可用 Apply 把四个面
+// 的变更放进**同一次提交**。
 package sqlitestore
 
 import (
@@ -13,10 +17,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
-	"sync"
 	"time"
 
 	oerrors "github.com/oekit/pkg/errors"
@@ -24,42 +25,22 @@ import (
 	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
-// 文件名（目录 = 一个独立存储实例；测试每个子测试一个临时目录）。
-const (
-	journalName = "tasks.jsonl"
-	lockName    = "tasks.lock"
-)
-
-// lockTimeout 等文件锁的上限。
-//
-// 等价于 SQLite 的 busy_timeout：拿不到写锁就**显式失败**，而不是继续写
-// （丢写是把「单写者」承诺变成装饰的最短路径）。
-const lockTimeout = 5 * time.Second
-
 // Option 装配项。
 type Option func(*Store)
 
 // WithClock 注入存储时钟（契约套件的过期场景要确定性推进）。
 func WithClock(clock func() time.Time) Option {
 	return func(s *Store) {
-		if clock != nil {
-			s.now = clock
-		}
+		s.UseClock(clock)
 	}
 }
 
-// Store 单机文件后端（taskboard.Board + taskboard.RenewingBoard）。
+// Store 单机文件后端：四个面共享一份事务域。
 //
 // ⚠️ 单写者形态：一个目录同一时刻只有一个写事务（flock）；不要把它放到
 // NFS/共享盘上当多副本协调库（见包文档「明确不承诺」）。
 type Store struct {
-	dir      string
-	journal  string
-	lockPath string
-
-	mu  sync.Mutex
-	now func() time.Time
-	f   *os.File
+	*TaskStore
 }
 
 // Open 打开（或创建）一个单机存储目录。
@@ -67,35 +48,17 @@ type Store struct {
 // 打开时会先拿一次写锁做崩溃恢复：截掉未换行的残尾。目录可重复打开
 // （多个 Store 实例 = 多个客户端）；每个事务重新拿锁并重放最新日志。
 func Open(dir string, opts ...Option) (*Store, error) {
-	if dir == "" {
-		return nil, oerrors.New("sqlitestore: 数据目录不能为空")
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, oerrors.Wrap(err, "sqlitestore: 建数据目录失败", "dir", dir)
-	}
-	path := filepath.Join(dir, journalName)
-	// 不用 O_APPEND：Windows 上 O_APPEND 打开的文件句柄没有 FILE_WRITE_DATA，
-	// f.Truncate 会报 Access is denied（残尾恢复必用）。写者由 flock 串行化，
-	// 每次追加前显式 Seek 到末尾即可，语义与 O_APPEND 相同。
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	d, err := openDB(dir)
 	if err != nil {
-		return nil, oerrors.Wrap(err, "sqlitestore: 打开日志失败", "path", path)
+		return nil, err
 	}
-	s := &Store{
-		dir:      dir,
-		journal:  path,
-		lockPath: filepath.Join(dir, lockName),
-		now:      time.Now,
-		f:        f,
-	}
+	s := &Store{TaskStore: &TaskStore{exec: exec{db: d}}}
 	for _, o := range opts {
 		o(s)
 	}
 	// 启动恢复：在写锁内截掉崩溃残尾（不允许在无锁状态下改文件）。
-	if err := s.transact(func(map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		return nil, nil
-	}); err != nil {
-		_ = f.Close()
+	if err := d.transact(func(tx *txCtx) error { return nil }); err != nil {
+		_ = d.close()
 		return nil, err
 	}
 	return s, nil
@@ -103,61 +66,31 @@ func Open(dir string, opts ...Option) (*Store, error) {
 
 // Close 关闭日志文件（不删除数据）。
 func (s *Store) Close() error {
-	if s == nil || s.f == nil {
-		return nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	err := s.f.Close()
-	s.f = nil
-	if err != nil {
-		return oerrors.Wrap(err, "sqlitestore: 关闭日志失败")
-	}
-	return nil
+	return s.exec.db.close()
 }
 
-// UseClock 注入存储时钟（boardtest.ClockedBoard）。
-func (s *Store) UseClock(now func() time.Time) {
-	if now == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.now = now
-}
+// Effects 副作用面（与任务面共享同一份事务域）。
+func (s *Store) Effects() *EffectStore { return &EffectStore{exec: s.exec} }
 
-// transact 执行一次写事务：加锁 → 重放 → fn 判定并产出要追加的记录 → 逐条
-// 追加并 fsync。fn 返回错误时**不写任何东西**（判定失败不留半截状态）。
-func (s *Store) transact(fn func(map[taskboard.TaskID]journalRecord) ([]journalRecord, error)) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.f == nil {
-		return oerrors.New("sqlitestore: 存储已关闭")
-	}
-	unlock, err := acquireLock(s.lockPath)
-	if err != nil {
-		return err
-	}
-	defer unlock()
+// Snapshots 进度快照面（与任务面共享同一份事务域）。
+func (s *Store) Snapshots() *SnapshotStore { return &SnapshotStore{exec: s.exec} }
 
-	state, err := loadJournalLocked(s.journal)
-	if err != nil {
-		return err
-	}
-	// 重放时末行若是残尾，先截掉再追加（否则追加会接在半截行后面）。
-	if err := repairTornTailLocked(s.f, s.journal); err != nil {
-		return err
-	}
-	writes, err := fn(state)
-	if err != nil {
-		return err
-	}
-	for _, rec := range writes {
-		if err := appendLocked(s.f, s.journal, rec); err != nil {
-			return err
-		}
-	}
-	return nil
+// Events 事件面（与任务面共享同一份事务域）。
+func (s *Store) Events() *EventStore { return &EventStore{exec: s.exec} }
+
+// Apply 在**一个事务**里提交四个面的变更。
+//
+// 回调返回错误 ⇒ 整批丢弃（四面都没变）；返回 nil ⇒ 四个面的变更作为
+// **一行**落盘（journal.go 的 v2 批次）⇒ 跨面不会出现「一半已提交」。
+//
+// 这是「单一存储覆盖全部状态」的机器形态：任务状态、副作用闸、进度快照、
+// 事件行（Outbox）在同一次提交里落盘。
+func (s *Store) Apply(ctx context.Context, fn func(tx *Tx) error) error {
+	now := s.exec.now()
+	return s.exec.run(ctx, func(c *txCtx) error {
+		c.now = now
+		return fn(&Tx{ctx: c})
+	})
 }
 
 // Seed 摆初始任务（任务拓扑是宿主资产；契约没有「创建」入口）。
@@ -165,39 +98,61 @@ func (s *Store) transact(fn func(map[taskboard.TaskID]journalRecord) ([]journalR
 // 与 pgstore.BoardStore.Seed 同形态：同 id 重摆覆盖内容并清租约，接管代次
 // 水位保留；落库失败 panic（装载入口不容静默失败）。
 func (s *Store) Seed(tasks ...taskboard.Task) {
-	err := s.transact(func(state map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		out := make([]journalRecord, 0, len(tasks))
-		for _, t := range tasks {
-			if t.ID == "" {
-				continue
-			}
-			prev := state[t.ID]
-			fresh := journalRecord{
-				Task:  cloneTask(t),
-				Fence: prev.Fence,
-			}
-			fresh.Task.Owner = ""
-			fresh.Task.Lease = taskboard.Lease{}
-			fresh.Task.Seq = prev.Task.Seq + 1
-			out = append(out, fresh)
-		}
-		return out, nil
-	})
-	if err != nil {
+	if err := s.TaskStore.Seed(tasks...); err != nil {
 		panic(fmt.Sprintf("sqlitestore: Seed 摆任务失败（装载入口不容静默失败）: %v", err))
 	}
 }
 
-// List 返回一致快照（一次重放；按 id 升序）。
-func (s *Store) List(_ context.Context) ([]taskboard.Task, error) {
-	var out []taskboard.Task
-	err := s.transact(func(state map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		out = make([]taskboard.Task, 0, len(state))
-		for _, rec := range state {
-			out = append(out, cloneTask(rec.Task))
+// TaskStore 任务面（taskboard.Board + taskboard.RenewingBoard）。
+//
+// 两种装配：独立事务（Store 持有）或事务内（Tx.Tasks() 取得）。判据是
+// 同一套函数（taskClaim / taskFinish / taskRenew）⇒ 两个入口不漂。
+type TaskStore struct {
+	exec exec
+}
+
+// UseClock 注入存储时钟（boardtest.ClockedBoard）。
+func (t *TaskStore) UseClock(now func() time.Time) {
+	if t.exec.db != nil {
+		t.exec.db.setClock(now)
+	}
+}
+
+// Seed 摆初始任务（事务内形态返回错误；装载入口由 Store.Seed 兜 panic）。
+func (t *TaskStore) Seed(tasks ...taskboard.Task) error {
+	return t.exec.run(context.Background(), func(tx *txCtx) error {
+		for _, task := range tasks {
+			if task.ID == "" {
+				continue
+			}
+			// 同 id 重摆覆盖内容并清租约；接管代次水位保留（不清）。
+			var prevSeq, prevFence uint64
+			if prev, ok := tx.st.tasks[task.ID]; ok {
+				prevSeq = prev.Task.Seq
+				prevFence = prev.Fence
+			}
+			fresh := taskboard.Task{
+				ID:    task.ID,
+				Title: task.Title,
+				Deps:  append([]taskboard.TaskID(nil), task.Deps...),
+				State: task.State,
+			}
+			fresh.Seq = prevSeq + 1
+			rec := journalRecord{Kind: kindTask, Task: &fresh, Fence: prevFence}
+			if err := tx.stage(rec); err != nil {
+				return err
+			}
 		}
-		sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-		return nil, nil
+		return nil
+	})
+}
+
+// List 返回一致快照（一次重放；按 id 升序）。
+func (t *TaskStore) List(ctx context.Context) ([]taskboard.Task, error) {
+	var out []taskboard.Task
+	err := t.exec.run(ctx, func(tx *txCtx) error {
+		out = taskList(tx)
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -206,48 +161,27 @@ func (s *Store) List(_ context.Context) ([]taskboard.Task, error) {
 }
 
 // Claim 认领任务（读-判-写在同一个写事务里；令牌与代次由存储铸造）。
-func (s *Store) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+//
+// 「取任务 + 判状态可认领」这两步留在**方法体内**：它是本实现的唯一认领
+// 入口（独立事务与事务内两个装配都走这里），判据因此只有一个主人。依赖与
+// 活租约的判定、铸令牌与写入交给 taskClaim（同一事务内）。
+func (t *TaskStore) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	now := t.exec.now()
 	var out taskboard.Task
-	err := s.transact(func(state map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		rec, ok := state[id]
+	err := t.exec.run(ctx, func(tx *txCtx) error {
+		rec, ok := tx.st.tasks[id]
 		if !ok {
-			return nil, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
+			return oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
 		}
-		now := s.now()
 		// 状态可认领判定统一走 taskboard.State.Claimable（issue #360）：
 		// 词表外 → ErrUnknownState，终态 → ErrTerminal。
 		if cerr := rec.Task.State.Claimable(); cerr != nil {
-			return nil, oerrors.Wrap(cerr, "sqlitestore: 任务状态不可认领",
+			return oerrors.Wrap(cerr, "sqlitestore: 任务状态不可认领",
 				"task", string(id), "state", string(rec.Task.State))
 		}
-		for _, dep := range rec.Task.Deps {
-			depRec, ok := state[dep]
-			if !ok || depRec.Task.State != taskboard.StateDone {
-				return nil, oerrors.Wrap(taskboard.ErrBlocked, "sqlitestore: 依赖未完成",
-					"task", string(id), "dep", string(dep))
-			}
-		}
-		if held(rec, now) {
-			return nil, oerrors.Wrap(taskboard.ErrTaken, "sqlitestore: 任务已被他人认领", "task", string(id))
-		}
-		token, err := mintToken()
-		if err != nil {
-			return nil, err
-		}
-		next := rec
-		next.Fence = rec.Fence + 1
-		next.Task.State = taskboard.StateClaimed
-		next.Task.Owner = agent
-		next.Task.Lease = taskboard.Lease{
-			Token: token,
-			Fence: taskboard.Fence(next.Fence),
-		}
-		if req.TTL > 0 {
-			next.Task.Lease.Until = now.Add(req.TTL)
-		}
-		next.Task.Seq = rec.Task.Seq + 1
-		out = cloneTask(next.Task)
-		return []journalRecord{next}, nil
+		var err error
+		out, err = taskClaim(tx, rec, id, agent, req, now)
+		return err
 	})
 	if err != nil {
 		return taskboard.Task{}, err
@@ -256,65 +190,124 @@ func (s *Store) Claim(_ context.Context, id taskboard.TaskID, agent taskboard.Ag
 }
 
 // Release 归还认领（凭令牌；非持有者一律被拒）。
-func (s *Store) Release(_ context.Context, id taskboard.TaskID, token string) error {
-	return s.finish(id, token, taskboard.StateOpen)
+func (t *TaskStore) Release(ctx context.Context, id taskboard.TaskID, token string) error {
+	return t.exec.run(ctx, func(tx *txCtx) error {
+		return taskFinish(tx, id, token, taskboard.StateOpen)
+	})
 }
 
 // Complete 标记完成（凭令牌；终态不带 owner/租约）。
-func (s *Store) Complete(_ context.Context, id taskboard.TaskID, token string) error {
-	return s.finish(id, token, taskboard.StateDone)
-}
-
-// finish 释放/完成共用的条件写：只认「当前认领态 + 令牌一致」。
-func (s *Store) finish(id taskboard.TaskID, token string, state taskboard.State) error {
-	return s.transact(func(all map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		rec, ok := all[id]
-		if !ok {
-			return nil, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
-		}
-		if rec.Task.State != taskboard.StateClaimed || rec.Task.Lease.Token != token {
-			return nil, oerrors.Wrap(taskboard.ErrLeaseLost, "sqlitestore: 租约令牌不匹配",
-				"task", string(id), "state", string(rec.Task.State))
-		}
-		next := rec
-		next.Task.State = state
-		next.Task.Owner = ""
-		next.Task.Lease = taskboard.Lease{} // 代次水位在 rec.Fence 里，不清
-		next.Task.Seq = rec.Task.Seq + 1
-		return []journalRecord{next}, nil
+func (t *TaskStore) Complete(ctx context.Context, id taskboard.TaskID, token string) error {
+	return t.exec.run(ctx, func(tx *txCtx) error {
+		return taskFinish(tx, id, token, taskboard.StateDone)
 	})
 }
 
 // Renew 续期并确认持有资格（令牌仍是最新代且租约未过期）。
-func (s *Store) Renew(_ context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+func (t *TaskStore) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	now := t.exec.now()
 	var out taskboard.Task
-	err := s.transact(func(all map[taskboard.TaskID]journalRecord) ([]journalRecord, error) {
-		rec, ok := all[id]
-		if !ok {
-			return nil, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
-		}
-		now := s.now()
-		if rec.Task.State != taskboard.StateClaimed || rec.Task.Lease.Token != token {
-			return nil, oerrors.Wrap(taskboard.ErrLeaseLost, "sqlitestore: 租约令牌不匹配", "task", string(id))
-		}
-		if !taskboard.LeaseHeld(rec.Task, now) {
-			return nil, oerrors.Wrap(taskboard.ErrLeaseLost,
-				"sqlitestore: 租约已过期，资格终止（请重新认领）", "task", string(id))
-		}
-		next := rec
-		if req.TTL > 0 {
-			next.Task.Lease.Until = now.Add(req.TTL)
-		} else {
-			next.Task.Lease.Until = time.Time{}
-		}
-		next.Task.Seq = rec.Task.Seq + 1
-		out = cloneTask(next.Task)
-		return []journalRecord{next}, nil
+	err := t.exec.run(ctx, func(tx *txCtx) error {
+		var err error
+		out, err = taskRenew(tx, id, token, req, now)
+		return err
 	})
 	if err != nil {
 		return taskboard.Task{}, err
 	}
 	return out, nil
+}
+
+// taskList 任务快照（按 id 升序）。
+func taskList(tx *txCtx) []taskboard.Task {
+	out := make([]taskboard.Task, 0, len(tx.st.tasks))
+	for _, rec := range tx.st.tasks {
+		out = append(out, cloneTask(rec.Task))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// taskClaim 认领任务的其余判定与写入（依赖 / 活租约 / 铸令牌 / 落盘）。
+//
+// 前置条件：调用方已取到 rec 并判过「状态可认领」（TaskStore.Claim 的方法
+// 体里做的——那是唯一入口，判据只有一个主人）。
+func taskClaim(tx *txCtx, rec *taskEntry, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest, now time.Time) (taskboard.Task, error) {
+	for _, dep := range rec.Task.Deps {
+		depRec, ok := tx.st.tasks[dep]
+		if !ok || depRec.Task.State != taskboard.StateDone {
+			return taskboard.Task{}, oerrors.Wrap(taskboard.ErrBlocked, "sqlitestore: 依赖未完成",
+				"task", string(id), "dep", string(dep))
+		}
+	}
+	if taskboard.LeaseHeld(rec.Task, now) {
+		return taskboard.Task{}, oerrors.Wrap(taskboard.ErrTaken, "sqlitestore: 任务已被他人认领", "task", string(id))
+	}
+	token, err := mintToken()
+	if err != nil {
+		return taskboard.Task{}, err
+	}
+	next := cloneTask(rec.Task)
+	nextFence := rec.Fence + 1
+	next.State = taskboard.StateClaimed
+	next.Owner = agent
+	next.Lease = taskboard.Lease{
+		Token: token,
+		Fence: taskboard.Fence(nextFence),
+	}
+	if req.TTL > 0 {
+		next.Lease.Until = now.Add(req.TTL)
+	}
+	next.Seq = rec.Task.Seq + 1
+	if err := tx.stage(journalRecord{Kind: kindTask, Task: &next, Fence: nextFence}); err != nil {
+		return taskboard.Task{}, err
+	}
+	return cloneTask(next), nil
+}
+
+// taskFinish 释放/完成共用的条件写：只认「当前认领态 + 令牌一致」。
+func taskFinish(tx *txCtx, id taskboard.TaskID, token string, state taskboard.State) error {
+	rec, ok := tx.st.tasks[id]
+	if !ok {
+		return oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
+	}
+	if rec.Task.State != taskboard.StateClaimed || rec.Task.Lease.Token != token {
+		return oerrors.Wrap(taskboard.ErrLeaseLost, "sqlitestore: 租约令牌不匹配",
+			"task", string(id), "state", string(rec.Task.State))
+	}
+	next := cloneTask(rec.Task)
+	next.State = state
+	next.Owner = ""
+	next.Lease = taskboard.Lease{} // 代次水位在 rec.Fence 里，不清
+	next.Seq = rec.Task.Seq + 1
+	return tx.stage(journalRecord{Kind: kindTask, Task: &next, Fence: rec.Fence})
+}
+
+// taskRenew 续期并确认持有资格（令牌仍是最新代且租约未过期）。
+func taskRenew(tx *txCtx, id taskboard.TaskID, token string, req taskboard.ClaimRequest, now time.Time) (taskboard.Task, error) {
+	rec, ok := tx.st.tasks[id]
+	if !ok {
+		return taskboard.Task{}, oerrors.Wrap(taskboard.ErrNotFound, "sqlitestore: 任务不存在", "task", string(id))
+	}
+	if rec.Task.State != taskboard.StateClaimed || rec.Task.Lease.Token != token {
+		return taskboard.Task{}, oerrors.Wrap(taskboard.ErrLeaseLost, "sqlitestore: 租约令牌不匹配",
+			"task", string(id), "state", string(rec.Task.State))
+	}
+	if !taskboard.LeaseHeld(rec.Task, now) {
+		return taskboard.Task{}, oerrors.Wrap(taskboard.ErrLeaseLost,
+			"sqlitestore: 租约已过期，资格终止（请重新认领）", "task", string(id))
+	}
+	next := cloneTask(rec.Task)
+	if req.TTL > 0 {
+		next.Lease.Until = now.Add(req.TTL)
+	} else {
+		next.Lease.Until = time.Time{}
+	}
+	next.Seq = rec.Task.Seq + 1
+	if err := tx.stage(journalRecord{Kind: kindTask, Task: &next, Fence: rec.Fence}); err != nil {
+		return taskboard.Task{}, err
+	}
+	return cloneTask(next), nil
 }
 
 // mintToken 铸一枚随机令牌（跨进程不复用不重合 ⇒ ABA 封死）。
@@ -330,4 +323,6 @@ func mintToken() (string, error) {
 var (
 	_ taskboard.Board         = (*Store)(nil)
 	_ taskboard.RenewingBoard = (*Store)(nil)
+	_ taskboard.Board         = (*TaskStore)(nil)
+	_ taskboard.RenewingBoard = (*TaskStore)(nil)
 )
