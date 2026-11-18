@@ -65,12 +65,17 @@ capabilities:
 
   - id: single-store-full-state
     title: 单一存储覆盖全部状态（任务板之外还含副作用 / 事件 / 快照）
-    state: partial
+    state: available
+    delivered_by: "#419"
     evidence:
       - kind: contract
-        ref: taskboard/taskboard.go#Board
-      - kind: issue
-        ref: "#419"
+        ref: examples/sqlitestore/store.go#Store.Apply
+      - kind: contract
+        ref: examples/sqlitestore/effect_store.go#EffectStore
+      - kind: contract
+        ref: examples/sqlitestore/snapshot.go#SnapshotStore
+      - kind: contract
+        ref: examples/sqlitestore/event.go#EventStore
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）
@@ -236,8 +241,8 @@ scenarios:
     storage: examples/sqlitestore
     worker: single-node
     required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
-    readiness: partial
-    notes: sqlitestore 目前覆盖任务板；副作用 / 事件 / 快照的单一存储落点仍是缺口（#419，#188 的残留）。
+    readiness: available
+    notes: sqlitestore 覆盖任务板 / 副作用 / 快照 / 事件四个面，且四个面共用一份事务域（同一把锁、同一个日志、一次提交，#419 清偿 #188 的残留）。
 
   - id: multi-process-same-host
     title: 同机多进程
