@@ -2608,6 +2608,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-word-table-enum-missing` | 登记的判定词表没有导出枚举出口 / 出口读的是另一张表 / 登记与事实已偏离 | `policy.yaml` 的 `word_tables` 段 + `archcheck/wordtable.go` |
 | `harness-word-table-handcopy` | 别的包手抄了登记词表的取值 | 引用主人常量，或在本包把它声明成自己的常量 |
 | `harness-word-table-family-uncovered` | 登记的词表没覆盖它那一族常量的全部取值（常量加了、表没加）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或写明 `family_exclude` 理由 |
+| `harness-word-table-value-collision` | 两张判定词表有同形取值却没声明关系；或声明了关系却没撞车（声明失真）| `policy.yaml` 的 `word_tables` 段 `relations`（`same` / `distinct`）|
 | `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
 | `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
 | `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）| `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
@@ -2815,6 +2816,19 @@ word_tables:
    同族里常含**另一张表**的常量（`protocol` 的 `Decision*` 同时含两张表的成员）
    ⇒ 给按前缀的豁免口 `family_exclude`，**必须写理由**，且**豁免失效即红**
    （豁免今天什么都没豁免，却会在将来出现同名常量时无声生效）。
+6. **`harness-word-table-value-collision`** —— 两张**判定词表**有同形取值时，必须在
+   `word_tables` 段的 `relations` 里**显式声明关系**：
+
+   - `same`     ：同一概念（一张表的别名/子集），引用任一家都对；
+   - `distinct` ：不同概念（同形只是拼写巧合），手抄方必须**在本包命名**。
+
+   为什么要有这一条：手抄判据只按「值在不在表里」判 ⇒ 它分不出「这处字面量想说的
+   是哪张表」。而**错误指路比不指路更坏**——把任务失败改成引用会话失败常量 = 语义损坏。
+   ⇒ 声明了关系，手抄文案就**按关系改口**：`same` 时列出全部候选常量；
+   `distinct` 时要求「在本包另起一个名字」。
+   声明了关系却**没撞车** ⇒ 报红（**声明失真**：今天没关系，将来一旦同形就会无声生效）。
+   表身份用 `pkg` + `enum`（一个包里可能有多张表）；关系是**对称**的（用无序对
+   做键，否则「同一对表声明两次」会被漏判）。
 
 **登记与不登记都要留痕**：登记面是稀疏的，而稀疏本身没人记——「这张表我们决定
 不登记」若只留在某个人脑子里，下一个人会重新调研一遍，甚至直接把它登记进去。
