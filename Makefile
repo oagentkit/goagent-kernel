@@ -118,7 +118,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -425,6 +425,15 @@ deploycheck: ## 部署配方能力清单门禁（docs/DEPLOY-MATRIX.yaml ↔ USA
 	@# 清单逐行比对——口径不一致时这条判据先响。
 	$(EXPORT) $(GOENV) go run ./cmd/deploymatrix
 
+ledgercheck: ## 演进台账纪律门禁（单号状态一致 / 关闭 PR 号 / 无主单号，台账 §15 建议 1）
+	@# 台账回答「这条单清了没」，此前这个答案只存在于散文里，机器读不出来——
+	@# 代价是台账 §15 记着的一次真实翻车：一批单早已由 8 个 PR 合入主干，
+	@# 接手的人按「单还挂着 open 标签」判断「还没人做」，整条工作树作废。
+	@# 本门禁把「单号 → 状态」变成机器可查的事实（internal/ledgerstatus 是唯一
+	@# 派生器），并当场判四条：状态矛盾 / 已合入却没给关闭 PR / 关闭 PR 号形态
+	@# 不对 / 正文引用的单号没进登记面（单号漂浮 = 无主）。
+	$(EXPORT) $(GOENV) go run ./cmd/ledgercheck
+
 site: ## 构建 VuePress 文档站到 site/docs/.vuepress/dist（gen.mjs 先生成机器事实页，解析失败即退出）
 	cd site && (test -d node_modules || npm ci --no-audit --no-fund) && npm run docs:build
 
@@ -504,7 +513,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck releasecheck modreplace modwork hygiene
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

@@ -49,7 +49,7 @@ import (
 //
 // 判定面是**主人包自己的常量声明** + **登记的那张表**——两者都是事实，
 // 不需要类型信息，也不需要语义推断。
-func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath string) []Violation {
+func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, seg WordTables, policyPath string) []Violation {
 	var out []Violation
 	for i := range facts {
 		f := &facts[i]
@@ -64,7 +64,7 @@ func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath
 			// 包不存在：登记漂移已由登记面判据报出（同一件事不说两遍）。
 			continue
 		}
-		members := wordTableFamilyMembers(idx, f)
+		members := wordTableFamilyMembers(idx, f, wordTablePackageOwners(seg, f.pkg))
 		excluded := wordTableFamilyExcluded(f, members, policyPath, &out)
 
 		if len(f.values) == 0 {
@@ -89,7 +89,7 @@ func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath
 				Path: policyPath,
 				Text: fmt.Sprintf("常量 %s.%s（取值 %q）已声明但不在登记的词表 %s.%s 里——"+
 					"它的消费侧从此没人管（不在表里 ⇒ 手抄判据判不到它；不在枚举出口里 ⇒ 宿主看不到它）："+
-					"把它加进那张表，或在 policy 的 family_exclude 里写明理由",
+					"把它加进那张表，或让它归属的那张表（哪怕未登记）声明自己拥有的前缀",
 					f.pkg, name, members[name], f.pkg, f.backing),
 				Kind: "word_table_family_uncovered",
 			})
@@ -120,14 +120,21 @@ func wordTableFamilyViolations(idx *wordRepo, facts []wordTableFacts, policyPath
 // 为什么只认字符串常量：同名族里常混着别的概念（contract 的 StatusOpen 是
 // 分类枚举 StatusClass 的取值，不是会话状态）。取值解析不出来 ⇒ 它不是
 // 这个族的词形 ⇒ 不算族成员。
-func wordTableFamilyMembers(idx *wordRepo, f *wordTableFacts) map[string]string {
+func wordTableFamilyMembers(idx *wordRepo, f *wordTableFacts, owners []wordTablePrefixOwner) map[string]string {
 	out := map[string]string{}
 	owner := idx.byRel[f.pkg]
 	if owner == nil {
 		return out
 	}
+	self := f.pkg + "|" + f.enum
 	for name := range owner.consts {
 		if !f.family.match(name) {
+			continue
+		}
+		// 归属派生：这个常量归哪张表？同包里**更具体的前缀**赢
+		// （见 wordtable_family_owner.go）⇒ 另一张表（哪怕未登记）拥有的
+		// 那段常量不再算本表的族成员——手写豁免因此成为多余。
+		if belong, ok := wordTableOwnerOfConstant(name, owners); ok && belong != self {
 			continue
 		}
 		v, ok := idx.resolveConst(f.pkg, name, 0)

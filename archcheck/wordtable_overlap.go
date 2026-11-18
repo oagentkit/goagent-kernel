@@ -180,8 +180,8 @@ func wordTableAnchorViolations(idx *wordRepo, facts []wordTableFacts, rels []Wor
 			// 表没派生出来 ⇒ 漂移已由登记面判据报出（同一件事不重复报两次）。
 			continue
 		}
-		aVals, aBad := wordTableAnchorSide(idx, aFact, r, "a", policyPath)
-		bVals, bBad := wordTableAnchorSide(idx, bFact, r, "b", policyPath)
+		aVals, aBad := wordTableAnchorSide(idx, aFact, bFact, r, "a", policyPath)
+		bVals, bBad := wordTableAnchorSide(idx, bFact, aFact, r, "b", policyPath)
 		out = append(out, aBad...)
 		out = append(out, bBad...)
 
@@ -222,6 +222,12 @@ func wordTableAnchorViolations(idx *wordRepo, facts []wordTableFacts, rels []Wor
 			if !ok {
 				continue // 已由判据 3 报出（同一件事不报两次）
 			}
+			if aVals[v] == "" || bRoot == "" {
+				// 某一端没有根声明（all 形态下该取值在本端没有常量）⇒
+				// 判不了「是不是同一处声明」——「判不了」不当成「判过了」，
+				// 缺常量这件事已由判据 1 报出。
+				continue
+			}
 			if bRoot != aVals[v] {
 				continue
 			}
@@ -255,12 +261,16 @@ func wordTableAnchorUnpaired(value string, other map[string]string) bool {
 //
 // 返回的违反覆盖两条判据：锚点常量不存在（改名/被删）、锚点常量的取值
 // 不在它那张表里。
-func wordTableAnchorSide(idx *wordRepo, f *wordTableFacts, r WordTableRelation, side, policyPath string) (map[string]string, []Violation) {
+func wordTableAnchorSide(idx *wordRepo, f, other *wordTableFacts, r WordTableRelation, side, policyPath string) (map[string]string, []Violation) {
 	vals := map[string]string{}
 	var out []Violation
 	anchors := r.Anchors.A
 	if side == "b" {
 		anchors = r.Anchors.B
+	}
+	if wordTableAnchorsAll(anchors) {
+		// all 形态：锚点取值集合 = 两张表的共有取值集合（判据 1~4 原样复用）。
+		return wordTableAnchorAllSide(idx, f, other, r, side, policyPath)
 	}
 	for _, a := range anchors {
 		rootPkg, rootName, value, ok := idx.resolveConstRoot(f.pkg, a.Const, 0)

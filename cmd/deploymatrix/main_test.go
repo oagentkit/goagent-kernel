@@ -6,11 +6,14 @@
 package main
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
 )
 
 // validMatrix 最小合法清单：一项 available（contract 证据）、一项 partial
@@ -58,6 +61,22 @@ func (a Alpha) Do() {}
 
 const validMakefile = "test:\n\t@echo ok\n"
 
+// validLedger 合成台账：#1 仍开着（beta-cap 的缺口），#2 已合入（不是缺口）。
+//
+// 文件名照抄仓里的真实相对路径：deploymatrix 按 ledgerstatus.DefaultPath
+// 读台账，夹具换个名字就得给命令加一个只为测试存在的开关——那是个更贵的
+// 口子。内容是合成的（单号、标题、阶段全是编的）。
+var validLedger = strings.Join([]string{
+	"# 合成台账",
+	"",
+	"## 9. issue 台账",
+	"",
+	"| 单号 | 标题 | 阶段 | 判据形态 | 状态 |",
+	"|---|---|---|---|---|",
+	"| #1 | 合成缺陷甲 | S1 | 合成判据 |  |",
+	"| #2 | 合成缺陷乙 | S1 | 合成判据 | ✅ 已合入 (#99) |",
+}, "\n")
+
 // writeRepo 造最小仓库；overrides 覆盖默认文件。
 func writeRepo(t *testing.T, overrides map[string]string) string {
 	t.Helper()
@@ -65,9 +84,10 @@ func writeRepo(t *testing.T, overrides map[string]string) string {
 	files := map[string]string{
 		"docs/DEPLOY-MATRIX.yaml": validMatrix,
 		"docs/USAGE.md":           validUsage,
-		"docs/claims.md":          "见 #1 与 #273。\n",
+		"docs/claims.md":          "见 #1、#2 与 #273。\n",
 		"Makefile":                validMakefile,
 		"alpha/alpha.go":          validAlpha,
+		ledgerstatus.DefaultPath:  validLedger,
 	}
 	for p, body := range overrides {
 		files[p] = body
@@ -191,6 +211,95 @@ func TestUnknownYAMLField(t *testing.T) {
 	root := writeRepo(t, map[string]string{"docs/DEPLOY-MATRIX.yaml": bad})
 	if _, err := run(root, io.Discard); err == nil {
 		t.Fatal("未知字段必须让解析失败（拼错字段名 = 声明面静默失效）")
+	}
+}
+
+// gapMatrix 一条「contract + issue」的能力：它的 state 必须由
+// 「该单在台账里还开不开」推导（已合入 ⇒ 不算缺口 ⇒ available；
+// 仍开着 ⇒ 算缺口 ⇒ partial）。
+var gapMatrix = strings.Join([]string{
+	"version: 1",
+	"capabilities:",
+	"  - id: alpha-cap",
+	"    title: Alpha 能力",
+	"    state: available",
+	"    evidence:",
+	"      - kind: contract",
+	"        ref: alpha/alpha.go#Alpha",
+	"      - kind: issue",
+	"        ref: \"#2\"",
+	"scenarios:",
+	"  - id: alpha-scenario",
+	"    title: Alpha 场景",
+	"    storage: memory",
+	"    worker: single-process",
+	"    required: [alpha-cap]",
+	"    readiness: available",
+}, "\n")
+
+// runCheckOut 跑判定并把输出带回来（要断言「说了什么」的用例用）。
+func runCheckOut(t *testing.T, root string) (int, string) {
+	t.Helper()
+	var buf bytes.Buffer
+	code, err := run(root, &buf)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	return code, buf.String()
+}
+
+// TestClosedIssueIsNotAGap 台账里已合入的单不再算缺口 ⇒ 能力状态是 available。
+//
+// 这一条是**假缺口**的正面判据：口径不改之前，单号 #2 在台账里明明写着
+// 「已合入」，能力却停在 partial，等于对宿主说「你还缺这个」。
+func TestClosedIssueIsNotAGap(t *testing.T) {
+	root := writeRepo(t, map[string]string{"docs/DEPLOY-MATRIX.yaml": gapMatrix})
+	if code := runCheck(t, root); code != 0 {
+		t.Fatalf("已合入的 issue 不该算缺口（state 应为 available），退出码 %d", code)
+	}
+}
+
+// TestOpenIssueIsStillAGap 台账里仍开着的单仍算缺口 ⇒ state 写 available 即红。
+func TestOpenIssueIsStillAGap(t *testing.T) {
+	openLedger := strings.Replace(validLedger,
+		"| #2 | 合成缺陷乙 | S1 | 合成判据 | ✅ 已合入 (#99) |",
+		"| #2 | 合成缺陷乙 | S1 | 合成判据 |  |", 1)
+	root := writeRepo(t, map[string]string{
+		"docs/DEPLOY-MATRIX.yaml": gapMatrix,
+		ledgerstatus.DefaultPath:  openLedger,
+	})
+	if code := runCheck(t, root); code != 1 {
+		t.Fatalf("仍开着的 issue 必须算缺口（state 应为 partial），退出码 %d", code)
+	}
+}
+
+// TestGapStateStillDerived 台账里已合入的单若把 state 手写成 partial ⇒ 红。
+//
+// 反向：口径若退化成「有 issue 证据就算缺口」，这个用例立刻绿——
+// 它挡住的正是「派生逻辑被改回旧口径」这种回归。
+func TestGapStateStillDerived(t *testing.T) {
+	bad := strings.Replace(gapMatrix, "state: available", "state: partial", 1)
+	root := writeRepo(t, map[string]string{"docs/DEPLOY-MATRIX.yaml": bad})
+	if code := runCheck(t, root); code != 1 {
+		t.Fatalf("手写 state 必须红，退出码 %d", code)
+	}
+}
+
+// TestUnknownIssueIsConservativelyAGap 台账里查不到的单 ⇒ 状态不可派生 ⇒
+// 保守按仍开着计（算缺口），而且必须把「为什么这么判」说出来。
+func TestUnknownIssueIsConservativelyAGap(t *testing.T) {
+	unknownLedger := strings.Replace(validLedger,
+		"| #2 | 合成缺陷乙 | S1 | 合成判据 | ✅ 已合入 (#99) |", "", 1)
+	root := writeRepo(t, map[string]string{
+		"docs/DEPLOY-MATRIX.yaml": gapMatrix,
+		ledgerstatus.DefaultPath:  unknownLedger,
+	})
+	code, out := runCheckOut(t, root)
+	if code != 1 {
+		t.Fatalf("状态不可派生的 issue 必须保守算缺口，退出码 %d；输出：\n%s", code, out)
+	}
+	if !strings.Contains(out, "不可派生") {
+		t.Fatalf("必须说清「为什么保守算缺口」，输出：\n%s", out)
 	}
 }
 

@@ -185,7 +185,19 @@ func wordTableSelfCheck(root string, policyPath string, seg *WordTables) []Viola
 			{"b", r.B.Pkg, r.Anchors.B},
 		} {
 			seenAnchor := map[string]bool{}
+			allSeen, concreteSeen := false, false
 			for _, an := range side.list {
+				if an.All {
+					allSeen = true
+					if strings.TrimSpace(an.Const) != "" {
+						add("word_tables.relations 里 %s 与 %s 的 %s 侧锚点同时写了 "+
+							"all: true 与 const %s：all 形态锚的是「两端共有的全部取值」，"+
+							"不能同时钉一个具体常量——二选一",
+							r.A.Pkg, r.B.Enum, side.name, an.Const)
+					}
+					continue
+				}
+				concreteSeen = true
 				if strings.TrimSpace(an.Const) == "" {
 					add("word_tables.relations 里 %s 与 %s 的 %s 侧锚点没写 const："+
 						"锚点必须是**具体常量**，没有常量名锚不到任何东西",
@@ -205,11 +217,49 @@ func wordTableSelfCheck(root string, policyPath string, seg *WordTables) []Viola
 				}
 				seenAnchor[k] = true
 			}
+			if allSeen && concreteSeen {
+				add("word_tables.relations 里 %s 与 %s 的 %s 侧同时写了「锚住全部共有取值」"+
+					"与具体常量锚点：两种形态互斥——all 已覆盖该端全部共有取值，"+
+					"具体锚点是多余的（留着只会让人误以为覆盖是抽样来的）",
+					r.A.Pkg, r.B.Enum, side.name)
+			}
 		}
 		if (len(r.Anchors.A) == 0) != (len(r.Anchors.B) == 0) {
 			add("word_tables.relations 里 %s 与 %s 只给了一端写锚点——"+
 				"锚点按取值成对，半边锚点没有配对语义：要写就两端都写，或都别写",
 				r.A.Pkg, r.B.Enum)
+		}
+		if wordTableAnchorsAll(r.Anchors.A) != wordTableAnchorsAll(r.Anchors.B) {
+			add("word_tables.relations 里 %s 与 %s 只给了一端写 all: true——"+
+				"all 形态必须两端成对：一端覆盖全部共有取值、另一端只钉一两个，"+
+				"配对语义不成立（两端的锚定面大小不同）",
+				r.A.Pkg, r.B.Enum)
+		}
+	}
+
+	// 族归属已由「各表自己声明前缀 + 最长匹配前缀优先」派生 ⇒
+	// family_exclude 成了多余的手写段。仍写着 ⇒ 报红并写明怎么改
+	// （**不静默忽略**：字段被忽略 ⇒ 宿主以为豁免还在，其实归属早变了）。
+	for _, t := range seg.Tables {
+		for _, ex := range t.FamilyExclude {
+			add("word_tables 段里 %s.%s 的 family_exclude（%s）已废弃："+
+				"族归属改由「各表自己声明拥有的前缀 + 最长匹配前缀优先」派生——"+
+				"让那张表（或那张未登记的表）在自己的 family / not_registered 段里"+
+				"声明它拥有的前缀，然后删掉这段豁免",
+				t.Pkg, t.Enum, ex.Prefix)
+		}
+	}
+	// 同一个包里，同一个前缀被两张表（或一张表 + 一张未登记的表）声明 ⇒
+	// 归属不唯一（「最长匹配」分不出胜负）⇒ 当天即红。
+	owners := map[string]map[string]string{} // pkg → prefix → owner
+	for _, t := range seg.Tables {
+		for _, p := range t.Family {
+			wordTableClaimPrefix(owners, t.Pkg, p, t.Pkg+"|"+t.Enum, add)
+		}
+	}
+	for _, nr := range seg.NotRegistered {
+		for _, p := range nr.Prefixes {
+			wordTableClaimPrefix(owners, nr.Pkg, p, "not_registered:"+nr.Subject, add)
 		}
 	}
 
@@ -230,4 +280,23 @@ func wordTableSelfCheck(root string, policyPath string, seg *WordTables) []Viola
 		}
 	}
 	return out
+}
+
+// wordTableClaimPrefix 登记一条「前缀 → 归属」的声明；同一包里同一前缀被
+// 声明两次 ⇒ 归属不唯一 ⇒ 报红。
+func wordTableClaimPrefix(owners map[string]map[string]string, pkg, prefix, owner string, add func(string, ...any)) {
+	if strings.TrimSpace(prefix) == "" {
+		add("word_tables 段里 %s 声明了空前缀：前缀是归属判定的依据，不能为空", pkg)
+		return
+	}
+	if owners[pkg] == nil {
+		owners[pkg] = map[string]string{}
+	}
+	if prev, dup := owners[pkg][prefix]; dup {
+		add("word_tables 段里 %s 的前缀 %q 被两个归属同时声明（%s 与 %s）："+
+			"归属不唯一（最长匹配也分不出胜负）——一个前缀只能归一张表",
+			pkg, prefix, prev, owner)
+		return
+	}
+	owners[pkg][prefix] = owner
 }

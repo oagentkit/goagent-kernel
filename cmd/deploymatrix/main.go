@@ -11,8 +11,12 @@
 //     - doc: path —— 文件存在；
 //  2. 能力的 state（available / partial / missing）必须与证据形态一致：
 //     - available = 至少一条 contract/gate 且无 issue 缺口；
-//     - partial   = 既有 contract/gate 又有 issue；
+//     - partial   = 既有 contract/gate 又有 issue 缺口；
 //     - missing   = 只有 issue（还没有可查的契约/门禁落点）；
+//     其中「issue 缺口」= **该单号在台账里仍开着**：台账（docs/DISTRIBUTED-
+//     EVOLUTION-*.md）是单号状态的唯一真相，已合入的单不再是缺口——
+//     把它算成缺口，能力就永远停在 partial，矩阵等于对宿主说「你还缺这个」
+//     而它其实早有了（台账 §15 形态 (a) 的同一个坑的另一个面）；
 //  3. 场景的 readiness 必须等于必需能力的最坏状态；
 //  4. docs/USAGE.md 的 deploy-matrix 机器口径块必须与清单逐行一致
 //     （场景 id / 推荐存储 / Worker 模式 / 当前状态）——不一致即红；
@@ -72,9 +76,14 @@ func run(root string, out io.Writer) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	probs, err := checkMatrix(root, m)
+	probs, notes, err := checkMatrix(root, m)
 	if err != nil {
 		return 0, err
+	}
+	// 说明先打：它们解释「某个状态是怎么推出来的」，读者不看就无从判断
+	// 这个结论对不对（派生状态的理由不给人看，就等于让人自己重推一遍）。
+	for _, n := range notes {
+		_, _ = fmt.Fprintf(out, "⚠ %s\n", n)
 	}
 	if len(probs) == 0 {
 		_, _ = fmt.Fprintf(out, "部署矩阵校验通过：%d 个场景 / %d 项能力（%s）✓\n",

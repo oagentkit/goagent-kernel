@@ -10,8 +10,13 @@
 #      - doc: path           —— 文件存在
 #   2. state 必须由证据推导（禁止手写一个会过期的结论）：
 #      available = 至少一条 contract/gate 且无 issue 缺口
-#      partial   = 既有 contract/gate 又有 issue
-#      missing   = 只有 issue（还没有可查的契约/门禁落点）
+#      partial   = 既有 contract/gate 又有 issue 缺口
+#      missing   = 只有 issue 缺口（还没有可查的契约/门禁落点）
+#      其中「issue 缺口」= **该单号在台账里仍开着**（docs/DISTRIBUTED-EVOLUTION-*.md
+#      是单号状态的唯一真相，由 internal/ledgerstatus 派生）：已合入的单不再是
+#      缺口——把它算成缺口，能力就永远停在 partial，矩阵等于对宿主说「你还缺
+#      这个」而它其实早有了。**缺口必须挂一个仍开着的单号**（有主的缺口），
+#      已关闭的单只能进 delivered_by，不能再当缺口挂。
 #   3. 场景 readiness = 必需能力里最差的那个状态；
 #   4. docs/USAGE.md 的 deploy-matrix 块必须与本文件的场景口径逐行一致。
 #
@@ -65,7 +70,7 @@ capabilities:
       - kind: contract
         ref: taskboard/taskboard.go#Board
       - kind: issue
-        ref: "#188"
+        ref: "#419"
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）
@@ -172,7 +177,7 @@ capabilities:
       - kind: contract
         ref: examples/containerbackend/k8sjobegress.go#K8sEgressProbe
       - kind: issue
-        ref: "#262"
+        ref: "#418"
 
   - id: authority-uniqueness
     title: 控制面与任务板共享同一份权威状态（不写第二份任务状态）
@@ -186,21 +191,27 @@ capabilities:
 
   - id: ownership-epoch
     title: 跨区域所有权代次（Ownership Epoch + 转移确认）
-    state: partial
+    state: available
     evidence:
       - kind: contract
-        ref: handoff/ledger.go#Epoch
-      - kind: issue
-        ref: "#273"
+        ref: ownership/ownership.go#Authority
+      - kind: contract
+        ref: ownership/ownership.go#Epoch
+      - kind: contract
+        ref: ownership/local.go#NewLocal
+    delivered_by: "#273"
 
   - id: partition-write-fencing
     title: 分区期间旧区域写入被 fence 拒绝
-    state: partial
+    state: available
     evidence:
       - kind: contract
-        ref: sideeffect/sideeffect.go#Fence
-      - kind: issue
-        ref: "#273"
+        ref: ownership/ownership.go#Fencer
+      - kind: contract
+        ref: ownership/judge.go#Judge
+      - kind: contract
+        ref: ownership/local.go#Local.Fence
+    delivered_by: "#273"
 
   - id: reliable-handoff
     title: 可靠交接（回执 + 代次 + 台面状态）
@@ -226,7 +237,7 @@ scenarios:
     worker: single-node
     required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
     readiness: partial
-    notes: sqlitestore 目前覆盖任务板；副作用 / 事件 / 快照的单一存储落点仍是缺口（#188）。
+    notes: sqlitestore 目前覆盖任务板；副作用 / 事件 / 快照的单一存储落点仍是缺口（#419，#188 的残留）。
 
   - id: multi-process-same-host
     title: 同机多进程
@@ -242,7 +253,7 @@ scenarios:
     worker: deployment
     required: [unified-lease, lease-renewal, reliable-events, quota-reclaim, job-idempotency, network-egress-enforcement, tenant-scoped-storage]
     readiness: partial
-    notes: 出站禁网的真集群实测（#262）是当前缺口；其余能力已落到契约 / 参考实现。
+    notes: 出站禁网的真集群实测（#418，#262 的残留）是当前缺口；其余能力已落到契约 / 参考实现。
 
   - id: multi-cluster-single-region
     title: 多集群单区域
@@ -257,5 +268,5 @@ scenarios:
     storage: regional-authority
     worker: regional-workers
     required: [ownership-epoch, partition-write-fencing, reliable-handoff]
-    readiness: partial
-    notes: 跨区域 Ownership Authority 未实现（#273）；分区下的写入拒绝只有局部 fence 原语。
+    readiness: available
+    notes: 跨区域 Ownership Authority 与分区写入 fence 已由 ownership 包交付（#273）；多区域共享权威存储仍是部署侧的形态选择。
