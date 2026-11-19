@@ -71,15 +71,12 @@ PKG_COV_EXEMPT := examples/pgstore
 #                  PostgreSQL 断言四条判据）——环境依赖的 integration 入口，
 #                  与 examples/pgstore 的豁免同一理由；拆装配层判据进常规层
 #                  即可缩窄。
-#   examples/sqliteadapter  占位包声明（issue #424，Task 1 登记驱动破例时落地）：
-#                  依赖方向门禁要求「新包先在 architecture-policy.yaml 登记」，
-#                  而 policy 自校验要求「登记的包根必须真实存在」——两条合起
-#                  来逼着登记当天就得有落地的包目录，否则门禁当场红（陈旧包根
-#                  当天即红）。本包此刻只有包声明，适配器实现与契约套件随
-#                  Task 2 落地。拆除条件：**临时豁免，Task 2 生效即拆**——
-#                  Task 2 一给该包写上真用例，cover-gate 就会报「豁免失效，
-#                  请从 PKG_NO_TEST_EXEMPT 移除」，当天必须删掉这一行。
-PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke,examples/sqliteadapter
+#
+# examples/sqliteadapter 的那条临时豁免已于 2026-11-19（issue #424，Task 2）
+# 当天拆除：那是 Task 1 登记驱动破例时的**占位包**豁免（占位包无测试文件），
+# 骨架落地并写上真用例后它即失效——豁免留着会与逐包下限判据打架（豁免包自己
+# 达标 ⇒ cover-gate 报「豁免失效，请从 PKG_NO_TEST_EXEMPT 移除」）。
+PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke
 # 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
 # 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
 # 那个版本」是两件事：命令在 PATH 里只说明门禁会跑，不说明跑的是同一套判据。

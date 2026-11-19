@@ -1,19 +1,55 @@
-// Package sqliteadapter 单机持久化的**真 SQLite 参考实现**（占位包声明）。
-//
-// # 为什么本文件现在只有包声明
-//
-// 依赖方向门禁要求「新增包先在 architecture-policy.yaml 登记」，而 policy 自校验
-// 要求「登记的包根必须真实存在」——两条合起来意味着登记之后必须立刻有落地的
-// 包目录，否则门禁当场红（陈旧包根当天即红）。适配器实现由后续任务补齐，此处
-// 先给出一个最小可编译的包声明：不含任何导出符号，不改变任何行为。
-//
-// # 落库形态（后续任务展开）
-//
-// 单文件 SQLite(WAL)：journal_mode=WAL / synchronous=FULL / busy_timeout=5000，
-// 写事务一律 BEGIN IMMEDIATE（先拿写锁再干活）；事件 ID 由每租户一行水位表
-// 铸造（UPDATE … RETURNING，回滚不烧号 ⇒ 无空洞）。
+// Package sqliteadapter 单机持久化的**真 SQLite 参考实现**。
 //
 // 生命周期: Experimental（v0.50.0 定级）——参考实现，随契约套件与参考部署演进，
 // 不承诺任何兼容，升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
 // docs/api-compat.md。
+//
+// # 它是什么
+//
+// 把内核的四套存储中立契约（taskboard.Board / sideeffect.Store /
+// checkpoint.StoreCAS / eventbus.Store）+ 控制面（controlplane.Store）+
+// 下游栅栏（sideeffect.FencedSink）+ 尾随游标（eventbus.CursorStore）
+// 落到一个 SQLite(WAL) 单文件库里，四个面**共用一份事务域**。
+//
+// # 与 examples/pgstore 的关系
+//
+// **形态同构、代码不共用**：表结构、事务边界、时钟口径、租户作用域、跨面
+// Apply 逐项对位；但判据逻辑两包各写一份——共用会把两个引擎耦在一起。
+// 正确性由**同一套契约套件**（boardtest / sidetest / RunSinkContract）对齐。
+//
+// # 选型口径
+//
+// 本包只适合**单机单副本**。多副本 / 跨机一律用 PostgreSQL：SQLite 的单文件
+// 锁跨机不可靠。判据由 cmd/storagecheck 机判。
+//
+// # 驱动与版本
+//
+// 驱动是 modernc.org/sqlite **v1.61.0**（纯 Go，无 cgo ⇒ CGO_ENABLED=0 的
+// 交叉构建矩阵不受影响）。锁 v1.61.0 的原因：v1.62.0 需要 libc v1.80.1，
+// 而本地 module cache 里没有它（且 goproxy.cn 解析超时）——驱动版本是依赖
+// 地板的一部分，抬版必须连带把传递依赖一起对账，不能只看驱动自己。
+//
+// # 表结构（参考表，gak_ 前缀）
+//
+//   - gak_board_task      任务认领面（taskboard.Board）
+//   - gak_effect_action   Key 级状态（副作用闸 sideeffect.Store）
+//   - gak_effect_resource 资源级状态（这个资源谁占着 / 发第几代令牌）
+//   - gak_downstream      下游资源（sideeffect.FencedSink 的落点）
+//   - gak_snapshot        进度快照（checkpoint.StoreCAS）
+//   - gak_event_watermark 已提交水位线（每租户一行；事件 ID 的铸造点）
+//   - gak_event           事件行（与业务状态同事务提交）
+//   - gak_tail_cursor     尾随游标（eventbus.CursorStore）
+//   - gak_run             运行状态（控制面 controlplane.Store 的落点）
+//   - gak_control_version 控制面版本锚（单行）
+//   - gak_control_effect  控制面效果裁决账
+//
+// gak_ 前缀是「参考表」的意思：与 PG 侧的 pgref_* 同款——标清楚它是参考实现，
+// 不是生产协议。
+//
+// # 已知边界
+//
+//   - 存储时钟是毫秒级（实测）：租约 TTL 建议 ≥ 1s。
+//   - DDL 的写锁升级在 SQLITE_BUSY 上不等 busy_timeout：建表只在装配期。
+//   - 单写者模型：多写者下退化为串行，busy_timeout 到点即失败（可判、
+//     不静默丢写，但降低可用性）。
 package sqliteadapter
