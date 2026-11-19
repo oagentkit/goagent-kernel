@@ -2,6 +2,29 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.49.3] — 2026-11-19
+
+### 新增(archcheck)：tenant_gate 登记面专用推导根 `tenant_table_type_roots`（#177 收编缺口）
+
+#177 把 bianque tenantcheck 的「租户表登记面」三条收编进 tenant_gate 时，登记面
+（判据 4-6）与读面（判据 1-2）**共用** `TenantTypeRoots` 作类型推导面。真实宿主
+实测这个共用不成立：读面的租户域类型可以包括**服务层载体**（输入/行 DTO——带租户
+字段但**不映射物理表**），载体跟着读面扫登记面会被误报 `tenant-table-name-missing`
+（它们本就没有表名方法，且「输入载体」也说不上映射哪张表）。而读面扫描根又不能收窄
+——实测有 4 个带授权上下文形参的返回点依赖载体被识别为租户域类型（收窄即丢真读面
+覆盖，宿主批次五百八十一实弹过这个坑）。两面扫描根**不同构**（典型：读面 =
+model+service、登记面 = model）。
+
+- 新增 `tenant_gate.tenant_table_type_roots`（**缺省 = `TenantTypeRoots`，不声明
+  = 旧行为逐字不变**）：登记面三条只在该根下推导租户模型。
+- 形状自校验把新根纳入目录存在性核对（登记面对那棵树完全隐形的形态不能静默）。
+- 三用例（收窄后载体不报 / 缺省口径载体照报——反向证明新字段真在起作用、且缺省
+  不改旧口径 / 收窄根缺失自校验点名）；变异反向验证：登记面退回宽根 ⇒ 收窄用例
+  精准变红，还原复绿。
+- 宿主收编面：bianque 以 `tenant_table_type_roots: [internal/model]` 启用登记面
+  三条，整体删除自造 `internal/tooling/tenantcheck`（两份执行体判同一片代码的
+  技术债就此清偿）。
+
 ## [v0.49.2] — 2026-11-19
 
 ### feat(examples/containerbackend)：#418 清偿——K8s 出站禁网的真集群实测结论（台账 §27）

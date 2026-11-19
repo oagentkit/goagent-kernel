@@ -258,3 +258,132 @@ func idsOf(infos []RuleInfo) []string {
 	}
 	return out
 }
+
+// ── 登记面专用推导根（tenant_table_type_roots）──
+//
+// 夹具形状对齐真实宿主：读面租户域类型 = 模型 + 服务层载体（输入 DTO 带租户
+// 字段但不映射物理表）；登记面只推模型。不收窄时载体 DTO 会被误报缺表名方法。
+
+// narrowRootPolicy 读面双根 + 登记面收窄到 model。
+func narrowRootPolicy(tableRoots string) string {
+	extra := "  tenant_type_roots: [model, svc]\n"
+	if tableRoots != "" {
+		extra += "  tenant_table_type_roots: " + tableRoots + "\n"
+	}
+	return tenantManifestPolicyWithDirs(extra)
+}
+
+// tenantManifestPolicyWithDirs 在多目录夹具 policy 上声明登记面。
+func tenantManifestPolicyWithDirs(extra string) string {
+	return policyHead + `tenant_gate:
+  enabled: true
+  severity: error
+  roots: [svc]
+  auth_context_types: [identity.Actor]
+  tenant_fields: [TenantID]
+  filter_columns: [tenant_id]
+  shared_surfaces:
+    - dir: model
+      name: VisibleTo
+      note: 合成判定面
+  tenant_tables_manifest: tables.txt
+` + extra
+}
+
+// narrowRootFixture 两目录仓：model/ 带表名方法的模型，svc/ 无表名方法的载体。
+func narrowRootFixture(t *testing.T, polYAML string) *Result {
+	t.Helper()
+	root := t.TempDir()
+	for _, d := range []string{"model", "svc"} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "architecture-policy.yaml"), []byte(polYAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := `package model
+
+type Record struct {
+	ID       uint64
+	TenantID string
+}
+
+func (Record) TableName() string { return "records" }
+
+func VisibleTo(a identity.Actor, r Record) bool { return a.TenantID == r.TenantID }
+`
+	svc := `package svc
+
+type RecordInput struct {
+	Name     string
+	TenantID string
+}
+
+func (RecordInput) Filter(a identity.Actor) bool { return a.TenantID != "" }
+`
+	if err := os.WriteFile(filepath.Join(root, "model", "a.go"), []byte(model), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "svc", "b.go"), []byte(svc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tables.txt"), []byte("records\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pol, err := Load(filepath.Join(root, "architecture-policy.yaml"))
+	if err != nil {
+		t.Fatalf("policy 解析失败: %v", err)
+	}
+	res, err := Run(root, pol)
+	if err != nil {
+		t.Fatalf("门禁给不出结论: %v", err)
+	}
+	return res
+}
+
+// TestTenantTableTypeRootsNarrow 收窄后：服务层载体不进登记面 ⇒ 不报缺表名方法；
+// 模型面照判（表已登记 ⇒ 三条全绿）。
+func TestTenantTableTypeRootsNarrow(t *testing.T) {
+	res := narrowRootFixture(t, narrowRootPolicy("[model]"))
+	for _, rule := range []string{tenantPolicyMissingRuleID, tenantPolicyDriftRuleID, tenantTableNameMissingRuleID} {
+		if vs := onlyRule(res, rule); len(vs) != 0 {
+			t.Fatalf("收窄后 %s 应全绿（载体不该进登记面）: %v", rule, textsOf(vs))
+		}
+	}
+}
+
+// TestTenantTableTypeRootsDefaultBackwardCompat 不声明收窄 = 与旧行为逐字一致：
+// 载体 DTO 照样被判缺表名方法（证明新字段真的在起作用，且缺省不改旧口径）。
+func TestTenantTableTypeRootsDefaultBackwardCompat(t *testing.T) {
+	res := narrowRootFixture(t, narrowRootPolicy(""))
+	vs := onlyRule(res, tenantTableNameMissingRuleID)
+	if len(vs) != 1 {
+		t.Fatalf("缺省口径下应恰好一条缺表名方法（RecordInput），实得 %d：%v", len(vs), textsOf(vs))
+	}
+	if !strings.Contains(vs[0].Text, "RecordInput") {
+		t.Fatalf("应点名载体类型: %s", vs[0].Text)
+	}
+}
+
+// TestTenantTableTypeRootsMissingDir 收窄根不存在 = 自校验点名（登记面对该树
+// 完全隐形的形态不能静默）。
+func TestTenantTableTypeRootsMissingDir(t *testing.T) {
+	tg := &TenantGate{
+		Enabled:              boolPtr(true),
+		Roots:                []string{"x"},
+		AuthContextTypes:     []string{"identity.Actor"},
+		TenantFields:         []string{"TenantID"},
+		TenantTableTypeRoots: []string{"absent-model-dir"},
+	}
+	vs := tenantGateSelfCheck(t.TempDir(), "policy.yaml", tg)
+	found := false
+	for _, v := range vs {
+		if strings.Contains(v.Text, "absent-model-dir") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("收窄根缺失应被自校验点名: %v", textsOf(vs))
+	}
+}
