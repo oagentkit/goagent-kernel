@@ -2563,7 +2563,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `test` | 全量单测 |
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`，当前无豁免；实测值以该目标输出为准）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
-| `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）|
+| `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|
 | `architecture-check` | 8 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
@@ -3004,6 +3004,32 @@ ctx = tenant.WithContext(ctx, tenant.Context{Tenant: tenantID})
 - 数据库行级隔离（RLS / 唯一约束 / 连接级租户变量）；
 - 自定义 `taskboard.Board` 实现：不接 `boardtest.RunTenant` 不算声明支持
   租户隔离。
+
+### 4.9 `make race` 红了怎么读
+
+`make race` 由 `cmd/raceprobe` 接管：它跑 `go test -race`，并在失败时给出**形态判定**
+（而不是只丢一行 FAIL）。五种形态与各自的处置：
+
+| 形态 | 指纹 | 你该做什么 |
+|---|---|---|
+| `data-race` | 竞态检测器报了 `WARNING: DATA RACE` | **代码面**：按报告里的 goroutine 栈修共享状态 |
+| `test-hang` | 输出里有 `goroutine N [..]:` 栈 | **代码面**：栈里指着卡住的 goroutine |
+| `startup-wedge` | 有 cmd/go 的兜底闹钟那行、**但一行栈都没有** | **环境面**：Go 运行时压根没起来 ⇒ 改代码没用，查机器面（内存压力 / 并行启动的测试二进制太多 / 同时有别的构建在跑）|
+| `test-failure` | 普通断言失败（有 `--- FAIL:`）| **代码面**：按失败用例名修 |
+| `unknown` | 都没有 | **别猜**：去看落盘的原始输出 |
+
+判定依据是**机制指纹**而不是症状：「超时了」两种形态都超时；「**有没有 goroutine 栈**」
+才分得清——能留下栈说明 Go 运行时活到过（用例问题），留不下说明它压根没启动
+（机器面问题）。
+
+`startup-wedge` 会自动做一次**串行复核**（同树 `-p 1` 重跑受害包，即「拿掉并行启动
+这个变量再跑一次」的对照实验）：复核通过 ⇒ 判「环境面已复核」（门禁判绿，但**留痕**：
+结论块 + 原始输出 + 复核输出三份落在 `RACE_EVIDENCE_DIR`，默认
+`$TMPDIR/goagent-kernel-race`）；复核失败 ⇒ 按复核结论判红。
+
+三段预算互相咬合（`RACE_GO_TIMEOUT` → cmd/go 兜底闹钟 = 它 + 1m → `RACE_WATCHDOG`
+**必须晚于**兜底闹钟）：早了就变成我们先杀 `go test` ⇒ 拿不到楔死指纹 ⇒ 判定退化成
+`unknown`（工具自己会拒这种配置，退出码 2）。
 
 ---
 

@@ -93,7 +93,21 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: make race
+        env:
+          # 取证目录钉死在 /tmp：默认推导自 TMPDIR，这里显式固定，
+          # 好让下面的上传步骤与门禁写入的是同一个目录。
+          RACE_EVIDENCE_DIR: /tmp/goagent-kernel-race
         run: make race
+      - name: 上传 race 取证（原始输出 + 形态结论）
+        # 取证是**辅助**产物：上传失败不得把绿构建判红——基础设施抖动与门禁结论
+        # 必须分开，否则「上传失败」会被读成「门禁红了」。
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: race-evidence
+          path: /tmp/goagent-kernel-race
+          if-no-files-found: ignore
 
   # ── contract 层：共享契约套件自测（sidetest / boardtest）──
   # 判「判据自身没坏」：宿主实现把套件接进去跑之前，先知道套件是绿的。

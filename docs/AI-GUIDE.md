@@ -499,7 +499,7 @@ make check
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红（当前为空）|
 | `architecture-check` | 8 条规则 + 5 门包 + 各包依赖方向（包数以该命令输出为准）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
-| `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）| 按报告的 goroutine 栈修共享状态；别把该目标改成 `CGO_ENABLED=0` |
+| `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
 | `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |

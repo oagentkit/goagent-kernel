@@ -84,24 +84,39 @@ CI_YML := .github/workflows/ci.yml
 # 全局的 GOENV(CGO_ENABLED=0)——那样它在 CI 上必红。本机 cgo=1 已验证可
 # 完整链接全仓（`CGO_ENABLED=1 go test -race -run '^$' ./...` 零输出）。
 RACE_ENV := CGO_ENABLED=1
-# race 步骤的看门狗超时（秒）。
+# ── race 的三段预算（RACE_GO_TIMEOUT / cmd/go 兜底闹钟 / RACE_WATCHDOG）──
 #
-# 为什么需要：门禁**挂死**是最坏的失败形态——不产出任何结论，读日志的人会
-# 误以为「没输出 = 没跑」。本机实测（2026-11-18 第十轮）出现过：race 步骤的
+# 三者互相咬合，**改一处必须改三处**：
+#
+#   RACE_GO_TIMEOUT  传给 `go test -timeout` 的用例超时（Go 自己的看门狗）。
+#   cmd/go 兜底闹钟  = RACE_GO_TIMEOUT + 1m（Go 源码里的 testKillTimeout）。
+#                    它杀测试二进制时打的那行
+#                    「*** Test killed with quit: ran too long (11m0s).」
+#                    **正是「启动期楔死」的指纹**——那种形态下 Go 运行时压根
+#                    没起来，连 Go 自己的超时都不会触发，只剩 cmd/go 这层闹钟。
+#   RACE_WATCHDOG    本工具（cmd/raceprobe）的兜底看门狗，**必须晚于
+#                    cmd/go 的兜底闹钟**：早了就变成我们先杀 go test ⇒
+#                    拿不到那行指纹 ⇒ 形态判定退化成 unknown（工具自己会拒）。
+#
+# 为什么需要看门狗：门禁**挂死**是最坏的失败形态——不产出任何结论，读日志的
+# 人会误以为「没输出 = 没跑」。本机实测（2026-11-18 第十轮）出现过：race 步骤的
 # 若干测试二进制卡在 macOS 动态链接器里（`sample` 显示主线程停在
-# `_dyld_start`）——进程在、CPU 占用 0%、**连 Go 自带的用例超时都不触发**
-# （Go 运行时压根没启动，看门狗 goroutine 不存在）。
+# `_dyld_start`）——进程在、CPU 占用 0%、**连 Go 自带的用例超时都不触发**。
 #
 # 触发条件是机器面负载：race 因必须开 cgo ⇒ 二进制**动态链接** ⇒ 启动期要在
 # dyld 上抢锁；本机 10 核并行启动几十个测试二进制 + 同时有别的会话在构建
 # ⇒ 内存压力下有进程卡死在启动期。与代码无关（单包重跑 1.1~1.6 秒通过、
 # 全量重跑全绿），但门禁不能因此无限期挂着。
 #
-# 超时后杀掉 go test 及其子进程并**非零退出**（红的形态），不留挂死。
-#
-# 取值 1800s：本地 race 步骤实测 1~2 分钟，CI 慢机留足余量；
+# 取值：本地 race 步骤实测 1~2 分钟，CI 慢机留足余量；
 # 真挂死时半小时内必红，远好过无限期挂着。
-RACE_TIMEOUT := 1800
+RACE_GO_TIMEOUT := 10m
+RACE_WATCHDOG := 30m
+# 取证落盘目录（原始输出 + 结论块）。默认落临时目录，不污染工作树。
+RACE_EVIDENCE_DIR ?= $(or $(TMPDIR),/tmp)/goagent-kernel-race
+# 启动期楔死时是否做串行复核（反事实实验）。默认开：复核通过 ⇒ 判「环境面已
+# 复核」（判绿但留痕），复核失败 ⇒ 按复核结论判红。
+RACE_RECHECK ?= true
 # 交叉构建矩阵：只声明**真的验过**的平台。
 # windows 回归在列（issue #34 收尾）：上游 runtime/procx 已落地 windows
 # 进程树路径（Job Object，runtime v0.11.0 起），windows/amd64 恢复交叉构建
@@ -173,40 +188,35 @@ race: ## 竞态检测（**开 cgo**：Linux 上 -race 强制要求 cgo，见 RAC
 	@# 竞态是本类内核最贵的一类缺陷（代次/闸/共享 map 都在并发路径上，
 	@# 而它们的失效形态是「偶尔给错答案」，单线程用例永远绿）。
 	@#
-	@# 看门狗：把「挂死」变成「红」。详见上面 RACE_TIMEOUT 的注释（实测过
-	@# 测试二进制卡在 dyld 启动期、连 Go 用例超时都不触发的形态）。
-	@# macOS 没有 timeout(1)（coreutils 未装），故自己兜一层：到点杀掉 go test
-	@# 及其子进程，退出码非零 ⇒ make 报红。
 	@#
-	@# 看门狗本身有两个实现约束（都是被实测打出来的，不是洁癖）：
-	@# ① **看门狗不得持有父进程的 stdout**——它若继承了管道，写 `make check | tail`
-	@#   的那端会一直等 EOF（实测：孤儿 sleep 持管道 ⇒ 输出延迟半小时才刷出，
-	@#   且管道把 make 的非零退出码吞成 tail 的 0 ⇒ 「红」看起来像「绿」）。
-	@#   故看门狗整体 `>/dev/null 2>&1`，超时消息落临时文件，由前台在 wait 之后
-	@#   打印——消息照样出得来，但看门狗不再持有管道。
-	@# ② **看门狗不得留下孤儿**——`kill` 掉看门狗的 shell 不会连带杀掉它内部的
-	@#   `sleep`（实测：kill 后 sleep 仍在跑 30 分钟）。故改为**轮询式**看门狗：
-	@#   它发现测试进程消失后自己退出（≤2s），不依赖被杀；每次轮询的 sleep 只 2s，
-	@#   残留窗口也从「半小时」缩到「2 秒」。
-	@# 不用 `set -m` + 进程组杀：实测 `set -m` 确实能让后台任务独占进程组，但作业
-	@# 控制开启后后台任务读 stdin 会收 SIGTTIN 而停住——那是**换一种挂死**。
-	@$(EXPORT) $(RACE_ENV) go test ./... -race -count=1 & pid=$$!; \
-	wd_log=$$(mktemp -t racewd.XXXXXX 2>/dev/null || echo /tmp/racewd.$$.log); \
-	( deadline=$$(( $$(date +%s) + $(RACE_TIMEOUT) )); \
-	  while kill -0 $$pid 2>/dev/null; do \
-	    if [ "$$(date +%s)" -ge "$$deadline" ]; then \
-	      printf 'race 门禁超时 %ss：杀掉挂死的测试进程（多半是进程启动期的环境面争用，见 Makefile RACE_TIMEOUT 注释）\n' '$(RACE_TIMEOUT)' >"$$wd_log"; \
-	      pkill -TERM -P $$pid 2>/dev/null; \
-	      kill -TERM $$pid 2>/dev/null; \
-	      break; \
-	    fi; \
-	    sleep 2; \
-	  done \
-	) >/dev/null 2>&1 & \
-	wait $$pid; rc=$$?; \
-	[ -s "$$wd_log" ] && cat "$$wd_log" >&2; \
-	rm -f "$$wd_log"; \
-	exit $$rc
+	@# **本轮起由 cmd/raceprobe 接管**（2026-11-19，第十七轮）。
+	@# 门禁失败时 Go 留下的痕迹有三种，**处置方式完全不同**：
+	@#   ① 数据竞争（代码面）② 用例挂死（代码面，带 goroutine 栈）
+	@#   ③ 启动期楔死（环境面：**没有 goroutine 栈**，Go 运行时压根没起来）
+	@# ③ 在原始日志里长得像 ②，而唯一可靠的区分特征就是「有没有栈」。
+	@# 2026-11-18 实录：一次 11m0s/signal:quit 的失败被归因为「某包用例挂死」，
+	@# 而那个包零计时敏感点（无 time.*、无 goroutine/channel、无 os/exec）——
+	@# 它的用例根本没有能挂住的东西 ⇒ 归因错了，处置必然错（改代码没用，
+	@# 要查机器面）。raceprobe 把这个区分做成**机器判定**，不再靠人猜。
+	@#
+	@# raceprobe 做三件事：**跑**（输出实时透传 + 全量落盘）、**判**（形态分类，
+	@# 不猜）、**复核**（形态是③时做串行复核：同树 `-p 1` 重跑受害包 ⇒
+	@# 反事实实验；复核通过 ⇒ 判「环境面已复核」并留痕；复核失败 ⇒ 按复核
+	@# 结论判红）。
+	@#
+	@# 看门狗仍是硬约束：到点杀**整棵进程树**（非零退出 ⇒ 门禁红），不留挂死。
+	@# 那两条被实测打出来的实现约束仍然成立，且现在由结构保证：
+	@# ① **不得持有父进程的 stdout**：子进程输出走 os/exec 自建的管道，本进程
+	@#   写完就退 ⇒ 写 `make check | tail` 的那端不会等 EOF，也不会把非零
+	@#   退出码吞成 tail 的 0（「红」看起来像「绿」）。
+	@# ② **不得留下孤儿**：unix 下子进程进独立进程组，超时按组杀 ⇒ go test 起的
+	@#   测试二进制（卡在启动期的那个永不退出）一并带走。
+	@$(EXPORT) $(GOENV) go run ./cmd/raceprobe \
+	  -packages ./... \
+	  -timeout $(RACE_GO_TIMEOUT) \
+	  -watchdog $(RACE_WATCHDOG) \
+	  -out $(RACE_EVIDENCE_DIR) \
+	  -recheck $(RACE_RECHECK)
 
 cover:
 	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1

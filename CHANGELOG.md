@@ -2,6 +2,36 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.49.0] — 2026-11-19
+
+### 新增(cmd/raceprobe)：race 门禁的取证式看门狗——失败形态机器判定 + 串行复核（台账 §26）
+
+race 门禁此前只回答「绿/红」，红的形态要靠人读日志推断。2026-11-18 实录：一次
+11m0s/`signal: quit` 的失败被归因为「某包用例挂死」，而那个包零计时敏感点
+（无 `time.*`、无 goroutine/channel、无 `os/exec`）——**它的用例根本没有能挂住的
+东西**；真因是 race 二进制卡在 macOS 动态链接器**启动期**（Go 运行时压根没起来 ⇒
+连 Go 自带的用例超时都不触发 ⇒ 一行 goroutine 栈都没有）。**归因错了，处置就必然错**。
+
+- `cmd/raceprobe`：跑 `go test -race`（输出实时透传 + 全量落盘）、按证据强度把失败
+  分成六种形态（`data-race` / `test-hang` / `startup-wedge` / `test-failure` /
+  `unknown` / `none`）、落取证（原始输出 + 结论块）。判据是**纯函数层**，用构造出来的
+  输出文本逐条钉住（含反向验证）——它要判的那个形态本机**不可稳定复现**，判据跑不到
+  就等于没判。
+- **区分特征是「有没有 goroutine 栈」**：
+  `*** Test killed with quit: ran too long (11m0s).` 来自 cmd/go 的兜底闹钟
+  （`testKillTimeout = testTimeout + 1m`），只在「Go 运行时没起来」时才是楔死的指纹；
+  有栈 ⇒ 用例挂死（代码面）。
+- **串行复核（反事实实验）**：形态是 `startup-wedge` 时，同树 `-p 1` 重跑受害包 ⇒
+  复核通过 ⇒ 判「环境面已复核」（判绿但**留痕**：结论块 + 原始输出 + 复核输出三份落盘）；
+  复核失败 ⇒ 按复核结论判红。方法与人工定责同源（换一个变量重跑一次对照）。
+- `make race` 改由 raceprobe 接管：三段预算互相咬合（`RACE_GO_TIMEOUT` → cmd/go 兜底
+  闹钟 = 它 + 1m → `RACE_WATCHDOG` **必须晚于**兜底闹钟，否则拿不到楔死指纹 ⇒ 判定
+  退化成 `unknown`，工具自己拒）。看门狗到点杀**整棵进程树**（unix 下独立进程组），
+  不留孤儿、不持有父进程 stdout。
+- 接线：`architecture-policy.yaml`（依赖方向豁免 + `egress_paths` 登记
+  `cmd/raceprobe/exec.go:defaultSpawner`）、`docs/AI-GUIDE.md`、`docs/USAGE.md`、
+  `AGENTS.md`（新纪律段）、README 工程底座三项重算、CI 的 race 作业上传取证产物。
+
 ## [v0.48.0] — 2026-11-18
 
 ### 新增(examples/sqlitestore)：接线与包文档——四个面的声明面 + 部署矩阵转 available（#419）
