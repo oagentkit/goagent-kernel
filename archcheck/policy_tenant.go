@@ -58,6 +58,13 @@ type TenantGate struct {
 	Roots []string `yaml:"roots"`
 	// TenantTypeRoots 是租户类型推导面；缺省（空）= Roots。
 	TenantTypeRoots []string `yaml:"tenant_type_roots"`
+	// TenantTableTypeRoots 是**登记面（判据 4-6）专用**的类型推导面；缺省
+	// （空）= TenantTypeRoots。读面（判据 1-2）的租户域类型可以包括服务层
+	// 载体（输入/行 DTO——带租户字段但**不映射物理表**），而登记面只关心
+	// 「映射到物理表的模型」：两者扫描根不同构时（典型：读面 = model+service、
+	// 登记面 = model）在这里单独声明，避免载体 DTO 被误报
+	// tenant-table-name-missing（它们本就没有表名方法）。
+	TenantTableTypeRoots []string `yaml:"tenant_table_type_roots"`
 	// AuthContextTypes 授权上下文类型名。可写限定名（pkg.Actor）或裸名（Actor）。
 	// 限定名按**源级限定符**匹配，并解析 import 别名（`import a ".../pkg"`
 	// 后的 a.Actor 仍算 pkg.Actor）——改名别名绕不过去。

@@ -133,6 +133,20 @@ func tenantGateViolations(root string, gate TenantGate) ([]Violation, error) {
 		}
 		typeFiles = append(typeFiles, files...)
 	}
+	// 登记面（判据 4-6）的推导面可单独收窄（issue：服务层载体 DTO 带租户字段
+	// 但不映射物理表，跟着读面扫会被误报缺表名方法）；缺省与读面同根。
+	tableRoots := gate.TenantTableTypeRoots
+	if len(tableRoots) == 0 {
+		tableRoots = typeRoots
+	}
+	var tableFiles []tenantFile
+	for _, r := range tableRoots {
+		files, err := cache.files(root, r)
+		if err != nil {
+			return nil, err
+		}
+		tableFiles = append(tableFiles, files...)
+	}
 	tenants := tenantTypeIndex(typeFiles, fields)
 
 	surfaceNames := map[string]bool{}
@@ -230,7 +244,7 @@ func tenantGateViolations(root string, gate TenantGate) ([]Violation, error) {
 
 	// 判据 4-6：租户表登记面（声明 tenant_tables_manifest 才启用，issue #177）。
 	if gate.TenantTablesManifest != "" {
-		mv, err := tenantManifestViolations(root, gate, typeFiles, fields)
+		mv, err := tenantManifestViolations(root, gate, tableFiles, fields)
 		if err != nil {
 			return nil, err
 		}

@@ -39,7 +39,7 @@ func tenantGateSelfCheck(root, policyPath string, tg *TenantGate) []Violation {
 	if len(tg.TenantFields) == 0 {
 		add("tenant_gate 已启用但没有 tenant_fields：租户域类型推导面为空，判据 1 永远不触发")
 	}
-	for _, r := range append(append([]string{}, tg.Roots...), tg.TenantTypeRoots...) {
+	for _, r := range append(append(append([]string{}, tg.Roots...), tg.TenantTypeRoots...), tg.TenantTableTypeRoots...) {
 		if r == "" {
 			add("tenant_gate 的扫描面里有空条目（空字符串不扫任何目录）")
 			continue
