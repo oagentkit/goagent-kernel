@@ -20,8 +20,10 @@
 - 租户作用域是真的具备：四个 `NewTenant*` 构造器 + 门面四个租户入口
   （`TenantEffects` / `TenantEvents` / `TenantDownstream` / `TenantTailCursors`），
   缺租户 **fail-closed**。
-- 存储时钟走 `unixepoch('subsec')`（跨进程共享的事实），**毫秒级**（实测最小非零增量
-  0.9999ms）⇒ 租约 TTL 建议 **≥ 1s**。
+- 存储时钟走 `unixepoch('subsec')`（跨进程共享的事实），但**消费面按整毫秒截断**
+  （`CAST(unixepoch('subsec') * 1000 AS INTEGER)`）⇒ **有效分辨率 1 ms**（实测相邻差
+  0/1 ms）；引擎原始 `unixepoch('subsec')` 的最小正增量约 **0.9999 ms** ⇒ 租约 TTL
+  建议 **≥ 1s**。
 
 ### 新增(examples/pgstore)：跨面事务——`Store.Apply` 把各面收进同一次提交
 
@@ -56,8 +58,9 @@
 ### 修复(policy)：登记 SQLite 驱动破例——驱动只进示例包的依赖图
 
 `modernc.org/sqlite` v1.61.0 作为**驱动破例**登记：只被 `examples/sqliteadapter` import，
-内核包 import 驱动即红（policy 的 dependency_direction 判着）；`scan_roots` 补记两个 sqlite
-示例包**都在列**——澄清「增而非替」。破例的代价与拆除条件写进 `go.mod` 与 policy。
+内核包 import 驱动即红（policy 的 dependency_direction 判着）；`scan_roots` 当时补记两个
+sqlite 示例包（同一次提交），随后随 `examples/sqlitestore` 删除**同摘** ⇒ 现在只剩
+`examples/sqliteadapter`。破例的代价与拆除条件写进 `go.mod` 与 policy。
 
 ### 文档(台账 / USAGE)：第十九轮台账 §28 + 选型口径的人读入口
 
