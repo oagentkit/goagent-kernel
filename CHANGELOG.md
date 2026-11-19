@@ -2,6 +2,25 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.50.1] — 2026-11-20
+
+### 修复(readme)：下游升级须知 v0.50.0 行的依赖地板口径——原话把两类下游混成了一类
+
+v0.50.0 的「下游升级须知」行写「**③ 需 `go mod tidy`**：依赖地板新增 `modernc.org/sqlite`
+v1.61.0」——**说宽了**：只有真正 import `examples/sqliteadapter` 的宿主才需要 tidy；
+只用内核包的宿主**连这条依赖都看不到**（模块图裁剪）。实测（空模块
+`go get github.com/yi-nology/goagent-kernel@v0.50.0` 后 `go mod tidy` + `go build`，
+两个形态各测一遍）：
+
+| 下游形态 | `modernc.org/sqlite` 进你的依赖吗 | 要 `go mod tidy` 吗 |
+|---|---|---|
+| 只 import 内核包（如 `contract`） | **不进**——go.mod 与 go.sum 里**零命中** | **不需要** |
+| import `examples/sqliteadapter` | 进——go.mod 里 `modernc.org/sqlite v1.61.0 // indirect` | **需要** |
+
+⇒ README 该行订正为「③ 只有 import `examples/sqliteadapter` 的宿主需要 `go mod tidy`」，
+并补一句「只用内核包的宿主连这条依赖都看不到（模块图裁剪）」。**行为面零变化**——
+本版只改文档（下游指导口径），不动任何代码、契约与门禁。
+
 ## [v0.50.0] — 2026-11-20
 
 ### 新增(examples/sqliteadapter)：真 SQLite 适配器——11 个面访问器共用一份事务域
