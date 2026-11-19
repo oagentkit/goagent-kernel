@@ -58,9 +58,9 @@
 ### 修复(policy)：登记 SQLite 驱动破例——驱动只进示例包的依赖图
 
 `modernc.org/sqlite` v1.61.0 作为**驱动破例**登记：只被 `examples/sqliteadapter` import，
-内核包 import 驱动即红（policy 的 dependency_direction 判着）；`scan_roots` 当时补记两个
-sqlite 示例包（同一次提交），随后随 `examples/sqlitestore` 删除**同摘** ⇒ 现在只剩
-`examples/sqliteadapter`。破例的代价与拆除条件写进 `go.mod` 与 policy。
+内核包 import 驱动即红（policy 的 dependency_direction 判着）；`scan_roots` 先后收录过两个
+sqlite 示例包（`sqlitestore` 先在列、`sqliteadapter` 后追加），随 `examples/sqlitestore`
+删除**同摘** ⇒ 现在只剩 `examples/sqliteadapter`。破例的代价与拆除条件写进 `go.mod` 与 policy。
 
 ### 文档(台账 / USAGE)：第十九轮台账 §28 + 选型口径的人读入口
 
