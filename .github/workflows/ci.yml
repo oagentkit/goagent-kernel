@@ -85,7 +85,11 @@ jobs:
   race:
     name: race（竞态检测，CGO_ENABLED=1）
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 外层闹钟必须**宽于**内层（工具自己的看门狗 RACE_WATCHDOG=30m）：
+    # 等宽 ⇒ 工具的看门狗与 CI 的作业超时同时到点 ⇒ 结论还没落盘就被 CI 取消，
+    # 门禁只剩「cancelled」而没有形态判定与取证。
+    # 内层最坏路径 = cmd/go 兜底闹钟 11m + 串行复核 10m ≈ 21m，故留 45m。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
