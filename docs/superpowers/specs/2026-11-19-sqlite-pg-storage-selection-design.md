@@ -220,7 +220,7 @@ PG 时钟口径。
 ### 7.1 删除
 
 - `examples/sqlitestore/**`（22 个 `.go` 文件，3358 行）——**全部删除**
-  （**已完成**：2026-11-20，commit `5ef2ccf`）。
+  （**已完成**：2026-11-20，commit `43b5834`）。
 
 ### 7.2 改写
 
@@ -341,7 +341,7 @@ PG 时钟口径。
 > 状态：**已实施完毕**。
 
 - **假 SQLite 已删**：`examples/sqlitestore`（flock + JSONL，22 个 `.go` 文件 /
-  3358 行）于 2026-11-20 删除（commit `5ef2ccf`）。它的登记面
+  3358 行）于 2026-11-20 删除（commit `43b5834`）。它的登记面
   （`architecture-policy.yaml` 的 modules + thresholds.scan_roots、`api-lifecycle.yaml`）
   与引用面（`docs/DEPLOY-MATRIX.yaml` 的 6 处 evidence）**同提交**改指真适配器。
 - **真适配器已就位**：`examples/sqliteadapter`（`modernc.org/sqlite`，纯 Go）

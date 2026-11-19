@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **状态**：**已实施完毕**（2026-11-19 – 2026-11-20，按下面的 Task 逐个落地；
-其中 **Task 10 = 删除假 SQLite 并翻转口径**，commit `5ef2ccf`）——
+其中 **Task 10 = 删除假 SQLite 并翻转口径**，commit `43b5834`）——
 **实施后现状**见文末「实施后现状」一节。
 
 **Goal:** 删掉名为 `sqlitestore` 的假 SQLite（flock + JSONL），建一个真 SQLite 适配器 `examples/sqliteadapter`（全面对齐 PG 的契约面），给 PG 补齐跨面事务，并把「何时用 SQLite / 何时用 PostgreSQL」做成门禁可判的规则。
@@ -87,7 +87,7 @@
 | `taskboard/claim_gate_test.go` | 注释里的实现枚举 |
 | `docs/DISTRIBUTED-EVOLUTION-20261117.md` | 新增 §28；§24 落点更新；§9 单号登记 |
 
-**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）——**已完成**（Task 10，2026-11-20，commit `5ef2ccf`）
+**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）——**已完成**（Task 10，2026-11-20，commit `43b5834`）
 
 ---
 
@@ -3097,7 +3097,7 @@ tag 打在 **CI 全绿的提交**上；CHANGELOG 的版本段提交**只碰 CHAN
 > 状态：**已实施完毕**。
 
 - **假 SQLite 已删**：`examples/sqlitestore`（flock + JSONL，22 个 `.go` 文件 /
-  3358 行）于 2026-11-20 删除（Task 10，commit `5ef2ccf`）。登记面
+  3358 行）于 2026-11-20 删除（Task 10，commit `43b5834`）。登记面
   （`architecture-policy.yaml` 的 modules + thresholds.scan_roots、
   `api-lifecycle.yaml`）与引用面（`docs/DEPLOY-MATRIX.yaml` 的 6 处 evidence）
   **同提交**改指真适配器。

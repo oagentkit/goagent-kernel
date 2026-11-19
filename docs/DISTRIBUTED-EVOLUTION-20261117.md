@@ -1793,16 +1793,16 @@ DNS 层 ⇒「连不上」与「解析不了」分不开。
 
 ### 本轮做了什么
 
-1. **删掉假 SQLite**：`examples/sqlitestore`（22 个 .go / 3358 行，commit `5ef2ccf`）
+1. **删掉假 SQLite**：`examples/sqlitestore`（22 个 .go / 3358 行，commit `43b5834`）
    ——它**不是 SQLite 驱动**（名字像、行为不是），却占着「单机持久化」的推荐位。
 2. **建真适配器**：`examples/sqliteadapter`——任务板 / 副作用 / 租户作用域副作用 /
    进度快照 / 事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 /
    租户作用域尾随游标 / 控制面，**11 个面访问器**共用一份事务域（同一个写句柄 +
    同一个库文件，一次提交）。
 3. **PG 侧补齐跨面事务**：`Store.Apply` + `runTx` 认 ctx 里已有的 tx + **共享失败槽**
-   ⇒ 各面在同一事务里同生共死（commit `3f2e027` / `cdfdc88`）。
+   ⇒ 各面在同一事务里同生共死（commit `aa744f1` / `7099314`）。
 4. **建选型判据门禁**：`cmd/storagecheck` + `docs/STORAGE-SELECTION.yaml`，
-   `make storagecheck` 逐条判（commit `2cb4a4d`）。
+   `make storagecheck` 逐条判（commit `7b57327`）。
 
 ### #188 的替代方案被本轮 supersede
 
