@@ -1511,8 +1511,12 @@ dependency_direction:
 #                                            机制依赖。它与 cmd/deploymatrix 共读
 #                                            internal/ledgerstatus（单号状态的唯一派生器），
 #                                            两处各解析一遍必然漂移。
+#   cmd/raceprobe                      race 门禁的取证式看门狗（2026-11-19，台账 §26）：
+#                                            起 go test 子进程、判失败形态（数据竞争 /
+#                                            用例挂死 / 启动期楔死）、落取证；起子进程
+#                                            与读输出是工具职责，不形成机制依赖。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1795,6 +1799,20 @@ egress_paths:
         GIT_TERMINAL_PROMPT=0），**不继承全量 environ**：本工具在 CI 里跑，
         父进程环境可能带凭据，而 git 的本地子命令用不到它们。
         将来若有人在这里加 fetch / push，本条目必须同步改成 proxy 并补上兑现的两半。
+    - path: cmd/raceprobe/exec.go
+      fn: defaultSpawner
+      mode: unrestricted
+      notes: |
+        race 门禁看门狗的子进程启动点：起 **go test**（跑本仓自己的用例）。
+        登记成 unrestricted 是**事实**而不是放行——这条路径的网络面由 Go 工具链
+        自己管（模块下载走 GOPROXY），本仓既没有能施加影响的执行后端，也没有可问
+        的 egress.Spec；登记成 proxy 只会让门禁以为「这条路径的出口有人管过」，
+        而实际没有任何东西在管。
+        子进程环境走唯一事实源 procx.ChildEnv（PATH/HOME 等基础白名单），
+        **不继承全量 environ**：本工具在 CI 里跑，父进程环境可能带凭据，而
+        go test 用不到它们。字面注入的只有 CGO_ENABLED=1（race 必须开 cgo），
+        其余是 Go 工具链变量的按名透传（口径见 exec.go 的 childEnv 注释）。
+        将来若有人在这里换成会联网的子命令，本条目必须同步改档位。
 
 # ── 宿主接缝契约门禁（issue #369/#370）──
 #
