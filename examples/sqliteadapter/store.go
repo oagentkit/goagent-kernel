@@ -148,6 +148,18 @@ func (s *Store) exec() exec { return exec{db: s.db, read: s.read, clock: s.clock
 // 继续用旧时钟 A ⇒ 时钟口径漂移且门禁不红。
 func (s *Store) execBase() exec { return exec{db: s.db, read: s.read} }
 
+// execOf 造一个**独立事务**的执行位置（写句柄与只读句柄同源）。
+//
+// 为什么单独一个工厂：exec 字面量的构造点必须集中在一处（见
+// exec_factory_test.go 的 AST 判据）——面里手搓 exec{...} 迟早漏 clock ⇒
+// 注入时钟在该面上静默失效 ⇒ 时钟口径漂移且门禁不红。
+//
+// 为什么只读句柄与写句柄同源：独立构造器只拿到 *sql.DB，拿不到数据文件路径
+// ⇒ 开不出第二个只读句柄（只读句柄要另开一个连接，见 Store.Open）。
+// 代价：写事务进行中时，独立读路径会与写句柄抢连接而排队；需要「读不阻塞
+// 写」的宿主请用 Store.Effects()（门面自带独立只读句柄）。
+func execOf(db *sql.DB) exec { return exec{db: db, read: db} }
+
 // execIn 造一个**事务内**的执行位置（带 clock —— 漏了会让注入时钟静默失效）。
 //
 // 为什么放 Store 而不是每个面一份：面各抄一份 ⇒ 迟早有一份漏 clock ⇒
