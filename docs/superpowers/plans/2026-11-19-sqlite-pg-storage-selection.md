@@ -215,7 +215,7 @@ git commit -m "chore(policy): 登记 SQLite 驱动破例——examples/sqliteada
   - `func (s *Store) UseClock(now func() time.Time)`
   - `type exec struct { db *sql.DB; tx *sql.Tx }`
   - `func (e exec) run(ctx context.Context, fn func(tx *sql.Tx) error) error`
-  - `func (e exec) now(ctx context.Context) (time.Time, error)`
+  - `func (e exec) now(ctx context.Context, tx *sql.Tx) (time.Time, error)`
   - `func (e exec) clockOverride() func() time.Time`
 
 - [ ] **Step 1: 写失败测试：骨架行为**

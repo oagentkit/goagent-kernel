@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -293,6 +294,82 @@ func TestExecNowUsesStorageClock(t *testing.T) {
 	}
 	if got.IsZero() {
 		t.Fatal("存储时钟不得为零时刻")
+	}
+	if got.Nanosecond()%int(time.Millisecond) != 0 {
+		t.Fatalf("存储时钟是毫秒级，实得 %v", got)
+	}
+}
+
+// TestExecNowNilTxWithoutClockFailsLoud nil tx 且无注入时钟 ⇒ 显式报错，不 panic。
+//
+// now 必须在**同一条事务连接**上取时刻（取时刻在拿到写锁之后）⇒ 调用方
+// 漏传 tx 是编程错误。原先的实现直接 tx.QueryRowContext ⇒ nil 指针 panic；
+// 这里要求 fail loud：报错且信息能让人一眼看出是「调用方没传 tx」。
+func TestExecNowNilTxWithoutClockFailsLoud(t *testing.T) {
+	s := openStore(t)
+	e := s.exec()
+	if e.clockOverride() != nil {
+		t.Fatal("本用例要求未注入时钟")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("nil tx 不得 panic（应返回显式错误），实得 panic: %v", r)
+		}
+	}()
+	got, err := e.now(context.Background(), nil)
+	if err == nil {
+		t.Fatalf("nil tx 且无注入时钟必须报错，实得时刻 %v", got)
+	}
+	if !got.IsZero() {
+		t.Fatalf("出错时不得返回时刻，实得 %v", got)
+	}
+	if !strings.Contains(err.Error(), "tx") {
+		t.Fatalf("错误信息须点明是调用方漏传 tx，实得: %v", err)
+	}
+}
+
+// TestExecNowNilTxWithInjectedClock nil tx 但注入了时钟 ⇒ 用注入时刻（不碰库）。
+//
+// 注入时钟优先于存储时钟 ⇒ nil tx 在这条路径上无害（根本不走库）。
+func TestExecNowNilTxWithInjectedClock(t *testing.T) {
+	s := openStore(t)
+	fixed := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	s.UseClock(func() time.Time { return fixed })
+	e := s.exec()
+	got, err := e.now(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("注入时钟时 nil tx 不得报错: %v", err)
+	}
+	if !got.Equal(fixed) {
+		t.Fatalf("应得注入时刻 %v，实得 %v", fixed, got)
+	}
+}
+
+// TestExecNowWithTxReturnsStorageClock 有 tx ⇒ 读存储时钟，落在调用时刻附近。
+//
+// 断言只取「合理区间」：SQLite 内建时钟是毫秒级、且与进程时钟同源，
+// 不写会抖的精确断言。
+func TestExecNowWithTxReturnsStorageClock(t *testing.T) {
+	s := openStore(t)
+	e := s.exec()
+	ctx := context.Background()
+	tx, err := s.DB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("开事务失败: %v", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	before := time.Now()
+	got, err := e.now(ctx, tx)
+	after := time.Now()
+	if err != nil {
+		t.Fatalf("取时刻失败: %v", err)
+	}
+	if got.IsZero() {
+		t.Fatal("存储时钟不得为零时刻")
+	}
+	const slack = 2 * time.Second
+	if got.Before(before.Add(-slack)) || got.After(after.Add(slack)) {
+		t.Fatalf("存储时钟 %v 应落在调用区间 [%v, %v] 附近（容差 %v）", got, before, after, slack)
 	}
 	if got.Nanosecond()%int(time.Millisecond) != 0 {
 		t.Fatalf("存储时钟是毫秒级，实得 %v", got)

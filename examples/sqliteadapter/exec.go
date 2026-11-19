@@ -60,9 +60,21 @@ func (e exec) run(ctx context.Context, fn func(tx *sql.Tx) error) error {
 //
 // 精度：SQLite 内建时钟是**毫秒级**（实测最小非零增量 0.9999ms），
 // 比 PG 的 clock_timestamp（微秒）粗。租约 TTL 建议 ≥ 1s。
+//
+// tx 必须显式传：nil tx 且**无注入时钟** ⇒ 返回显式错误（fail loud），
+// 不空指针 panic。
 func (e exec) now(ctx context.Context, tx *sql.Tx) (time.Time, error) {
 	if c := e.clockOverride(); c != nil {
 		return c(), nil
+	}
+	// 为什么不让 now 自己去 e.db 取时钟：
+	//   - exec.run 的回调拿到的 tx 与 exec 值里的 tx **不是同一个**（run 期间
+	//     exec.tx 仍为 nil）⇒ 去 e.db 取走的不是那条事务连接。
+	//   - 违反设计稿「取时刻在拿到写锁之后」；单连接池下更是直接与占着
+	//     唯一连接的写事务抢连接 ⇒ 挂到 ctx 超时。
+	// ⇒ nil tx 是**调用方漏传**的编程错误，显式报错让人一眼看出。
+	if tx == nil {
+		return time.Time{}, fmt.Errorf("sqliteadapter: 读存储时钟必须传事务句柄：tx 为 nil（调用方漏传 tx）")
 	}
 	var ms int64
 	if err := tx.QueryRowContext(ctx, `SELECT CAST(unixepoch('subsec') * 1000 AS INTEGER)`).Scan(&ms); err != nil {

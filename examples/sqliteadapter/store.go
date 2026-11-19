@@ -21,9 +21,11 @@ import (
 //   - _txlock=immediate：写事务一律 BEGIN IMMEDIATE（先拿写锁再干活）。
 //   - _busy_timeout=5000：跨进程写锁的等待上限（不静默丢写）。
 //   - _journal_mode=WAL：读不阻塞写，崩溃后按 WAL 重放。
-//   - _synchronous=2：synchronous=FULL（驱动按枚举取：0 OFF / 1 NORMAL /
-//     2 FULL / 3 EXTRA——写 FULL 会被驱动拒，故取数字 2）。
-const dsnParams = "?_txlock=immediate&_busy_timeout=5000&_journal_mode=WAL&_synchronous=2"
+//   - _synchronous=FULL：synchronous=FULL（驱动**同时接受枚举词与数字**：
+//     0 OFF / 1 NORMAL / 2 FULL / 3 EXTRA——写 FULL 与写 2 等价
+//     （实测两者都是 PRAGMA synchronous=2）；只有**非法值**才报错，
+//     如 _synchronous=bogus 会显式报 invalid _synchronous）。
+const dsnParams = "?_txlock=immediate&_busy_timeout=5000&_journal_mode=WAL&_synchronous=FULL"
 
 // Option 装配期选项。
 type Option func(*Store)
