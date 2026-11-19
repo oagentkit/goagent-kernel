@@ -2,6 +2,31 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.49.2] — 2026-11-19
+
+### feat(examples/containerbackend)：#418 清偿——K8s 出站禁网的真集群实测结论（台账 §27）
+
+#418 要的是「机制在真集群上被验过」——apiserver 接受 NetworkPolicy ≠ 数据面生效。
+上一轮按纪律如实留 open（当时本机没有装 NetworkPolicy CNI 的集群），本轮**把条件造
+出来**：kind 起控制面 + Calico 提供 NetworkPolicy 数据面（kind 自带的 kindnet **不实现**
+NetworkPolicy ⇒ 必须关掉它，否则数据面压根不拦 ⇒ 用例必然假绿）。
+
+- **判据加阳性对照**：同一台集群、**同一条**探针脚本、**同一个**目标（集群内见证端点
+  的数字 IP），唯一的变量是那张 NetworkPolicy——对照 Pod 必须连上（退出码 1 +
+  `EGRESS_OPEN`），禁网作业必须连不上（退出码 0 + `EGRESS_BLOCKED`）。原用例的探测
+  目标是 `https://…`，而 busybox wget 不支持 HTTPS ⇒「wget 失败」既可能是被拦、也可能
+  是压根不会说 HTTPS ⇒ **禁网没生效时用例照样绿**（假绿）。
+- 目标用**数字 IP** 而非域名：域名解析本身也是出站，被拦时失败落在 DNS 层 ⇒
+  「连不上」与「解析不了」分不开。
+- 新增 `make k8s-e2e`：自建集群 → 预载镜像 → 装 Calico → 跑验收 → 拆集群；缺
+  docker / kind / kubectl **明确报错退出**，不静默跳过（与 `make integration` 同一条纪律）。
+- 真机结论（kind v0.24.0 / Kubernetes v1.31.0 / Calico v3.30.3，darwin/arm64）：四条验收
+  标准逐条兑现；环境、实测输出与**结论边界**见 `docs/K8S-EGRESS-E2E-20261119.md`。
+- 部署清单能力 `network-egress-enforcement` 由 partial 转 **available**（台账 §27）。
+- 顺带修两处真 bug：叠加策略的 JSON 载荷多一个引号（该路径此前**从未在真集群上执行过**
+  ——CI 里它显式 Skipf）；`kubectl config view` 取的是**第一个** cluster 而非当前 context
+  （凭据会发到别的集群去）。
+
 ## [v0.49.1] — 2026-11-19
 
 ### 修复(gatecheck)：managed_test.go 里的 U+FFFD 坏字符——「判过的 ≠ 跑的」的落差
