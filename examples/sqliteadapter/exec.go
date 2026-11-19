@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // exec 一次操作的执行位置：独立事务，或当前事务内。
@@ -17,10 +19,40 @@ import (
 // 两种位置共用同一套判据函数 ⇒ 事务内走的判据与独立提交**逐字相同**，
 // 不会因为「换了个入口」而漂。这是跨面 Apply 的前提。
 type exec struct {
+	// db 写句柄：MaxOpenConns(1)，_txlock=immediate（写事务先拿写锁）。
 	db *sql.DB
+	// read 只读句柄：独立连接池，_txlock=deferred，引擎层只读。
+	//
+	// 为什么 SQLite 侧要分句柄而 PG 侧不用：PG 有 MVCC，读不阻塞写是引擎
+	// 内生的；SQLite 没有 MVCC，WAL 下的读并发靠「读者用自己的连接读已提交
+	// 快照」实现 ⇒ 只读句柄要在适配器层显式提供。
+	read *sql.DB
+	// tx 当前事务（nil ⇒ 不在事务内）。
 	tx *sql.Tx
 	// clock 注入的时钟（契约套件硬要求）；nil ⇒ 用存储时钟。
 	clock func() time.Time
+}
+
+// queryer 读句柄（能发起查询的一侧：*sql.DB 与 *sql.Tx 都满足）。
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// reader 取本次操作的读句柄。
+//
+// 路由判据：**tx != nil ⇒ 用 tx；否则用只读句柄。**
+//   - 事务内的读一律走 tx（读-判-写原子性靠这条保证）；
+//   - 独立读路径走只读句柄：写句柄只有一条连接，事务占用它期间从它取连接
+//     会**永久等待**（实测：挂到 ctx 超时）。
+func (e exec) reader() (queryer, error) {
+	if e.tx != nil {
+		return e.tx, nil
+	}
+	if e.read == nil {
+		return nil, errors.New("sqliteadapter: 只读句柄未初始化（独立读路径无路可走）")
+	}
+	return e.read, nil
 }
 
 // run 在执行位置里跑一次操作。
