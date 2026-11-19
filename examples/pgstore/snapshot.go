@@ -56,6 +56,9 @@ func (s *SnapStore) SaveIfNewer(ctx context.Context, snap checkpoint.Snapshot) e
 	}
 	fields, done, err := encodeSnapshot(snap)
 	if err != nil {
+		// ⚠ 本分支当前**不可达**（checkpoint.Snapshot.Fields 是 map[string]string
+		// ⇒ json.Marshal 不会失败）⇒ 这一处登记点**无法补判据**（没有路径可
+		// 走）。保留登记：若将来 Fields 变成可序列化失败的类型，它就是承重的。
 		failBatch(ctx, err)
 		return err
 	}

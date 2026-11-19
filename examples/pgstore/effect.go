@@ -126,14 +126,23 @@ func (s *EffectStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 
 // runTx 事务骨架：fn 报错即整体回滚（不落任何一行），成功才提交。
 //
-// # ⚠ 批内复用 ctx 里已有的 tx（本轮改动）
+// # ⚠ 通用规则：ctx 里已有 tx ⇒ 复用它（**这条规则不是 Apply 专属**）
 //
-// ctx 里若已有 tx（Apply 用 pgstore.WithTx 塞进去的），**复用它**——
-// 不新开事务、不提交（提交权在最外层 Apply）。否则照旧自己开一个。
+// ctx 里若已有 tx（**任何**调用方用 pgstore.WithTx 放进去的），runTx 就
+// **复用它**——不新开事务、**也不提交**（提交权归放 tx 的那一方）。否则照旧
+// 自己开一个（自开自提交）。
 //
 // 这一处改动让四个面全部支持跨面原子提交：Apply 开一个 tx 塞进 ctx，
 // 各面方法经 withinTx/withinTx2/withinTx3 → runTx 拿到同一个 tx ⇒
 // 跨面变更落进同一次提交。
+//
+// ⚠ **对既有 WithTx 使用者是语义变化**（仓外宿主需知）：
+//   - 此前：runTx 一律自开事务 ⇒ 宿主经 WithTx 放进去的 tx **被面忽略**
+//     （面写进自己那条独立事务并自行提交）⇒ 宿主的事务与面的写**毫无关系**。
+//   - 现在：面 **join 宿主那笔 tx**，提交权归宿主 ⇒ 宿主的事务才真的罩得住
+//     面的写。
+//   - 仓内**零回归**：pgstore.WithTx 在本仓只有一处调用（sink.go 的栅栏
+//     写入体）——它本来就该与预占同事务（契约要求「不得部分写」）。
 //
 // ⚠ **改的是 runTx，不是 withinTx**：withinTx/withinTx2/withinTx3 是
 // **泛型变体族**（按返回值个数分，见下方），三者的骨架都是 runTx ⇒ 只改

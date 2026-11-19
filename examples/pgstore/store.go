@@ -68,6 +68,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/oekit/pkg/errors"
+
+	"github.com/yi-nology/goagent-kernel/controlplane"
 )
 
 // Store 聚合 PG 参考实现的四个面，供跨面原子提交用。
@@ -96,6 +98,47 @@ func (s *Store) Snapshots() *SnapStore { return NewSnapStore(s.pool) }
 
 // Events 事件面。
 func (s *Store) Events() *EventStore { return NewEventStore(s.pool) }
+
+// # 下面 7 个访问器：评审 I-3 的**追加项**（brief 的 Produces 只列了上面四个）
+//
+// 为什么补：Task 9 的选型门禁要比对**门面可达性**——判「宿主只持门面时能做
+// 什么」。而 PG 侧 `Store.pool` **未导出** ⇒ 宿主只持 `*pgstore.Store` 时
+// 构造不出租户作用域面、栅栏面、游标面、控制面 ⇒ 两侧门面能力面**不等价**，
+// 而「符号可解析」那条判据**看不见这个不对称**（典型的「门禁绿 = 没判」）。
+//
+// ⇒ 补齐后两侧门面暴露**同款集合** ⇒ 对位成为**事实**，而不是口径上的声明。
+//
+// 形态差异只有一处：**租户解析**。租户作用域形态每次读写都从 ctx 取租户
+// （缺 ⇒ tenant.ErrNoContext，fail-closed）；默认形态不解析租户（缺租户
+// 照常可用）。其余语义与各自的独立构造器逐字相同。
+//
+// TenantEffects 租户作用域的副作用面。
+func (s *Store) TenantEffects() *EffectStore { return NewTenantEffectStore(s.pool) }
+
+// TenantEvents 租户作用域的事件面。
+func (s *Store) TenantEvents() *EventStore { return NewTenantEventStore(s.pool) }
+
+// Downstream 下游栅栏面。
+func (s *Store) Downstream() *Downstream { return NewDownstream(s.pool) }
+
+// TenantDownstream 租户作用域的下游栅栏面。
+func (s *Store) TenantDownstream() *Downstream { return NewTenantDownstream(s.pool) }
+
+// TailCursors 尾随游标面（consumer key 不得为空——空键会让所有尾随者共享
+// 一条游标 ⇒ 后跑的推过对方整段窗口 ⇒ 订阅侧静默漏帧；fail fast 在构造点）。
+func (s *Store) TailCursors(consumer string) *TailCursorStore {
+	return NewTailCursorStore(s.pool, consumer)
+}
+
+// TenantTailCursors 租户作用域的尾随游标面（consumer key 不得为空，同上）。
+func (s *Store) TenantTailCursors(consumer string) *TenantTailCursorStore {
+	return NewTenantTailCursorStore(s.pool, consumer)
+}
+
+// Control 控制面（审计器由宿主注入；为 nil 时只能读不能提交，见 NewControlStore）。
+func (s *Store) Control(aud controlplane.Auditor) *ControlStore {
+	return NewControlStore(s.pool, aud)
+}
 
 // Apply 在**一个事务**里提交四个面的变更。
 //
