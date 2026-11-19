@@ -24,6 +24,11 @@ import (
 // 任务行落在 gak_board_task（**与 BoardStore 同一张表**），run_id 建立归属。
 // 同 id 重摆覆盖内容；⚠ **seq 不覆盖**（同 id 重摆时 seq = 既有 + 1）——
 // seq 是「任务变更的序号」，单调递增是它的契约（与本包 Seed 同口径）。
+//
+// ⚠ **装载入口丢弃租约字段**：owner / token / fence / until 一律置 NULL / 0
+// （PG 侧 control_seed.go 保留调用方给的租约字段）⇒ 与本包 BoardStore.Seed
+// 同口径：**租约由存储在 Claim 时铸造**，装载入口不造租约（免得把一条过期
+// 或伪造的租约带进库里）。装载入口是参考实现的补充，不是契约的一部分。
 func (c *ControlStore) SeedRun(ctx context.Context, id controlplane.RunID, status string,
 	gen uint64, tasks ...taskboard.Task) error {
 	tx, err := c.exec.db.BeginTx(ctx, nil)

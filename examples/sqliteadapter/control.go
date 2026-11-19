@@ -19,6 +19,11 @@
 //     全部相关行（任务集合不是边改边读的流）——读面在 control_snapshot.go；
 //   - **版本锚**：gak_control_version 单行全局修订号；Commit* 先校验
 //     expect，不符即 ErrStoreConflict 且什么都不写；提交成功推进修订号；
+//     ⚠ **仅由控制面自身的提交推进**——任务板侧的写入（Claim / Complete /
+//     Release / Renew）不推进它 ⇒ 「快照之后目标被改过 ⇒ 提交必失败」这条
+//     对**控制面之外的写入**检测不到（与 PG 侧 pgref_control_version 逐字
+//     同款，不是本实现引入的偏差）⇒ 权威模式下强释走任务板（令牌 / 代次
+//     在那里判）、不经过 CommitTask ⇒ 该边界不影响权威路径的判定。
 //   - **留痕与状态同事务方向**：Auditor.Append 在版本校验之后、状态写入
 //     之前调用；留痕失败 ⇒ 事务回滚，状态一字不动。宿主 Auditor 若落在
 //     另一个数据库，跨库原子性不成立——这是宿主账本的边界，与 MemStore
@@ -80,10 +85,16 @@ type ControlStore struct {
 	store *Store
 }
 
-// 编译期契约断言：Store 契约 + 同源声明。
+// 编译期契约断言：Store 契约 + 同源声明 + 权威任务面。
 var (
 	_ controlplane.Store      = (*ControlStore)(nil)
 	_ controlplane.TaskSource = (*ControlStore)(nil)
+	// 权威接线（issue #268）：任务板必须同时是 TaskAuthority（强制释放经
+	// 它落地，令牌 / 代次在**同一张表**上判）与 TaskSource（装配期同源
+	// 校验）——**两侧都要有**：内核的 checkTaskSource 是「双方都实现才
+	// 比对」，只实现一方 ⇒ 装配期直接 ErrAuthorityMismatch。
+	_ controlplane.TaskAuthority = (*BoardStore)(nil)
+	_ controlplane.TaskSource    = (*BoardStore)(nil)
 )
 
 // Control 控制面（门面入口：自带独立只读句柄 ⇒ 快照读不与写事务抢连接）。
@@ -160,6 +171,12 @@ func (c *ControlStore) commit(ctx context.Context, expect controlplane.Version,
 	if c.store == nil {
 		return errors.New("sqliteadapter: 控制面未绑定 Store（造不出事务内执行位置）")
 	}
+	// ⚠ **为什么这里不直接用 exec.run**：exec.run 的独立形态（tx == nil）
+	// 会**自己开一个事务并提交** ⇒ 若在控制面的事务内调它 ⇒ 嵌套事务 ⇒
+	// 外层 tx 占着写句柄的唯一连接、内层永远等 ⇒ 挂到 ctx 超时（不是干净
+	// 报错）⇒ 事务边界只能由**本层自管**（BeginTx / Commit）；事务内的一
+	// 切经下面那个**事务内**执行位置（execIn 造 ⇒ tx != nil ⇒ exec.run
+	// 只跑回调，不开事务、不提交）。
 	tx, err := c.exec.db.BeginTx(ctx, nil)
 	if err != nil {
 		return errors.Wrap(err, "sqliteadapter: 开控制面提交事务失败")

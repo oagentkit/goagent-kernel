@@ -135,7 +135,7 @@ SQLite 的单写者模型在多写者下退化为串行，且 `busy_timeout` 到
 | 副作用闸 | `sideeffect.Store` | `effect` / `effect_resource` 两级表（Key 级 + 资源级），与 `pgstore/effect_rows.go` 同形 |
 | 进度快照 | `checkpoint.StoreCAS` | `snapshot` 表；带条件 upsert（`WHERE seq < excluded.seq` ⇒ 影响行数 0 即判陈旧） |
 | 事件面 | `eventbus.Store` / `TailStore` / `WatermarkTailStore` / `CursorStore` | `event` 表 + `event_watermark` **每租户一行**水位（与租户作用域一致）+ `tail_cursor` 表 |
-| 控制面 | `controlplane.Store` | `control_task` / `control_run` / `control_effect` + `control_version` 单行版本锚；三个 `Commit*` 在版本锚上「校验 → 留痕 → 写状态 → 推进版本」同事务 |
+| 控制面 | `controlplane.Store` | **复用任务板那张表**（任务状态；两侧都不另设 `control_task` 表）+ `run` 表 + `control_effect` 表 + `control_version` 单行版本锚；三个 `Commit*` 在版本锚上「校验 → 留痕 → 写状态 → 推进版本」同事务 |
 | 下游栅栏 | `sideeffect.FencedSink` | `downstream_fence` 表；带条件 upsert（`WHERE seen_fence <= presented`），**先原子预占再执行写入体** |
 
 **事件 ID 的铸造与水位线（本轮实测挖出的关键点）**：
