@@ -2363,7 +2363,7 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | 场景 | 推荐存储 | Worker 模式 | 必需能力 | 当前状态 |
 |---|---|---|---|---|
 | `single-process-agent` 单进程 Agent | memory | single-process | 幂等键作用域、Context 取消 | available |
-| `single-host-persistent` 单机持久化 | examples/sqlitestore | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
+| `single-host-persistent` 单机持久化 | examples/sqliteadapter | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
 | `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
 | `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | available |
 | `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |
@@ -2570,6 +2570,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
+| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点——见 `docs/STORAGE-SELECTION.yaml` |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |

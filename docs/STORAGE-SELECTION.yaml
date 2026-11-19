@@ -1,0 +1,338 @@
+# 存储选型声明面（issue #424）
+#
+# 这份文件回答一个问题：**「什么时候用 SQLite、什么时候用 PostgreSQL」**。
+# 它是机器可查的声明面——`make storagecheck`（cmd/storagecheck）逐条判定：
+#
+#   1. 场景声明的 storage 必须在本文件的允许集内；
+#   2. 该 storage 必须**实际提供**场景 required 的全部能力；
+#   3. 「storage 提供某能力」的断言必须能在代码里找到落点（path#Symbol 可解析，
+#      走 go/ast 判符号声明——与 deploycheck 的 contract 证据同款判据）。
+#
+# 第 3 条是本门禁与「写份文档让人读」的分界：没有它，「SQLite 提供租户隔离」
+# 就成了一句没人验证的话。
+#
+# 能力 id 的**唯一真相**是 docs/DEPLOY-MATRIX.yaml 的能力表：这里只能**引用**，
+# 不许另写一份清单（第二份清单漂移的方向恰好是「门禁判的和代码跑的不是一套」，
+# 失败形态是门禁变绿）。矩阵里的能力若没有任何存储认领，门禁同样报红——
+# 没人认领 = 该能力不被任何场景判定。
+#
+# 每条能力断言都带 **source** 标注，且标注必须与代码落点对得上：
+#   - storage：落点在该存储自己的代码根（code_root）下 ⇒ 该存储**自证**；
+#   - kernel ：落点在内核 / 宿主包里 ⇒ 能力由内核交付，存储只是前提。
+# 标注与代码位置对不上就是声明面在撒谎 ⇒ 报红（不写标注也红）。
+version: 1
+
+policy:
+  notes: |
+    选型口径（三条）：
+      - 需要跨进程 / 跨机共享写（多副本、多机、K8s）⇒ PostgreSQL；
+      - 需要重启后恢复且不引入外部服务进程 ⇒ SQLite；
+      - 只要进程内判据正确、不要持久化 ⇒ memory。
+
+    边界写死：**单机多进程一律判 PostgreSQL**。SQLite 的单写者模型在多写者下
+    退化为串行，busy_timeout 到点即失败（可判、不静默丢写，但降低可用性）。
+    ⇒ 同机多进程场景的 storage 必须是 PostgreSQL；这一条是 capability 归属
+    的直接后果（multi-process-claim / cross-process-token / database-clock
+    三项不声明给 SQLite）。
+
+    ⚠ SQLite 侧的三条**前提**（不是能力，是用它的前提）：
+      - 审计 / 留痕的写路径必须走**独立句柄**（进程内 / 独立库）。写句柄只有
+        一条连接，控制面事务占着它时，留痕面再走同一句柄 ⇒ 挂死（不是干净
+        报错）。
+      - 一致快照依赖 **WAL 快照语义**（deferred 只读事务）⇒ 非 WAL 模式下该
+        判据需重验。
+      - 存储时钟是**毫秒级**（实测）⇒ 租约 TTL 建议 ≥ 1s。
+
+    ⚠ 一条**两侧共有**的契约边界（不是 SQLite 的短板）：
+    版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入检测不到。
+    PostgreSQL 侧逐字同款（pgref_control_version 只出现在 pgstore/control.go）。
+
+    ⚠ 装载入口语义（SQLite 侧）：SeedRun 不覆盖 seq、**丢弃租约字段**
+    （owner / token / fence / until 置空）⇒ 与本包 BoardStore.Seed 同口径。
+
+storages:
+  # ── memory：进程内，不持久化 ─────────────────────────────────────────
+  - id: memory
+    title: 进程内内存（不持久化）
+    kind: memory
+    # 无代码根：这一档的能力全部由内核交付（内存实现没有自己的存储包）。
+    code_root: ""
+    notes: |
+      单进程不是「不用判据」：幂等键作用域与取消收口是后续扩容时不返工的前提。
+      这两项由内核交付（sideeffect / contract），内存档只是前提。
+    capabilities:
+      - id: idempotency-key-scope
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: sideeffect/key_scope.go#ActionKeyBuilder
+      - id: context-cancellation
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: contract/contract.go#RunContext
+
+  # ── examples/sqliteadapter：真 SQLite（WAL 单文件，单机单副本）─────────
+  - id: examples/sqliteadapter
+    title: 真 SQLite（WAL 单文件，单机单副本）
+    kind: sqlite
+    code_root: examples/sqliteadapter
+    notes: |
+      门面暴露 11 个面访问器（任务板 / 副作用 / 租户作用域副作用 / 进度快照 /
+      事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域
+      尾随游标 / 控制面），与 PostgreSQL 侧**同款**⇒ 门面可达性两侧对位。
+
+      租户作用域是真的具备（四个 NewTenant* 构造器 + 四个 TenantScoped() 入口 +
+      缺租户 fail-closed）⇒ 声明 tenant-scoped-storage。
+
+      **不声明** multi-process-claim / cross-process-token / database-clock：
+      单写者模型下这三项在多写者场景不成立（单机多进程一律判 PostgreSQL）。
+      这不是「还没做」，是「这个引擎给不了」——按事实判，不按「PG 那张表里有」
+      抄给 SQLite。
+    capabilities:
+      - id: taskboard-persistence
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/sqliteadapter/board.go#Store.Board
+          - kind: contract
+            ref: examples/sqliteadapter/board.go#BoardStore
+      - id: startup-recovery
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/sqliteadapter/store.go#Open
+      - id: single-store-full-state
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/sqliteadapter/apply.go#Store.Apply
+      - id: progress-reconciliation
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/sqliteadapter/snapshot.go#Store.Snapshots
+          - kind: contract
+            ref: examples/sqliteadapter/snapshot.go#SnapStore
+      - id: tenant-scoped-storage
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/sqliteadapter/tenant.go#Store.TenantEffects
+          - kind: contract
+            ref: examples/sqliteadapter/tenant.go#NewTenantEffectStore
+          - kind: contract
+            ref: examples/sqliteadapter/tenant.go#NewTenantEventStore
+          - kind: contract
+            ref: examples/sqliteadapter/tenant.go#NewTenantDownstream
+          - kind: contract
+            ref: examples/sqliteadapter/tenant.go#NewTenantTailCursorStore
+
+  # ── PostgreSQL：共享库，多副本 / 跨机 ─────────────────────────────────
+  - id: PostgreSQL
+    title: PostgreSQL（共享库，多副本 / 跨机）
+    kind: postgresql
+    code_root: examples/pgstore
+    notes: |
+      门面暴露 11 个面访问器，与 examples/sqliteadapter 侧**同款**⇒ 门面可达性
+      两侧对位（评审 I-3 的补齐结果）。
+
+      ⚠ 标 source: kernel 的几项（统一租约 / 租约续期 / 配额回收 / 作业幂等 /
+      出站禁网实测）由**内核与宿主包**交付，PostgreSQL 只是前提——不标就会让
+      读者误以为「PG 提供了作业幂等」。
+    capabilities:
+      - id: taskboard-persistence
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/board.go#BoardStore
+      - id: startup-recovery
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/schema.go#EnsureSchema
+      - id: single-store-full-state
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/store.go#Store.Apply
+      - id: progress-reconciliation
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/snapshot.go#SnapStore
+      - id: multi-process-claim
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/board.go#BoardStore
+      - id: cross-process-token
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/board.go#BoardStore
+      - id: database-clock
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/effect.go#EffectStore
+          - kind: contract
+            ref: examples/pgstore/board.go#BoardStore
+      - id: tenant-scoped-storage
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/effect.go#NewTenantEffectStore
+          - kind: contract
+            ref: examples/pgstore/event.go#NewTenantEventStore
+      - id: reliable-events
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/event.go#EventStore
+      - id: unified-lease
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: taskboard/renew.go#RenewingBoard
+      - id: lease-renewal
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: worker/managed_lease.go#LeaseSession
+      - id: quota-reclaim
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: scheduling/quota_store.go#QuotaStore
+      - id: job-idempotency
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: examples/containerbackend/k8sjob.go#K8sJob
+      - id: network-egress-enforcement
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: examples/containerbackend/k8sjobegress.go#K8sEgressProbe
+
+  # ── shared-authority-pg：多集群共享同一份权威库（部署形态）──────────
+  - id: shared-authority-pg
+    title: 共享权威 PostgreSQL（多集群共用一份权威状态）
+    kind: shared-authority
+    code_root: examples/pgstore
+    notes: |
+      这不是本仓的一个包，是**部署形态**：多集群共用同一份权威 PostgreSQL。
+      它的代码根与 PostgreSQL 同（能力由同一套参考实现交付），但权威面要求
+      控制面与任务板**同源**（authority-uniqueness）——这正是它与普通共享库
+      场景的区别。
+
+      可靠交接由 handoff 包交付（内核交付型）。
+    capabilities:
+      - id: authority-uniqueness
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/control.go#ControlStore
+      - id: reliable-events
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/event.go#EventStore
+      - id: tenant-scoped-storage
+        source: storage
+        evidence:
+          - kind: contract
+            ref: examples/pgstore/effect.go#NewTenantEffectStore
+      - id: reliable-handoff
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: handoff/desk.go#Desk
+
+  # ── regional-authority：跨区域权威（部署形态）─────────────────────────
+  - id: regional-authority
+    title: 跨区域权威（跨区域 Ownership Authority + 分区写 fence）
+    kind: regional-authority
+    # 无代码根：这一档的能力全部由内核的 ownership / handoff 包交付，
+    # 「存储」在这里是部署侧的形态选择，不是某个包。
+    code_root: ""
+    notes: |
+      跨区域 Ownership Authority 与分区写入 fence 已由 ownership 包交付；
+      多区域共享权威存储仍是部署侧的形态选择（多区域共享权威存储本身仍是
+      部署侧的选择，不是本仓某个包的属性）。
+    capabilities:
+      - id: ownership-epoch
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: ownership/ownership.go#Authority
+      - id: partition-write-fencing
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: ownership/ownership.go#Fencer
+      - id: reliable-handoff
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: handoff/desk.go#Desk
+
+# ── 已知不对称（两侧机制不同、语义同构的那类差异）────────────────────────
+#
+# 为什么要显式登记：**门禁绿 ≠ 两侧等价**。不写下来，读门禁报告的人会把
+# 「绿」读成「没差别」——那四条差异恰好都是「机制不同但语义同构」，不是能力
+# 缺失，所以任何能力表都判不出它们。
+#
+# 每条都要落在至少两个**已登记**的存储上，且落点必须能在代码里解析——
+# 登记一个假的差异比不登记更坏。
+known_asymmetries:
+  - id: batch-read-visibility
+    storages: [examples/sqliteadapter, PostgreSQL]
+    summary: |
+      批内读语义：SQLite 侧批内读走 exec.reader 路由（事务优先）⇒ **看得见**
+      本批未提交写；PostgreSQL 侧读走连接池 ⇒ **看不见**（MVCC 已提交快照）。
+      机制不同、语义同构——不是能力缺失（两侧都没承诺「批内读自己刚写的值」）。
+    evidence:
+      - kind: contract
+        ref: examples/sqliteadapter/exec.go#exec.reader
+      - kind: contract
+        ref: examples/pgstore/store.go#Store.Apply
+
+  - id: batch-cursor-write
+    storages: [examples/sqliteadapter, PostgreSQL]
+    summary: |
+      批内写游标：**PostgreSQL = 显式拒绝**（游标独立提交 ⇒ 会越过被回滚的
+      事件 ⇒ 重启后跳读 ⇒ 静默丢帧），登记进失败槽；**SQLite = 挂到 ctx 超时**
+      （写句柄 MaxOpenConns(1) 被外层事务占着）。两个后端**失败形态不同**，
+      都响亮，但形态不一样——跨后端迁移时不能假设「报错长得一样」。
+    evidence:
+      - kind: contract
+        ref: examples/pgstore/cursor.go#rejectBatchCursorWrite
+      - kind: contract
+        ref: examples/sqliteadapter/cursor.go#TailCursorStore
+
+  - id: same-store-identity
+    storages: [examples/sqliteadapter, PostgreSQL]
+    summary: |
+      「同一份存储」的判据：SQLite 侧按**文件路径**判（同一库的两个路径 /
+      符号链接 / 两处挂载 ⇒ 装配期拒，fail-closed，方向安全）；PostgreSQL 侧
+      按 host/port/database/schema 四元组判。两侧**同款口径**（都认不出
+      「同一份库的两个别名」），不是一长一短。
+    evidence:
+      - kind: contract
+        ref: examples/sqliteadapter/store.go#Store.sourceID
+      - kind: contract
+        ref: examples/pgstore/control.go#poolSourceID
+
+  - id: control-version-anchor
+    storages: [examples/sqliteadapter, PostgreSQL]
+    summary: |
+      版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入（如任务板侧的
+      写入）检测不到。**这是两侧共有的契约边界**，不是 SQLite 的短板
+      （PostgreSQL 侧逐字同款：pgref_control_version 只出现在 pgstore/control.go）。
+    evidence:
+      - kind: contract
+        ref: examples/sqliteadapter/control.go#ControlStore
+      - kind: contract
+        ref: examples/pgstore/control.go#ControlStore

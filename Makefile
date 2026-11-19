@@ -138,7 +138,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -477,7 +477,7 @@ k8s-e2e: ## K8s 出站禁网真集群验收（自建 kind+Calico 集群，跑完
 # 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -534,6 +534,14 @@ deploycheck: ## 部署配方能力清单门禁（docs/DEPLOY-MATRIX.yaml ↔ USA
 	@# readiness 由证据推导（手写结论与证据不符即红）。USAGE 的机器口径块与
 	@# 清单逐行比对——口径不一致时这条判据先响。
 	$(EXPORT) $(GOENV) go run ./cmd/deploymatrix
+
+storagecheck: ## 存储选型判据门禁（docs/STORAGE-SELECTION.yaml ↔ 部署矩阵 / 代码落点，issue #424）
+	@# 回答「什么时候用 SQLite、什么时候用 PostgreSQL」——答案不靠人记：场景声明的
+	@# storage 必须在选型声明面的允许集内 + 该 storage 必须实际提供场景必需的全部
+	@# 能力 + 「该 storage 提供该能力」的断言必须能在代码里找到落点（go/ast 判符号
+	@# 声明）。第三条是本门禁与「写份文档让人读」的分界：没有它，「SQLite 提供租户
+	@# 隔离」就成了一句没人验证的话。
+	$(EXPORT) $(GOENV) go run ./cmd/storagecheck .
 
 ledgercheck: ## 演进台账纪律门禁（单号状态一致 / 关闭 PR 号 / 无主单号，台账 §15 建议 1）
 	@# 台账回答「这条单清了没」，此前这个答案只存在于散文里，机器读不出来——
@@ -623,7 +631,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

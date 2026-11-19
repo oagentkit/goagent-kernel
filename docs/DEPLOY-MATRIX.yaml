@@ -243,11 +243,11 @@ scenarios:
 
   - id: single-host-persistent
     title: 单机持久化
-    storage: examples/sqlitestore
+    storage: examples/sqliteadapter
     worker: single-node
     required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
     readiness: available
-    notes: sqlitestore 覆盖任务板 / 副作用 / 快照 / 事件四个面，且四个面共用一份事务域（同一把锁、同一个日志、一次提交，#419 清偿 #188 的残留）。
+    notes: sqliteadapter 是真 SQLite（WAL 单文件）：门面暴露 11 个面访问器（任务板 / 副作用 / 租户作用域副作用 / 进度快照 / 事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域尾随游标 / 控制面），共用一份事务域（同一个写句柄 + 同一个库文件，一次提交，#419 清偿 #188 的残留）。
 
   - id: multi-process-same-host
     title: 同机多进程

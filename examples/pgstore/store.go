@@ -1,4 +1,4 @@
-// store.go —— 跨面 Apply：PG 参考实现的门面（四个面 + 同一次提交）。
+// store.go —— 跨面 Apply：PG 参考实现的门面（11 个面访问器 + 同一次提交）。
 //
 // # 为什么要有它
 //
@@ -72,9 +72,9 @@ import (
 	"github.com/yi-nology/goagent-kernel/controlplane"
 )
 
-// Store 聚合 PG 参考实现的四个面，供跨面原子提交用。
+// Store 聚合 PG 参考实现的 11 个面访问器，供跨面原子提交用。
 //
-// 四个面共用**同一个 pool** ⇒ 同一个数据库、同一个 schema ⇒ 跨面事务有落点。
+// 这 11 个面共用**同一个 pool** ⇒ 同一个数据库、同一个 schema ⇒ 跨面事务有落点。
 type Store struct {
 	pool *pgxpool.Pool
 }
@@ -140,13 +140,13 @@ func (s *Store) Control(aud controlplane.Auditor) *ControlStore {
 	return NewControlStore(s.pool, aud)
 }
 
-// Apply 在**一个事务**里提交四个面的变更。
+// Apply 在**一个事务**里提交各面的变更（门面暴露的 11 个面都在同一次提交里）。
 //
 // 语义：
 //   - 回调返回错误 ⇒ 整批丢弃，该错误**原样**传出（不被包装）；
 //   - 回调返回 nil，但批内任一面失败过 ⇒ 整批仍丢弃，并报出那条失败
 //     （失败被调用方吞掉时，返回 nil 等于谎报「整批提交了」）；
-//   - 回调返回 nil 且批内无失败 ⇒ 四个面的变更作为**一次提交**落库。
+//   - 回调返回 nil 且批内无失败 ⇒ 各面的变更作为**一次提交**落库。
 //
 // 实现：开一个 pgx.Tx 塞进 ctx（pgstore.WithTx，既有接缝），各面方法经
 // withinTx/withinTx2/withinTx3 → runTx 认到它 ⇒ 复用同一个 tx ⇒ 跨面变更

@@ -1538,8 +1538,16 @@ dependency_direction:
 #                                            起 go test 子进程、判失败形态（数据竞争 /
 #                                            用例挂死 / 启动期楔死）、落取证；起子进程
 #                                            与读输出是工具职责，不形成机制依赖。
+#   cmd/storagecheck                    存储选型判据门禁（2026-11-19，issue #424）：
+#                                            判 docs/STORAGE-SELECTION.yaml ↔ 部署矩阵场景
+#                                            ↔ 代码落点（go/ast 判符号声明）；读声明面与
+#                                            解析 Go 符号是工具职责，不形成机制依赖。
+#                                            它与 cmd/deploymatrix 分开：后者判「能力齐不齐」
+#                                            （红在缺能力），本门禁红在「选错引擎」——
+#                                            两件事的失败形态不同，混在一起会让「哪个门禁
+#                                            在管我」变得不可追。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -1656,7 +1664,7 @@ sandbox_providers:
   # 逐包列举，理由同 dependency_direction（issue #35）：前缀豁免会**无声地**把
   # 将来新增的 cmd 子包一起盖住。这些是工具，它们不实现 sandbox.Provider
   # （cmd/apilifecheck 为 issue #113/#104 的生命周期门禁，2026-11-12 登记同批）。
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/seamcheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/seamcheck, cmd/storagecheck, docs]
   providers:
     - id: gatecheck-managed
       level: LevelProcess
