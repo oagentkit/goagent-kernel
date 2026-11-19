@@ -51,6 +51,14 @@ type report struct {
 	staleExempt []string
 	// staleStructuralExempt 已失效的结构性豁免（没命中任何包）。
 	staleStructuralExempt []string
+	// inapplicableStructuralExempt 结构性豁免指向的包**形态不适用**
+	// （零测试文件 / 无语句）⇒ 豁免对它不生效。
+	//
+	// 它与 staleStructuralExempt 是**两件事**：后者是「包根本不在日志里」
+	// （包没了/改名了），前者是「包**在**日志里、只是形态对不上」。混在一起
+	// ⇒ 维护者照着「没有包命中这条结构性豁免」去找一个**就在日志里**的包，
+	// 找不到 ⇒ 红得说不出原因（本仓明令要避免的失败形态）。
+	inapplicableStructuralExempt []string
 	// conflictingExempt 同时登记在两张豁免表里的包（口径冲突）。
 	conflictingExempt []string
 	// undeclaredNoTest 未声明的零测试包。
@@ -63,7 +71,8 @@ type report struct {
 func (r report) ok() bool {
 	return len(r.below) == 0 && len(r.staleExempt) == 0 &&
 		len(r.staleStructuralExempt) == 0 && len(r.conflictingExempt) == 0 &&
-		len(r.undeclaredNoTest) == 0 && len(r.staleNoTestExempt) == 0
+		len(r.undeclaredNoTest) == 0 && len(r.staleNoTestExempt) == 0 &&
+		len(r.inapplicableStructuralExempt) == 0
 }
 
 // hasSuffix 按后缀匹配包路径。
@@ -99,17 +108,40 @@ func judge(results []pkgResult, o options) report {
 	hitNoTest := make([]bool, len(o.noTestExempt))
 
 	for _, res := range results {
+		// 结构性豁免的命中**先**算出来，且**不论形态**：豁免表登记的是**包**，
+		// 「包在不在日志里」与「这个包的形态适不适用」必须分开判。
+		//
+		// 混在一起的后果（本次修掉的缺陷）：零测试文件 / 无语句的包在下面两个
+		// 短路分支里 continue ⇒ 结构性豁免「没命中任何包」⇒ 报错「没有包命中
+		// 这条结构性豁免」——可那个包**就在日志里**，维护者照着去找一个**不存在**
+		// 的包。红得说不出原因，与常红同样会训练人忽略门禁。
+		si := matchIndex(o.structuralExempt, res.pkg)
+		if si >= 0 {
+			hitStructural[si] = true
+		}
 		if res.noTestFiles {
+			// 零测试文件形态归 PKG_NO_TEST_EXEMPT，**不归**结构性豁免。
 			if i := matchIndex(o.noTestExempt, res.pkg); i >= 0 {
 				hitNoTest[i] = true
 				r.noTestDeclared++
-				continue
+			} else {
+				r.undeclaredNoTest = append(r.undeclaredNoTest, res.pkg)
 			}
-			r.undeclaredNoTest = append(r.undeclaredNoTest, res.pkg)
+			if si >= 0 {
+				r.inapplicableStructuralExempt = append(r.inapplicableStructuralExempt, fmt.Sprintf(
+					"%s: 该包没有任何测试文件 ⇒ 零测试文件形态归 PKG_NO_TEST_EXEMPT，"+
+						"不归结构性豁免 ⇒ 请从 PKG_COV_STRUCTURAL_EXEMPT 移除", res.pkg))
+			}
 			continue
 		}
 		if !res.hasCoverage {
 			// `[no statements]`：不适用，既不计入分母也不判违规。
+			// 纯接口包**不进任何豁免**（既有行为）。
+			if si >= 0 {
+				r.inapplicableStructuralExempt = append(r.inapplicableStructuralExempt, fmt.Sprintf(
+					"%s: 该包没有任何可统计语句（[no statements]）⇒ 纯接口包不进任何豁免 "+
+						"⇒ 请从 PKG_COV_STRUCTURAL_EXEMPT 移除", res.pkg))
+			}
 			continue
 		}
 		// 两张豁免表各自命中哪一个，先算出来。
@@ -118,10 +150,12 @@ func judge(results []pkgResult, o options) report {
 		// 「性质决定判据不适用」⇒ 必须报出来，别默默取一个——默默取一个等于
 		// 判据自己藏起一处矛盾，下一个人读到的是一份自相矛盾的声明面。
 		ci := matchIndex(o.exempt, res.pkg)
-		si := matchIndex(o.structuralExempt, res.pkg)
 		if ci >= 0 && si >= 0 {
 			hitCoverage[ci] = true
-			hitStructural[si] = true
+			// 冲突分支也要计入计数桶：不记 ⇒ 报告里的「N 个结构性豁免」少报，
+			// 而「豁免不能静默」正是这条纪律的意图。**每个被豁免的包只数一次**
+			// ⇒ 这里计入结构性豁免桶，不重复计入普通豁免桶。
+			r.structuralExempted++
 			r.conflictingExempt = append(r.conflictingExempt, fmt.Sprintf(
 				"%s: 同时登记在 PKG_COV_EXEMPT（%s）与 PKG_COV_STRUCTURAL_EXEMPT（%s）",
 				res.pkg, o.exempt[ci], o.structuralExempt[si]))
@@ -136,7 +170,6 @@ func judge(results []pkgResult, o options) report {
 			//
 			// 它仍然是「失效即红」，只是失效判据换成「没命中任何包」
 			// （包被删了/改名了 ⇒ 豁免的对象没了 ⇒ 条目该拆）。
-			hitStructural[si] = true
 			r.structuralExempted++
 			continue
 		}
@@ -209,6 +242,13 @@ func (r report) String(o options) string {
 		for _, s := range r.staleStructuralExempt {
 			fmt.Fprintf(&b, "  - %s ⇒ 请从 PKG_COV_STRUCTURAL_EXEMPT 移除\n", s)
 		}
+	}
+	if len(r.inapplicableStructuralExempt) > 0 {
+		b.WriteString("结构性豁免指向的包形态不适用（包就在日志里，但不是它该豁免的形态）：\n")
+		for _, s := range r.inapplicableStructuralExempt {
+			fmt.Fprintf(&b, "  - %s\n", s)
+		}
+		b.WriteString("修法：零测试文件形态登记到 PKG_NO_TEST_EXEMPT；纯接口包（无语句）不进任何豁免。\n")
 	}
 	if len(r.conflictingExempt) > 0 {
 		b.WriteString("同一个包同时登记在两张豁免表里（口径冲突，必须拆掉一条）：\n")

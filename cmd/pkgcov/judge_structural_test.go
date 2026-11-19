@@ -45,6 +45,8 @@ func TestJudgeStructuralExempt(t *testing.T) {
 		conflict  int
 		// structCount 生效中的结构性豁免数（绿报告里必须看得见）。
 		structCount int
+		// inapplicable 形态不适用的结构性豁免数（见 judge_shape_test.go）。
+		inapplicable int
 	}{
 		{
 			// 正向：结构性豁免命中且覆盖率达标 ⇒ 绿。
@@ -84,11 +86,16 @@ func TestJudgeStructuralExempt(t *testing.T) {
 		{
 			// 反向：同包同时在两张表 ⇒ 红。
 			// 口径冲突必须报出来，不能默默取一个。
-			name:       "同包同时在两张表 ⇒ 红在 conflict（口径冲突必须报出来）",
-			exempt:     []string{"alpha", "beta"},
-			structural: []string{"alpha"},
-			wantOK:     false,
-			conflict:   1,
+			//
+			// structCount=1（M4）：冲突的包也被豁免了 ⇒ 计入结构性豁免计数。
+			// 豁免不能静默——计数少报一次，就是让「豁免被默默吃掉」没有信号。
+			// 逐条用例见 judge_shape_test.go（那儿带「坏实现会红」的对照断言）。
+			name:        "同包同时在两张表 ⇒ 红在 conflict（口径冲突必须报出来）",
+			exempt:      []string{"alpha", "beta"},
+			structural:  []string{"alpha"},
+			wantOK:      false,
+			conflict:    1,
+			structCount: 1,
 		},
 	}
 	for _, c := range cases {
@@ -112,6 +119,10 @@ func TestJudgeStructuralExempt(t *testing.T) {
 			}
 			if r.structuralExempted != c.structCount {
 				t.Errorf("structuralExempted = %d，期望 %d 条", r.structuralExempted, c.structCount)
+			}
+			if len(r.inapplicableStructuralExempt) != c.inapplicable {
+				t.Errorf("inapplicableStructuralExempt = %v，期望 %d 条",
+					r.inapplicableStructuralExempt, c.inapplicable)
 			}
 		})
 	}
