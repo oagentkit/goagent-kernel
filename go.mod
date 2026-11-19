@@ -31,6 +31,19 @@ go 1.27.4
 // 驱动即红）。选 pgx/v5 的理由：纯 Go（CGO_ENABLED=0 的交叉构建矩阵不受影响）、
 // v5 原生 API 自带连接池（pgxpool）与事务骨架，宿主抄参考实现时不用再引
 // database/sql 适配层。
+//
+// modernc.org/sqlite（v1.61.0 起，issue #424）：SQLite 驱动，**只被
+// examples/sqliteadapter（真 SQLite 参考实现）import**——它同样是参考实现
+// 不是内核依赖，内核各包的依赖图里没有它（policy 的 dependency_direction
+// 判着：内核包 import 驱动即红）。选 modernc.org/sqlite 的理由：纯 Go
+// （CGO_ENABLED=0 的交叉构建矩阵不受影响）、驱动名即注册名（database/sql 的
+// "sqlite"），且支持 BEGIN IMMEDIATE / RETURNING 这些落库形态要的语法。
+//
+// 代价与拆除条件：主 module 多一棵传递依赖树（modernc.org/libc / mathutil /
+// memory 等约 12 个 module）——纯 Go，但下载量、编译时间与安全发布跟进都随
+// 之上去。拆除条件——宿主形态全部转 PG，或驱动改由宿主自带而本仓退回
+// 「SQLite 落库形态规范」形态（不提供可跑适配器），则这条破例可撤（本 require
+// 与 ext_prefixes 里的 modernc.org 前缀一并撤）。
 require (
 	github.com/dop251/goja v0.0.0-20261110204830-f493a2b600d6
 	github.com/jackc/pgx/v5 v5.13.0
@@ -44,6 +57,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a
 	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.61.0
 )
 
 require (
@@ -71,12 +85,15 @@ require (
 	github.com/mailru/easyjson v0.9.2 // indirect
 	github.com/mark3labs/mcp-go v1.5.0 // indirect
 	github.com/mattn/go-colorable v0.1.11 // indirect
+	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/ncruces/go-strftime v1.1.0 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oagentkit/mcpkit v0.14.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -91,5 +108,8 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
+	modernc.org/libc v1.79.0 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.12.1 // indirect
 	mvdan.cc/sh/v3 v3.14.1 // indirect
 )
