@@ -29,6 +29,17 @@
 - **判据先于实现**：改任何判定逻辑必须同时给「坏实现会红」的反向验证用例。
 - **本轮网络现实**：`modernc.org/sqlite` v1.61.0 已在本机 module cache（含 `libc` v1.79.0 等）；v1.62.0 需要 `libc` v1.80.1，**本机 cache 缺失且 `goproxy.cn` 解析超时**。⇒ 依赖版本先按「cache 里有的」定，需要联网时改用备用代理（见 Task 1）。
 - **探针纪律**：并发/锁相关的探针，**两侧必须指向同一份数据**（本轮曾因此测出假结论）。
+- **SQLite 驱动的传递依赖离线齐备**（controller 实测，2026-11-20）：`modernc.org/sqlite` v1.61.0
+  的整棵传递依赖树**已全部在本机 module cache，无需联网**——
+  `modernc.org/libc` v1.79.0、`cc/v4` v4.30.3、`ccgo/v4` v4.37.0、`gc/v2` v2.6.5、`gc/v3` v3.2.0、
+  `goabi0` v0.2.0、`mathutil` v1.7.1、`memory` v1.12.1、`fileutil` v1.4.0、`strutil` v1.2.1、
+  `sortutil` v1.2.1、`opt` v0.2.0、`token` v1.1.0、`github.com/ncruces/go-strftime` v1.1.0、
+  `github.com/remyoudompheng/bigfft`、`golang.org/x/sys` v0.50.0、`github.com/google/uuid` v1.6.0、
+  `github.com/dustin/go-humanize` v1.1.0、`github.com/mattn/go-isatty` v0.0.24
+  ⇒ 本轮**全程离线**完成（`go mod download all` rc=0）。
+  ⚠️ **驱动参数取值形式已逐个实测**（v1.61.0）：`_synchronous=FULL` 与 `_synchronous=2` **都合法**
+  （两者都得到 `PRAGMA synchronous = 2`），只有非法值（如 `bogus`）被拒
+  ⇒ 「枚举词」与「数字」两种写法都对，别把 FULL 当成非法值。
 
 ---
 
