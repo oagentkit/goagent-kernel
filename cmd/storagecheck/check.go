@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/oekit/pkg/errors"
 	"gopkg.in/yaml.v3"
@@ -104,31 +105,47 @@ func check(root string) ([]string, []string, error) {
 		}
 	}
 	probs = append(probs, checkAsymmetries(root, sel)...)
+
+	// 场景侧（判据 1 + 判据 2 + 硬边界 + 陈旧档位）。
+	// 场景说明排在能力说明之后：先看「有哪些档位、各认领几项」，再看
+	// 「每个场景选了谁、齐不齐」——读起来是一条从面到点的链。
+	scenarioProbs, scenarioNotes := checkScenarios(m, sel, known)
+	probs = append(probs, scenarioProbs...)
+	notes = append(notes, scenarioNotes...)
+	probs = append(probs, checkWriters(m, sel)...)
+	probs = append(probs, checkStoragesReferenced(m, sel)...)
+
+	// 已知不对称的摘要：放最后（它是读报告时的补充说明，不是判定结论）。
 	for _, a := range sel.Asymmetries {
 		notes = append(notes, fmt.Sprintf("已知不对称 %s：%s", a.ID, a.Summary))
 	}
-
-	// 场景侧（判据 1 + 判据 2 + 硬边界 + 陈旧档位）。
-	probs = append(probs, checkScenarios(m, sel, known)...)
-	probs = append(probs, checkWriters(m, sel)...)
-	probs = append(probs, checkStoragesReferenced(m, sel)...)
 	return probs, notes, nil
 }
 
 // checkScenarios 逐场景判（判据 1 + 判据 2）。
-func checkScenarios(m *Matrix, sel *Selection, known map[string]bool) []string {
+//
+// 返回 (违反, 说明)。**每个场景都产出一条说明**：读门禁输出的人要能逐场景
+// 看到「这个场景选了哪个 storage、必需能力齐不齐」——只报违反不给场景全景，
+// 输出就少了可追溯性。
+//
+// 不齐时说明行**点名缺哪几项**：只说「不齐」等于让人自己去重推一遍。
+func checkScenarios(m *Matrix, sel *Selection, known map[string]bool) ([]string, []string) {
 	var probs []string
+	var notes []string
 	for _, sc := range m.Scenarios {
 		where := fmt.Sprintf("%s: 场景 %s", matrixPath, sc.ID)
 		st, ok := findStorage(sel.Storages, sc.Storage)
 		if !ok {
 			probs = append(probs, fmt.Sprintf("%s: storage %q 不在选型声明面的允许集内", where, sc.Storage))
+			notes = append(notes, fmt.Sprintf("说明 场景 %s → storage %s：storage 不在选型声明面的允许集内（必需能力未判）",
+				sc.ID, sc.Storage))
 			continue
 		}
 		provided := map[string]bool{}
 		for _, c := range st.Capabilities {
 			provided[c.ID] = true
 		}
+		var missing []string
 		for _, req := range sc.Required {
 			if !known[req] {
 				probs = append(probs, fmt.Sprintf("%s: 必需能力 %q 不在部署矩阵的能力表里", where, req))
@@ -136,10 +153,17 @@ func checkScenarios(m *Matrix, sel *Selection, known map[string]bool) []string {
 			}
 			if !provided[req] {
 				probs = append(probs, fmt.Sprintf("%s: storage %q 不提供必需能力 %q", where, sc.Storage, req))
+				missing = append(missing, req)
 			}
 		}
+		if len(missing) == 0 {
+			notes = append(notes, fmt.Sprintf("说明 场景 %s → storage %s：必需能力齐备", sc.ID, sc.Storage))
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("说明 场景 %s → storage %s：必需能力不齐（缺 %s）",
+			sc.ID, sc.Storage, strings.Join(missing, "、")))
 	}
-	return probs
+	return probs, notes
 }
 
 // checkWriters 硬边界「多写者场景不得选单写者档位」的数据化判据。

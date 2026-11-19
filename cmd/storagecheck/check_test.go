@@ -187,6 +187,46 @@ func TestCheckRejectsEmptyDeclaration(t *testing.T) {
 	requireViolation(t, probs, "没有任何存储")
 }
 
+// TestScenarioNotesCoverEveryScenario 每个场景都要有一条说明。
+//
+// 可追溯性：读门禁输出的人要能逐场景看到「这个场景选了哪个 storage、
+// 必需能力齐不齐」——只报违反不给场景全景，输出就少了这一层。
+func TestScenarioNotesCoverEveryScenario(t *testing.T) {
+	root := writeRoot(t, demoMatrix, demoSelection)
+	_, notes, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
+	}
+	joined := strings.Join(notes, "\n")
+	for _, sc := range []struct{ id, storage string }{
+		{"scene-one", "demo-store"},
+		{"scene-two", "demo-other"},
+	} {
+		want := "场景 " + sc.id + " → storage " + sc.storage
+		if !strings.Contains(joined, want) {
+			t.Fatalf("说明里必须有 %q，实得:\n%s", want, joined)
+		}
+	}
+}
+
+// TestScenarioNoteNamesMissingCapabilities 必需能力不齐 ⇒ 说明行点名缺哪几项。
+//
+// 只说「不齐」等于让人自己去重推一遍 ⇒ 必须说清缺什么。
+func TestScenarioNoteNamesMissingCapabilities(t *testing.T) {
+	m := strings.Replace(demoMatrix, "required: [cap-persist]", "required: [cap-lease]", 1)
+	root := writeRoot(t, m, demoSelection)
+	probs, notes, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
+	}
+	requireViolation(t, probs, "不提供必需能力")
+	joined := strings.Join(notes, "\n")
+	want := "场景 scene-one → storage demo-store：必需能力不齐（缺 cap-lease）"
+	if !strings.Contains(joined, want) {
+		t.Fatalf("不齐的场景必须点名缺的能力（%q），实得:\n%s", want, joined)
+	}
+}
+
 // TestCheckRejectsUnreferencedStorage 声明面里没有任何场景引用的 storage ⇒ 红。
 //
 // 陈旧声明当天即红（与仓内「陈旧包根当天即红」同款）：否则它会一直躺在
