@@ -19,7 +19,7 @@ import (
 // 判据不通过 ⇒ 真后端**一次都不被调用**。
 //
 // 这是「判据与执行不可分」的落点：若判据在别处跑、执行在这里跑，
-// 中间任何一步走错就产生「判过的 ≠ 跑的」���落差。
+// 中间任何一步走错就产生「判过的 ≠ 跑的」的落差。
 func TestManagedDoesNotDelegateOnDeny(t *testing.T) {
 	calls := 0
 	inner := countingProvider{level: sandbox.LevelOS, calls: &calls}
