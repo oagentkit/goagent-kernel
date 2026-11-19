@@ -496,7 +496,7 @@ make check
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
-| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红（当前为空）|
+| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的两张表：`PKG_COV_EXEMPT`（普通，当前为空）与 `PKG_COV_STRUCTURAL_EXEMPT`（结构性：包的性质决定通用判据不适用，自己达标不判红，但没命中任何包仍判红），两张表都失效即红|
 | `architecture-check` | 8 条规则 + 5 门包 + 各包依赖方向（包数以该命令输出为准）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
