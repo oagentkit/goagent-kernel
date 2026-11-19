@@ -69,21 +69,12 @@ func TestActionRowIntentColumnsAllOrNone(t *testing.T) {
 				if !row.hasIntent() {
 					t.Fatal("四列齐全应报告有意图")
 				}
-				// 解引用前置守卫：四列齐全时不得报错（否则完整意图也被拒）。
-				if cerr := row.intentCompleteErr(sideeffect.Key("k-guard")); cerr != nil {
-					t.Fatalf("四列齐全时解引用前置守卫不得报错: %v", cerr)
-				}
 			default: // 其余 14 种半写组合一律 fail-closed
 				if !errors.Is(err, ErrIntentIncomplete) {
 					t.Fatalf("半写行必须返回 ErrIntentIncomplete，实得 %v", err)
 				}
 				if row.hasIntent() {
 					t.Fatal("半写行不得报告有意图（否则会被当空行放行）")
-				}
-				// 解引用前置守卫（Acquire 判定路径）同样必须 fail-closed：
-				// 残缺行一旦被解引用就是 NULL panic（库层 panic 直接杀宿主进程）。
-				if cerr := row.intentCompleteErr(sideeffect.Key("k-guard")); !errors.Is(cerr, ErrIntentIncomplete) {
-					t.Fatalf("半写行在解引用前置守卫上也必须返回 ErrIntentIncomplete，实得 %v", cerr)
 				}
 			}
 		})

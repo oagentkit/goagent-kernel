@@ -135,20 +135,6 @@ func (a *actionRow) checkIntentColumns() error {
 	return nil
 }
 
-// intentCompleteErr 意图四列齐全性守卫（Acquire 判定路径的解引用前置）。
-//
-// lockAction 的 checkIntentColumns 已经在所有入口前拒掉半写行；这里再守一次
-// 是因为 Acquire 随后要解引用意图四列——守卫与解引用放在同一段里，防止将来
-// 新增入口绕过 lockAction 直接判。
-func (a *actionRow) intentCompleteErr(key sideeffect.Key) error {
-	if a.intentColumnsFilled() == 4 {
-		return nil
-	}
-	return errors.Wrap(ErrIntentIncomplete,
-		"sqliteadapter: 动作行的执行意图残缺（四列应同时为 NULL 或同时有值）",
-		"key", string(key))
-}
-
 // hasIntent 该 Key 上是否挂着一次未裁决的尝试（四列同时判）。
 func (a *actionRow) hasIntent() bool { return a.intentColumnsFilled() == 4 }
 
