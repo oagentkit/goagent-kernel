@@ -2141,6 +2141,15 @@ thresholds:
   # 却一直漏在 scan_roots 之外，于是「超长文件」「god object」两条阈值对它
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
+  #
+  # 两个 sqlite 条目是**两个不同的包**，不是同一个包改名的两种写法：
+  # examples/sqlitestore = 既有单机 SQLite 落库形态参考实现（一直在列）；
+  # examples/sqliteadapter = 2026-11-19 新增的适配器包（issue #424）。
+  # 两者都在列 ⇒ 两个包各自对下面两条阈值负责；摘掉任一条，那个包当场隐形
+  # （policy 自校验即红：「登记在 modules 段却不在 thresholds.scan_roots 段」）。
+  #
+  # 耦合提醒（Task 10 删包时必须同做）：删 examples/sqlitestore 这个包时，
+  # 必须一并摘掉这里对应的条目，否则陈旧 root 自校验当天即红。
   scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, internal/ledgerstatus, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore, examples/sqliteadapter]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
