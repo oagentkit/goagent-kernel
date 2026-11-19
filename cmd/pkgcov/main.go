@@ -20,8 +20,14 @@
 // # 三条判据（判的是三件事，故都要跑）
 //
 //  1. 已计入的包低于下限             ⇒ 红（补该包的用例，别降阈值）
-//  2. 豁免包自己达标了               ⇒ 红（豁免失效，必须当天拆除）
+//  2. 普通豁免包自己达标了            ⇒ 红（豁免失效，必须当天拆除）
 //  3. 包没有任何测试文件             ⇒ 红（见下）
+//
+// 另有一类**结构性豁免**（-structural-exempt，语义见 judge.go）：包的**性质**
+// 决定通用覆盖率判据不适用（环境依赖型）⇒ 豁免包自己达标**不**判红；
+// 但它「没命中任何包」仍判红（包没了/改名了 ⇒ 条目该拆），「命中的包形态不适用」
+// （零测试文件 / 无语句 ⇒ 豁免对它压根不适用）同样判红——**两种形态分开报**，
+// 否则维护者会照着「没有包命中」去找一个**就在日志里**的包。
 //
 // 第 3 条对应 issue #30：`go test` 对无测试文件的包输出 `? <pkg> [no test files]`，
 // 旧判据跳过这类行——这是**刻意**的（它不是「0% 覆盖」，是「不适用」），但后果是
@@ -32,9 +38,18 @@
 // # 豁免的纪律
 //
 // 豁免一旦写成一次性的空条文就会永久留着——半年后没人记得它当初为什么存在，
-// 也没人敢删。故两条豁免都「失效即红」：被豁免的对象自己达标了，就必须当天删掉
-// 那一行。这与 architecture-policy.yaml 的 exceptions 必须写 until 是同一套口径：
-// **豁免可以有，但不能静默，也不能无期限。**
+// 也没人敢删。故**各张豁免表**都「失效即红」，但**失效的判据按类别不同**
+// （逐类见下 ⚠️ 段）：**普通豁免**（-exempt）的失效是「被豁免的对象自己达标了」
+// ⇒ 当天删掉那一行。这与 architecture-policy.yaml 的 exceptions 必须写 until
+// 是同一套口径：**豁免可以有，但不能静默，也不能无期限。**
+//
+// ⚠️「失效」的判据**按豁免类别不同**（2026-11-20）：普通豁免（-exempt）的失效
+// 是「自己达标了」（还缺用例这件事没了）；结构性豁免（-structural-exempt）的失效
+// 是「没命中任何包」（多半是包被删了/改名了）或「命中的包形态不适用」
+// （零测试文件 / 无语句 ⇒ 豁免对它压根不适用）；零测试豁免（-no-test-exempt）
+// 的失效是「该包已有测试文件或不存在」。拿「自己达标」当结构性豁免的失效
+// 信号 = 把「本机碰巧有 PostgreSQL」当成「该拆豁免了」——而那正是本次修掉的
+// 判定缺陷（同一个包、同一份代码，有 DSN 时红、无 DSN 时绿）。
 //
 // # 文件切分（按判据的一侧，不按行数）
 //
@@ -62,6 +77,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	min := fs.Float64("min", 70, "逐包覆盖率下限（百分比）")
 	exempt := fs.String("exempt", "", "覆盖率豁免：包路径后缀，逗号分隔")
 	noTestExempt := fs.String("no-test-exempt", "", "零测试文件豁免：包路径后缀，逗号分隔")
+	structuralExempt := fs.String("structural-exempt", "",
+		"结构性豁免：包路径后缀，逗号分隔（包的性质决定通用判据不适用，不受「自己达标即红」约束）")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -79,7 +96,12 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	o := options{min: *min, exempt: splitList(*exempt), noTestExempt: splitList(*noTestExempt)}
+	o := options{
+		min:              *min,
+		exempt:           splitList(*exempt),
+		structuralExempt: splitList(*structuralExempt),
+		noTestExempt:     splitList(*noTestExempt),
+	}
 	r := judge(results, o)
 	if !r.ok() {
 		reportf(stderr, "%s", r.String(o))

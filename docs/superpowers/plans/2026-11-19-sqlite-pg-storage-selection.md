@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**状态**：**已实施完毕**（2026-11-19 – 2026-11-20，按下面的 Task 逐个落地；
+其中 **Task 10 = 删除假 SQLite 并翻转口径**，commit `43b5834`）——
+**实施后现状**见文末「实施后现状」一节。
+
 **Goal:** 删掉名为 `sqlitestore` 的假 SQLite（flock + JSONL），建一个真 SQLite 适配器 `examples/sqliteadapter`（全面对齐 PG 的契约面），给 PG 补齐跨面事务，并把「何时用 SQLite / 何时用 PostgreSQL」做成门禁可判的规则。
 
 **Architecture:** 三个存储实现各司其职——`examples/reference-runtime`（内存，证判据本身对）、`examples/sqliteadapter`（真 SQLite，单机持久化，unit 层可跑）、`examples/pgstore`（PG，多副本/跨机，integration 层）。SQLite 与 PG 两包**形态同构、代码不共用**（存储层不同，耦合即锁死），正确性由同一套契约套件（`boardtest` / `sidetest` / `sidetest.RunSinkContract`）对齐。选型判据是独立门禁 `cmd/storagecheck`，声明面 `docs/STORAGE-SELECTION.yaml`，读 `docs/DEPLOY-MATRIX.yaml` 的场景表判「场景选的 storage 是否在允许集内 + 是否真提供该场景必需的全部能力 + 能力断言在代码里找得到落点」。
@@ -25,6 +29,17 @@
 - **判据先于实现**：改任何判定逻辑必须同时给「坏实现会红」的反向验证用例。
 - **本轮网络现实**：`modernc.org/sqlite` v1.61.0 已在本机 module cache（含 `libc` v1.79.0 等）；v1.62.0 需要 `libc` v1.80.1，**本机 cache 缺失且 `goproxy.cn` 解析超时**。⇒ 依赖版本先按「cache 里有的」定，需要联网时改用备用代理（见 Task 1）。
 - **探针纪律**：并发/锁相关的探针，**两侧必须指向同一份数据**（本轮曾因此测出假结论）。
+- **SQLite 驱动的传递依赖离线齐备**（controller 实测，2026-11-20）：`modernc.org/sqlite` v1.61.0
+  的整棵传递依赖树**已全部在本机 module cache，无需联网**——
+  `modernc.org/libc` v1.79.0、`cc/v4` v4.30.3、`ccgo/v4` v4.37.0、`gc/v2` v2.6.5、`gc/v3` v3.2.0、
+  `goabi0` v0.2.0、`mathutil` v1.7.1、`memory` v1.12.1、`fileutil` v1.4.0、`strutil` v1.2.1、
+  `sortutil` v1.2.1、`opt` v0.2.0、`token` v1.1.0、`github.com/ncruces/go-strftime` v1.1.0、
+  `github.com/remyoudompheng/bigfft`、`golang.org/x/sys` v0.50.0、`github.com/google/uuid` v1.6.0、
+  `github.com/dustin/go-humanize` v1.1.0、`github.com/mattn/go-isatty` v0.0.24
+  ⇒ 本轮**全程离线**完成（`go mod download all` rc=0）。
+  ⚠️ **驱动参数取值形式已逐个实测**（v1.61.0）：`_synchronous=FULL` 与 `_synchronous=2` **都合法**
+  （两者都得到 `PRAGMA synchronous = 2`），只有非法值（如 `bogus`）被拒
+  ⇒ 「枚举词」与「数字」两种写法都对，别把 FULL 当成非法值。
 
 ---
 
@@ -72,7 +87,7 @@
 | `taskboard/claim_gate_test.go` | 注释里的实现枚举 |
 | `docs/DISTRIBUTED-EVOLUTION-20261117.md` | 新增 §28；§24 落点更新；§9 单号登记 |
 
-**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）
+**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）——**已完成**（Task 10，2026-11-20，commit `43b5834`）
 
 ---
 
@@ -215,7 +230,7 @@ git commit -m "chore(policy): 登记 SQLite 驱动破例——examples/sqliteada
   - `func (s *Store) UseClock(now func() time.Time)`
   - `type exec struct { db *sql.DB; tx *sql.Tx }`
   - `func (e exec) run(ctx context.Context, fn func(tx *sql.Tx) error) error`
-  - `func (e exec) now(ctx context.Context) (time.Time, error)`
+  - `func (e exec) now(ctx context.Context, tx *sql.Tx) (time.Time, error)`
   - `func (e exec) clockOverride() func() time.Time`
 
 - [ ] **Step 1: 写失败测试：骨架行为**
@@ -3073,3 +3088,27 @@ tag 打在 **CI 全绿的提交**上；CHANGELOG 的版本段提交**只碰 CHAN
   `Downstream` / `TailCursorStore` —— 命名与 PG 同款 ✓
 - `resolveTenant(ctx, scoped, fallback) (string, error)` —— Task 6 定义，Task 4/5/7 沿用 ✓
 - `cmd/storagecheck.check(root) ([]string, []string, error)` —— Task 9 定义，测试与 main 沿用 ✓
+
+---
+
+## 实施后现状（2026-11-19 – 2026-11-20，**已实施完毕**）
+
+> 本节是**实施后的现状指针**；上面的 Task 清单**保持原样**（那是这份计划的价值）。
+> 状态：**已实施完毕**。
+
+- **假 SQLite 已删**：`examples/sqlitestore`（flock + JSONL，22 个 `.go` 文件 /
+  3358 行）于 2026-11-20 删除（Task 10，commit `43b5834`）。登记面
+  （`architecture-policy.yaml` 的 modules + thresholds.scan_roots、
+  `api-lifecycle.yaml`）与引用面（`docs/DEPLOY-MATRIX.yaml` 的 6 处 evidence）
+  **同提交**改指真适配器。
+- **真适配器已就位**：`examples/sqliteadapter`（`modernc.org/sqlite`，纯 Go）已落地，
+  门面暴露 11 个面访问器，与 PG 侧同款；`examples/pgstore` 的跨面事务（`Store.Apply`）
+  已补齐。
+- **选型门禁已上线**：`cmd/storagecheck` + 声明面 `docs/STORAGE-SELECTION.yaml`
+  （`make storagecheck`），已接进 `make check` 与 `make unit` **两层** ⇒ CI 上真的跑。
+- **口径已翻**：部署矩阵的 `single-host-persistent` 场景 storage 指向
+  `examples/sqliteadapter`；`docs/USAGE.md` 补了「存储选型」专节（三条判据 +
+  「单机多进程一律判 PostgreSQL」的硬边界 + SQLite 毫秒级时钟提示）。
+- **历史不改写**：台账 / CHANGELOG / README 版本表 / `AGENTS.md` / `docs/AI-GUIDE.md`
+  的历史段落**逐字保留**，只做**追加式**现状注。
+- **关联单号**：#424。

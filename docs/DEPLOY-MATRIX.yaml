@@ -20,6 +20,19 @@
 #   3. 场景 readiness = 必需能力里最差的那个状态；
 #   4. docs/USAGE.md 的 deploy-matrix 块必须与本文件的场景口径逐行一致。
 #
+# **与存储选型声明面的粒度关系**（本文件 ↔ docs/STORAGE-SELECTION.yaml）：
+#
+#   - 本文件的 evidence 是**面级展开**：一条能力把它的各张脸**各列一条落点**
+#     （single-store-full-state 就列了任务板 / 副作用 / 快照 / 事件四个面）；
+#   - 选型声明面的 evidence 是**事务域本体**：一条能力只指那条把各张脸收进
+#     **同一份事务域**的入口（examples/sqliteadapter/apply.go#Store.Apply）；
+#   - 两边用的是**同一个 capability id**（能力词表的唯一真相是本文件），id
+#     层面的一致性由 `make storagecheck` 判据 2 机判（场景的 storage 必须
+#     提供该场景 required 的全部能力）⇒ **不要求 ref 集合逐条相同**。
+#
+#   ⇒ 「矩阵 4 条、选型面 1 条」**不是一份漏了三条**，是同一能力的两种粒度：
+#     矩阵回答「这个能力由哪些面兑现」，选型面回答「这个引擎能不能兑现它」。
+#
 # 能力没主 = 没人推进。每条缺口都必须挂 issue（或已经落到 contract/gate 上）。
 version: 1
 
@@ -50,7 +63,7 @@ capabilities:
       - kind: contract
         ref: taskboard/taskboard.go#Board
       - kind: contract
-        ref: examples/sqlitestore/store.go#Store
+        ref: examples/sqliteadapter/board.go#Store.Board
       - kind: contract
         ref: examples/pgstore/board.go#BoardStore
 
@@ -59,7 +72,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/sqlitestore/store.go#Open
+        ref: examples/sqliteadapter/store.go#Open
       - kind: gate
         ref: test
 
@@ -69,13 +82,13 @@ capabilities:
     delivered_by: "#419"
     evidence:
       - kind: contract
-        ref: examples/sqlitestore/store.go#Store.Apply
+        ref: examples/sqliteadapter/apply.go#Store.Apply
       - kind: contract
-        ref: examples/sqlitestore/effect_store.go#EffectStore
+        ref: examples/sqliteadapter/effect.go#Store.Effects
       - kind: contract
-        ref: examples/sqlitestore/snapshot.go#SnapshotStore
+        ref: examples/sqliteadapter/snapshot.go#Store.Snapshots
       - kind: contract
-        ref: examples/sqlitestore/event.go#EventStore
+        ref: examples/sqliteadapter/event.go#Store.Events
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）
@@ -243,11 +256,11 @@ scenarios:
 
   - id: single-host-persistent
     title: 单机持久化
-    storage: examples/sqlitestore
+    storage: examples/sqliteadapter
     worker: single-node
     required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
     readiness: available
-    notes: sqlitestore 覆盖任务板 / 副作用 / 快照 / 事件四个面，且四个面共用一份事务域（同一把锁、同一个日志、一次提交，#419 清偿 #188 的残留）。
+    notes: sqliteadapter 是真 SQLite（WAL 单文件）：门面暴露 11 个面访问器（任务板 / 副作用 / 租户作用域副作用 / 进度快照 / 事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域尾随游标 / 控制面），共用一份事务域（同一个写句柄 + 同一个库文件，一次提交，#419 清偿 #188 的残留）。
 
   - id: multi-process-same-host
     title: 同机多进程

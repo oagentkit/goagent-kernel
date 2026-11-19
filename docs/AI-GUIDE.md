@@ -496,7 +496,7 @@ make check
 | `vet` | go vet | 按提示改 |
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
-| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的 `PKG_COV_EXEMPT`，失效即红（当前为空）|
+| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的两张表：`PKG_COV_EXEMPT`（普通，当前为空）与 `PKG_COV_STRUCTURAL_EXEMPT`（结构性：包的性质决定通用判据不适用，自己达标不判红，但没命中任何包仍判红），两张表都失效即红|
 | `architecture-check` | 8 条规则 + 5 门包 + 各包依赖方向（包数以该命令输出为准）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
@@ -801,6 +801,12 @@ policy 的 `forwarding_shell_max_chars`（那是给宿主留的逃生口，不�
    引到错的方向（以为是自己没权限，真因是别人在用锁）。
 4. **获取与释放两条路径一起看**：它们共享同一类瞬时故障，释放不做退避重试 ⇒ 一次
    瞬时占用就把锁留住，后续写者空转到超时。
+
+> **2026-11-19 现状注**：第 1 条举的本仓实例 `examples/sqlitestore/lock.go` 已随该包
+> 删除（它是 flock + JSONL 的文件后端，**不是 SQLite**）——现存的真 SQLite 落库在
+> `examples/sqliteadapter`，写事务用 `BEGIN IMMEDIATE` + `busy_timeout=5000`，
+> **没有平台专属 errno 判定面**。上面的做法四条本身仍然成立（那是方法论），
+> 只是「本仓实例」那一处已陈旧。
 
 ---
 

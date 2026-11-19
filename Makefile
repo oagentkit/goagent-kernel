@@ -22,9 +22,14 @@ COV_MIN  := 60
 PKG_COV_MIN := 70
 # 逐包下限的显式豁免（逗号分隔，按包路径**后缀**匹配）。**当前为空。**
 #
+# 这一类豁免的语义是「**覆盖率不达标、但可以用例补上去**」的包：拆它的方式是
+# 补用例。故「自己达标即红」对它是正确的——豁免的存在理由（还缺用例）消失的
+# 那一刻，判据就该要求拆掉它。
+#
 # 纪律同 policy 的 exceptions：豁免必须写原因 + 拆除条件，且**到期即拆**——
-# 豁免包一旦自己达到下限，cover-gate 会报「豁免失效」并拒绝变绿，
+# **普通豁免**包一旦自己达到下限，cover-gate 会报「豁免失效」并拒绝变绿，
 # 逼人当天删掉这一行，而不是让它无限期留着变成装饰。
+# （结构性豁免的失效判据不同，见下面 PKG_COV_STRUCTURAL_EXEMPT。）
 #
 # # 这里曾经有过唯一一条豁免，已当场拆除（2026-11-06，同一天）
 #
@@ -39,7 +44,36 @@ PKG_COV_MIN := 70
 # 记这一笔的原因是它验证了「失效即红」这条机制：补完用例后第一次跑 cover-gate，
 # 门禁自己报的就是「豁免失效，请从 PKG_COV_EXEMPT 移除」，而不是默默放行。
 #
-# # 现存一条结构性豁免（2026-11-12，issue #94）
+# ⚠️ examples/pgstore 原先登记在这张表里（2026-11-12，issue #94），但它的豁免
+# 理由是**环境依赖**⇒ 登记的**类别**错了（见下面 PKG_COV_STRUCTURAL_EXEMPT）。
+PKG_COV_EXEMPT :=
+# 逐包下限的**结构性豁免**（逗号分隔，按包路径**后缀**匹配）。
+#
+# 与 PKG_COV_EXEMPT 的区别在**判据语义**，不在匹配方式（两者都是后缀匹配）：
+#
+#   PKG_COV_EXEMPT             「覆盖率不达标、但可以用例补上去」的包。
+#                              豁免包自己达到下限 ⇒ 判红（豁免失效，当天拆）。
+#   PKG_COV_STRUCTURAL_EXEMPT  包的**性质**决定通用覆盖率判据不适用（环境依赖型）。
+#                              豁免包自己达标 ⇒ **不判红**（豁免的理由仍在）；
+#                              但**没命中任何包** ⇒ 仍判红（包没了/改名了 ⇒ 条目该拆）；
+#                              **命中的包形态不适用**（零测试文件 / 无语句）⇒ 仍判红
+#                              （豁免对它压根不适用 ⇒ 换表或拆除；两种形态分开报，
+#                              否则维护者会照着「没有包命中」去找一个**就在日志里**的包）。
+#
+# 为什么要分两类（2026-11-20）：原先 examples/pgstore 登记在 PKG_COV_EXEMPT 里，
+# 而它的豁免理由恰恰是「环境依赖」⇒ 同一个包、同一份代码，两种环境两种结论：
+# 本机有 PostgreSQL 时该包覆盖 80.7% ≥ 70% ⇒ 判红「豁免失效」，可豁免的理由
+# （环境依赖）一个字都没变 ⇒ 门禁在逼人写一个**假的拆除**。
+# 而「拆豁免」这条路本身是反方向的：无 DSN 时该包覆盖仅 1.5% ⇒ 拆了它，
+# CI（gates job 没有 PG service）必红 ⇒ 拆豁免 = 把本机绿换成 CI 红。
+#
+# ⚠️ 同一个包**不得**同时登记在两张表里 ⇒ 判**口径冲突**并报红。
+# 报告里**两个表项都点名** ⇒ 照着提示拆掉错的那条即可。
+# 为什么必须报出来而不是默默取一条：两张表的语义互斥（一个说「还缺用例」，
+# 一个说「性质决定通用覆盖率判据不适用」），默默取一条等于判据自己藏起一处
+# 矛盾 ⇒ 下一个人读到的是一份自相矛盾的声明面，而门禁此时是绿的。
+#
+# # 现存一条结构性豁免（2026-11-12 登记，2026-11-20 归类到本表，issue #94）
 #
 # 豁免对象是 examples/pgstore（PostgreSQL 参考存储）。原因：该包的全部用例
 # 都是**环境依赖的 integration 用例**——没有可连的 PostgreSQL 时在环境入口
@@ -51,7 +85,14 @@ PKG_COV_MIN := 70
 # verify profile）。拆除条件：**结构性豁免，无自然到期日**——与 cmd/ptcchild
 # 同型（包的性质决定了通用覆盖率判据不适用）；若将来该包长出不依赖数据库的
 # 可测逻辑，把那部分判据接进常规层即可缩窄本豁免。
-PKG_COV_EXEMPT := examples/pgstore
+#
+# ⚠️ 为什么它**不受**「自己达标即红」约束：那条判据问的是「豁免的理由还在吗」。
+# 本包的豁免理由是「包的性质」——环境依赖是**性质**，不是「用例还没写」。
+# 本机碰巧有 PostgreSQL ⇒ 覆盖率上去了，但包的性质一点没变 ⇒ 豁免该留着。
+# 反过来，「没命中任何包」（包被删了/改名了）仍判红：那时豁免的**对象**没了，
+# 这才是真失效。故本表的纪律仍是「失效即红」，只是失效的判据是「对象没了」
+# 而不是「自己达标了」。
+PKG_COV_STRUCTURAL_EXEMPT := examples/pgstore
 # 零测试文件豁免（逗号分隔，按包路径**后缀**匹配）。同样「失效即红」。
 #
 # 为什么要这条判据（issue #30）：`go test` 对无测试文件的包输出
@@ -61,7 +102,7 @@ PKG_COV_EXEMPT := examples/pgstore
 # 整包不写测试，判据一声不吭。判据分不出「合理的零测试」与「漏写测试」——
 # 那就别假装分得出，要求显式声明：要么补测试，要么在这里登记并写清为什么。
 #
-# 当前三项：
+# 当前四项：
 #   cmd/archcheck  纯 CLI 装配层（Load/Run/WriteReport 的拼装与 flag 解析）；
 #                  判定逻辑全在 archcheck 包，那里有完整用例。
 #   cmd/ptcchild   子进程夹具：不作为独立包被调用，而是由 ptc 的用例用
@@ -71,6 +112,11 @@ PKG_COV_EXEMPT := examples/pgstore
 #                  PostgreSQL 断言四条判据）——环境依赖的 integration 入口，
 #                  与 examples/pgstore 的豁免同一理由；拆装配层判据进常规层
 #                  即可缩窄。
+#
+# examples/sqliteadapter 的那条临时豁免已于 2026-11-19（issue #424，Task 2）
+# 当天拆除：那是 Task 1 登记驱动破例时的**占位包**豁免（占位包无测试文件），
+# 骨架落地并写上真用例后它即失效——豁免留着会与逐包下限判据打架（豁免包自己
+# 达标 ⇒ cover-gate 报「豁免失效，请从 PKG_NO_TEST_EXEMPT 移除」）。
 PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke
 # 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
 # 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
@@ -133,7 +179,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -238,6 +284,11 @@ cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应�
 	@# 管「没有一个包躲在大盘后面」。两者判的是两件事，故都要跑；判定细则见
 	@# cmd/pkgcov 的头注（原 scripts/pkgcov.awk，issue #36 收编为 Go 执行体）。
 	@#
+	@# 逐包下限有**两张豁免表**（语义差别见上面各自的注释块）：
+	@# PKG_COV_EXEMPT（普通：豁免包自己达到下限 ⇒ 红，当天拆）与
+	@# PKG_COV_STRUCTURAL_EXEMPT（结构性：环境依赖型，不受「自己达标即红」约束，
+	@# 但没命中任何包 ⇒ 仍红）。两张表传同一个执行体的两个 flag。
+	@#
 	@# 日志必须留到逐包判定之后再删：原实现「成功即 rm 日志」，于是逐包数字在
 	@# 判定前就已经没了——这正是它此前只能判全局的实现层原因。
 	@#
@@ -257,7 +308,7 @@ cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应�
 	  rm -f "$$log"; \
 	  exit 1; \
 	fi; \
-	if ! $(EXPORT) $(GOENV) go run ./cmd/pkgcov -min $(PKG_COV_MIN) -exempt "$(PKG_COV_EXEMPT)" -no-test-exempt "$(PKG_NO_TEST_EXEMPT)" <"$$log"; then \
+	if ! $(EXPORT) $(GOENV) go run ./cmd/pkgcov -min $(PKG_COV_MIN) -exempt "$(PKG_COV_EXEMPT)" -structural-exempt "$(PKG_COV_STRUCTURAL_EXEMPT)" -no-test-exempt "$(PKG_NO_TEST_EXEMPT)" <"$$log"; then \
 	  rm -f "$$log"; \
 	  exit 1; \
 	fi; \
@@ -472,7 +523,7 @@ k8s-e2e: ## K8s 出站禁网真集群验收（自建 kind+Calico 集群，跑完
 # 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -529,6 +580,14 @@ deploycheck: ## 部署配方能力清单门禁（docs/DEPLOY-MATRIX.yaml ↔ USA
 	@# readiness 由证据推导（手写结论与证据不符即红）。USAGE 的机器口径块与
 	@# 清单逐行比对——口径不一致时这条判据先响。
 	$(EXPORT) $(GOENV) go run ./cmd/deploymatrix
+
+storagecheck: ## 存储选型判据门禁（docs/STORAGE-SELECTION.yaml ↔ 部署矩阵 / 代码落点，issue #424）
+	@# 回答「什么时候用 SQLite、什么时候用 PostgreSQL」——答案不靠人记：场景声明的
+	@# storage 必须在选型声明面的允许集内 + 该 storage 必须实际提供场景必需的全部
+	@# 能力 + 「该 storage 提供该能力」的断言必须能在代码里找到落点（go/ast 判符号
+	@# 声明）。第三条是本门禁与「写份文档让人读」的分界：没有它，「SQLite 提供租户
+	@# 隔离」就成了一句没人验证的话。
+	$(EXPORT) $(GOENV) go run ./cmd/storagecheck .
 
 ledgercheck: ## 演进台账纪律门禁（单号状态一致 / 关闭 PR 号 / 无主单号，台账 §15 建议 1）
 	@# 台账回答「这条单清了没」，此前这个答案只存在于散文里，机器读不出来——
@@ -618,7 +677,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck ledgercheck releasecheck modreplace modwork hygiene
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

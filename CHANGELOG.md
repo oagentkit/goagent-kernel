@@ -2,6 +2,78 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.50.0] — 2026-11-20
+
+### 新增(examples/sqliteadapter)：真 SQLite 适配器——11 个面访问器共用一份事务域
+
+`examples/sqlitestore` 删掉（22 个 .go / 3358 行）：它**不是 SQLite 驱动**（名字像、行为
+不是），却占着「单机持久化」的推荐位。本轮换上**真 SQLite**（`modernc.org/sqlite` v1.61.0，
+**纯 Go 无 cgo**，WAL 单文件）：
+
+- 门面暴露 **11 个面访问器**（任务板 / 副作用 / 租户作用域副作用 / 进度快照 / 事件 /
+  租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域尾随游标 / 控制面），
+  共用一份事务域（同一个写句柄 + 同一个库文件，一次提交）。
+- 事件面是 **Outbox 形态**：ID 由水位行（每租户一行）铸造，行锁持有到事务提交 ⇒
+  **铸造序 == 提交序**；回滚不烧号 ⇒ 序列空洞结构性地不存在。
+- 已提交水位线读**水位行**、`MAX(id)` 读**事件行** ⇒ 上界关系是「水位线 ≤ MAX(id)」；
+  `MaxID` 与 `CommittedWatermark` 同值同源，**不回裸 `max(id)`**。
+- 租户作用域是真的具备：四个 `NewTenant*` 构造器 + 门面四个租户入口
+  （`TenantEffects` / `TenantEvents` / `TenantDownstream` / `TenantTailCursors`），
+  缺租户 **fail-closed**。
+- 存储时钟走 `unixepoch('subsec')`（跨进程共享的事实），但**消费面按整毫秒截断**
+  （`CAST(unixepoch('subsec') * 1000 AS INTEGER)`）⇒ **有效分辨率 1 ms**（实测相邻差
+  0/1 ms）；引擎原始 `unixepoch('subsec')` 的最小正增量约 **0.9999 ms** ⇒ 租约 TTL
+  建议 **≥ 1s**。
+
+### 新增(examples/pgstore)：跨面事务——`Store.Apply` 把各面收进同一次提交
+
+此前 PG 侧各面各自 Begin/Commit ⇒「任务做完了但没留痕」「留痕了但没做完」两类半截状态
+结构性地可能。`Store.Apply` 开一个 tx 塞进 ctx，`runTx` **认 ctx 里已有的 tx**（只改这一处，
+`withinTx` / `withinTx2` / `withinTx3` 三个泛型变体全部受益）⇒ 各面变更落在**同一次提交**里。
+另有**共享失败槽**：任一面失败，其余面都看得见。
+
+### 新增(cmd/storagecheck)：存储选型判据——何时用 SQLite、何时用 PG 机判
+
+- 声明面 `docs/STORAGE-SELECTION.yaml`：每个存储**认领**哪些能力、能力在代码里的落点
+  （`path#Symbol`，走 go/ast 判符号声明）；能力 id 的唯一真相仍是部署矩阵的能力表。
+- 三条口径：需要**跨进程 / 跨机共享写** ⇒ PostgreSQL；需要**重启后恢复**且不引入外部服务
+  进程 ⇒ SQLite；只要**进程内判据正确**、不要持久化 ⇒ memory。
+- **硬边界：单机多进程一律判 PostgreSQL**（单写者模型在多写者下退化为串行，`busy_timeout`
+  到点即失败）。这条边界**不靠 capability 归属碰巧撑着**：按 `scenario_writers`（场景形态 →
+  并发写者数）与 `max_writers`（存储 → 写者上限）两张数据表判 ⇒ 多写者场景选了单写者档位
+  **当场红**。
+- 已知不对称逐条登记（批内读可见性 / 批内写游标的失败形态 /「同一份存储」的身份口径 /
+  版本锚边界 / 建表入口公开面不对位）。
+- 入口：`make storagecheck`；人读口径：`docs/USAGE.md` §3.17。
+
+### 修复(examples/pgstore)：失败槽逐点承重 + 批内游标显式拒绝 + 门面可达性对位
+
+- **失败槽逐点覆盖**：评审实测拆掉若干登记点后全套仍绿 ⇒「失败即作废整批」在这些路径上是
+  假的，且**栅栏面一条面向失败的用例都没有**。逐登记点补判据：8 个**可达**登记点各自单独
+  拆掉 ⇒ 各自打红。
+- **批内写游标显式拒绝**：游标走 `pool.Exec` 独立提交 ⇒ 批内写游标会在外层回滚时已经落库 ⇒
+  游标越过被回滚的事件 ⇒ 重启后跳读 ⇒ **静默丢帧** ⇒ 改为显式拒绝。
+- **门面可达性对位**：PG 侧门面与 `examples/sqliteadapter` 侧**同款**（11 个面访问器）。
+
+### 修复(policy)：登记 SQLite 驱动破例——驱动只进示例包的依赖图
+
+`modernc.org/sqlite` v1.61.0 作为**驱动破例**登记：只被 `examples/sqliteadapter` import，
+内核包 import 驱动即红（policy 的 dependency_direction 判着）；`scan_roots` 先后收录过两个
+sqlite 示例包（`sqlitestore` 先在列、`sqliteadapter` 后追加），随 `examples/sqlitestore`
+删除**同摘** ⇒ 现在只剩 `examples/sqliteadapter`。破例的代价与拆除条件写进 `go.mod` 与 policy。
+
+### 文档(台账 / USAGE)：第十九轮台账 §28 + 选型口径的人读入口
+
+- 台账 `docs/DISTRIBUTED-EVOLUTION-20261117.md` 新增 **§28**：删假 SQLite / 建真适配器 /
+  PG 跨面事务 / 建选型判据门禁；#188 的 JSONL 后端落点**由 #424 取代**；三条实测事实
+  （毫秒级存储时钟 / 事件 ID 无空洞 / 水位线 ≠ 事件表 MAX(id)）；选型口径三条 + 硬边界；
+  下一阶段建议（PG 快照面缺序号溢出守卫 ⇒ **#425**，本轮未修，如实留 open）。
+- §9 登记表新增 #424 与 #425 两行（#425 是本轮实测坐实的**真缺陷**，本轮未修）；§9.1 的
+  #188 行记着历史落点被取代；§6 / §7 的活面按「只追加、不改写」处置，历史面一字未动。
+- `docs/USAGE.md` §3.17：选型口径的人读入口（三条判据 + SQLite 侧三条前提 + 四个坑）。
+- README「下游升级须知」补 v0.50.0 行：删 `examples/sqlitestore` + 依赖地板新增
+  `modernc.org/sqlite` ⇒ 下游要 `go mod tidy`；内核包的公开契约面逐字未变。
+
 ## [v0.49.3] — 2026-11-19
 
 ### 新增(archcheck)：tenant_gate 登记面专用推导根 `tenant_table_type_roots`（#177 收编缺口）

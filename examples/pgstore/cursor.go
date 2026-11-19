@@ -66,7 +66,13 @@ func (s *TailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) 
 //
 // 失败返回 error，调用方（Tailer）只 warn 不停摆——游标落后只会导致重启后
 // 重读（订阅侧幂等吸收），方向安全。
+//
+// ⚠ **批次进行中 ⇒ 显式拒绝**（见 rejectBatchCursorWrite）：游标走独立提交 ⇒
+// 批内写游标会越过被回滚的事件 ⇒ 重启后跳读 ⇒ 静默丢帧。
 func (s *TailCursorStore) SaveCursor(ctx context.Context, cursor uint64) error {
+	if err := rejectBatchCursorWrite(ctx); err != nil {
+		return err
+	}
 	return saveCursor(ctx, s.pool, s.consumer, cursor)
 }
 
@@ -99,6 +105,16 @@ func NewTenantTailCursorStore(pool *pgxpool.Pool, consumer string) *TenantTailCu
 
 var _ eventbus.CursorStore = (*TenantTailCursorStore)(nil)
 
+// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
+//
+// 租户作用域型恒为 true（**类型本身就是声明**）——保留这个自检口是为了让宿主
+// 对两种游标面用同一段装配期断言：把「忘记装配」变成**启动期失败**，而不是
+// 运行期的跨租户可见（副作用面的 TenantScoped 同款用途）。
+//
+// ⚠ 默认型 TailCursorStore **没有**该方法（它不解析租户 ⇒ 无从声明）——与
+// SQLite 侧同款（两侧现状一致，不是一边漏了）。
+func (s *TenantTailCursorStore) TenantScoped() bool { return true }
+
 // LoadCursor 读当前租户上次保存的游标（缺租户上下文 ⇒ tenant.ErrNoContext）。
 func (s *TenantTailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) {
 	t, err := resolveTenant(ctx, true, "")
@@ -109,12 +125,45 @@ func (s *TenantTailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, e
 }
 
 // SaveCursor 保存当前租户的游标（缺租户上下文 ⇒ tenant.ErrNoContext）。
+//
+// ⚠ **批次进行中 ⇒ 显式拒绝**（见 rejectBatchCursorWrite）：游标走独立提交 ⇒
+// 批内写游标会越过被回滚的事件 ⇒ 重启后跳读 ⇒ 静默丢帧。
+//
+// 拒绝**先于**租户解析：批次内的写游标一律按「批内写游标」拒（否则缺租户的
+// 拒绝会顶掉它 ⇒ 拒绝进不了失败槽 ⇒ 吞掉它就静默半提交）。
 func (s *TenantTailCursorStore) SaveCursor(ctx context.Context, cursor uint64) error {
+	if err := rejectBatchCursorWrite(ctx); err != nil {
+		return err
+	}
 	t, err := resolveTenant(ctx, true, "")
 	if err != nil {
 		return err
 	}
 	return saveCursor(ctx, s.pool, tenantCursorKey(t, s.consumer), cursor)
+}
+
+// rejectBatchCursorWrite 批次进行中时**拒绝**写游标。
+//
+// 为什么必须显式拒绝（而不是「让它独立提交」）：游标走 pool.Exec ⇒ 另有连接
+// ⇒ **独立提交** ⇒ 批内写游标会在外层回滚时**已经落库** ⇒ 游标越过被回滚的
+// 事件 ⇒ 重启后从更后面续读 ⇒ **静默丢帧**（全程没有任何报错）。
+//
+// ⚠ 与 SQLite 侧的失败形态**不同**（Task 9 的选型声明面要写清这条差异）：
+//   - SQLite 侧批内写游标 ⇒ **挂到 ctx 超时**（响亮，但慢：写句柄只有一条
+//     连接，内层等外层释放）；
+//   - PG 侧批内写游标 ⇒ 本函数**显式拒绝**（不挂死、不静默半提交）。
+//
+// 拒绝要**登记进共享失败槽**：调用方吞掉这个错误时，本批仍必须作废。
+//
+// 读路径不管（游标读在批内无危害；「失败即作废整批」的承诺只覆盖写路径，与
+// 既有口径一致）。
+func rejectBatchCursorWrite(ctx context.Context) error {
+	if batchFrom(ctx) == nil {
+		return nil
+	}
+	err := errors.New("pgstore: 批次内禁止写游标（游标独立提交 ⇒ 会越过被回滚的事件 ⇒ 重启后跳读）")
+	failBatch(ctx, err)
+	return err
 }
 
 // tenantCursorKey 把 (tenant, consumer) 拼成 pgref_tail_cursor.consumer 的

@@ -2363,7 +2363,7 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | 场景 | 推荐存储 | Worker 模式 | 必需能力 | 当前状态 |
 |---|---|---|---|---|
 | `single-process-agent` 单进程 Agent | memory | single-process | 幂等键作用域、Context 取消 | available |
-| `single-host-persistent` 单机持久化 | examples/sqlitestore | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
+| `single-host-persistent` 单机持久化 | examples/sqliteadapter | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
 | `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
 | `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | available |
 | `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |
@@ -2373,6 +2373,10 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 **怎么用**：先按目标场景选存储 / Worker 模式，再把 `required` 列里的能力逐条
 对到清单的 `evidence`。`partial` / `missing` 的条目都挂着 issue——它们是**有主
 的缺口**，不是「文档里没写所以不存在」。
+
+**选哪个存储**：矩阵只给「这个场景需要哪些能力」，**选型判据**（三条判据 +
+「单机多进程一律判 PostgreSQL」的硬边界 + SQLite 毫秒级时钟）在 §3.17
+「存储选型」——机器口径在 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)。
 
 ---
 
@@ -2538,6 +2542,70 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
   `Resource` / `Amount` 是**预占时的快照**，带错字段也只会归还那一笔原始预占。
 - **`MemQuotaStore` 上生产**。多副本部署下每个副本各记一份账 ⇒ 超卖 N 倍。
 
+### 3.17 存储选型：什么时候用 SQLite、什么时候用 PostgreSQL（issue #424）
+
+**三条判据，按顺序问**（机器口径在
+[docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)，`make storagecheck` 逐条判）：
+
+1. **需要跨进程 / 跨机共享写**（多副本、多机、K8s）⇒ **PostgreSQL**。
+2. **需要重启后恢复，且不想为此多起一个服务进程** ⇒ **SQLite**
+   （单文件 WAL 库，参考实现 `examples/sqliteadapter`）。
+3. **只要进程内判据正确、不要持久化** ⇒ **memory**（进程内实现，不落库）。
+
+**边界写死：单机多进程一律判 PostgreSQL。** SQLite 的单写者模型在多写者下
+退化为串行，`busy_timeout` 到点即失败（可判、不静默丢写，但可用性下降）
+⇒ 同机多进程（两个 Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
+这条边界不是靠记性维持的：门禁按「场景形态 → 并发写者数」与「存储 → 写者上限」
+两张数据表判，**多写者场景选了单写者档位当场红**。
+
+**SQLite 侧的三条前提**（不是能力，是用它的前提）：
+
+- **存储时钟是毫秒级**（实测）⇒ **租约 TTL 建议 ≥ 1s**——秒级以下的 TTL 会被
+  时钟分辨率吃掉，过期判定的边界行为不可预期。
+- **留痕写路径要独立句柄**：控制面事务占着写句柄时，留痕面再走同一句柄会挂死
+  （不是干净报错）⇒ 审计 / 留痕走独立句柄（进程内或独立库）。
+- **一致快照依赖 WAL 快照语义**（deferred 只读事务）⇒ 非 WAL 模式下该判据需重验。
+
+**怎么落地**：场景 → 存储的对应关系在
+[docs/DEPLOY-MATRIX.yaml](DEPLOY-MATRIX.yaml)（`single-host-persistent` →
+`examples/sqliteadapter`；`multi-process-same-host` / `k8s-single-cluster` →
+`PostgreSQL`），**选型声明面**在
+[docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)——那里逐条写了每个存储
+**认领**哪些能力、能力在代码里的落点（`path#Symbol`，`make storagecheck`
+走 go/ast 判符号声明）。两份声明面不许脱节：能力 id 的唯一真相是部署矩阵的
+能力表，矩阵里删了能力而选型面还认领它（或反过来谁都不认领），当场红。
+（两份声明面的 **evidence 粒度不同**：部署矩阵是**面级展开**（一条能力把各张脸
+各列一条落点），选型面是**事务域本体**（一条能力只指那条把各张脸收进同一份
+事务域的入口）⇒ **不矛盾**，id 层面的一致性由 `make storagecheck` 判据 2 机判。）
+
+#### 已登记的已知不对称（两侧**确有**行为差异的部分）
+
+选型面把两侧**已知不等价**的地方逐条登记在 `known_asymmetries` 段，`make storagecheck`
+逐条判（落点可解析 / 落在 ≥2 个不同存储上 / summary 非空），并把摘要打进门禁输出：
+
+| id | 一句话 |
+|---|---|
+| `batch-read-visibility` | 批内读：SQLite 侧**看得见**本批未提交写，PG 侧**看不见**（MVCC 已提交快照）——机制不同、语义同构，不是能力缺失 |
+| `batch-cursor-write` | 批内写游标：PG 侧**显式拒绝**（游标独立提交会越过被回滚的事件 ⇒ 静默丢帧），SQLite 侧**挂到 ctx 超时**——都响亮，但**失败形态不同** |
+| `same-store-identity` | 「同一份存储」的判据：SQLite 侧按**文件路径**判（两个路径 / 符号链接 / 两处挂载 ⇒ 装配期拒），PG 侧按 **host/port/database/schema** 四元组判——两侧同款口径 |
+| `control-version-anchor` | 版本锚只被**控制面自身的提交**推进 ⇒ 检测不到控制面之外的写入——**两侧共有**的契约边界，不是 SQLite 的短板 |
+| `facade-schema-bootstrap` | 建表入口的公开面**不对位**：SQLite 侧有 `Store.EnsureSchema`，PG 侧是**包级函数** `pgstore.EnsureSchema` ⇒ 只持门面的宿主在 PG 侧拿不到建表入口 |
+
+⇒ **跨引擎迁移时别假设两侧行为一致**（尤其「批内读看得见什么」「批内写游标怎么报错」）。
+逐条全文与落点见 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml) 的
+`known_asymmetries` 段。
+
+#### 坑
+
+- **按「数据量小」选 SQLite**。判据是**写者数**与**要不要恢复**，不是数据量
+  ——单写者下 SQLite 完全够用，多写者下它一定降级。
+- **同机跑两个 Worker 进程，还当自己是「单机」**。进程数 ≥ 2 ⇒ 写者数 ≥ 2 ⇒
+  按硬边界判 PostgreSQL。
+- **把毫秒级存储时钟当高精度时钟用**。租约 / 过期判定按亚秒 TTL 计算 ⇒
+  边界不可预期 ⇒ TTL 取 ≥ 1s。
+- **拿 SQLite 当「不用起 PG」的免维护方案**。它省掉的是**服务进程**，不是
+  **运维**：WAL 文件、备份、跨机共享都得自己安排。
+
 ---
 ## 4. 门禁与提交前检查
 
@@ -2570,6 +2638,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
+| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点——见 `docs/STORAGE-SELECTION.yaml` |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |

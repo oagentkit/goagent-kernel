@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "declarations": 93,
-  "callsites": 438,
+  "callsites": 439,
   "fully_written": 5,
   "seams": [
     {
@@ -92,7 +92,7 @@
     {
       "id": "controlplane.Auditor",
       "kind": "interface",
-      "callsites": 2,
+      "callsites": 3,
       "written": [
         "blocking",
         "panic"

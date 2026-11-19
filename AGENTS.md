@@ -1362,6 +1362,14 @@ macOS / Linux 走 flock 路径，永远绿；判据只在目标平台的 CI 上�
    一次瞬时故障把整台存储卡住。本轮抽出 `removeWithRetry(path, budget)`（平台无关，
    本地可测），Windows 侧用它释放。
 
+> **2026-11-19 现状注**（不改写上文的事故记录，只补一句免得指错路）：上文判据所在的
+> `examples/sqlitestore` 已删除——它是 **flock + JSONL 的文件后端，不是 SQLite**
+> （本轮由真 SQLite 适配器 `examples/sqliteadapter` 接管单机持久化场景）。它的
+> `lock.go` / `lock_unix.go` / `lock_windows.go` 与那套 errno 判定面**都不存在了**：
+> 现存的真 SQLite 落库用 `BEGIN IMMEDIATE`（先拿写锁）+ `busy_timeout=5000`
+> 表达同一纪律，**没有平台专属 errno 分支** ⇒ 上文第 1 条在 SQLite 侧已无对应实现，
+> 别照着旧文件路径去找。
+
 **验证**：6 条变异（去掉 accessDenied 分支 / 去掉 sharingViolation 分支 / 屏蔽
 `os.IsExist` / 把 nil 判成占用 / 释放时不认「文件已不存在」/ 释放后谎报未删除）
 **全部打红**，还原后全绿；`GOOS=windows` 的包与**用例二进制**交叉编译均绿；
