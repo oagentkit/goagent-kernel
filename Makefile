@@ -61,7 +61,7 @@ PKG_COV_EXEMPT := examples/pgstore
 # 整包不写测试，判据一声不吭。判据分不出「合理的零测试」与「漏写测试」——
 # 那就别假装分得出，要求显式声明：要么补测试，要么在这里登记并写清为什么。
 #
-# 当前三项：
+# 当前四项：
 #   cmd/archcheck  纯 CLI 装配层（Load/Run/WriteReport 的拼装与 flag 解析）；
 #                  判定逻辑全在 archcheck 包，那里有完整用例。
 #   cmd/ptcchild   子进程夹具：不作为独立包被调用，而是由 ptc 的用例用
@@ -71,7 +71,15 @@ PKG_COV_EXEMPT := examples/pgstore
 #                  PostgreSQL 断言四条判据）——环境依赖的 integration 入口，
 #                  与 examples/pgstore 的豁免同一理由；拆装配层判据进常规层
 #                  即可缩窄。
-PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke
+#   examples/sqliteadapter  占位包声明（issue #424，Task 1 登记驱动破例时落地）：
+#                  依赖方向门禁要求「新包先在 architecture-policy.yaml 登记」，
+#                  而 policy 自校验要求「登记的包根必须真实存在」——两条合起
+#                  来逼着登记当天就得有落地的包目录，否则门禁当场红（陈旧包根
+#                  当天即红）。本包此刻只有包声明，适配器实现与契约套件随
+#                  Task 2 落地。拆除条件：**临时豁免，Task 2 生效即拆**——
+#                  Task 2 一给该包写上真用例，cover-gate 就会报「豁免失效，
+#                  请从 PKG_NO_TEST_EXEMPT 移除」，当天必须删掉这一行。
+PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke,examples/sqliteadapter
 # 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
 # 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
 # 那个版本」是两件事：命令在 PATH 里只说明门禁会跑，不说明跑的是同一套判据。
