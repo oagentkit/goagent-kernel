@@ -54,7 +54,7 @@ var (
 // exec.reader。SQLite 没有 MVCC，读并发靠「读者用自己的连接读已提交快照」
 // 实现 ⇒ 只读句柄必须在适配器层显式提供（PG 侧由引擎内生，故 PG 侧不分池）。
 func (s *Store) Board() *BoardStore {
-	return &BoardStore{exec: exec{db: s.db, read: s.read}, store: s}
+	return &BoardStore{exec: s.execBase(), store: s}
 }
 
 // UseClock 注入时钟（boardtest.ClockedBoard 硬要求）。
@@ -82,13 +82,24 @@ func (b *BoardStore) clockSource() func() time.Time {
 	return nil
 }
 
-// execIn 造一个事务内的执行位置（带 clock —— 漏了会让注入时钟静默失效）。
+// execIn 造一个事务内的执行位置（共享工厂在 Store 上，见 Store.execIn）。
 //
-// ⚠ 事务内的执行位置一律走这里，**不要**手搓 exec{db, tx}：手搓时漏掉
-// clock 字段 ⇒ 事务内读到的是存储时钟而不是注入的假时钟 ⇒ 时钟口径漂移
-// 且门禁不红（Task 2 评审 M2 就是这条同型的坑）。
+// 这里只做一件事：把**面级**解析出的时钟交给共享工厂——构造点只有一处，
+// 「漏 clock」没有发生的地方。
+//
+// ⚠ 时钟必须由**面**给：契约套件注入的是**面级**时钟（ClockedBoard.UseClock），
+// 若工厂只取 Store 级时钟 ⇒ 板面级注入失效 ⇒ 过期判定读不到注入时钟 ⇒
+// 套件立刻红。
 func (b *BoardStore) execIn(tx *sql.Tx) exec {
-	return exec{db: b.exec.db, read: b.exec.read, tx: tx, clock: b.clockSource()}
+	if b.store == nil {
+		// 防御分支：BoardStore 只由 Store.Board() 造 ⇒ b.store 必非 nil。
+		// 仍按同一口径补上 tx 与 clock（面里不另抄一份构造逻辑）。
+		e := b.exec
+		e.tx = tx
+		e.clock = b.clockSource()
+		return e
+	}
+	return b.store.execIn(tx, b.clockSource())
 }
 
 // boardRow 任务行（内部表示）。

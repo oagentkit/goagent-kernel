@@ -137,6 +137,26 @@ func (s *Store) Path() string { return s.path }
 
 // exec 造一个**独立事务**的执行位置（判据单一来源的入口）。
 //
-// 事务内的执行位置由调用方在拿到 tx 后另造（exec{db, tx}）——两者共用同一套
-// 判据函数，只是「谁负责提交」不同。
+// 事务内的执行位置走共享工厂 Store.execIn——两者共用同一套判据函数，只是
+// 「谁负责提交」不同。
 func (s *Store) exec() exec { return exec{db: s.db, read: s.read, clock: s.clock} }
+
+// execBase 造一个**面级**执行位置的基座（**不带时钟**）。
+//
+// 为什么不带时钟：面级时钟在**调用时**解析（见 BoardStore.clockSource）——
+// 构造时抓一份 ⇒ 「先 UseClock(A) 再 Board() 再 UseClock(B)」这一顺序会让面
+// 继续用旧时钟 A ⇒ 时钟口径漂移且门禁不红。
+func (s *Store) execBase() exec { return exec{db: s.db, read: s.read} }
+
+// execIn 造一个**事务内**的执行位置（带 clock —— 漏了会让注入时钟静默失效）。
+//
+// 为什么放 Store 而不是每个面一份：面各抄一份 ⇒ 迟早有一份漏 clock ⇒
+// 注入时钟在该面上静默失效 ⇒ 时钟口径漂移且门禁不红（Task 2 评审 M2、
+// Task 3 评审同型）。构造点集中在一处 ⇒ 「漏 clock」没有发生的地方。
+//
+// clock 由**面**传入（面级注入优先 ⇒ Store 级 ⇒ nil，见 BoardStore.clockSource）：
+// 契约套件注入的是**面级**时钟（boardtest.ClockedBoard.UseClock），若这里只取
+// s.clock ⇒ 板面级注入失效 ⇒ 过期判定读不到注入时钟 ⇒ 套件立刻红。
+func (s *Store) execIn(tx *sql.Tx, clock func() time.Time) exec {
+	return exec{db: s.db, read: s.read, tx: tx, clock: clock}
+}
