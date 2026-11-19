@@ -20,6 +20,9 @@
 #   - storage：落点在该存储自己的代码根（code_root）下 ⇒ 该存储**自证**；
 #   - kernel ：落点在内核 / 宿主包里 ⇒ 能力由内核交付，存储只是前提。
 # 标注与代码位置对不上就是声明面在撒谎 ⇒ 报红（不写标注也红）。
+#
+# 能力落点一律指**门面访问器**（宿主真正拿到的那扇门），不指门面下一层的
+# 面级类型或包级构造器——比对口径是「门面可达性」，两侧必须同款。
 version: 1
 
 policy:
@@ -34,6 +37,10 @@ policy:
     ⇒ 同机多进程场景的 storage 必须是 PostgreSQL；这一条是 capability 归属
     的直接后果（multi-process-claim / cross-process-token / database-clock
     三项不声明给 SQLite）。
+
+    ⚠ 这条边界**不靠 capability 归属碰巧撑着**：归属一旦被人改错，硬边界就会
+    跟着失效（归属错了也不红是最贵的形态）⇒ 边界由下面两段**数据**机器判：
+    scenario_writers（场景形态 → 并发写者数）与 max_writers（存储 → 写者上限）。
 
     ⚠ SQLite 侧的三条**前提**（不是能力，是用它的前提）：
       - 审计 / 留痕的写路径必须走**独立句柄**（进程内 / 独立库）。写句柄只有
@@ -50,6 +57,37 @@ policy:
     ⚠ 装载入口语义（SQLite 侧）：SeedRun 不覆盖 seq、**丢弃租约字段**
     （owner / token / fence / until 置空）⇒ 与本包 BoardStore.Seed 同口径。
 
+  # 口径里**必须**含有的关键文本（门禁逐条核对，不只判非空）。
+  #
+  # 为什么逐条列出来：只判 policy.notes 非空的话，把口径删到只剩一句空话
+  # 照样绿 ⇒ 派单要的「在输出里让人看得见」那半边就废了。
+  # 关键文本是**数据**——门禁代码里不写死任何口径词。
+  required_texts:
+    - id: single-writer-hard-boundary
+      keywords: ["单机多进程一律判 PostgreSQL"]
+    - id: sqlite-audit-independent-handle
+      keywords: ["独立句柄"]
+    - id: sqlite-wal-snapshot
+      keywords: ["WAL"]
+    - id: sqlite-millisecond-clock
+      keywords: ["毫秒"]
+
+# 场景形态 → 该形态的并发写者数（数据）。
+#
+# 键 = 部署矩阵里场景的 worker 取值。门禁代码里不许出现这些形态词 ⇒ 它们
+# 只能作为**数据**存在在这里。
+#
+# 语义 = 该形态**至少**有几个并发写者：单写者形态是 1，多写者形态一律 ≥ 2。
+# 写者上限由每个 storage 的 max_writers 给出 ⇒ 「多写者场景选了单写者档位」
+# 当场红（不靠 capability 归属碰巧兜着）。
+scenario_writers:
+  single-process: 1
+  single-node: 1
+  multi-process: 2
+  deployment: 2
+  local-workers: 2
+  regional-workers: 2
+
 storages:
   # ── memory：进程内，不持久化 ─────────────────────────────────────────
   - id: memory
@@ -57,6 +95,8 @@ storages:
     kind: memory
     # 无代码根：这一档的能力全部由内核交付（内存实现没有自己的存储包）。
     code_root: ""
+    # 写者上限：进程内单写者。
+    max_writers: 1
     notes: |
       单进程不是「不用判据」：幂等键作用域与取消收口是后续扩容时不返工的前提。
       这两项由内核交付（sideeffect / contract），内存档只是前提。
@@ -77,16 +117,20 @@ storages:
     title: 真 SQLite（WAL 单文件，单机单副本）
     kind: sqlite
     code_root: examples/sqliteadapter
+    # 写者上限：单写者模型 ⇒ 1。并发写者场景选它 ⇒ 门禁当场红。
+    max_writers: 1
     notes: |
       门面暴露 11 个面访问器（任务板 / 副作用 / 租户作用域副作用 / 进度快照 /
       事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域
       尾随游标 / 控制面），与 PostgreSQL 侧**同款**⇒ 门面可达性两侧对位。
+      建表入口挂在 Store 上（公开方法 EnsureSchema）——PG 侧没有等价物，见
+      known_asymmetries 里的 facade-schema-bootstrap。
 
       租户作用域是真的具备（四个 NewTenant* 构造器 + 四个 TenantScoped() 入口 +
       缺租户 fail-closed）⇒ 声明 tenant-scoped-storage。
 
       **不声明** multi-process-claim / cross-process-token / database-clock：
-      单写者模型下这三项在多写者场景不成立（单机多进程一律判 PostgreSQL）。
+      单写者模型下这三项在多写者场景不成立（单机多进程一律判 PG）。
       这不是「还没做」，是「这个引擎给不了」——按事实判，不按「PG 那张表里有」
       抄给 SQLite。
     capabilities:
@@ -95,13 +139,13 @@ storages:
         evidence:
           - kind: contract
             ref: examples/sqliteadapter/board.go#Store.Board
-          - kind: contract
-            ref: examples/sqliteadapter/board.go#BoardStore
       - id: startup-recovery
         source: storage
         evidence:
           - kind: contract
             ref: examples/sqliteadapter/store.go#Open
+          - kind: contract
+            ref: examples/sqliteadapter/schema.go#Store.EnsureSchema
       - id: single-store-full-state
         source: storage
         evidence:
@@ -112,8 +156,6 @@ storages:
         evidence:
           - kind: contract
             ref: examples/sqliteadapter/snapshot.go#Store.Snapshots
-          - kind: contract
-            ref: examples/sqliteadapter/snapshot.go#SnapStore
       - id: tenant-scoped-storage
         source: storage
         evidence:
@@ -133,9 +175,12 @@ storages:
     title: PostgreSQL（共享库，多副本 / 跨机）
     kind: postgresql
     code_root: examples/pgstore
+    # 写者上限：连接池多连接 ⇒ 不设上限。
+    max_writers: unlimited
     notes: |
-      门面暴露 11 个面访问器，与 examples/sqliteadapter 侧**同款**⇒ 门面可达性
-      两侧对位（评审 I-3 的补齐结果）。
+      门面暴露 11 个面访问器（与 examples/sqliteadapter 侧**同款**）⇒ 门面可达性
+      两侧对位（评审 I-3 的补齐结果）。能力落点一律指门面访问器，不指门面
+      下一层的面级类型。
 
       ⚠ 标 source: kernel 的几项（统一租约 / 租约续期 / 配额回收 / 作业幂等 /
       出站禁网实测）由**内核与宿主包**交付，PostgreSQL 只是前提——不标就会让
@@ -145,9 +190,12 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/board.go#BoardStore
+            ref: examples/pgstore/store.go#Store.Board
       - id: startup-recovery
         source: storage
+        # ⚠ **无门面等价物**：PG 的 Store 没有公开的建表入口（SQLite 侧有，
+        # 见 known_asymmetries 的 facade-schema-bootstrap）⇒ 这条能力只能指
+        # 包级函数。这是**事实差异**，不是漏写。
         evidence:
           - kind: contract
             ref: examples/pgstore/schema.go#EnsureSchema
@@ -160,36 +208,36 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/snapshot.go#SnapStore
+            ref: examples/pgstore/store.go#Store.Snapshots
       - id: multi-process-claim
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/board.go#BoardStore
+            ref: examples/pgstore/store.go#Store.Board
       - id: cross-process-token
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/board.go#BoardStore
+            ref: examples/pgstore/store.go#Store.Board
       - id: database-clock
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/effect.go#EffectStore
+            ref: examples/pgstore/store.go#Store.Effects
           - kind: contract
-            ref: examples/pgstore/board.go#BoardStore
+            ref: examples/pgstore/store.go#Store.Board
       - id: tenant-scoped-storage
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/effect.go#NewTenantEffectStore
+            ref: examples/pgstore/store.go#Store.TenantEffects
           - kind: contract
-            ref: examples/pgstore/event.go#NewTenantEventStore
+            ref: examples/pgstore/store.go#Store.TenantEvents
       - id: reliable-events
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/event.go#EventStore
+            ref: examples/pgstore/store.go#Store.Events
       - id: unified-lease
         source: kernel
         evidence:
@@ -221,6 +269,8 @@ storages:
     title: 共享权威 PostgreSQL（多集群共用一份权威状态）
     kind: shared-authority
     code_root: examples/pgstore
+    # 写者上限：共享库 ⇒ 不设上限。
+    max_writers: unlimited
     notes: |
       这不是本仓的一个包，是**部署形态**：多集群共用同一份权威 PostgreSQL。
       它的代码根与 PostgreSQL 同（能力由同一套参考实现交付），但权威面要求
@@ -233,17 +283,17 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/control.go#ControlStore
+            ref: examples/pgstore/store.go#Store.Control
       - id: reliable-events
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/event.go#EventStore
+            ref: examples/pgstore/store.go#Store.Events
       - id: tenant-scoped-storage
         source: storage
         evidence:
           - kind: contract
-            ref: examples/pgstore/effect.go#NewTenantEffectStore
+            ref: examples/pgstore/store.go#Store.TenantEffects
       - id: reliable-handoff
         source: kernel
         evidence:
@@ -257,6 +307,8 @@ storages:
     # 无代码根：这一档的能力全部由内核的 ownership / handoff 包交付，
     # 「存储」在这里是部署侧的形态选择，不是某个包。
     code_root: ""
+    # 写者上限：共享权威存储 ⇒ 不设上限。
+    max_writers: unlimited
     notes: |
       跨区域 Ownership Authority 与分区写入 fence 已由 ownership 包交付；
       多区域共享权威存储仍是部署侧的形态选择（多区域共享权威存储本身仍是
@@ -281,10 +333,10 @@ storages:
 # ── 已知不对称（两侧机制不同、语义同构的那类差异）────────────────────────
 #
 # 为什么要显式登记：**门禁绿 ≠ 两侧等价**。不写下来，读门禁报告的人会把
-# 「绿」读成「没差别」——那四条差异恰好都是「机制不同但语义同构」，不是能力
+# 「绿」读成「没差别」——那几条差异恰好都是「机制不同但语义同构」，不是能力
 # 缺失，所以任何能力表都判不出它们。
 #
-# 每条都要落在至少两个**已登记**的存储上，且落点必须能在代码里解析——
+# 每条都要落在至少两个**互不相同**的已登记存储上，且落点必须能在代码里解析——
 # 登记一个假的差异比不登记更坏。
 known_asymmetries:
   - id: batch-read-visibility
@@ -336,3 +388,18 @@ known_asymmetries:
         ref: examples/sqliteadapter/control.go#ControlStore
       - kind: contract
         ref: examples/pgstore/control.go#ControlStore
+
+  - id: facade-schema-bootstrap
+    storages: [examples/sqliteadapter, PostgreSQL]
+    summary: |
+      建表入口的**公开面不对位**：SQLite 侧的 Store 上有公开的建表方法
+      （Store.EnsureSchema），PostgreSQL 侧的对应入口是**包级函数**
+      （pgstore.EnsureSchema），Store 上没有等价物。
+      ⇒ 「11 个**面**访问器」两侧对位，但**整体公开面**不对位；
+      ⇒ 后果：只持门面的宿主在 PostgreSQL 侧拿不到建表入口
+      （startup-recovery 这条能力的落点因此落在包级函数上）。
+    evidence:
+      - kind: contract
+        ref: examples/sqliteadapter/schema.go#Store.EnsureSchema
+      - kind: contract
+        ref: examples/pgstore/schema.go#EnsureSchema

@@ -15,6 +15,9 @@ import (
 )
 
 // run 判据的 CLI 装配（返回退出码——便于用例直接断言，不靠子进程）。
+//
+// 输出里必须**看得见口径**：选型口径若只躺在声明面里没人看得见，它就只是一段
+// 没人验证的散文 ⇒ 口径正文、逐条要点、已知不对称的摘要都打出来。
 func run(args []string, stdout, stderr io.Writer) int {
 	root := "."
 	if len(args) > 0 {
@@ -26,7 +29,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	for _, n := range notes {
-		fmt.Fprintf(stdout, "storagecheck: 说明 %s\n", n)
+		fmt.Fprintf(stdout, "storagecheck: %s\n", n)
 	}
 	if len(probs) > 0 {
 		for _, p := range probs {
@@ -34,7 +37,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "storagecheck ✓（场景选型在允许集内 + 能力齐备 + 落点可解析）")
+	fmt.Fprintln(stdout, "storagecheck ✓（场景选型在允许集内 + 能力齐备 + 落点可解析 + 写者数不越界）")
 	return 0
 }
 

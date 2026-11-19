@@ -1,4 +1,4 @@
-// check_test.go —— 存储选型判据的用例（含三类反向验证）。
+// check_test.go —— 场景侧判据的用例与**合成夹具**。
 //
 // 夹具是**合成数据**：两套假存储（各自一个能力）+ 两个场景 + 一条已知不对称。
 // 夹具里的包名 / 能力名都不指向任何真实领域——判据面是「声明 ↔ 代码」的
@@ -44,18 +44,26 @@ scenarios:
 
 // demoSelection 合成选型声明面：两套存储各认领一个能力 + 一条已知不对称。
 //
-// demo-store 的能力是**存储自证型**（落点在 pkgdemo/ 下）；
+// demo-store 的能力是**存储自证型**（落点在 pkgdemo/ 下），写者上限 1；
 // demo-other 的能力是**内核交付型**（落点也在 pkgdemo/ 下，但不在 pkgother/ 下
-// ⇒ 标注与代码位置对得上）。
+// ⇒ 标注与代码位置对得上），写者上限不限。
 const demoSelection = `version: 1
 policy:
   notes: |
-    合成口径：够用即可。
+    合成口径：单节点用 demo-store，多节点用 demo-other。
+    审计路径必须走独立句柄。
+  required_texts:
+    - id: demo-boundary
+      keywords: ["独立句柄"]
+scenario_writers:
+  single-node: 1
+  multi-node: 2
 storages:
   - id: demo-store
     title: 演示存储
     kind: file
     code_root: pkgdemo
+    max_writers: 1
     capabilities:
       - id: cap-persist
         source: storage
@@ -66,6 +74,7 @@ storages:
     title: 演示另一种存储
     kind: file
     code_root: pkgother
+    max_writers: unlimited
     capabilities:
       - id: cap-lease
         source: kernel
@@ -168,144 +177,6 @@ func TestCheckRejectsMissingCapability(t *testing.T) {
 	requireViolation(t, probs, "不提供必需能力")
 }
 
-// TestCheckRejectsUnresolvableEvidence 能力断言指向不存在的符号 ⇒ 红。
-func TestCheckRejectsUnresolvableEvidence(t *testing.T) {
-	s := strings.Replace(demoSelection, "ref: pkgdemo/store.go#Store", "ref: pkgdemo/store.go#Nope", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "在代码里找不到")
-}
-
-// TestCheckRejectsMissingEvidenceFile 落点所在文件不存在 ⇒ 红。
-func TestCheckRejectsMissingEvidenceFile(t *testing.T) {
-	s := strings.Replace(demoSelection, "ref: pkgdemo/store.go#Store", "ref: pkgdemo/nope.go#Store", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "所在文件不存在")
-}
-
-// TestCheckRejectsCapabilityWithoutEvidence 能力断言没有落点 ⇒ 红。
-//
-// 「派生不出」若被当成「没有手抄」，门禁就是静默空转：一条都判不了却照常报绿。
-func TestCheckRejectsCapabilityWithoutEvidence(t *testing.T) {
-	s := strings.Replace(demoSelection, `        evidence:
-          - kind: contract
-            ref: pkgdemo/store.go#Store
-`, "", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "没有落点")
-}
-
-// TestCheckRejectsUncoveredMatrixCapability 矩阵里的能力没有任何存储认领 ⇒ 红。
-//
-// 没人认领的能力 = 该能力不被任何场景判定 ⇒ 矩阵与选型面之间开了一个洞。
-func TestCheckRejectsUncoveredMatrixCapability(t *testing.T) {
-	s := strings.Replace(demoSelection, `      - id: cap-lease
-        source: kernel
-        evidence:
-          - kind: contract
-            ref: pkgdemo/lease.go#Lease
-`, "", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "没有任何存储认领")
-}
-
-// TestCheckRejectsUnknownCapabilityID 声明了矩阵能力表里没有的能力 ⇒ 红。
-func TestCheckRejectsUnknownCapabilityID(t *testing.T) {
-	s := strings.Replace(demoSelection, "      - id: cap-persist", "      - id: cap-ghost", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "不在部署矩阵的能力表里")
-}
-
-// TestCheckRejectsMislabelledSource 内核交付型却把落点指在本存储包内 ⇒ 红。
-//
-// 标注与代码位置对不上 = 声明面在撒谎（「PG 提供了 job-idempotency」）。
-func TestCheckRejectsMislabelledSource(t *testing.T) {
-	s := strings.Replace(demoSelection, `      - id: cap-lease
-        source: kernel
-`, `      - id: cap-lease
-        source: storage
-`, 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "标注为存储自证型")
-}
-
-// TestCheckRejectsKernelLabelOnOwnPackage 存储自证型却把落点指在包外 ⇒ 红。
-func TestCheckRejectsKernelLabelOnOwnPackage(t *testing.T) {
-	s := strings.Replace(demoSelection, `      - id: cap-persist
-        source: storage
-        evidence:
-          - kind: contract
-            ref: pkgdemo/store.go#Store
-`, `      - id: cap-persist
-        source: kernel
-        evidence:
-          - kind: contract
-            ref: pkgdemo/store.go#Store
-`, 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "标注为内核交付型")
-}
-
-// TestCheckRejectsMalformedEvidenceRef 落点不是 path#Symbol 形态 ⇒ 红。
-func TestCheckRejectsMalformedEvidenceRef(t *testing.T) {
-	s := strings.Replace(demoSelection, "ref: pkgdemo/store.go#Store", "ref: pkgdemo/store.go", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "path#Symbol")
-}
-
-// TestCheckRejectsBadAsymmetry 不对称登记必须落在两个真实存储上 ⇒ 红。
-func TestCheckRejectsBadAsymmetry(t *testing.T) {
-	s := strings.Replace(demoSelection, "storages: [demo-store, demo-other]", "storages: [demo-store]", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "至少两个存储")
-}
-
-// TestCheckRejectsUnknownAsymmetryStorage 不对称登记引用了不存在的存储 ⇒ 红。
-func TestCheckRejectsUnknownAsymmetryStorage(t *testing.T) {
-	s := strings.Replace(demoSelection, "storages: [demo-store, demo-other]", "storages: [demo-store, demo-ghost]", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "未登记的存储")
-}
-
 // TestCheckRejectsEmptyDeclaration 声明面为空 ⇒ 红（空清单等于没有判据）。
 func TestCheckRejectsEmptyDeclaration(t *testing.T) {
 	root := writeRoot(t, demoMatrix, "version: 1\npolicy:\n  notes: 合成口径。\nstorages: []\n")
@@ -316,37 +187,89 @@ func TestCheckRejectsEmptyDeclaration(t *testing.T) {
 	requireViolation(t, probs, "没有任何存储")
 }
 
-// TestCheckRejectsEmptyPolicyNotes 选型口径为空 ⇒ 红。
-func TestCheckRejectsEmptyPolicyNotes(t *testing.T) {
-	s := strings.Replace(demoSelection, `policy:
-  notes: |
-    合成口径：够用即可。
-`, "policy:\n  notes: \"\"\n", 1)
+// TestCheckRejectsUnreferencedStorage 声明面里没有任何场景引用的 storage ⇒ 红。
+//
+// 陈旧声明当天即红（与仓内「陈旧包根当天即红」同款）：否则它会一直躺在
+// 允许集里，直到某天有人以为它还有效。
+func TestCheckRejectsUnreferencedStorage(t *testing.T) {
+	s := strings.Replace(demoSelection, "known_asymmetries:", `  - id: demo-ghost
+    title: 没有场景引用的档位
+    kind: file
+    code_root: pkgother
+    max_writers: unlimited
+    capabilities:
+      - id: cap-lease
+        source: kernel
+        evidence:
+          - kind: contract
+            ref: pkgdemo/lease.go#Lease
+known_asymmetries:`, 1)
 	root := writeRoot(t, demoMatrix, s)
 	probs, _, err := check(root)
 	if err != nil {
 		t.Fatalf("判定出错: %v", err)
 	}
-	requireViolation(t, probs, "policy.notes 为空")
+	requireViolation(t, probs, "没有任何场景引用")
 }
 
-// TestDeclaredSymbolsFindsMethodForm 符号解析认「类型.方法」形态（go/ast 判定）。
-func TestDeclaredSymbolsFindsMethodForm(t *testing.T) {
-	root := writeRoot(t, demoMatrix, demoSelection)
-	syms, err := declaredSymbols(filepath.Join(root, "pkgdemo", "store.go"))
+// TestCheckRejectsMultiWriterOnSingleWriterStorage 多写者场景选了单写者档位 ⇒ 红。
+//
+// 这条是「硬边界不靠 capability 归属碰巧撑着」的牙齿：即使能力归属被人改对
+// （给单写者档位补上多进程那几项），写者上限这条判据仍然红。
+func TestCheckRejectsMultiWriterOnSingleWriterStorage(t *testing.T) {
+	m := strings.Replace(demoMatrix, "storage: demo-other", "storage: demo-store", 1)
+	root := writeRoot(t, m, demoSelection)
+	probs, _, err := check(root)
 	if err != nil {
-		t.Fatalf("解析失败: %v", err)
+		t.Fatalf("判定出错: %v", err)
 	}
-	if !syms["Store"] {
-		t.Fatal("应找到类型 Store")
+	requireViolation(t, probs, "最多支持")
+}
+
+// TestCheckRejectsUnregisteredScenarioForm 场景形态没有登记写者数 ⇒ 红。
+//
+// 漏登记 = 判据无从下手 ⇒ 红（不判「没登记」就等于放过那条边界）。
+func TestCheckRejectsUnregisteredScenarioForm(t *testing.T) {
+	s := strings.Replace(demoSelection, "  multi-node: 2\n", "", 1)
+	root := writeRoot(t, demoMatrix, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
 	}
-	if !syms["Store.Apply"] {
-		t.Fatal("应找到方法 Store.Apply")
+	requireViolation(t, probs, "没有登记写者数")
+}
+
+// TestCheckRejectsMissingMaxWriters 存储没声明写者上限 ⇒ 红。
+//
+// 「没写」不等于「什么都行」——把它当成不限就是静默放行。
+func TestCheckRejectsMissingMaxWriters(t *testing.T) {
+	s := strings.Replace(demoSelection, "    max_writers: 1\n", "", 1)
+	root := writeRoot(t, demoMatrix, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
 	}
-	if syms["Store.Nope"] {
-		t.Fatal("不该找到 Store.Nope")
+	requireViolation(t, probs, "max_writers 未声明")
+}
+
+// TestCheckRejectsBadMaxWriters 写者上限取值非法 ⇒ 红。
+func TestCheckRejectsBadMaxWriters(t *testing.T) {
+	s := strings.Replace(demoSelection, "    max_writers: 1\n", "    max_writers: zero\n", 1)
+	root := writeRoot(t, demoMatrix, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
 	}
-	if syms["Nope"] {
-		t.Fatal("不该找到 Nope")
+	requireViolation(t, probs, "max_writers 必须是数字或 unlimited")
+}
+
+// TestCheckRejectsZeroMaxWriters 写者上限为 0 ⇒ 红（至少 1）。
+func TestCheckRejectsZeroMaxWriters(t *testing.T) {
+	s := strings.Replace(demoSelection, "    max_writers: 1\n", "    max_writers: 0\n", 1)
+	root := writeRoot(t, demoMatrix, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
 	}
+	requireViolation(t, probs, "max_writers 至少为 1")
 }

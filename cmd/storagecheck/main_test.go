@@ -1,12 +1,11 @@
-// main_test.go —— CLI 装配与边界路径的用例。
+// main_test.go —— CLI 装配与通用错误路径的用例。
 //
-// 边界路径也要有判据：判据门禁最容易的失效形态是「错误路径没人走」
+// 边界路径也要有判据：门禁最容易的失效形态是「错误路径没人走」
 // ⇒ 一条都判不了却照常报绿。
 package main
 
 import (
 	"bytes"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -24,6 +23,28 @@ func TestRunPasses(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "✓") {
 		t.Fatalf("必须打出通过标记，实得 %q", stdout.String())
+	}
+}
+
+// TestRunShowsPolicyText 选型口径必须出现在门禁输出里。
+//
+// 派单原文：口径「要在 cmd/storagecheck 的 notes/输出里让人看得见」——
+// 只躺在声明面里没人看得见，它就只是一段没人验证的散文。
+func TestRunShowsPolicyText(t *testing.T) {
+	root := writeRoot(t, demoMatrix, demoSelection)
+	var stdout, stderr bytes.Buffer
+	if rc := run([]string{root}, &stdout, &stderr); rc != 0 {
+		t.Fatalf("正常形态应退出 0，实得 %d；stderr=%s", rc, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "审计路径必须走独立句柄") {
+		t.Fatalf("口径正文必须出现在输出里，实得:\n%s", out)
+	}
+	if !strings.Contains(out, "口径要点 demo-boundary") {
+		t.Fatalf("口径要点必须出现在输出里，实得:\n%s", out)
+	}
+	if !strings.Contains(out, "两侧的读路由不同") {
+		t.Fatalf("已知不对称的摘要必须出现在输出里，实得:\n%s", out)
 	}
 }
 
@@ -95,39 +116,6 @@ func TestCheckRejectsUnknownRequiredCapability(t *testing.T) {
 	requireViolation(t, probs, "不在部署矩阵的能力表里")
 }
 
-// TestCheckRejectsBadEvidenceKind 证据类型不是 contract ⇒ 红。
-func TestCheckRejectsBadEvidenceKind(t *testing.T) {
-	s := strings.Replace(demoSelection, "          - kind: contract", "          - kind: doc", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "证据类型只允许 contract")
-}
-
-// TestCheckRejectsMissingSource 能力断言缺 source 标注 ⇒ 红。
-func TestCheckRejectsMissingSource(t *testing.T) {
-	s := strings.Replace(demoSelection, "        source: storage\n", "", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "缺 source 标注")
-}
-
-// TestCheckRejectsUnknownSource source 取值不在词表内 ⇒ 红。
-func TestCheckRejectsUnknownSource(t *testing.T) {
-	s := strings.Replace(demoSelection, "source: storage", "source: magic", 1)
-	root := writeRoot(t, demoMatrix, s)
-	probs, _, err := check(root)
-	if err != nil {
-		t.Fatalf("判定出错: %v", err)
-	}
-	requireViolation(t, probs, "只允许")
-}
-
 // TestCheckErrorsOnUnknownFieldInSelection 声明面里出现未知字段 ⇒ 解析报错。
 //
 // 字段名拼错会让整段声明**读不进去**（读不进去 = 当成没写）⇒ 必须当场红，
@@ -167,49 +155,5 @@ func TestCheckErrorsWhenSelectionMissing(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "读声明面失败") {
 		t.Fatalf("报错要说清是读失败，实得 %v", err)
-	}
-}
-
-// TestUnderRoot 落点归类：只有代码根之下才算「自证」。
-func TestUnderRoot(t *testing.T) {
-	cases := []struct {
-		root string
-		path string
-		want bool
-	}{
-		{"pkgdemo", "pkgdemo/store.go", true},
-		{"pkgdemo", "pkgdemo", true},
-		{"pkgdemo", "pkgdemo2/store.go", false},
-		{"pkgdemo", "other/store.go", false},
-		{"", "pkgdemo/store.go", false},
-		{"", "", false},
-	}
-	for _, c := range cases {
-		if got := underRoot(c.root, c.path); got != c.want {
-			t.Fatalf("underRoot(%q, %q) = %v, 期望 %v", c.root, c.path, got, c.want)
-		}
-	}
-}
-
-// TestResolveRefRejectsBadShapes 落点形态不对 ⇒ 判不成立且给出理由。
-func TestResolveRefRejectsBadShapes(t *testing.T) {
-	root := writeRoot(t, demoMatrix, demoSelection)
-	if ok, reason := resolveRef(root, "pkgdemo/store.go"); ok || reason == "" {
-		t.Fatal("缺 #Symbol 必须判不成立且给出理由")
-	}
-	if ok, _ := resolveRef(root, "pkgdemo/store.go#Store"); !ok {
-		t.Fatal("合法落点必须判成立")
-	}
-}
-
-// TestDeclaredSymbolsOnUnparsableFile 解析不了的文件 ⇒ 报错，不当「符号不存在」。
-func TestDeclaredSymbolsOnUnparsableFile(t *testing.T) {
-	root := t.TempDir()
-	bad := filepath.Join(root, "bad.go")
-	if err := os.WriteFile(bad, []byte("package x\nfunc (\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := declaredSymbols(bad); err == nil {
-		t.Fatal("解析失败必须报错（不能当成「符号不存在」——那是两种不同的结论）")
 	}
 }
