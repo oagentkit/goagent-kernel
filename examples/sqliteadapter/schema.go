@@ -125,11 +125,20 @@ CREATE TABLE IF NOT EXISTS gak_control_effect (
 // DDL 的写锁升级在 SQLITE_BUSY 上不等 busy_timeout（实测），故建表只在
 // 装配期做，不在运行期做。
 func (s *Store) EnsureSchema(ctx context.Context) error {
-	if err := s.exec().run(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, schemaDDL)
-		return err
-	}); err != nil {
+	if err := s.ensureSchema(ctx, schemaDDL); err != nil {
 		return fmt.Errorf("sqliteadapter: 建表失败: %w", err)
 	}
 	return nil
+}
+
+// ensureSchema 在一个事务里执行给定的 DDL（可注入，便于测试中途失败形态）。
+//
+// DDL 做成参数是判据需求，不是设计洁癖：只有能注入「先建一张表、再执行一条
+// 语法错误语句」的多语句 DDL，用例才能区分「一个事务内建表」与「裸跑逐条
+// 提交」——后者在 autocommit 下会留下半截 schema（正是上面那句注释要防的事）。
+func (s *Store) ensureSchema(ctx context.Context, ddl string) error {
+	return s.exec().run(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, ddl)
+		return err
+	})
 }
