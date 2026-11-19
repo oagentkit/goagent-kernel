@@ -38,13 +38,13 @@
 > | 本文覆盖 | 24 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
 > | policy 登记 | **60** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **62** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 生命周期登记 | **61** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个包目录。
+> `architecture-policy.yaml` 的 `modules` 段登记 **60** 个包目录。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -2374,6 +2374,10 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 对到清单的 `evidence`。`partial` / `missing` 的条目都挂着 issue——它们是**有主
 的缺口**，不是「文档里没写所以不存在」。
 
+**选哪个存储**：矩阵只给「这个场景需要哪些能力」，**选型判据**（三条判据 +
+「单机多进程一律判 PostgreSQL」的硬边界 + SQLite 毫秒级时钟）在 §3.17
+「存储选型」——机器口径在 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)。
+
 ---
 
 ### 3.15 跨区域所有权：`ownership`（issue #273）
@@ -2537,6 +2541,50 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 - **拿 `Resource` / `Amount` 当归还凭据**。归还只认 Token 查到的存储记录；租约里的
   `Resource` / `Amount` 是**预占时的快照**，带错字段也只会归还那一笔原始预占。
 - **`MemQuotaStore` 上生产**。多副本部署下每个副本各记一份账 ⇒ 超卖 N 倍。
+
+### 3.17 存储选型：什么时候用 SQLite、什么时候用 PostgreSQL（issue #424）
+
+**三条判据，按顺序问**（机器口径在
+[docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)，`make storagecheck` 逐条判）：
+
+1. **需要跨进程 / 跨机共享写**（多副本、多机、K8s）⇒ **PostgreSQL**。
+2. **需要重启后恢复，且不想为此多起一个服务进程** ⇒ **SQLite**
+   （单文件 WAL 库，参考实现 `examples/sqliteadapter`）。
+3. **只要进程内判据正确、不要持久化** ⇒ **memory**（进程内实现，不落库）。
+
+**边界写死：单机多进程一律判 PostgreSQL。** SQLite 的单写者模型在多写者下
+退化为串行，`busy_timeout` 到点即失败（可判、不静默丢写，但可用性下降）
+⇒ 同机多进程（两个 Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
+这条边界不是靠记性维持的：门禁按「场景形态 → 并发写者数」与「存储 → 写者上限」
+两张数据表判，**多写者场景选了单写者档位当场红**。
+
+**SQLite 侧的三条前提**（不是能力，是用它的前提）：
+
+- **存储时钟是毫秒级**（实测）⇒ **租约 TTL 建议 ≥ 1s**——秒级以下的 TTL 会被
+  时钟分辨率吃掉，过期判定的边界行为不可预期。
+- **留痕写路径要独立句柄**：控制面事务占着写句柄时，留痕面再走同一句柄会挂死
+  （不是干净报错）⇒ 审计 / 留痕走独立句柄（进程内或独立库）。
+- **一致快照依赖 WAL 快照语义**（deferred 只读事务）⇒ 非 WAL 模式下该判据需重验。
+
+**怎么落地**：场景 → 存储的对应关系在
+[docs/DEPLOY-MATRIX.yaml](DEPLOY-MATRIX.yaml)（`single-host-persistent` →
+`examples/sqliteadapter`；`multi-process-same-host` / `k8s-single-cluster` →
+`PostgreSQL`），**选型声明面**在
+[docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)——那里逐条写了每个存储
+**认领**哪些能力、能力在代码里的落点（`path#Symbol`，`make storagecheck`
+走 go/ast 判符号声明）。两份声明面不许脱节：能力 id 的唯一真相是部署矩阵的
+能力表，矩阵里删了能力而选型面还认领它（或反过来谁都不认领），当场红。
+
+#### 坑
+
+- **按「数据量小」选 SQLite**。判据是**写者数**与**要不要恢复**，不是数据量
+  ——单写者下 SQLite 完全够用，多写者下它一定降级。
+- **同机跑两个 Worker 进程，还当自己是「单机」**。进程数 ≥ 2 ⇒ 写者数 ≥ 2 ⇒
+  按硬边界判 PostgreSQL。
+- **把毫秒级存储时钟当高精度时钟用**。租约 / 过期判定按亚秒 TTL 计算 ⇒
+  边界不可预期 ⇒ TTL 取 ≥ 1s。
+- **拿 SQLite 当「不用起 PG」的免维护方案**。它省掉的是**服务进程**，不是
+  **运维**：WAL 文件、备份、跨机共享都得自己安排。
 
 ---
 ## 4. 门禁与提交前检查

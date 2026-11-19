@@ -27,10 +27,10 @@ func TestNoDuplicateErrorSentinelLiterals(t *testing.T) {
 	const root = ".."
 
 	// 同一份实现按 GOOS 互斥编译：字面量相同是结构使然，不是第二份哨兵。
-	allow := map[string]bool{
-		"examples/sqlitestore/lock_unix.go":    true,
-		"examples/sqlitestore/lock_windows.go": true,
-	}
+	// 当前无豁免项（2026-11-19：examples/sqlitestore 删除后，仓内已无 GOOS
+	// 互斥的同名哨兵对——sqliteadapter 没有平台专属文件）；机制留着，后续
+	// 再出现同类形态时在此登记。
+	allow := map[string]bool{}
 
 	type occurrence struct {
 		file string

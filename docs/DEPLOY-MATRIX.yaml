@@ -50,7 +50,7 @@ capabilities:
       - kind: contract
         ref: taskboard/taskboard.go#Board
       - kind: contract
-        ref: examples/sqlitestore/store.go#Store
+        ref: examples/sqliteadapter/board.go#Store.Board
       - kind: contract
         ref: examples/pgstore/board.go#BoardStore
 
@@ -59,7 +59,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/sqlitestore/store.go#Open
+        ref: examples/sqliteadapter/store.go#Open
       - kind: gate
         ref: test
 
@@ -69,13 +69,13 @@ capabilities:
     delivered_by: "#419"
     evidence:
       - kind: contract
-        ref: examples/sqlitestore/store.go#Store.Apply
+        ref: examples/sqliteadapter/apply.go#Store.Apply
       - kind: contract
-        ref: examples/sqlitestore/effect_store.go#EffectStore
+        ref: examples/sqliteadapter/effect.go#Store.Effects
       - kind: contract
-        ref: examples/sqlitestore/snapshot.go#SnapshotStore
+        ref: examples/sqliteadapter/snapshot.go#Store.Snapshots
       - kind: contract
-        ref: examples/sqlitestore/event.go#EventStore
+        ref: examples/sqliteadapter/event.go#Store.Events
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）

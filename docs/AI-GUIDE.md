@@ -802,6 +802,12 @@ policy 的 `forwarding_shell_max_chars`（那是给宿主留的逃生口，不�
 4. **获取与释放两条路径一起看**：它们共享同一类瞬时故障，释放不做退避重试 ⇒ 一次
    瞬时占用就把锁留住，后续写者空转到超时。
 
+> **2026-11-19 现状注**：第 1 条举的本仓实例 `examples/sqlitestore/lock.go` 已随该包
+> 删除（它是 flock + JSONL 的文件后端，**不是 SQLite**）——现存的真 SQLite 落库在
+> `examples/sqliteadapter`，写事务用 `BEGIN IMMEDIATE` + `busy_timeout=5000`，
+> **没有平台专属 errno 判定面**。上面的做法四条本身仍然成立（那是方法论），
+> 只是「本仓实例」那一处已陈旧。
+
 ---
 
 ## 6. 反向验证（改门禁必做）

@@ -649,40 +649,6 @@ modules:
       租户维度（issue #275）：effect / 资源 / 下游 / 事件表均 (tenant, 业务键)
       复合主键，NewTenant* 从 ctx 取租户、缺租户 fail-closed。
 
-  # Standalone 单机持久化参考实现（2026-11-16 新增，issue #188）：
-  # SQLite(WAL) 的**契约级设计** + 零依赖文件后端（flock + JSONL + fsync）。
-  #
-  # 为什么没有 sqlite 驱动：本仓是单一 module（examples 不是独立 module），
-  # 主干不为参考实现新增第三方依赖——pgx 是既有唯一破例，且它只进
-  # pgrefstore 的依赖图。引入 modernc.org/sqlite 会把一棵数 MB 的传递依赖
-  # 树带进主 module。替代方案与 SQLite DDL/WAL 的逐条映射写在包文档里，
-  # 宿主在自己 module 加驱动后照抄即可。
-  - id: sqlitestore
-    roots: [examples/sqlitestore]
-    requires: [taskboard, sideeffect, checkpoint, eventbus, "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      单机持久化参考实现：进程内 mutex + 跨进程 flock 单写者，JSONL 追加 +
-      fsync 为提交点，打开/写入前重放并截断残尾。WAL/SQLite 的落库形态
-      （PRAGMA / BEGIN IMMEDIATE / 单连接写串行化 / 存储时钟）写在 doc.go，
-      是宿主生产实现的契约级依据。
-
-      2026-11-18 起覆盖**四个面**（issue #419）：taskboard.Board（含
-      RenewingBoard）/ sideeffect.Store / checkpoint.StoreCAS /
-      eventbus.Store+TailStore。四面**共用一份事务域**（同一把锁、同一个
-      日志、一次提交）——这是「单一存储覆盖全部状态」这条能力（部署清单
-      `single-store-full-state`）的机器形态：任务状态、副作用闸、进度快照、
-      事件行（Outbox）在**同一次提交**里落盘，跨面不会出现「一半已提交」。
-      事件 ID 取自**已提交水位线**（铸造序 == 提交序，回滚不烧号）⇒ 结构性地
-      满足 TailStore 的「无空洞推进」硬要求。
-
-      四个面各自是一个类型（sideeffect.Store.Complete 与 taskboard.Board.Complete
-      签名不同 ⇒ 不能塞进同一个类型），但**共享同一份事务域**。
-
-      契约套件：boardtest 全套判据在本实现的 taskboard 面上真跑；
-      sidetest 全套（33 条）在 sideeffect 面上真跑（与 pgstore 同一段判据）。
-
   # 真 SQLite 参考实现（2026-11-19 新增，issue #424）：单机持久化的 SQLite
   # 落库形态——四套契约面 + 控制面 + 下游栅栏 + 租户作用域 + 跨面 Apply。
   #
@@ -2150,15 +2116,14 @@ thresholds:
   # 从来不生效——两条都只差一个字面量，谁也不会发现。
   # 现在由 archcheck 的 policy 自校验强制两者一致（漏一个即门禁红）。
   #
-  # 两个 sqlite 条目是**两个不同的包**，不是同一个包改名的两种写法：
-  # examples/sqlitestore = 既有单机 SQLite 落库形态参考实现（一直在列）；
-  # examples/sqliteadapter = 2026-11-19 新增的适配器包（issue #424）。
-  # 两者都在列 ⇒ 两个包各自对下面两条阈值负责；摘掉任一条，那个包当场隐形
-  # （policy 自校验即红：「登记在 modules 段却不在 thresholds.scan_roots 段」）。
+  # sqlite 条目 = 单机持久化那**一个**包（examples/sqliteadapter，issue #424）：
+  # 2026-11-19 起，名为 sqlitestore 的 flock + JSONL 文件后端（**不是 SQLite**）
+  # 已删除，它的 modules 条目与这里的 scan_root **同摘** ⇒ 下面只剩真 SQLite 这条。
   #
-  # 耦合提醒（Task 10 删包时必须同做）：删 examples/sqlitestore 这个包时，
-  # 必须一并摘掉这里对应的条目，否则陈旧 root 自校验当天即红。
-  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, internal/ledgerstatus, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqlitestore, examples/sqliteadapter]
+  # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
+  # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
+  # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
+  scan_roots: [protocol, statemachine, eventbus, spill, pii, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/subhub, internal/ledgerstatus, cmd, examples/reference-runtime, examples/pgstore, examples/pgstore/cmd/pgsmoke, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, examples/sqliteadapter]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
