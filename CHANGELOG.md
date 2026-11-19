@@ -2,6 +2,19 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.49.1] — 2026-11-19
+
+### 修复(gatecheck)：managed_test.go 里的 U+FFFD 坏字符——「判过的 ≠ 跑的」的落差
+
+- `gatecheck/managed_test.go` 第 22 行有 **3 个连续的 U+FFFD**（典型的「一个 3 字节汉字
+  被逐字节吞成 3 个替换符」）。还原的字取自仓内**同款句子的既有措辞**（不是猜的）：
+  `gatecheck/managed.go:38`、`gatecheck/gatecheck.go:353`、`AGENTS.md:990` 三处同款句子
+  都写作「判过的后端 ≠ 实际跑的后端」**的**落差 ⇒ 还原为「判过的 ≠ 跑的」的落差。
+- 影响面：**仅测试文件里的一行注释，零行为变化**。
+- 顺带全仓复扫：**受跟踪文件里已无任何 U+FFFD**（此前这一处是唯一的）。
+
+验证：`go test ./gatecheck/ -count=1` 全绿（含 `-race`）；gofmt 干净。
+
 ## [v0.49.0] — 2026-11-19
 
 ### 新增(cmd/raceprobe)：race 门禁的取证式看门狗——失败形态机器判定 + 串行复核（台账 §26）
