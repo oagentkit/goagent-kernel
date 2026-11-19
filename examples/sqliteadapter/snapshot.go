@@ -52,18 +52,26 @@ func (s *Store) Snapshots() *SnapStore { return &SnapStore{exec: s.execBase()} }
 // （条件 upsert 的影响行数为 0 即判陈旧——「比较与写入」在同一条语句里完成，
 // 不存在「先读后写」的窗口）。
 func (s *SnapStore) SaveIfNewer(ctx context.Context, snap checkpoint.Snapshot) error {
+	// ⚠ 下面三道拒绝都发生在 **exec.run 之外** ⇒ 必须显式登记进失败槽：
+	// 否则调用方吞掉这个错误时整批仍会提交（「失败即作废整批」对这条路径
+	// 是假的）。
 	if snap.Seq == 0 {
-		return errors.Wrap(checkpoint.ErrStaleSeq,
+		err := errors.Wrap(checkpoint.ErrStaleSeq,
 			"序号为 0 的快照不是一次真实提交，不得落库（更不得覆盖既有快照）",
 			"run_id", snap.RunID)
+		s.exec.fail(err)
+		return err
 	}
 	if snap.Seq > math.MaxInt64 {
 		// 序号列是 INTEGER（有符号 64 位）：高位被截断成负数 ⇒ 单调比较整个
 		// 反向（负数 < 任何正数 ⇒ 永远「更新」）⇒ 恢复点可被任意覆盖。
-		return errors.New("sqliteadapter: 快照序号超出 INTEGER 范围（run_id=" + snap.RunID + "）")
+		err := errors.New("sqliteadapter: 快照序号超出 INTEGER 范围（run_id=" + snap.RunID + "）")
+		s.exec.fail(err)
+		return err
 	}
 	done, fields, err := encodeSnapshot(snap)
 	if err != nil {
+		s.exec.fail(err)
 		return err
 	}
 	return s.exec.run(ctx, func(tx *sql.Tx) error {

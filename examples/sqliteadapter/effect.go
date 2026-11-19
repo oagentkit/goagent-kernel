@@ -54,6 +54,10 @@ type EffectStore struct {
 	exec exec
 	// store 归属的 Store：面级时钟的兜底来源（见 clockSource）。
 	store *Store
+	// tenantScoped 装配期声明（issue #275）：true ⇒ 每个入口从 ctx 取租户，
+	// 缺租户拒绝（fail-closed）。false ⇒ 旧布局，租户取 Action.Tenant
+	// （空 = 单命名空间），不强制上下文。
+	tenantScoped bool
 }
 
 // 编译期断言：本实现满足副作用闸的两套契约。
@@ -125,19 +129,31 @@ func (s *EffectStore) execIn(tx *sql.Tx) exec {
 		e.clock = s.clockSource()
 		return e
 	}
-	return s.store.execIn(tx, s.clockSource())
+	e := s.store.execIn(tx, s.clockSource())
+	// 失败槽随执行位置走（批次级状态：四个面共享同一份）。
+	e.failed = s.exec.failed
+	return e
 }
 
 // prepareAction 入口处的租户解析：把作用域结论落回 Action.Tenant，后续
 // 全部 SQL 用 act.Tenant 做联合定位（解析只在入口发生一次）。
 //
-// 旧布局（本任务的口径）：不强制租户，租户取 Action.Tenant 自带的值
-// （空 = 单命名空间）⇒ 当前是恒等映射。
+// 旧布局（默认形态）：不强制租户，租户取 Action.Tenant 自带的值
+// （空 = 单命名空间）⇒ 恒等映射。
 //
-// ⚠ 租户**作用域**（从 ctx 取租户、缺租户拒绝）由 Task 6 落地——那里只改
-// 这一处即可（各入口已统一走它），不必再逐个入口改 SQL；本任务不留恒假的
-// 作用域开关（声明了却永远不生效的开关比没有更坏）。
-func (s *EffectStore) prepareAction(_ context.Context, act sideeffect.Action) (sideeffect.Action, error) {
+// 租户作用域：每个入口从 ctx 取租户（tenant.Require），缺租户 ⇒ 拒绝
+// （fail-closed）；Action.Tenant 与 ctx 不一致 ⇒ ErrTenantMismatch。
+//
+// ⚠ 解析失败要**登记进失败槽**：本函数在 exec.run **之外**被调（租户拒绝
+// 发生在任何写入之前）⇒ 不登记的话，调用方吞掉这个错误时整批仍会提交 ⇒
+// 「失败即作废整批」对租户拒绝是假的。
+func (s *EffectStore) prepareAction(ctx context.Context, act sideeffect.Action) (sideeffect.Action, error) {
+	t, err := resolveTenant(ctx, s.tenantScoped, act.Tenant)
+	if err != nil {
+		s.exec.fail(err)
+		return act, err
+	}
+	act.Tenant = t
 	return act, nil
 }
 

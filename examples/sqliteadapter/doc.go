@@ -17,6 +17,20 @@
 // Apply 逐项对位；但判据逻辑两包各写一份——共用会把两个引擎耦在一起。
 // 正确性由**同一套契约套件**（boardtest / sidetest / RunSinkContract）对齐。
 //
+// # 跨面 Apply 与租户作用域
+//
+//   - **跨面 Apply**（Store.Apply）：四个面的变更收进**同一次提交**，失败即
+//     作废整批——即使调用方吞掉了内层的错误（内层失败会被记进共享失败槽）
+//     ⇒ 跨面不会出现「一半已提交」，也不会出现「什么都没提交却报成功」。
+//   - **租户作用域**（NewTenantEffectStore / NewTenantEventStore /
+//     NewTenantDownstream / NewTenantTailCursorStore 与门面的 Store.Tenant*
+//     入口）：每次读写都从 ctx 取租户（缺 ⇒ tenant.ErrNoContext，fail-closed
+//     ——不是回落到默认命名空间）；声明的租户与 ctx 不一致 ⇒
+//     ErrTenantMismatch（拒绝猜测哪一份是对的）。
+//
+// 默认形态（NewEffectStore / NewEventStore / NewDownstream / TailCursors 与
+// 门面的 Store.* 入口）**逐字不变**：单租户命名空间，租户取动作/事件自带的值。
+//
 // # 选型口径
 //
 // 本包只适合**单机单副本**。多副本 / 跨机一律用 PostgreSQL：SQLite 的单文件

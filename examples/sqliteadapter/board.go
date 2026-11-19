@@ -99,7 +99,10 @@ func (b *BoardStore) execIn(tx *sql.Tx) exec {
 		e.clock = b.clockSource()
 		return e
 	}
-	return b.store.execIn(tx, b.clockSource())
+	e := b.store.execIn(tx, b.clockSource())
+	// 失败槽随执行位置走（批次级状态：四个面共享同一份）。
+	e.failed = b.exec.failed
+	return e
 }
 
 // boardRow 任务行（内部表示）。

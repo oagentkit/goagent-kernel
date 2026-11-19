@@ -31,6 +31,17 @@ type exec struct {
 	tx *sql.Tx
 	// clock 注入的时钟（契约套件硬要求）；nil ⇒ 用存储时钟。
 	clock func() time.Time
+	// failed 本批第一次失败（**仅**事务内形态使用；nil ⇒ 不在任何批次里）。
+	//
+	// 为什么要有它：事务内某个面判失败时，调用方**可能吞掉那个错误**继续
+	// 写别的面 ⇒ 就会出现「一半已提交」。失败一旦发生就作废整批，是唯一能
+	// 杜绝这种半截事务的形态（失败形态是变红，不是留半截状态）。
+	//
+	// ⚠ 它是**记录点**，不是判定点：判定只有一处（Apply 的提交闸）。两处
+	// 都判 ⇒ 同一个判断有两个主人 ⇒ 改坏一处测试看不出区别。
+	//
+	// 指针而非值：四个面共享**同一份**槽 ⇒ 任一面失败，其余面都看得见。
+	failed *error
 }
 
 // queryer 读句柄（能发起查询的一侧：*sql.DB 与 *sql.Tx 都满足）。
@@ -55,11 +66,33 @@ func (e exec) reader() (queryer, error) {
 	return e.read, nil
 }
 
+// fail 登记本批的一次失败（只记**第一次**）。
+//
+// 为什么是 exec 上的方法而不是 Apply 上的闭包：失败可能发生在**进 exec.run
+// 之前**（租户解析拒绝、快照的落库前校验）⇒ 那些路径也得能登记，否则
+// 「失败即作废整批」对它们是假的。
+//
+// 独立事务形态（failed == nil）⇒ 登记是空操作。
+func (e exec) fail(err error) {
+	if err == nil || e.failed == nil {
+		return
+	}
+	if *e.failed == nil {
+		*e.failed = err
+	}
+}
+
 // run 在执行位置里跑一次操作。
 func (e exec) run(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	if e.tx != nil {
 		// 事务内：调用方拿到的是同一个 tx，不再开事务、不再提交。
-		return fn(e.tx)
+		if err := fn(e.tx); err != nil {
+			// 失败登记：调用方**可能吞掉**这个错误 ⇒ 本批必须作废。
+			// 登记只发生在事务内形态（独立事务没有批次可作废）。
+			e.fail(err)
+			return err
+		}
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return err

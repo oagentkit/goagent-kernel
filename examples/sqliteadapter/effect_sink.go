@@ -39,10 +39,17 @@ import (
 // txKey 事务句柄在 ctx 里的键（私有：外部造不出带事务的 ctx）。
 type txKey struct{}
 
+// resolvedTenantKey 已解析租户在 ctx 里的键（私有：外部造不出带结论的 ctx）。
+type resolvedTenantKey struct{}
+
 // Downstream FencedSink 的 SQLite 参考实现。
 type Downstream struct {
 	// exec 执行位置：db 是写句柄，read 是只读句柄（独立读路径走它）。
 	exec exec
+	// tenantScoped 装配期声明（issue #275）：true ⇒ 资源键按 (tenant,
+	// resource) 隔离，缺租户上下文拒绝。false ⇒ tenant ''（旧布局），
+	// 资源字符串本身的作用域仍有效。
+	tenantScoped bool
 }
 
 // 编译期断言：本实现满足下游栅栏契约。
@@ -99,6 +106,14 @@ func ExecWithin(ctx context.Context, query string, args ...any) (int64, error) {
 //     同一代持有者的多次写入合法，如分批提交）；
 //  3. 第 1 条的判定与第 2 条的写入（含令牌更新）在同一个事务里。
 func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented sideeffect.Fence, write func(ctx context.Context) error) error {
+	// 租户解析在**入口**发生一次（后续 SQL 一律用这一份结论）。
+	tenantID, err := resolveTenant(ctx, d.tenantScoped, "")
+	if err != nil {
+		// 失败登记：拒绝发生在 exec.run 之外 ⇒ 不登记的话调用方吞掉它时
+		// 整批仍会提交（「失败即作废整批」对这条路径是假的）。
+		d.exec.fail(err)
+		return err
+	}
 	return d.exec.run(ctx, func(tx *sql.Tx) error {
 		// 一条带条件的 upsert 完成比较与预占：
 		//   新资源直接以 presented 建行（首次写入恒通过）；
@@ -108,7 +123,7 @@ func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented
 			`INSERT INTO gak_downstream (tenant, resource, seen_fence, value) VALUES (?, ?, ?, '')
 			 ON CONFLICT (tenant, resource) DO UPDATE SET seen_fence = excluded.seen_fence
 			 WHERE gak_downstream.seen_fence <= excluded.seen_fence`,
-			"", resource, int64(presented))
+			tenantID, resource, int64(presented))
 		if err != nil {
 			return errors.Wrap(err, "sqliteadapter: 栅栏预占失败", "resource", resource)
 		}
@@ -120,7 +135,8 @@ func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented
 		if write != nil {
 			// 写入体在同一事务里执行：报错 ⇒ 整体回滚 ⇒ 预占与已写的业务
 			// 数据一起消失（不得部分写）。
-			if err := write(WithTx(ctx, tx)); err != nil {
+			// 入口的租户结论带进写入体（写入体不再二次解析 ⇒ 同一份结论）。
+			if err := write(withResolvedTenant(WithTx(ctx, tx), tenantID)); err != nil {
 				return err
 			}
 		}
@@ -133,6 +149,10 @@ func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented
 // 独立读路径 ⇒ 走只读句柄（写事务占用写句柄唯一连接时，从写句柄取连接会
 // 永久等待）。读的是**已提交快照**（WAL 下的读者用自己的连接看已提交数据）。
 func (d *Downstream) SeenFence(ctx context.Context, resource string) (sideeffect.Fence, error) {
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
 	q, err := d.exec.reader()
 	if err != nil {
 		return 0, err
@@ -140,7 +160,7 @@ func (d *Downstream) SeenFence(ctx context.Context, resource string) (sideeffect
 	var seen sql.NullInt64
 	if err := q.QueryRowContext(ctx,
 		`SELECT seen_fence FROM gak_downstream WHERE tenant = ? AND resource = ?`,
-		"", resource).Scan(&seen); err != nil {
+		tenantID, resource).Scan(&seen); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
 		}
@@ -149,19 +169,47 @@ func (d *Downstream) SeenFence(ctx context.Context, resource string) (sideeffect
 	return sideeffect.Fence(seen.Int64), nil
 }
 
+// withResolvedTenant 把入口解析出的租户结论带进写入体（私有键）。
+func withResolvedTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, resolvedTenantKey{}, tenantID)
+}
+
+// resolvedTenant 取写入体 ctx 里带的那份结论（没有 ⇒ ok=false）。
+func resolvedTenant(ctx context.Context) (string, bool) {
+	t, ok := ctx.Value(resolvedTenantKey{}).(string)
+	return t, ok
+}
+
+// resourceTenant 资源面的租户解析：写入体里的 ctx 已带入口结论（不做第二次
+// 解析），外部调用走同一套 resolveTenant。
+func (d *Downstream) resourceTenant(ctx context.Context) (string, error) {
+	if t, ok := resolvedTenant(ctx); ok {
+		return t, nil
+	}
+	return resolveTenant(ctx, d.tenantScoped, "")
+}
+
 // WriteMarker 在写入体里写一个参考业务标记（值追加 'm'）。
 //
 // 它是参考实现的「业务写入」占位：宿主的真实业务写入走同一条路
 // （ExecWithin，同一事务）。供共享套件判「不得部分写」。
 func (d *Downstream) WriteMarker(ctx context.Context, resource string) error {
-	_, err := ExecWithin(ctx,
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = ExecWithin(ctx,
 		`UPDATE gak_downstream SET value = value || 'm' WHERE tenant = ? AND resource = ?`,
-		"", resource)
+		tenantID, resource)
 	return err
 }
 
 // Marker 读已落盘的参考业务标记（无记录返回空串）。
 func (d *Downstream) Marker(ctx context.Context, resource string) (string, error) {
+	tenantID, err := d.resourceTenant(ctx)
+	if err != nil {
+		return "", err
+	}
 	q, err := d.exec.reader()
 	if err != nil {
 		return "", err
@@ -169,7 +217,7 @@ func (d *Downstream) Marker(ctx context.Context, resource string) (string, error
 	var value sql.NullString
 	if err := q.QueryRowContext(ctx,
 		`SELECT value FROM gak_downstream WHERE tenant = ? AND resource = ?`,
-		"", resource).Scan(&value); err != nil {
+		tenantID, resource).Scan(&value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}

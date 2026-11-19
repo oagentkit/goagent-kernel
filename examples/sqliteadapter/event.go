@@ -40,11 +40,16 @@
 //
 // # 租户作用域
 //
-// 本任务只落地**默认形态**（单命名空间）：写路径按事件自带的 Tenant 分区
-// （空 = ""），读路径固定读 "" 流——与 PG 侧 NewEventStore 同款。
-// 打开租户作用域的构造器（NewTenantEventStore）与 ctx 租户解析
-// （resolveTenant）由 Task 6 落地：同一 ctx 两份解析必然漂（同一个事件两处
-// 得出不同租户），故本任务不预造第二份。
+// 两种形态（判据入口见 tenant.go 的 resolveTenant，三段）：
+//
+//   - **默认形态**（NewEventStore / Store.Events）：写路径按事件自带的 Tenant
+//     分区（空 = ""），读路径固定读 "" 流——与 PG 侧 NewEventStore 同款。
+//   - **租户作用域**（NewTenantEventStore / Store.TenantEvents）：每次读写
+//     都从 ctx 取租户（缺租户 ⇒ tenant.ErrNoContext，fail-closed）；事件自带
+//     的 Tenant 与 ctx 不一致 ⇒ ErrTenantMismatch。
+//
+// 同一 ctx 只解析一次（入口解析，后续 SQL 一律用这一份结论）⇒ 同一个事件
+// 不会在两处得出不同租户。
 package sqliteadapter
 
 import (
@@ -69,9 +74,9 @@ type EventStore struct {
 	// tenantScoped 装配期声明（issue #275）：true ⇒ 发布与读取都从 ctx 取租户
 	//（缺租户 ⇒ tenant.ErrNoContext），每个租户一条独立 ID 空间与水位线。
 	//
-	// ⚠ 本任务只落地默认形态 ⇒ 该开关现在恒为 false；它**不是**无主的死开关
-	//：Task 6 的 Produces 明确认领了它（NewTenantEventStore + resolveTenant），
-	// 届时打开即可，判据与 PG 侧同款。
+	// 默认形态（NewEventStore / Store.Events）恒为 false：租户取事件自带的
+	// Tenant（空 = 单命名空间），读面固定读 "" 流——与 PG 侧 NewEventStore
+	// 同款。租户作用域形态见 NewTenantEventStore / Store.TenantEvents。
 	tenantScoped bool
 }
 
@@ -84,12 +89,6 @@ var (
 
 // Events 事件面（与其它面共用同一份事务域）。
 func (s *Store) Events() *EventStore { return &EventStore{exec: s.execBase()} }
-
-// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
-//
-// 用途（PG 侧注释原话）：把「忘记装配」变成**启动期失败**，而不是运行期的
-// 跨租户可见。
-func (s *EventStore) TenantScoped() bool { return s.tenantScoped }
 
 // normalizeEvent 与 DurablePublisher.Publish 同款的零值归一（Level / Payload），
 // 归一发生在落库前——落库行与广播帧同一内容。
@@ -132,7 +131,13 @@ func encodeEventPayload(p map[string]any) (string, error) {
 //
 // 输入事件的 ev.ID 一律忽略（游标由水位行铸造）。
 func (s *EventStore) PublishInTx(ctx context.Context, tx *sql.Tx, ev eventbus.Event) (uint64, error) {
-	return s.publishInTx(ctx, tx, ev)
+	id, err := s.publishInTx(ctx, tx, ev)
+	if err != nil {
+		// 失败登记：PublishInTx 不经 exec.run（调用方自带事务）⇒ 失败必须
+		// 显式登记，否则调用方吞掉它时整批仍会提交。
+		s.exec.fail(err)
+	}
+	return id, err
 }
 
 // publishInTx 事务内发布核心：拿号（水位行锁）→ 插事件行。本函数不提交
@@ -141,9 +146,14 @@ func (s *EventStore) publishInTx(ctx context.Context, tx *sql.Tx, ev eventbus.Ev
 	ev = normalizeEvent(ev)
 	ev.ID = 0 // 权威游标由水位行铸造：输入侧 ID 一律忽略（防御陈旧游标流入）
 
-	// 租户分区键：默认形态取事件自带的 Tenant（空 = 单命名空间）——与 PG 侧
-	// NewEventStore 同款（不会把带租户的事件静默并进 "" 流）。
-	tenantID := ev.Tenant
+	// 租户分区键：入口解析一次（默认形态取事件自带的 Tenant，空 = 单命名
+	// 空间——与 PG 侧 NewEventStore 同款；租户作用域形态从 ctx 取，缺租户
+	// 拒绝、声明与 ctx 不一致拒绝）。
+	tenantID, err := resolveTenant(ctx, s.tenantScoped, ev.Tenant)
+	if err != nil {
+		return 0, err
+	}
+	ev.Tenant = tenantID
 
 	// 拿号即持锁：按租户 UPSERT 水位行的 committed + 1 RETURNING 新值——
 	// 行锁持有到本事务提交，同一租户的下一个发布者在此等待 ⇒ 铸造序 ==
@@ -200,11 +210,14 @@ func (s *EventStore) Insert(ctx context.Context, ev eventbus.Event) (uint64, err
 	return id, nil
 }
 
-// readTenant 读路径的租户：默认形态固定读 "" 流（与 PG 侧 NewEventStore 同款）。
+// readTenant 读路径的租户：默认形态固定读 "" 流（与 PG 侧 NewEventStore 同款）；
+// 租户作用域形态按 ctx 读（缺租户 ⇒ tenant.ErrNoContext，fail-closed）。
 //
-// 事件行仍按 Event.Tenant 分区（不会静默并进 "" 流），但读面只读单命名空间；
-// 租户作用域形态按 ctx 读（Task 6 打开后此处改走 resolveTenant）。
-func (s *EventStore) readTenant() string { return "" }
+// 事件行仍按 Event.Tenant 分区（不会静默并进 "" 流），但默认形态的读面只读
+// 单命名空间。
+func (s *EventStore) readTenant(ctx context.Context) (string, error) {
+	return resolveTenant(ctx, s.tenantScoped, "")
+}
 
 // readWatermark 读已提交水位线（≤ 此值的游标 ID 已全部提交且可见）。
 //
@@ -213,12 +226,12 @@ func (s *EventStore) readTenant() string { return "" }
 //
 // ⚠ 缺行 = 零事件 = 水位线 0（COALESCE）：水位行是惰性建出的，空库上根本
 // 没有那一行——契约要求 MaxID 在空表上返回 0（PG 侧靠建表时种行达成同一效果）。
-func (s *EventStore) readWatermark(ctx context.Context, q queryer) (uint64, error) {
+func (s *EventStore) readWatermark(ctx context.Context, q queryer, tenantID string) (uint64, error) {
 	var n int64
 	if err := q.QueryRowContext(ctx,
 		`SELECT COALESCE((SELECT committed FROM gak_event_watermark WHERE tenant = ?), 0)`,
-		s.readTenant()).Scan(&n); err != nil {
-		return 0, errors.Wrap(err, "sqliteadapter: 读事件水位线失败", "tenant", s.readTenant())
+		tenantID).Scan(&n); err != nil {
+		return 0, errors.Wrap(err, "sqliteadapter: 读事件水位线失败", "tenant", tenantID)
 	}
 	if n < 0 {
 		return 0, errors.New("sqliteadapter: 事件水位线为负（数据损坏）")
@@ -232,21 +245,29 @@ func (s *EventStore) readWatermark(ctx context.Context, q queryer) (uint64, erro
 // 推过无空洞边界——否则初始化本身就把在途小 ID 跳过（#264）。Outbox 形态下
 // 无空洞边界就是已提交水位线（与 CommittedWatermark 同值同源）。
 func (s *EventStore) MaxID(ctx context.Context) (uint64, error) {
+	t, err := s.readTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
 	q, err := s.exec.reader()
 	if err != nil {
 		return 0, err
 	}
-	return s.readWatermark(ctx, q)
+	return s.readWatermark(ctx, q, t)
 }
 
 // CommittedWatermark 已提交水位线读法（eventbus.WatermarkTailStore，#264 的
 // 实现声明面）：实现本方法 = 声明本存储是 Outbox 形态。
 func (s *EventStore) CommittedWatermark(ctx context.Context) (uint64, error) {
+	t, err := s.readTenant(ctx)
+	if err != nil {
+		return 0, err
+	}
 	q, err := s.exec.reader()
 	if err != nil {
 		return 0, err
 	}
-	return s.readWatermark(ctx, q)
+	return s.readWatermark(ctx, q, t)
 }
 
 // ListAfter 列出 id > cursor 的事件（eventbus.TailStore，升序，limit 为单拍
@@ -262,6 +283,10 @@ func (s *EventStore) CommittedWatermark(ctx context.Context) (uint64, error) {
 // ⚠ 上界与取段在**同一条语句**里（子查询读水位行）⇒ 一个快照，不存在
 // 「读完水位线、事件行又推进了」的窗口。
 func (s *EventStore) ListAfter(ctx context.Context, cursor uint64, limit int) ([]eventbus.Event, error) {
+	t, err := s.readTenant(ctx)
+	if err != nil {
+		return nil, err
+	}
 	q, err := s.exec.reader()
 	if err != nil {
 		return nil, err
@@ -273,7 +298,7 @@ func (s *EventStore) ListAfter(ctx context.Context, cursor uint64, limit int) ([
 		   AND id > ?
 		   AND id <= COALESCE((SELECT committed FROM gak_event_watermark WHERE tenant = ?), 0)
 		 ORDER BY id
-		 LIMIT ?`, s.readTenant(), int64(cursor), s.readTenant(), limit)
+		 LIMIT ?`, t, int64(cursor), t, limit)
 	if err != nil {
 		return nil, errors.Wrap(err, "sqliteadapter: 读事件段失败")
 	}
