@@ -100,7 +100,7 @@ func (b *BoardStore) execIn(tx *sql.Tx) exec {
 		return e
 	}
 	e := b.store.execIn(tx, b.clockSource())
-	// 失败槽随执行位置走（批次级状态：四个面共享同一份）。
+	// 失败槽随执行位置走（批次级状态：五个面共享同一份）。
 	e.failed = b.exec.failed
 	return e
 }
@@ -191,6 +191,35 @@ func scanBoardRow(row interface{ Scan(...any) error }) (*boardRow, error) {
 	}, nil
 }
 
+// encodeDeps 把依赖列表压成 JSON 文本（deps 列是 TEXT）。
+//
+// 单一来源：装载入口（Seed）与控制面提交（CommitTask）都走它 ⇒ 依赖的存储
+// 形态只有一份（两处各写一份必然漂）。
+func encodeDeps(deps []taskboard.TaskID) (string, error) {
+	if len(deps) == 0 {
+		return "[]", nil
+	}
+	raw, err := json.Marshal(deps)
+	if err != nil {
+		return "", errors.Wrap(err, "sqliteadapter: 序列化依赖失败")
+	}
+	return string(raw), nil
+}
+
+// TaskSourceID 实现 controlplane.TaskSource（issue #268/#278）：同一数据
+// 文件的任务板与控制面报同一值 ⇒ NewAuthoritativeStorePlane 据此在装配期
+// 判定「同一张任务表」；不同数据文件 ⇒ 不同来源 ⇒ 装配期拒绝。
+//
+// ⚠ 本面与控制面**必须成对实现**：内核的同源校验是「双方都实现才比对」，
+// 只实现一方 ⇒ 装配期直接 ErrAuthorityMismatch（控制面声明了来源而任务
+// 权威面没有 ⇒ 无法判定同源）。
+func (b *BoardStore) TaskSourceID() string {
+	if b.store == nil {
+		return ""
+	}
+	return b.store.sourceID()
+}
+
 // List 返回当前全部任务的快照（一致快照：单次查询读全量）。
 //
 // ⚠ **独立读路径必须走只读句柄**（不是写句柄）：写句柄只有一条连接
@@ -244,13 +273,9 @@ func (b *BoardStore) Seed(tasks ...taskboard.Task) {
 // 「任务变更的序号」，单调递增是它的契约；覆盖会让同一个 seq 反复出现 ⇒
 // 变更被吞掉且无人发现。
 func (b *BoardStore) seedOne(task taskboard.Task) error {
-	deps := "[]"
-	if len(task.Deps) > 0 {
-		raw, err := json.Marshal(task.Deps)
-		if err != nil {
-			return errors.Wrap(err, "sqliteadapter: 序列化依赖失败")
-		}
-		deps = string(raw)
+	deps, err := encodeDeps(task.Deps)
+	if err != nil {
+		return err
 	}
 	ctx := context.Background()
 	return b.exec.run(ctx, func(tx *sql.Tx) error {

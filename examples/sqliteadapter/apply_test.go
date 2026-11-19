@@ -2,8 +2,8 @@
 //
 // # 为什么要有 Apply
 //
-// 四个面各自提交 ⇒ 「任务做完了但没留痕」「留痕了但没做完」两类半截状态
-// 结构性地可能。Apply 把四个面的变更收进**同一次提交**，失败即作废整批
+// 五个面各自提交 ⇒ 「任务做完了但没留痕」「留痕了但没做完」两类半截状态
+// 结构性地可能。Apply 把五个面的变更收进**同一次提交**，失败即作废整批
 // （即使调用方吞掉了内层的错误）。
 //
 // # 三条最容易踩的坑（用例逐条钉住）
@@ -39,9 +39,9 @@ func appCtx(t *testing.T) context.Context {
 	return ctx
 }
 
-// TestApplyCommitsAllFacesAtomically 四个面的变更落进**同一次提交**。
+// TestApplyCommitsAllFacesAtomically 五个面的变更落进**同一次提交**。
 //
-// 判据：提交后四面都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部不生效
+// 判据：提交后五面都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部不生效
 // （见下面两条用例）。
 func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 	ctx := appCtx(t)
@@ -68,13 +68,19 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 		if _, err := tx.Events().Insert(ctx, eventbus.Event{SessionID: "s-apply", Type: "t-apply"}); err != nil {
 			return err
 		}
+		// 栅栏面：批内预占 + 写入体（写入体走同一事务 ⇒ 不得部分写）。
+		if err := tx.Downstream().WriteFenced(ctx, "res-apply", 1, func(ctx context.Context) error {
+			return tx.Downstream().WriteMarker(ctx, "res-apply")
+		}); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("Apply 失败: %v", err)
 	}
 
-	// 四个面都读得到（⇒ 四面变更同生共死）。
+	// 五个面都读得到（⇒ 五面变更同生共死）。
 	tasks, err := s.Board().List(ctx)
 	if err != nil {
 		t.Fatalf("读任务失败: %v", err)
@@ -103,6 +109,13 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("副作用面未随批提交，实得 %d 行", n)
+	}
+	marker, err := s.Downstream().Marker(ctx, "res-apply")
+	if err != nil {
+		t.Fatalf("读栅栏标记失败: %v", err)
+	}
+	if marker != "m" {
+		t.Fatalf("栅栏面未随批提交（业务标记应为 m），实得 %q", marker)
 	}
 }
 
@@ -192,7 +205,7 @@ func TestApplyVoidsBatchWhenInnerFailureSwallowed(t *testing.T) {
 	}
 }
 
-// TestApplySharesOneTransactionAcrossFaces 四个面共用**同一个**事务。
+// TestApplySharesOneTransactionAcrossFaces 各面共用**同一个**事务。
 //
 // 判据：事务内的读看得见事务内的未提交写（读走 tx，不走只读句柄）⇒ 只有
 // 同一个 tx 才成立。分面各开事务时这条判据会退化成「读不到」或挂死。
@@ -217,7 +230,7 @@ func TestApplySharesOneTransactionAcrossFaces(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("Apply 失败（四个面没有共用同一个事务）: %v", err)
+		t.Fatalf("Apply 失败（各面没有共用同一个事务）: %v", err)
 	}
 }
 

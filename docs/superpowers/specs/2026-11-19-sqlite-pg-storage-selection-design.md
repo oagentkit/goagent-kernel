@@ -134,13 +134,13 @@ SQLite 的单写者模型在多写者下退化为串行，且 `busy_timeout` 到
 | 任务板 | `taskboard.Board` / `RenewingBoard` | `board_task` 表；`Claim` 在 `BEGIN IMMEDIATE` 内读-判-写并铸造 token 与 `fence`；`Release`/`Complete` 只认 token，`RowsAffected==0` 再读一次区分 `ErrNotFound` / `ErrLeaseLost` |
 | 副作用闸 | `sideeffect.Store` | `effect` / `effect_resource` 两级表（Key 级 + 资源级），与 `pgstore/effect_rows.go` 同形 |
 | 进度快照 | `checkpoint.StoreCAS` | `snapshot` 表；带条件 upsert（`WHERE seq < excluded.seq` ⇒ 影响行数 0 即判陈旧） |
-| 事件面 | `eventbus.Store` / `TailStore` / `WatermarkTailStore` / `CursorStore` | `event` 表 + `event_watermark` 单行水位 + `tail_cursor` 表 |
+| 事件面 | `eventbus.Store` / `TailStore` / `WatermarkTailStore` / `CursorStore` | `event` 表 + `event_watermark` **每租户一行**水位（与租户作用域一致）+ `tail_cursor` 表 |
 | 控制面 | `controlplane.Store` | `control_task` / `control_run` / `control_effect` + `control_version` 单行版本锚；三个 `Commit*` 在版本锚上「校验 → 留痕 → 写状态 → 推进版本」同事务 |
 | 下游栅栏 | `sideeffect.FencedSink` | `downstream_fence` 表；带条件 upsert（`WHERE seen_fence <= presented`），**先原子预占再执行写入体** |
 
 **事件 ID 的铸造与水位线（本轮实测挖出的关键点）**：
 
-- 事件 ID 在 **`event_watermark` 单行**上铸造（`UPDATE … SET last_id = last_id + 1 …
+- 事件 ID 在 **`event_watermark` 每租户一行**上铸造（`UPDATE … SET last_id = last_id + 1 …
   RETURNING last_id`），**不是** `AUTOINCREMENT`。⇒ 回滚时 `last_id` 随事务一起回滚，
   **号被复用** ⇒ 序列空洞结构性不存在（实测：`first=1`、回滚烧掉 `2`、`next=2`）。
 - `CommittedWatermark` 读**水位线行**；`ListAfter` 读**事件表**。两者**不是同一个数**：
@@ -153,9 +153,9 @@ SQLite 的单写者模型在多写者下退化为串行，且 `busy_timeout` 到
 
 ### 5.4 跨面 `Apply`
 
-`Store.Apply(ctx, fn func(tx *Tx) error) error`：`Tx` 上挂四个面的**事务内变体**
-（`Tasks()` / `Effects()` / `Snapshots()` / `Events()`），一次事务一次提交 ⇒
-跨面不会出现「一半已提交」。
+`Store.Apply(ctx, fn func(tx *Tx) error) error`：`Tx` 上挂五个面的**事务内变体**
+（`Tasks()` / `Effects()` / `Snapshots()` / `Events()` / `Downstream()`），一次事务一次
+提交 ⇒ 跨面不会出现「一半已提交」。
 
 **判据代码单一来源**：事务内的判据与独立提交**逐字相同**，不写两份。实现形态是
 「判据函数 + 可切换的执行位置」（`sqlitestore` 当年用 `exec{db, tx}` 达成，

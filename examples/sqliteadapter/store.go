@@ -53,7 +53,7 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Store) { s.clock = now }
 }
 
-// Store 一个 SQLite 后端：四个面 + 控制面 + 栅栏 + 游标，共用一份事务域。
+// Store 一个 SQLite 后端：五个面 + 控制面 + 游标，共用一份事务域。
 type Store struct {
 	// db 写句柄：MaxOpenConns(1)，_txlock=immediate（写事务先拿写锁）。
 	db *sql.DB
@@ -134,6 +134,12 @@ func (s *Store) DB() *sql.DB { return s.db }
 
 // Path 数据文件路径（对账用）。
 func (s *Store) Path() string { return s.path }
+
+// sourceID 存储来源标识：同一数据文件的面（任务板 / 控制面）报同一值。
+//
+// 与 PG 侧 poolSourceID 同款用途：NewAuthoritativeStorePlane 据此在装配期
+// 判定「同一张任务表」（不同数据文件 ⇒ 不同来源 ⇒ 装配期拒绝）。
+func (s *Store) sourceID() string { return "sqliteadapter:" + s.path }
 
 // exec 造一个**独立事务**的执行位置（判据单一来源的入口）。
 //

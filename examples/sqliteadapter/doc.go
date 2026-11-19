@@ -9,7 +9,7 @@
 // 把内核的四套存储中立契约（taskboard.Board / sideeffect.Store /
 // checkpoint.StoreCAS / eventbus.Store）+ 控制面（controlplane.Store）+
 // 下游栅栏（sideeffect.FencedSink）+ 尾随游标（eventbus.CursorStore）
-// 落到一个 SQLite(WAL) 单文件库里，四个面**共用一份事务域**。
+// 落到一个 SQLite(WAL) 单文件库里，全部面**共用一份事务域**。
 //
 // # 与 examples/pgstore 的关系
 //
@@ -19,7 +19,7 @@
 //
 // # 跨面 Apply 与租户作用域
 //
-//   - **跨面 Apply**（Store.Apply）：四个面的变更收进**同一次提交**，失败即
+//   - **跨面 Apply**（Store.Apply）：五个面的变更收进**同一次提交**，失败即
 //     作废整批——即使调用方吞掉了内层的错误（内层失败会被记进共享失败槽）
 //     ⇒ 跨面不会出现「一半已提交」，也不会出现「什么都没提交却报成功」。
 //   - **租户作用域**（NewTenantEffectStore / NewTenantEventStore /
