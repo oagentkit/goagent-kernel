@@ -1885,8 +1885,21 @@ Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
    `Seq=9223372036854775808`（负数落库后读回假序号）；SQLite 侧
    `examples/sqliteadapter/snapshot.go:65` 有同款守卫（`snap.Seq > math.MaxInt64`）
    ⇒ **本轮未修，如实留 open**。
-2. **`examples/pgstore` 里残留「四个面」的窄义措辞**：`pg_apply_test.go:5` 与
-   `effect.go:135`——门面侧实际是**十一个**面访问器，措辞与门面可达性不同步，待清理。
+2. **`examples/pgstore` 里残留「四个面」的窄义措辞**——门面侧实际是**十一个**面
+   访问器，措辞与门面可达性不同步，待清理。**实测共 7 处**（本条初稿只点名 2 处，
+   属漏报，已补全）：`pg_apply_test.go:5` / `:64` / `:66`（措辞作「四面」）/ `:100` /
+   `:131` / `:164` 与 `effect.go:135`。
 3. **§26 / §27 的建议仍未处理**：§26 的三条（形态判定下沉为可导入包 / 其它门禁统一取证
    形态 / §25 两条顺延）、§27 另两条（真集群验收路径要有「被执行过」的清单 / CI 侧该
    不该跑这条 e2e 待议——§27 末尾第 1 条即 §26 的顺延，不另计），按原顺序排在后续轮次。
+4. **两侧门面「同款集合」的相等性未被机判**（最终评审实测）：`examples/pgstore/store.go:109`
+   断言「补齐后两侧门面暴露**同款集合** ⇒ 对位成为**事实**」——但该事实**没有**机器
+   判据：删掉 PG 侧任一面访问器（实测 `TenantTailCursors`）或给 PG 侧加一个 SQLite 侧
+   没有的访问器 ⇒ `storagecheck` / `deploycheck` / `architecture-check` **全绿**（只有
+   `pgstore` 包自身因用例引用而编译失败，而那组用例被 `GAK_PGREF_DSN` 门控 ⇒ CI 常规
+   层不判）。**当前两侧确实各 11 个面**（评审逐个核对通过），但那是**事实**不是
+   **机判事实** ⇒ 无声漂移不会有人看见。修法：在 `cmd/storagecheck` 增设一条
+   「两侧门面访问器集合相等」判据（两侧导出集合做差集，非空即红）。
+   附带一条覆盖面偏窄：`docs/STORAGE-SELECTION.yaml` 的 evidence 只引用了 11 个面
+   访问器中的 7 个，`Downstream` / `TailCursors` / `TenantDownstream` /
+   `TenantTailCursors` **两侧均无 evidence ref** ⇒ 同属声明面覆盖不全，一并待补。

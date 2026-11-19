@@ -2,6 +2,27 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.50.2] — 2026-11-20
+
+### 文档(台账)：§28 下一阶段建议订正——「四个面」窄义措辞的落点由 2 处补全为 7 处，并新增一条如实登记
+
+最终全分支评审（**PASS**，零 Critical / 零 Major）查出两处台账口径问题，本版订正：
+
+1. **漏报**：§28 建议第 2 条只点名 `pg_apply_test.go:5` 与 `effect.go:135` 两处
+   ⇒ 实测**共 7 处**（`pg_apply_test.go:5` / `:64` / `:66`（措辞作「四面」）/ `:100` /
+   `:131` / `:164` + `effect.go:135`）⇒ 登记补全为全量清单。
+2. **新增**：建议第 4 条——**两侧门面「同款集合」的相等性未被机判**。评审实测：删掉
+   PG 侧任一面访问器、或给 PG 侧加一个 SQLite 侧没有的访问器 ⇒ `storagecheck` /
+   `deploycheck` / `architecture-check` **全绿**（`pgstore` 包自身那组用例被
+   `GAK_PGREF_DSN` 门控 ⇒ CI 常规层不判）⇒ **当前两侧确实各 11 个面**（评审逐个核对
+   通过），但那是**事实**不是**机判事实** ⇒ 无声漂移不会有人看见。修法：给
+   `cmd/storagecheck` 增设「两侧门面访问器集合相等」判据（导出集合做差集，非空即红）。
+   附带一条覆盖面偏窄：`docs/STORAGE-SELECTION.yaml` 的 evidence 只引用了 11 个面
+   访问器中的 7 个（`Downstream` / `TailCursors` / `TenantDownstream` /
+   `TenantTailCursors` 两侧均无 evidence ref）。
+
+**行为面零变化**——只改台账与 CHANGELOG，不动代码、契约与门禁。
+
 ## [v0.50.1] — 2026-11-20
 
 ### 修复(readme)：下游升级须知 v0.50.0 行的依赖地板口径——原话把两类下游混成了一类
