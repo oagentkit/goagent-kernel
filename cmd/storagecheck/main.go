@@ -25,19 +25,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	probs, notes, err := check(root)
 	if err != nil {
-		fmt.Fprintf(stderr, "storagecheck: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "storagecheck: %v\n", err)
 		return 1
 	}
 	for _, n := range notes {
-		fmt.Fprintf(stdout, "storagecheck: %s\n", n)
+		_, _ = fmt.Fprintf(stdout, "storagecheck: %s\n", n)
 	}
 	if len(probs) > 0 {
 		for _, p := range probs {
-			fmt.Fprintf(stderr, "storagecheck: %s\n", p)
+			_, _ = fmt.Fprintf(stderr, "storagecheck: %s\n", p)
 		}
 		return 1
 	}
-	fmt.Fprintln(stdout, "storagecheck ✓（场景选型在允许集内 + 能力齐备 + 落点可解析 + 写者数不越界）")
+	_, _ = fmt.Fprintln(stdout, "storagecheck ✓（场景选型在允许集内 + 能力齐备 + 落点可解析 + 写者数不越界）")
 	return 0
 }
 

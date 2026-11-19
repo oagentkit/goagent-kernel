@@ -2574,6 +2574,26 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 **认领**哪些能力、能力在代码里的落点（`path#Symbol`，`make storagecheck`
 走 go/ast 判符号声明）。两份声明面不许脱节：能力 id 的唯一真相是部署矩阵的
 能力表，矩阵里删了能力而选型面还认领它（或反过来谁都不认领），当场红。
+（两份声明面的 **evidence 粒度不同**：部署矩阵是**面级展开**（一条能力把各张脸
+各列一条落点），选型面是**事务域本体**（一条能力只指那条把各张脸收进同一份
+事务域的入口）⇒ **不矛盾**，id 层面的一致性由 `make storagecheck` 判据 2 机判。）
+
+#### 已登记的已知不对称（两侧**确有**行为差异的部分）
+
+选型面把两侧**已知不等价**的地方逐条登记在 `known_asymmetries` 段，`make storagecheck`
+逐条判（落点可解析 / 落在 ≥2 个不同存储上 / summary 非空），并把摘要打进门禁输出：
+
+| id | 一句话 |
+|---|---|
+| `batch-read-visibility` | 批内读：SQLite 侧**看得见**本批未提交写，PG 侧**看不见**（MVCC 已提交快照）——机制不同、语义同构，不是能力缺失 |
+| `batch-cursor-write` | 批内写游标：PG 侧**显式拒绝**（游标独立提交会越过被回滚的事件 ⇒ 静默丢帧），SQLite 侧**挂到 ctx 超时**——都响亮，但**失败形态不同** |
+| `same-store-identity` | 「同一份存储」的判据：SQLite 侧按**文件路径**判（两个路径 / 符号链接 / 两处挂载 ⇒ 装配期拒），PG 侧按 **host/port/database/schema** 四元组判——两侧同款口径 |
+| `control-version-anchor` | 版本锚只被**控制面自身的提交**推进 ⇒ 检测不到控制面之外的写入——**两侧共有**的契约边界，不是 SQLite 的短板 |
+| `facade-schema-bootstrap` | 建表入口的公开面**不对位**：SQLite 侧有 `Store.EnsureSchema`，PG 侧是**包级函数** `pgstore.EnsureSchema` ⇒ 只持门面的宿主在 PG 侧拿不到建表入口 |
+
+⇒ **跨引擎迁移时别假设两侧行为一致**（尤其「批内读看得见什么」「批内写游标怎么报错」）。
+逐条全文与落点见 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml) 的
+`known_asymmetries` 段。
 
 #### 坑
 

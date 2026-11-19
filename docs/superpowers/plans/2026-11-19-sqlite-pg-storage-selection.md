@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**状态**：**已实施完毕**（2026-11-19 – 2026-11-20，按下面的 Task 逐个落地；
+其中 **Task 10 = 删除假 SQLite 并翻转口径**，commit `5ef2ccf`）——
+**实施后现状**见文末「实施后现状」一节。
+
 **Goal:** 删掉名为 `sqlitestore` 的假 SQLite（flock + JSONL），建一个真 SQLite 适配器 `examples/sqliteadapter`（全面对齐 PG 的契约面），给 PG 补齐跨面事务，并把「何时用 SQLite / 何时用 PostgreSQL」做成门禁可判的规则。
 
 **Architecture:** 三个存储实现各司其职——`examples/reference-runtime`（内存，证判据本身对）、`examples/sqliteadapter`（真 SQLite，单机持久化，unit 层可跑）、`examples/pgstore`（PG，多副本/跨机，integration 层）。SQLite 与 PG 两包**形态同构、代码不共用**（存储层不同，耦合即锁死），正确性由同一套契约套件（`boardtest` / `sidetest` / `sidetest.RunSinkContract`）对齐。选型判据是独立门禁 `cmd/storagecheck`，声明面 `docs/STORAGE-SELECTION.yaml`，读 `docs/DEPLOY-MATRIX.yaml` 的场景表判「场景选的 storage 是否在允许集内 + 是否真提供该场景必需的全部能力 + 能力断言在代码里找得到落点」。
@@ -72,7 +76,7 @@
 | `taskboard/claim_gate_test.go` | 注释里的实现枚举 |
 | `docs/DISTRIBUTED-EVOLUTION-20261117.md` | 新增 §28；§24 落点更新；§9 单号登记 |
 
-**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）
+**删除**：`examples/sqlitestore/`（22 个 `.go` 文件，3358 行）——**已完成**（Task 10，2026-11-20，commit `5ef2ccf`）
 
 ---
 
@@ -3073,3 +3077,27 @@ tag 打在 **CI 全绿的提交**上；CHANGELOG 的版本段提交**只碰 CHAN
   `Downstream` / `TailCursorStore` —— 命名与 PG 同款 ✓
 - `resolveTenant(ctx, scoped, fallback) (string, error)` —— Task 6 定义，Task 4/5/7 沿用 ✓
 - `cmd/storagecheck.check(root) ([]string, []string, error)` —— Task 9 定义，测试与 main 沿用 ✓
+
+---
+
+## 实施后现状（2026-11-19 – 2026-11-20，**已实施完毕**）
+
+> 本节是**实施后的现状指针**；上面的 Task 清单**保持原样**（那是这份计划的价值）。
+> 状态：**已实施完毕**。
+
+- **假 SQLite 已删**：`examples/sqlitestore`（flock + JSONL，22 个 `.go` 文件 /
+  3358 行）于 2026-11-20 删除（Task 10，commit `5ef2ccf`）。登记面
+  （`architecture-policy.yaml` 的 modules + thresholds.scan_roots、
+  `api-lifecycle.yaml`）与引用面（`docs/DEPLOY-MATRIX.yaml` 的 6 处 evidence）
+  **同提交**改指真适配器。
+- **真适配器已就位**：`examples/sqliteadapter`（`modernc.org/sqlite`，纯 Go）已落地，
+  门面暴露 11 个面访问器，与 PG 侧同款；`examples/pgstore` 的跨面事务（`Store.Apply`）
+  已补齐。
+- **选型门禁已上线**：`cmd/storagecheck` + 声明面 `docs/STORAGE-SELECTION.yaml`
+  （`make storagecheck`），已接进 `make check` 与 `make unit` **两层** ⇒ CI 上真的跑。
+- **口径已翻**：部署矩阵的 `single-host-persistent` 场景 storage 指向
+  `examples/sqliteadapter`；`docs/USAGE.md` 补了「存储选型」专节（三条判据 +
+  「单机多进程一律判 PostgreSQL」的硬边界 + SQLite 毫秒级时钟提示）。
+- **历史不改写**：台账 / CHANGELOG / README 版本表 / `AGENTS.md` / `docs/AI-GUIDE.md`
+  的历史段落**逐字保留**，只做**追加式**现状注。
+- **关联单号**：#424。

@@ -1,7 +1,7 @@
 # 真 SQLite 适配器与存储选型判据（设计）
 
-日期：2026-11-19
-状态：设计已确认（brainstorming 四节逐节确认），待实施
+日期：2026-11-19（设计）／2026-11-19 – 2026-11-20（实施）
+状态：**已实施完毕**（原为「设计已确认，待实施」）——**实施后现状**见 §12
 关联台账：docs/DISTRIBUTED-EVOLUTION-20261117.md（新增 §28）
 
 ## 0. 一句话
@@ -12,15 +12,15 @@
 
 ## 1. 问题陈述
 
-现状三份存储实现：
+现状三份存储实现（**设计时的现状**，实施后的现状见 §12）：
 
 | 包 | 实际是什么 | 部署形态 |
 |---|---|---|
 | `examples/reference-runtime` | 内存存储（`package main`） | 单进程、不持久化 |
 | `examples/pgstore` | **真** PostgreSQL（6270 行） | 共享库、多副本 |
-| `examples/sqlitestore` | **不是 SQLite**：flock + JSONL 追加 + fsync（3358 行） | 单机、单写者 |
+| `examples/sqlitastore`（**设计时的事实，现已删除**）| **不是 SQLite**：flock + JSONL 追加 + fsync（3358 行） | 单机、单写者 |
 
-`examples/sqlitestore` 的包名与实现不符：`doc.go` 自述「为什么这里没有 SQLite 驱动」
+`examples/sqlitestore` 的包名与实现不符：其 `doc.go`（**已随该包删除**）自述「为什么这里没有 SQLite 驱动」
 ——issue #188 要 SQLite(WAL) 适配器，但因「内核包不得为参考实现引入第三方依赖」被拒，
 改以「契约级设计 + 零依赖文件后端」清偿（#188 关闭于 PR #249），SQLite 的 DDL / WAL /
 事务边界只以**文档章节**形式留给宿主抄写。
@@ -36,6 +36,8 @@ SQLite 在仓内**不存在**。
 ## 2. 目标与非目标
 
 ### 目标
+
+> 以下四条是**设计时**的目标清单，**已全部完成**（实施后现状见 §12）。
 
 1. `examples/sqliteadapter`：真 SQLite 适配器，契约面**全面对齐 PG**（四套契约面 +
    `controlplane.Store` + `sideeffect.FencedSink` + `eventbus.CursorStore` + 租户作用域 +
@@ -211,11 +213,14 @@ PG 时钟口径。
 
 ## 7. 删除面与登记面同步
 
+> 本节是**设计时**的删除面测算与改写清单；实施结果见 §12「实施后现状」。
+
 全仓 **33 个文件**提及 `sqlitestore`（包内 24 个 + 包外 9 个）。
 
 ### 7.1 删除
 
-- `examples/sqlitestore/**`（22 个 `.go` 文件，3358 行）——**全部删除**。
+- `examples/sqlitestore/**`（22 个 `.go` 文件，3358 行）——**全部删除**
+  （**已完成**：2026-11-20，commit `5ef2ccf`）。
 
 ### 7.2 改写
 
@@ -229,6 +234,11 @@ PG 时钟口径。
 | `AGENTS.md`（4 处）/ `docs/AI-GUIDE.md`（1 处） | 删「四份契约面共用一份事务域（JSONL 后端）」的表述，改为 PG + SQLite 两引擎各自同构 |
 | `archcheck/error_sentinel_test.go` | 删 `examples/sqlitestore/lock_unix.go` / `lock_windows.go` 两条豁免 |
 | `taskboard/claim_gate_test.go` | 注释里的四实现枚举去掉 sqlitestore |
+
+> ⚠ 本表是**设计时的改写清单**，已执行（2026-11-19 – 2026-11-20）。其中一行与事实不符、
+> 实施时**未照做**：`README.md` 的「包表删 sqlitestore 行、加 sqliteadapter 行」——
+> README 包表**只列核心包**，**没有 `examples/*` 行** ⇒ 无需改包表
+> （`make docsync` 判：52 个包，前后一致）。
 
 ### 7.3 只追加、不改历史
 
@@ -324,3 +334,24 @@ PG 时钟口径。
 - 两个适配器判据逻辑不共用代码 ⇒ 同一契约的两次实现可能漂 ⇒ 靠契约套件对齐
   （这正是共享套件存在的理由），不靠代码复用。
 - 本轮不提供 JSONL → SQLite 迁移工具（§2 非目标）。
+
+## 12. 实施后现状（2026-11-19 – 2026-11-20，**已实施完毕**）
+
+> 本节是**实施后的现状指针**；上面的设计推导与目标清单**保持原样**（那是这份文档的价值）。
+> 状态：**已实施完毕**。
+
+- **假 SQLite 已删**：`examples/sqlitestore`（flock + JSONL，22 个 `.go` 文件 /
+  3358 行）于 2026-11-20 删除（commit `5ef2ccf`）。它的登记面
+  （`architecture-policy.yaml` 的 modules + thresholds.scan_roots、`api-lifecycle.yaml`）
+  与引用面（`docs/DEPLOY-MATRIX.yaml` 的 6 处 evidence）**同提交**改指真适配器。
+- **真适配器已就位**：`examples/sqliteadapter`（`modernc.org/sqlite`，纯 Go）
+  已落地，门面暴露 11 个面访问器，与 PG 侧同款；`examples/pgstore` 的跨面事务
+  （`Store.Apply`）已补齐。
+- **选型门禁已上线**：`cmd/storagecheck` + 声明面 `docs/STORAGE-SELECTION.yaml`
+  （`make storagecheck`），已接进 `make check` 与 `make unit` **两层** ⇒ CI 上真的跑。
+- **口径已翻**：部署矩阵的 `single-host-persistent` 场景 storage 指向
+  `examples/sqliteadapter`；`docs/USAGE.md` 补了「存储选型」专节（三条判据 +
+  「单机多进程一律判 PostgreSQL」的硬边界 + SQLite 毫秒级时钟提示）。
+- **历史不改写**：`AGENTS.md` / `docs/AI-GUIDE.md` / `README` 的 v0.48.0 版本表 /
+  台账 / CHANGELOG 的历史段落**逐字保留**，只做**追加式**现状注。
+- **关联单号**：#424。
