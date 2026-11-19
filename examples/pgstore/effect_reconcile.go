@@ -39,8 +39,12 @@ func (s *EffectStore) ResolveUncertain(ctx context.Context, act sideeffect.Actio
 // 要落的那份状态——「校验时还有效、裁决前已被接管」的窗口不存在。
 func (s *EffectStore) ResolveUncertainOwned(ctx context.Context, act sideeffect.Action, res sideeffect.Resolution, holder string) (sideeffect.Outcome, sideeffect.Result, error) {
 	if holder == "" {
-		return sideeffect.OutcomeContended, sideeffect.Result{}, errors.Wrap(sideeffect.ErrReconcileLost,
+		err := errors.Wrap(sideeffect.ErrReconcileLost,
 			"空凭据不是任何一次对账认领", "key", string(act.Key))
+		// 批内拒绝 ⇒ 登记失败：这条拒绝发生在**进事务之前** ⇒ 不登记的话，
+		// 「失败即作废整批」对这条路径是假的。
+		failBatch(ctx, err)
+		return sideeffect.OutcomeContended, sideeffect.Result{}, err
 	}
 	act, perr := s.prepareAction(ctx, act)
 	if perr != nil {
@@ -120,9 +124,13 @@ func (s *EffectStore) resolveBody(ctx context.Context, tx pgx.Tx, act sideeffect
 // 占用过期可重新认领（可重入）——对账者死亡不永久占住这个 Key。
 func (s *EffectStore) BeginReconcile(ctx context.Context, act sideeffect.Action, ttl time.Duration) (sideeffect.Reconcile, error) {
 	if ttl <= 0 {
-		return sideeffect.Reconcile{}, errors.Wrap(sideeffect.ErrInvalidTTL,
+		err := errors.Wrap(sideeffect.ErrInvalidTTL,
 			"对账认领时长必须为正（零/负 TTL 造出出生即过期的认领）",
 			"key", string(act.Key))
+		// 批内拒绝 ⇒ 登记失败：这条拒绝发生在**进事务之前** ⇒ 不登记的话，
+		// 「失败即作废整批」对这条路径是假的。
+		failBatch(ctx, err)
+		return sideeffect.Reconcile{}, err
 	}
 	act, perr := s.prepareAction(ctx, act)
 	if perr != nil {

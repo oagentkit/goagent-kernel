@@ -99,6 +99,16 @@ func NewTenantTailCursorStore(pool *pgxpool.Pool, consumer string) *TenantTailCu
 
 var _ eventbus.CursorStore = (*TenantTailCursorStore)(nil)
 
+// TenantScoped 报告本实例是否声明了租户作用域（装配期自检用）。
+//
+// 租户作用域型恒为 true（**类型本身就是声明**）——保留这个自检口是为了让宿主
+// 对两种游标面用同一段装配期断言：把「忘记装配」变成**启动期失败**，而不是
+// 运行期的跨租户可见（副作用面的 TenantScoped 同款用途）。
+//
+// ⚠ 默认型 TailCursorStore **没有**该方法（它不解析租户 ⇒ 无从声明）——与
+// SQLite 侧同款（两侧现状一致，不是一边漏了）。
+func (s *TenantTailCursorStore) TenantScoped() bool { return true }
+
 // LoadCursor 读当前租户上次保存的游标（缺租户上下文 ⇒ tenant.ErrNoContext）。
 func (s *TenantTailCursorStore) LoadCursor(ctx context.Context) (uint64, bool, error) {
 	t, err := resolveTenant(ctx, true, "")

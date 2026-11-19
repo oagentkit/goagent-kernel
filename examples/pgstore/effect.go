@@ -81,6 +81,9 @@ func (s *EffectStore) TenantScoped() bool { return s.tenantScoped }
 func (s *EffectStore) prepareAction(ctx context.Context, act sideeffect.Action) (sideeffect.Action, error) {
 	t, err := resolveTenant(ctx, s.tenantScoped, act.Tenant)
 	if err != nil {
+		// 批内租户拒绝 ⇒ 登记失败：调用方**可能吞掉**它 ⇒ 本批必须作废。
+		// （八个入口共用这一处 ⇒ 覆盖面不缺。）
+		failBatch(ctx, err)
 		return act, err
 	}
 	act.Tenant = t
@@ -122,7 +125,47 @@ func (s *EffectStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 }
 
 // runTx 事务骨架：fn 报错即整体回滚（不落任何一行），成功才提交。
+//
+// # ⚠ 批内复用 ctx 里已有的 tx（本轮改动）
+//
+// ctx 里若已有 tx（Apply 用 pgstore.WithTx 塞进去的），**复用它**——
+// 不新开事务、不提交（提交权在最外层 Apply）。否则照旧自己开一个。
+//
+// 这一处改动让四个面全部支持跨面原子提交：Apply 开一个 tx 塞进 ctx，
+// 各面方法经 withinTx/withinTx2/withinTx3 → runTx 拿到同一个 tx ⇒
+// 跨面变更落进同一次提交。
+//
+// ⚠ **改的是 runTx，不是 withinTx**：withinTx/withinTx2/withinTx3 是
+// **泛型变体族**（按返回值个数分，见下方），三者的骨架都是 runTx ⇒ 只改
+// runTx 一处，三个变体全部受益 ⇒ 不必给 30 个方法各写 InTx 变体。
+//
+// # ⚠ PG 侧的嵌套事务不会挂死，但会**破坏原子性**
+//
+// pool 有多条连接 ⇒ 面若在批内自开事务，内层拿到的是**另一条连接** ⇒
+// 独立提交 ⇒ 外层回滚时内层已落库 ⇒ 同样是「一半已提交」，而且**没有报错**
+// （SQLite 侧同形态是挂到 ctx 超时——响亮失败；PG 侧是静默半提交，更坏）。
+// ⇒ 批内拿不到本批事务句柄时**拒绝自开事务**：响亮失败好过静默半提交。
+//
+// # 失败登记
+//
+// 批内 fn 报错 ⇒ 登记进共享失败槽（failBatch）：调用方**可能吞掉**这个错误
+// ⇒ 本批必须作废。批外自开事务时没有批次可作废 ⇒ 登记是空操作。
 func runTx(ctx context.Context, pool *pgxpool.Pool, fn func(tx pgx.Tx) error) error {
+	if tx, ok := TxFromContext(ctx); ok && tx != nil {
+		// 批内：复用本批的 tx（不开事务、不提交——提交权在最外层 Apply）。
+		if err := fn(tx); err != nil {
+			failBatch(ctx, err)
+			return err
+		}
+		return nil
+	}
+	if slot := batchFrom(ctx); slot != nil {
+		// 批内却没有本批的事务句柄 ⇒ 面自开事务 ⇒ 独立提交 ⇒ 破坏跨面原子性。
+		// 拒绝（并登记失败 ⇒ 整批作废）。
+		err := errors.New("pgstore: 批次内禁止面自开事务（独立提交会破坏跨面原子性）")
+		slot.record(err)
+		return err
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return errors.Wrap(err, "pgstore: 开事务失败")

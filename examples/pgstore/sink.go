@@ -111,6 +111,9 @@ func ExecWithin(ctx context.Context, sql string, args ...any) (int64, error) {
 func (d *Downstream) WriteFenced(ctx context.Context, resource string, presented sideeffect.Fence, write func(ctx context.Context) error) error {
 	tenantID, err := resolveTenant(ctx, d.tenantScoped, "")
 	if err != nil {
+		// 批内租户拒绝 ⇒ 登记失败：这条拒绝发生在**进事务之前** ⇒ 不登记的话，
+		// 「失败即作废整批」对栅栏面是假的。
+		failBatch(ctx, err)
 		return err
 	}
 	_, err = withinTx(ctx, d.pool, func(tx pgx.Tx) (bool, error) {
@@ -179,11 +182,16 @@ func (d *Downstream) resourceTenant(ctx context.Context) (string, error) {
 func (d *Downstream) WriteMarker(ctx context.Context, resource string) error {
 	tenantID, err := d.resourceTenant(ctx)
 	if err != nil {
+		failBatch(ctx, err)
 		return err
 	}
 	_, err = ExecWithin(ctx,
 		`UPDATE pgref_downstream SET value = value || 'm' WHERE tenant = $1 AND resource = $2`,
 		tenantID, resource)
+	if err != nil {
+		// 「不在写入体内」这类拒绝也发生在**进事务之前** ⇒ 同样登记。
+		failBatch(ctx, err)
+	}
 	return err
 }
 

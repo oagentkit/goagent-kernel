@@ -33,33 +33,54 @@ func NewSnapStore(pool *pgxpool.Pool) *SnapStore {
 }
 
 // SaveIfNewer 仅当已持久化的序号**严格小于**本次序号时才写入。
+//
+// 陈旧写（序号 ≤ 已持久化序号）返回 checkpoint.ErrStaleSeq 且**什么都没写**
+// （条件 upsert 的影响行数为 0 即判陈旧——「比较与写入」在同一条语句里完成，
+// 不存在「先读后写」的窗口）。
+//
+// # 事务边界
+//
+// 写走 runTx ⇒ **批内复用本批的 tx**（与各面同一次提交 ⇒ 快照与其它面的
+// 变更同生共死）；批外自开事务（单条 upsert 本身即原子 ⇒ 包一层事务不改变
+// 语义，只是让批内能同生共死）。
 func (s *SnapStore) SaveIfNewer(ctx context.Context, snap checkpoint.Snapshot) error {
 	if snap.Seq == 0 {
-		return errors.Wrap(checkpoint.ErrStaleSeq,
+		err := errors.Wrap(checkpoint.ErrStaleSeq,
 			"序号为 0 的快照不是一次真实提交，不得落库（更不得覆盖既有快照）",
 			"run_id", snap.RunID)
+		// 批内 ⇒ 登记失败：调用方**可能吞掉**它 ⇒ 本批必须作废。
+		// （这条拒绝发生在**进事务之前** ⇒ 不登记的话，「失败即作废整批」对
+		// 快照面是假的。）
+		failBatch(ctx, err)
+		return err
 	}
 	fields, done, err := encodeSnapshot(snap)
 	if err != nil {
+		failBatch(ctx, err)
 		return err
 	}
-	tag, err := s.pool.Exec(ctx,
-		`INSERT INTO pgref_snapshot (run_id, seq, status, done, fields)
-		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (run_id) DO UPDATE SET
-		     seq = EXCLUDED.seq, status = EXCLUDED.status,
-		     done = EXCLUDED.done, fields = EXCLUDED.fields
-		 WHERE pgref_snapshot.seq < EXCLUDED.seq`,
-		snap.RunID, int64(snap.Seq), snap.Status, done, fields)
-	if err != nil {
-		return errors.Wrap(err, "pgstore: 快照落库失败", "run_id", snap.RunID)
-	}
-	if tag.RowsAffected() == 0 {
-		return errors.Wrap(checkpoint.ErrStaleSeq,
-			"快照序号未严格递增（不得覆盖）",
-			"run_id", snap.RunID, "seq", snap.Seq)
-	}
-	return nil
+	_, err = withinTx(ctx, s.pool, func(tx pgx.Tx) (int64, error) {
+		tag, err := tx.Exec(ctx,
+			`INSERT INTO pgref_snapshot (run_id, seq, status, done, fields)
+			 VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (run_id) DO UPDATE SET
+			     seq = EXCLUDED.seq, status = EXCLUDED.status,
+			     done = EXCLUDED.done, fields = EXCLUDED.fields
+			 WHERE pgref_snapshot.seq < EXCLUDED.seq`,
+			snap.RunID, int64(snap.Seq), snap.Status, done, fields)
+		if err != nil {
+			return 0, errors.Wrap(err, "pgstore: 快照落库失败", "run_id", snap.RunID)
+		}
+		if tag.RowsAffected() == 0 {
+			// 陈旧写：在**事务内**判 ⇒ 失败经 runTx 登记进失败槽（批内必须
+			// 作废整批），且此刻什么都没写。
+			return 0, errors.Wrap(checkpoint.ErrStaleSeq,
+				"快照序号未严格递增（不得覆盖）",
+				"run_id", snap.RunID, "seq", snap.Seq)
+		}
+		return 1, nil
+	})
+	return err
 }
 
 // Load 读取快照。无记录返回 checkpoint.ErrNotFound，不得返回零值 + nil。
