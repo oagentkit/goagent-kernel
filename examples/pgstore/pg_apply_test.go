@@ -132,7 +132,7 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 // TestApplyRollsBackEveryFaceTogether 回调返回错误 ⇒ 本用例覆盖的这几张面
 // （任务板 / 副作用 / 快照 / 事件）的写**一个都不留**。
 //
-// 这是「同一次提交」的**承重**判据：若各面各自提交，前三个面的写早已落库、
+// 这是「同一次提交」的**承重**判据：若各面各自提交，这几张面的写早已落库、
 // 只有事件面被回滚 ⇒ 跨面半截状态 ⇒ 判据必须红。
 func TestApplyRollsBackEveryFaceTogether(t *testing.T) {
 	dsn := requireDSN(t)

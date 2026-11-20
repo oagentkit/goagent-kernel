@@ -2593,7 +2593,7 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
   W2：形态写者数 ≥2 ⟺ 该形态下有场景要求多写者能力（写者数 ==1 ⇒ 该形态下所有场景
   都不要求）。
   ⇒ 改弱任一张表当场红，那条硬边界不再靠「记性 + 能力归属碰巧」撑着。
-- **两侧门面「同款集合」相等性（F1–F4）**：F1 声明面的 `accessors` ∪ `other_methods`
+- **两侧门面「同款集合」相等性（F1–F5）**：F1 声明面的 `accessors` ∪ `other_methods`
   与代码派生集（go/ast）**双向**相等；F2 清单形状（面访问器非空 / 不重复 / 与其它导出
   方法不重叠）；F3 各门面的面访问器集合必须相等（差集非空即红，并点名差哪几个）；
   F4 每个面访问器要么被能力证据引用、要么登记 ⇒ 都没有即红；F5 有方法级落点的存储**必须**登记
@@ -2661,8 +2661,8 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`，当前无豁免；实测值以该目标输出为准）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
-| `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|
-| `architecture-check` | 8 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
+| `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
+| `architecture-check` | 9 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
@@ -2677,7 +2677,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
 ```
 
-### 4.2 八条架构规则
+### 4.2 九条架构规则
 
 | 规则 | 级别 | 拦什么 |
 |---|---|---|
@@ -2689,6 +2689,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-no-printf-log-callback` | **error** | 公开 API 里的 `logf func(string, ...any)`（printf 回调焊进签名即不可逆 API 债） |
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
+| `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
 另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 
