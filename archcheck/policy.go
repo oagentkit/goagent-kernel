@@ -27,17 +27,28 @@ type NegFollow struct {
 // Rule 是一条正则式规则：匹配面由 scope/include/scope_exclude 圈定，判据由
 // forbid_regex（源码文本）或 forbid_import_regex（import 路径）给出。
 type Rule struct {
-	ID           string      `yaml:"id"`
-	Desc         string      `yaml:"desc"`
-	Severity     string      `yaml:"severity"` // error（默认，违反即非零退出）| warn（报告口径，不阻断）
-	Scope        []string    `yaml:"scope"`
-	ScopeExclude []string    `yaml:"scope_exclude"`
-	Include      []string    `yaml:"include"`
-	IgnoreTest   bool        `yaml:"ignore_test"`
-	OnlyTest     bool        `yaml:"only_test"` // 只扫测试文件（配合 severity: warn 做夹具体检）
-	ForbidImport string      `yaml:"forbid_import_regex"`
-	ForbidRegex  string      `yaml:"forbid_regex"`
-	NegFollow    []NegFollow `yaml:"negative_follow"`
+	ID           string   `yaml:"id"`
+	Desc         string   `yaml:"desc"`
+	Severity     string   `yaml:"severity"` // error（默认，违反即非零退出）| warn（报告口径，不阻断）
+	Scope        []string `yaml:"scope"`
+	ScopeExclude []string `yaml:"scope_exclude"`
+	Include      []string `yaml:"include"`
+	IgnoreTest   bool     `yaml:"ignore_test"`
+	OnlyTest     bool     `yaml:"only_test"` // 只扫测试文件（配合 severity: warn 做夹具体检）
+	ForbidImport string   `yaml:"forbid_import_regex"`
+	ForbidRegex  string   `yaml:"forbid_regex"`
+	// CheckKind 选**结构化**执行体（当前取值域：goroutine_join）。
+	//
+	// 为什么需要第三个执行体：forbid_regex 判「源码文本里有没有某个形状」，
+	// forbid_import_regex 判「import 路径里有没有某个形状」。而有些纪律判的是
+	// **结构关系**——「用例体内有没有 go 语句」与「测试侧有没有等待点」这两件事
+	// 之间的关系，逐行正则认不出来（go 语句有多种形态，等待点还散在助手里）。
+	//
+	// 取值域必须封闭：写错的类别名若被当成「不是已知类别」，这条登记就**静默降级**
+	// 成「不判」——登记了一张表却没生效，且没有任何机器能发现。未知类别当天即红
+	// （见 selfcheck.go）。
+	CheckKind string      `yaml:"check_kind"`
+	NegFollow []NegFollow `yaml:"negative_follow"`
 	// ImportExempt import 路径级的**精确**例外（issue #15）。
 	//
 	// 存在的原因：只有 `forbid_import_regex`（正则禁令）时，宿主若要放行
