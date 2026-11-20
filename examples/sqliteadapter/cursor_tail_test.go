@@ -80,6 +80,26 @@ func mustInsertEvent(t *testing.T, evs *EventStore, typ string) uint64 {
 	return id
 }
 
+// stopTailer 收尾尾随 goroutine：取消后**等它退出**（2s 超时兜底，不把用例挂死）。
+//
+// 为什么必须等：Tailer.Run 的退出式是 select{ctx.Done, ticker.C}，两者同时
+// 就绪时 select 随机取 ⇒ 取消后 tailer 可能连转若干拍才退出。用例不等它就
+// 把存储交还 ⇒ goroutine 在**临时目录已被删**之后仍去读库 ⇒ SQLite 侧会在
+// 已删目录里重建 -wal/-shm ⇒ t.TempDir() 的 RemoveAll 报 directory not empty。
+//
+// 与 TestTailCursorStoreConcurrentTailers 同款范式（done 通道 + 显式等待），
+// 只是收尾点放在用例体内而不是 t.Cleanup 里 ⇒ 「返回前交还」这件事是显式的。
+func stopTailer(t *testing.T, cancel context.CancelFunc, done <-chan struct{}, what string) {
+	t.Helper()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s：ctx 取消后 tailer goroutine 未在 2s 内退出"+
+			"（存储不得在它退出前交还）", what)
+	}
+}
+
 // TestTailCursorStoreRestartResumesFromSavedCursor 崩溃点重启续读：第一程
 // 初始化游标 0 → 消费 1..3 → 持久化 3 → 退出；停机窗口发布 4..5；第二程必须
 // 从 3 续随并补达 4..5，且**不得重走 MaxID 初始化**。
@@ -120,12 +140,7 @@ func TestTailCursorStoreRestartResumesFromSavedCursor(t *testing.T) {
 	}
 	waitTailCursor(t, cs, 3)
 
-	cancel1()
-	select {
-	case <-done1:
-	case <-time.After(2 * time.Second):
-		t.Fatal("第一程 ctx 取消后未返回")
-	}
+	stopTailer(t, cancel1, done1, "第一程尾随")
 
 	// 停机窗口：他副本继续发布。
 	mustInsertEvent(t, evs, "during-downtime-4")
@@ -138,11 +153,15 @@ func TestTailCursorStoreRestartResumesFromSavedCursor(t *testing.T) {
 	gaps := make(chan [2]uint64, 8)
 	run2, cancel2 := context.WithCancel(ctx)
 	defer cancel2()
-	go eventbus.NewTailer(counted, hub2,
-		eventbus.WithTailInterval(10*time.Millisecond),
-		eventbus.WithTailCursorStore(cs),
-		eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
-	).Run(run2)
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		eventbus.NewTailer(counted, hub2,
+			eventbus.WithTailInterval(10*time.Millisecond),
+			eventbus.WithTailCursorStore(cs),
+			eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
+		).Run(run2)
+	}()
 
 	if ev := waitTailEvent(t, ch2, "停机窗口内的事件"); ev.ID != 4 {
 		t.Fatalf("第二程必须从持久化游标 3 续随（先送 4），实得 %d", ev.ID)
@@ -155,6 +174,7 @@ func TestTailCursorStoreRestartResumesFromSavedCursor(t *testing.T) {
 	}
 	assertNoGap(t, gaps, 80*time.Millisecond)
 	waitTailCursor(t, cs, 5)
+	stopTailer(t, cancel2, done2, "第二程尾随")
 }
 
 // TestTailCursorStoreCrashBeforeSaveRereadsNoSkip 崩溃点在「投递后、保存前」：
@@ -179,11 +199,15 @@ func TestTailCursorStoreCrashBeforeSaveRereadsNoSkip(t *testing.T) {
 	gaps := make(chan [2]uint64, 8)
 	run, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go eventbus.NewTailer(evs, hub,
-		eventbus.WithTailInterval(10*time.Millisecond),
-		eventbus.WithTailCursorStore(cs),
-		eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
-	).Run(run)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		eventbus.NewTailer(evs, hub,
+			eventbus.WithTailInterval(10*time.Millisecond),
+			eventbus.WithTailCursorStore(cs),
+			eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
+		).Run(run)
+	}()
 
 	if ev := waitTailEvent(t, ch, "重读的 3"); ev.ID != 3 {
 		t.Fatalf("保存前崩溃必须重读 3（不得跳过），实得 %d", ev.ID)
@@ -194,6 +218,7 @@ func TestTailCursorStoreCrashBeforeSaveRereadsNoSkip(t *testing.T) {
 	}
 	assertNoGap(t, gaps, 80*time.Millisecond)
 	waitTailCursor(t, cs, 4)
+	stopTailer(t, cancel, done, "重读续随尾随")
 }
 
 // TestTailCursorStoreConcurrentTailers 并发尾随：两个副本各持独立游标并发读

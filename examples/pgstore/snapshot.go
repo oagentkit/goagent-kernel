@@ -4,7 +4,9 @@
 //
 //   - SaveIfNewer：一条带条件的 upsert（WHERE 已持久化序号 < 本次序号），
 //     影响行数为 0 ⇒ 判陈旧（ErrStaleSeq），**不写入**；Seq == 0 一律先拒
-//     （它不是一次真实提交，放它落库等于给了它唯一能覆盖既有快照的写）。
+//     （它不是一次真实提交，放它落库等于给了它唯一能覆盖既有快照的写）；
+//     序号超过 MaxInt64 一律先拒（序号列是有符号 64 位 ⇒ 高位被截成负数
+//     ⇒ 单调比较反向 ⇒ 恢复点可被任意覆盖）。
 //     并发提交同一 run 时，两个进程的条件更新在行锁上排队，只有序号更大的
 //     那个落库——单调闸在存储侧成立，不在进程侧。
 //   - Load：无记录返回 ErrNotFound（**不得**返回零值 + nil——那会被上游
@@ -14,6 +16,7 @@ package pgstore
 import (
 	"context"
 	"encoding/json"
+	"math"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -51,6 +54,17 @@ func (s *SnapStore) SaveIfNewer(ctx context.Context, snap checkpoint.Snapshot) e
 		// 批内 ⇒ 登记失败：调用方**可能吞掉**它 ⇒ 本批必须作废。
 		// （这条拒绝发生在**进事务之前** ⇒ 不登记的话，「失败即作废整批」对
 		// 快照面是假的。）
+		failBatch(ctx, err)
+		return err
+	}
+	if snap.Seq > math.MaxInt64 {
+		// 序号列是有符号 BIGINT（64 位）：超过 MaxInt64 的序号被截断成**负数**
+		// ⇒ 单调比较整个反向（负数 < 任何正数 ⇒ 永远「更新」）⇒ 恢复点可被
+		// 任意覆盖（陈旧慢写照样落库，且不报错）。
+		err := errors.New("pgstore: 快照序号超出 BIGINT 范围（run_id=" + snap.RunID + "）")
+		// 批内 ⇒ 登记失败：调用方**可能吞掉**它 ⇒ 本批必须作废。
+		// （与 Seq == 0 那条拒绝同款：都发生在**进事务之前** ⇒ 不登记的话，
+		// 「失败即作废整批」对快照面是假的。）
 		failBatch(ctx, err)
 		return err
 	}

@@ -2,9 +2,9 @@
 //
 // # 为什么要有 Apply
 //
-// 四个面各自 Begin/Commit ⇒ 「任务做完了但没留痕」「留痕了但没做完」两类半截
-// 状态结构性地可能。Apply 把各面的变更收进**同一次提交** ⇒ 跨面不会出现
-// 「一半已提交」。
+// 本文件覆盖的这几张面（任务板 / 副作用 / 快照 / 事件）各自 Begin/Commit ⇒
+// 「任务做完了但没留痕」「留痕了但没做完」两类半截状态结构性地可能。
+// Apply 把各面的变更收进**同一次提交** ⇒ 跨面不会出现「一半已提交」。
 //
 // # PG 侧与 SQLite 侧**必然不同**的三处（机制决定，不是漏做）
 //
@@ -61,9 +61,10 @@ func freshStore(t *testing.T, dsn string) *Store {
 	return NewStore(schemaPool(t, dsn, schema))
 }
 
-// TestApplyCommitsAllFacesAtomically 四个面的变更落在**同一次提交**里。
+// TestApplyCommitsAllFacesAtomically 本用例覆盖的这几张面（任务板 / 副作用 /
+// 快照 / 事件）的变更落在**同一次提交**里。
 //
-// 判据：提交后四面都读得到（一次提交 ⇒ 全部生效）。
+// 判据：提交后这几张面都读得到（一次提交 ⇒ 全部生效）。
 func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 	dsn := requireDSN(t)
 	ctx := applyCtx(t)
@@ -97,7 +98,7 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 		t.Fatalf("Apply 失败: %v", err)
 	}
 
-	// 四个面都读得到（⇒ 四面变更同生共死）。
+	// 本用例覆盖的这几张面都读得到（⇒ 变更同生共死）。
 	tasks, err := s.Board().List(ctx)
 	if err != nil {
 		t.Fatalf("读任务失败: %v", err)
@@ -128,10 +129,11 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 	}
 }
 
-// TestApplyRollsBackEveryFaceTogether 回调返回错误 ⇒ 四个面的写**一个都不留**。
+// TestApplyRollsBackEveryFaceTogether 回调返回错误 ⇒ 本用例覆盖的这几张面
+// （任务板 / 副作用 / 快照 / 事件）的写**一个都不留**。
 //
-// 这是「同一次提交」的**承重**判据：若各面各自提交，前三个面的写早已落库、
-// 只有事件面被回滚 ⇒ 跨面半截状态 ⇒ 判据必须红。
+// 这是「同一次提交」的**承重**判据：若各面各自提交，除事件面外的那几张面的写
+// 早已落库、只有事件面被回滚 ⇒ 跨面半截状态 ⇒ 判据必须红。
 func TestApplyRollsBackEveryFaceTogether(t *testing.T) {
 	dsn := requireDSN(t)
 	ctx := applyCtx(t)
@@ -161,7 +163,7 @@ func TestApplyRollsBackEveryFaceTogether(t *testing.T) {
 		t.Fatalf("Apply 必须原样传出回调的错误: %v", err)
 	}
 
-	// 四个面一个都没留下。
+	// 本用例覆盖的这几张面一个都没留下。
 	tasks, lerr := s.Board().List(ctx)
 	if lerr != nil {
 		t.Fatalf("读任务失败: %v", lerr)

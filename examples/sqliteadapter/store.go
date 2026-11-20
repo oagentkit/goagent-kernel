@@ -1,7 +1,8 @@
 // store.go —— 门面骨架：开库、装配期选项、生命周期。
 //
-// 门面只管三件事：开库、装选项、关库。五个面（任务板 / 副作用闸 / 进度快照
-// / 事件面 / 下游栅栏）与控制面、尾随游标、跨面 Apply **共用同一份** exec
+// 门面只管三件事：开库、装选项、关库。门面暴露的各个面（任务板 / 副作用闸 /
+// 进度快照 / 事件面 / 下游栅栏，其中副作用闸 / 事件面 / 下游栅栏另有租户作用域
+// 变体；尾随游标，含租户作用域变体）与控制面、跨面 Apply **共用同一份** exec
 // 执行位置抽象（exec.go），因此「独立提交」与「事务内」两条路径走的是同一套
 // 判据函数。
 
@@ -53,7 +54,7 @@ func WithClock(now func() time.Time) Option {
 	return func(s *Store) { s.clock = now }
 }
 
-// Store 一个 SQLite 后端：五个面 + 控制面 + 游标，共用一份事务域。
+// Store 一个 SQLite 后端：各面 + 控制面 + 游标，共用一份事务域。
 type Store struct {
 	// db 写句柄：MaxOpenConns(1)，_txlock=immediate（写事务先拿写锁）。
 	db *sql.DB

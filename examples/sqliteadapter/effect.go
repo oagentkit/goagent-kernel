@@ -130,7 +130,7 @@ func (s *EffectStore) execIn(tx *sql.Tx) exec {
 		return e
 	}
 	e := s.store.execIn(tx, s.clockSource())
-	// 失败槽随执行位置走（批次级状态：五个面共享同一份）。
+	// 失败槽随执行位置走（批次级状态：各面共享同一份）。
 	e.failed = s.exec.failed
 	return e
 }

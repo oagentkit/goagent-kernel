@@ -132,9 +132,14 @@ func (s *EffectStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 // **复用它**——不新开事务、**也不提交**（提交权归放 tx 的那一方）。否则照旧
 // 自己开一个（自开自提交）。
 //
-// 这一处改动让四个面全部支持跨面原子提交：Apply 开一个 tx 塞进 ctx，
-// 各面方法经 withinTx/withinTx2/withinTx3 → runTx 拿到同一个 tx ⇒
-// 跨面变更落进同一次提交。
+// 这一处改动让门面暴露的各个面（**尾随游标面除外**）支持跨面原子提交：
+// Apply 开一个 tx 塞进 ctx，各面方法经 withinTx/withinTx2/withinTx3 → runTx
+// 拿到同一个 tx ⇒ 跨面变更落进同一次提交。
+//
+// ⚠ **尾随游标面为什么被排除**：它的 SaveCursor 走 pool.Exec ⇒ 独立提交
+// ⇒ 批内写游标会越过被回滚的事件 ⇒ 重启后跳读 ⇒ **静默丢帧** ⇒ 批内
+// **显式拒绝**（rejectBatchCursorWrite；租户作用域尾随游标同理）——是**响亮
+// 拒绝**，不是静默绕过。
 //
 // ⚠ **对既有 WithTx 使用者是语义变化**（仓外宿主需知）：
 //   - 此前：runTx 一律自开事务 ⇒ 宿主经 WithTx 放进去的 tx **被面忽略**

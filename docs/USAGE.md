@@ -2578,6 +2578,43 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 各列一条落点），选型面是**事务域本体**（一条能力只指那条把各张脸收进同一份
 事务域的入口）⇒ **不矛盾**，id 层面的一致性由 `make storagecheck` 判据 2 机判。）
 
+#### 门禁还判什么（声明面的形式与一致性）
+
+除了上面三条选型判据与「能力落点可在代码里解析」，`make storagecheck` 还判声明面
+**自身**的形式与一致性——失败形态一律是「当场红」，不是提示：
+
+- **`kind` 封闭值域**：每条存储的 `kind` 只能是 `memory` / `sqlite` /
+  `postgresql` / `shared-authority` / `regional-authority` 五个取值之一 ⇒ 拼错、乱写、
+  写一个不存在的引擎类别当场红（报红时点名写了什么 + 允许哪些取值）。此前 `kind`
+  是**自由标签**，那一列字没有任何机器保证。
+- **写者数交叉校验（W1 存储侧 + W2 场景侧）**：`scenario_writers`（场景形态 → 并发
+  写者数）与 `max_writers`（存储 → 写者上限）**两张表互相钉住**——
+  W1：存储的写者上限是多写者档位 ⟺ 它认领了至少一项多写者能力；
+  W2：形态写者数 ≥2 ⟺ 该形态下有场景要求多写者能力（写者数 ==1 ⇒ 该形态下所有场景
+  都不要求）。
+  ⇒ 改弱任一张表当场红，那条硬边界不再靠「记性 + 能力归属碰巧」撑着。
+- **两侧门面「同款集合」相等性（F1–F5）**：F1 声明面的 `accessors` ∪ `other_methods`
+  与代码派生集（go/ast）**双向**相等；F2 清单形状（面访问器非空 / 不重复 / 与其它导出
+  方法不重叠）；F3 各门面的面访问器集合必须相等（差集非空即红，并点名差哪几个）；
+  F4 每个面访问器要么被能力证据引用、要么登记 ⇒ 都没有即红；F5 有方法级落点的存储**必须**登记
+  `facade:` 段 ⇒ **方法级落点仍在时**整段删掉不会「真空绿」（F5 会响）。
+  ⚠ **前提限定**（逐条实测口径见台账 §29 边界 2 与 §31 边界 3 / 4）：「真空绿」被防住的前提是
+  **方法级落点仍在**——方法级落点一并降级为类型级后 F5 就不再响，但门禁**不会当场转绿**：
+  走到 rc=0 要三步（实测于今天的 `docs/STORAGE-SELECTION.yaml`）：① 删掉那一扇门面的 `facade:`
+  段（**共用同一扇门的两个存储都要删**——只删一个则那扇门仍被另一个存储声明着 ⇒ 实测到不了
+  rc=0，仍红在 F4 的覆盖面）⇒ 仍红（F5 仍响 + F4 的**登记面**红）；② 把那两个存储的方法级
+  落点一并降级为类型级 ⇒ 仍红（F5 不响了，红的是 F4 的**登记面**）；③ 删掉
+  `known_unbacked_accessors` 里挂在**没有门面的存储**上的登记项 ⇒ 才 rc=0，而门面判定面只剩
+  1 扇 ⇒ **F3 空真**（退化成自我比较）⇒ **该侧门面完全不被判**。
+  ⇒ 「两侧门面同款」从此是**机判事实**，不是散文里的断言。
+- **`known_unbacked_accessors` 登记面**：没有能力落点的面访问器登记在这里，并写明事实
+  理由。⚠ **登记表示「当前没有能力断言覆盖它」，不表示它已被覆盖**；登记若其实已被
+  能力证据覆盖 ⇒ 当天即红（过期登记当天删掉）。
+
+⚠ **门禁判的是声明面之间的一致性，不是外部事实**：「某存储**实际上**能不能扛多写者」
+仍靠能力认领 + 写者上限**互相印证**（事实源头是代码与机制，不是门禁）⇒ 门禁只保证
+两张表不互相打脸。
+
 #### 已登记的已知不对称（两侧**确有**行为差异的部分）
 
 选型面把两侧**已知不等价**的地方逐条登记在 `known_asymmetries` 段，`make storagecheck`
@@ -2632,13 +2669,13 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`，当前无豁免；实测值以该目标输出为准）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
-| `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64；**windows 不支持**）|
-| `architecture-check` | 8 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
+| `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
+| `architecture-check` | 9 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
-| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点——见 `docs/STORAGE-SELECTION.yaml` |
+| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点 / 存储 `kind` 不在封闭值域内 / 写者数与写者上限交叉校验（W1 存储侧 + W2 场景侧 + W3 陈旧形态键）/ 两侧门面的面访问器集合相等（F3）+ 门面清单与代码派生集双向相等（F1）+ 清单形状（F2）+ 每个面访问器都有能力落点或已登记（F4）+ 有方法级落点的存储必须登记门面段（F5）——见 `docs/STORAGE-SELECTION.yaml` |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
@@ -2648,7 +2685,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 make architecture-check --report   # 看全量违规清单（默认前 10 条）
 ```
 
-### 4.2 八条架构规则
+### 4.2 九条架构规则
 
 | 规则 | 级别 | 拦什么 |
 |---|---|---|
@@ -2660,6 +2697,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-no-printf-log-callback` | **error** | 公开 API 里的 `logf func(string, ...any)`（printf 回调焊进签名即不可逆 API 债） |
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
+| `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
 另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 

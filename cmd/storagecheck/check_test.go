@@ -17,12 +17,14 @@ const demoMatrix = `version: 1
 capabilities:
   - id: cap-persist
     title: 状态持久化
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
         ref: pkgdemo/store.go#Store
   - id: cap-lease
     title: 租约一致性
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -61,7 +63,7 @@ scenario_writers:
 storages:
   - id: demo-store
     title: 演示存储
-    kind: file
+    kind: memory
     code_root: pkgdemo
     max_writers: 1
     capabilities:
@@ -72,7 +74,7 @@ storages:
             ref: pkgdemo/store.go#Store
   - id: demo-other
     title: 演示另一种存储
-    kind: file
+    kind: postgresql
     code_root: pkgother
     max_writers: unlimited
     capabilities:
@@ -234,7 +236,7 @@ func TestScenarioNoteNamesMissingCapabilities(t *testing.T) {
 func TestCheckRejectsUnreferencedStorage(t *testing.T) {
 	s := strings.Replace(demoSelection, "known_asymmetries:", `  - id: demo-ghost
     title: 没有场景引用的档位
-    kind: file
+    kind: memory
     code_root: pkgother
     max_writers: unlimited
     capabilities:
