@@ -23,6 +23,15 @@ const (
 )
 
 // Valid 报告该处置口径是否在词表内。
+//
+// ⚠️ **零值（空串）不是有效口径**——它不是「第三种口径」，而是「未设」。
+//
+// 但这与 `Budget.Policy` 的零值**不矛盾**：零值放在 `Budget.Policy` 上是
+// **合法缺省**（= 强制收尾，见 `Budget.EffectivePolicy`）。两件事问的是不同的
+// 问题：本方法答「这个**取值**在不在词表内」，缺省解析答「没设时按哪个口径办」。
+//
+// ⇒ **宿主不要用本方法校验 `Budget.Policy`**：那会把合法缺省判成非法。
+// 校验预算声明用 `Budget.Validate`；要拿生效口径用 `Budget.EffectivePolicy`。
 func (p StopPolicy) Valid() bool { return stopPolicyAll[p] }
 
 // Limit 额度类别（判定词表；主人表 roundLimitAll，枚举出口 AllLimits）。
@@ -89,7 +98,23 @@ func (b Budget) Validate() error {
 	return nil
 }
 
+// EffectivePolicy 缺省处置口径（零值 = 强制收尾）。
+//
+// 为什么导出：**缺省解析本身就是判定语义**，而它原先只有一个未导出的入口
+// （`effectivePolicy`）⇒ 宿主拿不到「本预算实际按哪个口径处置」这个事实。
+// 拿不到就只有两条路：要么在宿主侧**手抄**一条缺省规则（每个宿主各抄一遍 ⇒
+// 同一份声明在不同宿主得到不同处置，正是本包要消灭的病），要么干脆不判。
+//
+// ⚠️ 这条方法的存在也消掉了「零值是不是合法口径」的歧义：`StopPolicy.Valid`
+// 答的是「这个**取值**在不在词表内」（零值不在），本方法答的是「没设时按哪个
+// 口径办」（零值 = 强制收尾）。**宿主校验 `Budget.Policy` 不要用 `Valid`**——
+// 那会把合法缺省判成非法；校验预算声明用 `Budget.Validate`。
+func (b Budget) EffectivePolicy() StopPolicy { return b.effectivePolicy() }
+
 // effectivePolicy 缺省处置口径（零值 = 强制收尾）。
+//
+// ⚠️ 本方法与导出的 `EffectivePolicy` 是**同一份判据**（导出面转调它，不是两份
+// 实现）：包内与包外走同一条解析路径 ⇒ 缺省口径不会在两侧漂。
 func (b Budget) effectivePolicy() StopPolicy {
 	if b.Policy == "" {
 		return PolicyForceFinal
