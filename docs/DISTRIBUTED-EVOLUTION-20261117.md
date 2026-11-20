@@ -2021,3 +2021,91 @@ Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
 
 本轮含**行为变更**（#425 守卫）+ **新判据**（F1–F5 / W1–W3 / `kind` 封闭值域）
 ⇒ **v0.51.0**（minor，不是 patch）。
+
+## 30. 第二十一轮台账（2026-11-20）：尾随游标用例的 goroutine 收尾 + 修复轮 r5/r6
+
+> **本轮修的是既有潜伏缺陷，不是新需求**：尾随游标 / 事件面用例在用例内起 goroutine 跑
+> `eventbus.Tailer`，只 `defer cancel()` 而**不等 goroutine 退出** ⇒ 用例返回后存储已被交还，
+> 残留 goroutine 仍在动它 ⇒ 门禁 `make check` 的 cover-gate 段偶发红
+> （`TempDir RemoveAll cleanup: ... directory not empty`）。
+> 本节另登记**修复轮 r5/r6**（门面派生集的两处 fail-closed 口径）。
+> 两条落点均**已提交**在各自分支；随本轮集成合入主干，**关闭 PR 号由集成阶段回填**
+> （§29 同款口径）。
+
+### 落点
+
+| 位置 | 作用 |
+|---|---|
+| `examples/sqliteadapter/cursor_tail_test.go` | 尾随游标三段（第一程 / 第二程 / 重读续随）经 `stopTailer` 收尾；本文件新增 `stopTailer` 助手 |
+| `examples/sqliteadapter/cursor_fail_test.go` | 读失败停摆用例：尾随 goroutine 收尾 |
+| `examples/sqliteadapter/event_tail_test.go` | 端到端尾随用例：尾随 goroutine 收尾 |
+| `examples/pgstore/pg_cursor_test.go` | PG 侧同款收尾（三处）；本文件新增 `stopTailer` 助手 |
+| `examples/pgstore/pg_event_test.go` | PG 侧端到端尾随收尾（一处） |
+| `cmd/storagecheck/facade.go` + `cmd/storagecheck/facade_fixtures_test.go` | **修复轮 r5/r6** 的落点（分支 `feature/storage-facade-failclosed`，提交 `7bf6e26` / `8dd3a35`）——**归属另一条分支，合入主干由集成阶段执行**；若该分支未随本轮合入，下表 ② 的状态词须回改 |
+
+### 本轮清偿了什么（逐项 → 落点）
+
+| 项 | 落点 | 状态 |
+|---|---|---|
+| ① 尾随游标 / 事件面用例未等 goroutine 退出（SQLite 侧 5 处 + PG 侧 4 处） | 上表前五个 `examples/` 文件 | 已合入（关闭 PR 号待回填） |
+| ② 修复轮 r5/r6：门面类型非 struct 字面量 ⇒ fail-closed 判红；门面类型找不到 ⇒ 判「派生集不完整」，合成夹具挪出用例文件 | `cmd/storagecheck/`（上表末行） | 已合入（关闭 PR 号待回填） |
+
+**① 的因果链**（已实测，非推断）：`eventbus.Tailer.Run` 的退出式是
+`select{ctx.Done, ticker.C}`，两者同时就绪时 select 随机取 ⇒ 取消后 tailer 可能连转若干拍
+⇒ 用例一返回，`t.Cleanup` 先关存储、再删临时目录 ⇒ 残留 tailer 的读（只读句柄，DSN 带
+`_journal_mode=WAL` ⇒ 引擎侧文件在同一目录建 `-wal`/`-shm` 伴生文件）在**存储已交还之后**
+在清理窗口内重建 `-wal`/`-shm` 伴生文件（此时目录**仍在**，被删掉的是库文件本体；伴生文件在 `RemoveAll` 的 readdir+unlink 之后、最后一次 rmdir 之前被重建）⇒ 最后那次删目录撞 ENOTEMPTY ⇒ `directory not empty`。
+独立探针实测（探针在仓外，不属本仓）：旧写法 **8/1000** 失败（残留文件清一色是伴生的
+`-wal`/`-shm`），新写法 **0/800** 失败。
+
+**② 的因果链**：见该分支的提交说明；本节只登记「做了什么」，不重复它的判据表。
+
+### 审计：`examples/**` 的 21 处 goroutine 派生点逐个归类
+
+派单点名 7 处 + 本轮自查补列 2 处 ⇒ **可疑集 9 处**（本轮已收尾）。
+复核时把审计面扩到 `examples/**` 的**全部 21 处真实派生点**（宽扫 `\bgo\s+[a-zA-Z_]`，
+24 处命中里去掉 3 处注释里的 “go test” 与 1 处注释里的 “裸 go func”）：
+**21 = 9 处本轮收尾 + 12 处既有写法**；那 12 处逐个核过，**均不属于本缺陷类**
+（要么用例体内 join，要么只读不碰存储）——下表列全 12 处。
+
+| 位置 | 形态 | 为什么不动 |
+|---|---|---|
+| `examples/sqliteadapter/control_run_test.go:177` | 并发提交，`wg.Wait()` | 用例返回前 goroutine 已 join ⇒ 不再碰存储 |
+| `examples/sqliteadapter/control_run_test.go:232` | 提交与连读并发，`wg.Wait()` | 同上 |
+| `examples/sqliteadapter/event_test.go:307` | 并发发布，`wg.Wait()` | 同上 |
+| `examples/sqliteadapter/snapshot_test.go:167` | 并发保存，`wg.Wait()`（**本轮补列**） | 同上 |
+| `examples/pgstore/pg_control_test.go:296` | 并发提交，`wg.Wait()` | 同上 |
+| `examples/pgstore/pg_test.go:195` | 并发保存，按 worker 数收齐结果 | 收齐即全部 goroutine 已发完结果 ⇒ 不再碰存储 |
+| `examples/pgstore/pg_clock_test.go:108` | 锁等待用例，`select <-done` | 等到结果才返回 |
+| `examples/pgstore/pg_event_test.go:185` | 并发发布，按 worker 数收齐结果（**本轮补列**） | 同上 |
+| `examples/pgstore/pg_e2e_env_test.go:135` | 子进程 stdout 扫描协程 | 只读子进程管道，**不碰存储也不碰临时目录**；子进程由 `t.Cleanup` SIGKILL |
+| `examples/sqliteadapter/cursor_tail_test.go:258` | 并发尾随，join 注册在**最后**的 `t.Cleanup` | LIFO 下 join 先于 `s.Close()` 与目录删除执行 ⇒ 返回前已 join |
+| `examples/pgstore/pg_cursor_test.go:261` | 同上（PG 侧并发尾随） | 同上 |
+| `examples/reference-runtime/runtime_test.go:151` | `async.GoSafe` 起的 goroutine | 用例体内等结果 ⇒ 返回前已 join；且不碰存储 |
+
+### 本轮新增的机器判据（判什么 / 失败形态）
+
+**本轮零新增机器判据。** 本轮修的是**用例自己的收尾纪律**，不是仓库的判据面：
+
+- 「用例内起的 goroutine 必须在用例返回前退出」这条纪律**当前未被机判**——仓里**没有任何
+  一条规则**查「测试用例起 goroutine 后有没有等它退出」。本轮靠人工逐处审出。
+- 修复轮 r5/r6 是**判据自身**的收紧（fail-closed 方向），落点在 `cmd/storagecheck/`，其判据
+  清单见该分支提交说明；本节不重复。
+
+### 本轮仍然存在的边界（如实登记未被机判的断言）
+
+1. **「用例内 goroutine 未收尾」未被机判**（最重要）：仓里没有规则查它 ⇒ 下一个人写新用例
+   照样可能漏 ⇒ 本轮修的是**已写出来的那 9 处**，不是**这类写法本身**。
+2. **暴露形态是概率型**：实测失败率约 0.8%（旧写法 8/1000，新写法 0/800）⇒ 单跑 10/10
+   绿**不构成**「它不存在」的证据；CI 上「这次绿了」同样不构成。
+3. **PG 侧症状不同 ⇒ 按症状排查会漏**：PG 侧交还的是「schema + 连接池」不是临时目录 ⇒
+   同样的未收尾不表现为 `directory not empty`，而是「对已删 schema 的无谓查询 + WARN 刷屏」。
+4. **失败路径仍会漏收尾**：`t.Fatalf` 触发 Goexit 时用例体内的收尾语句被跳过 ⇒ 该路径下
+   尾随 goroutine 仍会活到 ctx 超时（10s）⇒ **失败用例仍可能**带出同款清理报错。本轮未改
+   （修法要动用例骨架，收益不对称）。
+5. **复现器在仓外**：反例复现器是仓外独立程序（含 `main.go` 与三支驱动脚本）⇒ 这类缺陷
+   **没有仓内可复跑的门禁**，换台机器要重写探针。
+
+### 版本口径
+
+本轮**零行为变更**（只改用例与文档）⇒ 沿用 **v0.51.0** 段，不抬版本号。
