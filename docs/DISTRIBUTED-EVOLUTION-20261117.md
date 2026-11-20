@@ -1884,15 +1884,52 @@ Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
    本机真库实测坐实：`SaveIfNewer(Seq=2^63)` err=nil，`Load` 得
    `Seq=9223372036854775808`（负数落库后读回假序号）；SQLite 侧
    `examples/sqliteadapter/snapshot.go:65` 有同款守卫（`snap.Seq > math.MaxInt64`）
-   ⇒ **本轮未修，如实留 open**。
-2. **`examples/pgstore` 里残留「四个面」的窄义措辞**——门面侧实际是**十一个**面
-   访问器，措辞与门面可达性不同步，待清理。**实测共 7 处**（本条初稿只点名 2 处，
-   属漏报，已补全）：`pg_apply_test.go:5` / `:64` / `:66`（措辞作「四面」）/ `:100` /
+   ⇒ **第十九轮未修，如实留 open**。
+   ⇒ **第二十轮已清偿**（落点：`examples/pgstore/snapshot.go:60` 的
+   `snap.Seq > math.MaxInt64` 守卫（与 SQLite 侧同款，现于
+   `examples/sqliteadapter/snapshot.go:67`）+ 同款失败槽登记（`failBatch(ctx, err)`）
+   + 反向用例 `examples/pgstore/pg_snapshot_overflow_test.go`）。
+   ⚠ **关闭 PR 号待回填**：PR 尚未开出 ⇒ 台账状态词此刻保持原样（不写关闭标记），
+   由集成阶段在 PR 合入后用一次独立提交统一回填。
+2. **两侧存储代码根里残留「N 个面」的窄义措辞**——门面侧实际是**十一个**面
+   访问器，措辞与门面可达性不同步，待清理。**第十九轮实测 PG 侧共 7 处**（本条初稿
+   只点名 2 处，属漏报，已补全）：`pg_apply_test.go:5` / `:64` / `:66`（措辞作「四面」）/ `:100` /
    `:131` / `:164` 与 `effect.go:135`。
+   ⇒ **第二十轮已清偿**：按「两侧都给全量清单」的纪律扩到两侧 ⇒ **实测共 21 处**
+   （PG 侧 7 + SQLite 侧 **14**；SQLite 侧的 14 处里有 1 处是派单清单漏检的
+   `examples/sqliteadapter/apply_test.go:44`，实现者自查发现并一并清掉）。
+   **两侧代码根内已无「N 个面」窄义计数**（残留的只有 `examples/pgstore/store.go` 里
+   「11 个面访问器」——数字与实际访问器集合一致，不是窄义计数，且不在本轮归属内）。
+
+   **全量落点清单（21 处逐条：文件:行号 → 原措辞 → 新措辞）**：
+
+   | # | 文件:行号 | 原措辞 | 新措辞 |
+   |---|---|---|---|
+   | 1 | `examples/pgstore/effect.go:135` | 这一处改动让**四个面**全部支持跨面原子提交 | 这一处改动让**门面暴露的各个面**全部支持跨面原子提交 |
+   | 2 | `examples/pgstore/pg_apply_test.go:5` | **四个面**各自 Begin/Commit | **本文件覆盖的这几张面（任务板 / 副作用 / 快照 / 事件）**各自 Begin/Commit |
+   | 3 | `examples/pgstore/pg_apply_test.go:64` | TestApplyCommitsAllFacesAtomically **四个面**的变更落在**同一次提交**里 | TestApplyCommitsAllFacesAtomically **本用例覆盖的这几张面（任务板 / 副作用 / 快照 / 事件）**的变更落在**同一次提交**里 |
+   | 4 | `examples/pgstore/pg_apply_test.go:66` | 判据：提交后**四面**都读得到（一次提交 ⇒ 全部生效） | 判据：提交后**这几张面**都读得到（一次提交 ⇒ 全部生效） |
+   | 5 | `examples/pgstore/pg_apply_test.go:100` | **四个面**都读得到（⇒ **四面**变更同生共死） | **本用例覆盖的这几张面**都读得到（⇒ 变更同生共死） |
+   | 6 | `examples/pgstore/pg_apply_test.go:131` | TestApplyRollsBackEveryFaceTogether 回调返回错误 ⇒ **四个面**的写**一个都不留** | TestApplyRollsBackEveryFaceTogether 回调返回错误 ⇒ **本用例覆盖的这几张面（任务板 / 副作用 / 快照 / 事件）**的写**一个都不留** |
+   | 7 | `examples/pgstore/pg_apply_test.go:164` | **四个面**一个都没留下 | **本用例覆盖的这几张面**一个都没留下 |
+   | 8 | `examples/sqliteadapter/apply.go:1` | 跨面 Apply：**五个面**的变更收进**同一次提交** | 跨面 Apply：**各面**的变更收进**同一次提交** |
+   | 9 | `examples/sqliteadapter/apply.go:91` | Tx 一次事务的**五个面**（共享同一份状态与同一次提交） | Tx 一次事务的**各面**（共享同一份状态与同一次提交） |
+   | 10 | `examples/sqliteadapter/apply.go:93` | ⚠ **五个面**共用**同一个** tx ⇒ 同一次提交 | ⚠ **各面**共用**同一个** tx ⇒ 同一次提交 |
+   | 11 | `examples/sqliteadapter/apply_test.go:5` | **五个面**各自提交 | **本文件覆盖的这几张面（任务 / 副作用 / 快照 / 事件 / 下游栅栏）**各自提交 |
+   | 12 | `examples/sqliteadapter/apply_test.go:6` | Apply 把**五个面**的变更收进**同一次提交**，失败即作废整批 | Apply 把**各面**的变更收进**同一次提交**，失败即作废整批 |
+   | 13 | `examples/sqliteadapter/apply_test.go:42` | TestApplyCommitsAllFacesAtomically **五个面**的变更落进**同一次提交** | TestApplyCommitsAllFacesAtomically **本用例覆盖的这几张面（任务 / 副作用 / 快照 / 事件 / 下游栅栏）**的变更落进**同一次提交** |
+   | 14 | `examples/sqliteadapter/apply_test.go:44` | 判据：提交后**五面**都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部不生效 | 判据：提交后**这几张面**都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部不生效 |
+   | 15 | `examples/sqliteadapter/apply_test.go:83` | **五个面**都读得到（⇒ **五面**变更同生共死） | **本用例覆盖的这几张面**都读得到（⇒ 变更同生共死） |
+   | 16 | `examples/sqliteadapter/board.go:103` | 失败槽随执行位置走（批次级状态：**五个面**共享同一份） | 失败槽随执行位置走（批次级状态：**各面**共享同一份） |
+   | 17 | `examples/sqliteadapter/effect.go:133` | 失败槽随执行位置走（批次级状态：**五个面**共享同一份） | 失败槽随执行位置走（批次级状态：**各面**共享同一份） |
+   | 18 | `examples/sqliteadapter/exec.go:43` | 指针而非值：**五个面**共享**同一份**槽 ⇒ 任一面失败，其余面都看得见 | 指针而非值：**各面**共享**同一份**槽 ⇒ 任一面失败，其余面都看得见 |
+   | 19 | `examples/sqliteadapter/store.go:3` | 门面只管三件事：开库、装选项、关库。**五个面（任务板 / 副作用闸 / 进度快照 / 事件面 / 下游栅栏）**与控制面、尾随游标、跨面 Apply **共用同一份** exec 执行位置抽象 | 门面只管三件事：开库、装选项、关库。**各面（任务板 / 副作用闸 / 进度快照 / 事件面 / 下游栅栏，及其租户作用域变体）**与控制面、尾随游标、跨面 Apply **共用同一份** exec 执行位置抽象 |
+   | 20 | `examples/sqliteadapter/store.go:56` | Store 一个 SQLite 后端：**五个面** + 控制面 + 游标，共用一份事务域 | Store 一个 SQLite 后端：**各面** + 控制面 + 游标，共用一份事务域 |
+   | 21 | `examples/sqliteadapter/doc.go:22` | **跨面 Apply**（Store.Apply）：**五个面**的变更收进**同一次提交**，失败即作废整批 | **跨面 Apply**（Store.Apply）：**各面**的变更收进**同一次提交**，失败即作废整批 |
 3. **§26 / §27 的建议仍未处理**：§26 的三条（形态判定下沉为可导入包 / 其它门禁统一取证
    形态 / §25 两条顺延）、§27 另两条（真集群验收路径要有「被执行过」的清单 / CI 侧该
    不该跑这条 e2e 待议——§27 末尾第 1 条即 §26 的顺延，不另计），按原顺序排在后续轮次。
-4. **两侧门面「同款集合」的相等性未被机判**（最终评审实测）：`examples/pgstore/store.go:109`
+4. **两侧门面「同款集合」的相等性此前未被机判**（最终评审实测）：`examples/pgstore/store.go:109`
    断言「补齐后两侧门面暴露**同款集合** ⇒ 对位成为**事实**」——但该事实**没有**机器
    判据：删掉 PG 侧任一面访问器（实测 `TenantTailCursors`）或给 PG 侧加一个 SQLite 侧
    没有的访问器 ⇒ `storagecheck` / `deploycheck` / `architecture-check` **全绿**（只有
@@ -1903,3 +1940,84 @@ Worker 进程抢同一份任务板）**必须**用 PostgreSQL。
    附带一条覆盖面偏窄：`docs/STORAGE-SELECTION.yaml` 的 evidence 只引用了 11 个面
    访问器中的 7 个，`Downstream` / `TailCursors` / `TenantDownstream` /
    `TenantTailCursors` **两侧均无 evidence ref** ⇒ 同属声明面覆盖不全，一并待补。
+   ⇒ **第二十轮已清偿**（落点：`cmd/storagecheck/facade.go` 五条判据 F1–F5 +
+   `docs/STORAGE-SELECTION.yaml` 的 `facade:` 段与 `known_unbacked_accessors`）：
+   F1 声明面与代码派生集**双向**相等 / F2 清单形状（面访问器非空 / 不重复 / 与其它导出
+   方法不重叠）/ F3 两侧门面的面访问器集合相等 / F4 每个面访问器要么被能力证据引用、
+   要么登记（登记过期即红）/ F5 有方法级落点的存储必须登记门面段；附带那条覆盖面偏窄
+   一并补齐（两侧各 11 个面访问器现在逐个都有能力落点或登记项）。
+
+## 29. 第二十轮台账（2026-11-20）：声明面收紧 + 门面集合机判（§28 建议 1/2/4 收口）
+
+> **本轮是存储面的一轮**：把 §28「下一阶段建议」里点名的三条**就地清偿**
+> （#425 快照序号溢出守卫 / 「N 个面」窄义措辞 / 两侧门面「同款集合」的相等性），
+> 另加两条声明面收紧（`kind` 封闭值域 + 写者数交叉校验）。
+> §26 / §27 的建议仍未处理，仍排在后续轮次（见 §28 建议 3）。
+
+### 落点
+
+| 位置 | 作用 |
+|---|---|
+| `examples/pgstore/snapshot.go` | 快照序号溢出守卫：`snap.Seq > math.MaxInt64` 一律先拒（与 SQLite 侧同款） |
+| `examples/pgstore/pg_snapshot_overflow_test.go` | 溢出守卫的反向用例（拒绝 + 失败槽登记） |
+| `examples/pgstore` 与 `examples/sqliteadapter` 共 9 个文件 | 「N 个面」窄义措辞清理（实测 21 处：PG 7 + SQLite 14） |
+| `cmd/storagecheck/kinds.go` | 存储 `kind` 的封闭值域判据 |
+| `cmd/storagecheck/writers.go` | 写者数交叉校验（W1 存储侧 / W2 场景侧 / W3 陈旧形态键） |
+| `cmd/storagecheck/facade.go` | 门面「同款集合」的相等性（F1–F5） |
+| `docs/STORAGE-SELECTION.yaml` | `facade:` 段与 `known_unbacked_accessors` 登记面 |
+| `docs/USAGE.md` §3.17 与门禁表 | 选型口径的人读入口（本轮新判据同步进这两处） |
+
+### 本轮清偿了什么（逐项 → 落点）
+
+1. **#425（PG 快照面缺序号溢出守卫）**：两侧对位补齐（落点与事实详见 §28 建议 1）
+   ⇒ **本轮已清偿**（关闭 PR 号待回填：PR 开出并合入后由集成阶段统一回填状态词）。
+2. **「N 个面」窄义措辞**：实测 **21 处**（PG 7 + SQLite 14），全量落点清单见 §28 建议 2
+   ⇒ **本轮已清偿**。
+3. **两侧门面「同款集合」的相等性未机判**：F1–F5 五条判据（落点详见 §28 建议 4）
+   ⇒ **本轮已清偿**。
+
+### 本轮新增的机器判据（判什么 / 失败形态）
+
+| 判据 | 判什么 | 失败形态 |
+|---|---|---|
+| 快照序号溢出守卫 | PG 侧 `Seq > math.MaxInt64` 一律先拒（与 SQLite 侧同款） | 当场拒绝并把错误登记进失败槽（`failBatch(ctx, err)`）⇒ 调用方拿得到失败，不静默落库 |
+| `kind` 封闭值域 | 存储的 `kind` 只能是 memory / sqlite / postgresql / shared-authority / regional-authority 五个取值 | 未知或空取值即红，并点名写了什么 + 允许哪些取值 |
+| 能力多写者标注 | 矩阵里每条能力都必须显式标注 `requires_multi_writer` | 缺省即红（漏登记 ⇒ 该能力既不在多写者集合、也不在单写者集合里 ⇒ 判据静默失效） |
+| W1 写者数交叉校验（存储侧） | 存储的写者上限是多写者档位 ⟺ 它认领了至少一项多写者能力 | 两个方向都判：多写者档位却不认领 ⇒ 红；单写者档位却认领 ⇒ 红 |
+| W2 写者数交叉校验（场景侧） | 形态写者数 ≥2 ⟺ 该形态下有场景要求多写者能力；写者数 ==1 ⇒ 该形态下所有场景都不要求 | 写者数 ≥2 却无人要求 ⇒ 红（表被改弱了）；写者数 ==1 却有人要求 ⇒ 红 |
+| W3 陈旧形态键 | `scenario_writers` 里没有任何场景引用的形态键 | 当天即红（与「陈旧存储当天即红」同款：没人引用的声明躺在那里 = 有人以为它还有效） |
+| F1 门面派生集双向相等 | 声明面的 `accessors` ∪ `other_methods` 与代码派生集（go/ast）逐字相符 | 任一侧多出即红；门面类型含嵌入字段（派生集含提升方法、不完整）⇒ fail-closed 直接判红 |
+| F2 门面清单形状 | `accessors` 非空 / 不重复 / 与 `other_methods` 不重叠 | 形状不合即红（点名哪个名字重了） |
+| F3 两侧门面对等 | 各门面的面访问器集合必须相等 | 差集非空即红，并点名差哪几个 |
+| F4 落点或登记 | 每个面访问器要么被能力证据引用、要么登记进 `known_unbacked_accessors` | 都没有即红；登记若其实已被证据覆盖 ⇒ 红（过期登记当天即删） |
+| F5 门面段不得缺席 | 声明面里出现方法级落点却没写 `facade:` 段 | 当场红（防「真空绿」：声明面不写门面 ⇒ 一整面判据不判） |
+| 写者上限非法按存储去重 | 同一条非法上限按**存储**报一次（不按场景报 N 遍） | 报告稳定 ⇒ 同文噪声不压过信号 |
+
+### 本轮仍然存在的边界（如实登记未被机判的断言）
+
+1. **协调改弱可让硬边界静默失效**（Task 3 评审 M2，**最重要**）：把 10 条
+   `requires_multi_writer` **全翻 false** + 6 个形态写者数**全改 1** + 5 条存储
+   `max_writers` **全改 1** ⇒ `storagecheck` **rc=0** 且 `deploymatrix` **rc=0**
+   ⇒ 「多写者场景不得选单写者档位」这条硬边界**静默消失**，而矩阵标题仍写
+   「同机多进程」、选型口径仍写「单机多进程一律判 PostgreSQL」。
+   ⚠ **这不是实现缺陷**：门禁按派单要求**从矩阵派生**多写者集合 ⇒ 机器只能判
+   **两张表互洽**，「这些数据本身是不是真的」不在判据面内 ⇒ 这是**判据的作用域边界**。
+2. **「零门面即红」未做**（Task 4 评审 Major 2 的后续议题）：删掉某存储整段 `facade:`
+   + 把它的方法级落点降级为类型级 ⇒ 门禁**不红**。本轮只做了「✓ 文案条件化」
+   （门面数为 0 时**不许**宣称判过门面那几条）。
+   ⚠ 评审明确否掉了「门面数 ≥ 2」这个修法（把门禁形状硬编码成「必须两扇门」，逼人编门；
+   且会打红既有合成夹具）⇒ 这条**留作后续议题**，如实登记。
+3. **写者数交叉校验（W1/W2）钉住的是两张表之间的一致性**：「某存储**实际上**能不能扛
+   多写者」这件事**仍不是机判事实**（事实源头是代码与机制，不是门禁）。
+4. **`known_unbacked_accessors` 是登记面，不是「已覆盖」的证明**：登记项表示「当前没有
+   能力断言覆盖它」，**不表示**它已被覆盖。两侧的实测覆盖数（评审核对过，直接抄）：
+   `examples/pgstore` = **9 个访问器有能力落点 + 2 个登记**；
+   `examples/sqliteadapter` = **4 个有落点 + 7 个登记**（两侧各 11 个）。
+5. **PG 侧快照溢出拒绝用裸 `errors.New`** ⇒ 按 `errors.Is(err, checkpoint.ErrStaleSeq)`
+   分流的调用方**判不到**。与 SQLite 侧**逐字一致** ⇒ **不是缺陷**；但**将来若加哨兵
+   必须两侧同改**（否则两侧语义漂移）。
+
+### 版本口径
+
+本轮含**行为变更**（#425 守卫）+ **新判据**（F1–F5 / W1–W3 / `kind` 封闭值域）
+⇒ **v0.51.0**（minor，不是 patch）。
