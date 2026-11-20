@@ -98,30 +98,62 @@ func TestManagedExecutorLateCheckpointRejectedAfterTakeover(t *testing.T) {
 // TestManagedExecutorRenewalPreventsTakeover
 //
 // 验收（issue #265）：续期期间任务不被他人接管（长任务场景端到端）。
-// 真实时间推进：TTL 短、续期节拍更短，施加段横跨原 TTL 数倍——
-// 期间他人认领必须被拒（ErrTaken），本持有者最终正常收场。
+//
+// # 构造为什么是确定性的（issue #430）
+//
+// 原构造用**墙钟排程**造「接管尝试落在续期窗口内」这个前提：施加段
+// time.Sleep(1100ms) 模拟长任务，三次尝试各 sleep(350ms) ⇒ 第三次尝试落在
+// ~1053ms，与任务自然完成（~1100ms）之间只剩 ~47ms 余量。机器一忙，测试
+// 协程被推迟几十毫秒 ⇒ 实得「任务已是终态」；续期节拍同时被饿死超过 TTL
+// 时则实得 <nil>（接管成功）。同一处、红法不同——承重夹具不能靠时序去撞。
+//
+// 新构造逐个消掉三个前提：
+//
+//  1. **任务提前完成** → 施加段阻塞在用例控制的通道上，不放行就不可能终态；
+//  2. **原 TTL 已过** → 等的是「一次发生在原到期时刻之后的**成功续期**」——
+//     该次续期成功本身就是「租约活过了原 TTL」的证据（coord 的 Renew 对已
+//     过期租约返回 ErrLeaseLost 且不做任何修改）；
+//  3. **续期被饿死** → 每次尝试都**紧跟在一次可观测的成功续期之后** ⇒ 租约
+//     刚被推后，剩余有效期是一整个 TTL，机器多忙都落在有效期内。
+//
+// 判定语义不许弱化：仍须证明「不被接管（ErrTaken）」+「完整收场（applied +
+// 任务终态 done）」两条。
 func TestManagedExecutorRenewalPreventsTakeover(t *testing.T) {
 	ctx := context.Background()
-	board := newRealtimeBoard()
+	board := newRenewObserverBoard(newRealtimeBoard())
 	board.Seed(taskboard.Task{ID: "t1", State: taskboard.StateOpen})
+
+	const (
+		claimTTL  = 400 * time.Millisecond
+		renewTick = 80 * time.Millisecond
+	)
 
 	effects := &fakeEffects{outcome: sideeffect.OutcomeApplied}
 	exec, err := NewManagedExecutor(board, effects, ManagedConfig{
 		Agent:         "w-a",
-		ClaimTTL:      400 * time.Millisecond,
-		RenewInterval: 80 * time.Millisecond,
-		Progress:      nil,
+		ClaimTTL:      claimTTL,
+		RenewInterval: renewTick,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	applied := make(chan struct{}, 1)
+	// 施加段卡在用例控制的通道上：放行前任务不可能走到终态。
+	applyEntered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+
 	work := ManagedWork{
 		Effect: sideeffect.Effect{
-			Apply: func(context.Context, any, sideeffect.Lease) (sideeffect.Result, error) {
-				applied <- struct{}{}
-				time.Sleep(1100 * time.Millisecond) // 横跨原 TTL（400ms）数倍
+			Apply: func(actx context.Context, _ any, _ sideeffect.Lease) (sideeffect.Result, error) {
+				applyEntered <- struct{}{}
+				select {
+				case <-release:
+				case <-actx.Done(): // 租约易主 ⇒ 在途封口（会话 ctx）
+					return sideeffect.Result{}, actx.Err()
+				}
 				return sideeffect.Result{Payload: []byte("done")}, nil
 			},
 		},
@@ -132,21 +164,49 @@ func TestManagedExecutorRenewalPreventsTakeover(t *testing.T) {
 		err     error
 	}
 	res := make(chan execResult, 1)
+	finished := make(chan struct{})
 	go func() {
 		o, e := exec.Execute(ctx, "t1", work)
 		res <- execResult{o, e}
+		close(finished)
 	}()
-	<-applied // 已进入施加段（租约会话已在续期）
+	<-applyEntered // 已进入施加段：认领已发生，租约会话已开
 
-	// 接管尝试：横跨原 TTL 的时刻点前后各试一次，必须全部 ErrTaken。
+	// 原租约（未续期时）的到期时刻：认领时刻取「认领返回之后」的墙钟 ⇒ 偏严。
+	origExpiry := board.claimTime().Add(claimTTL)
+
+	var last renewalEvent
 	for i := range 3 {
-		time.Sleep(350 * time.Millisecond) // 第 i 次尝试落在 ~(350i, 350i+400)ms
+		// 等一次「晚于原到期时刻、且晚于上次已观测到的那次」的成功续期。
+		after := origExpiry
+		if last.at.After(after) {
+			after = last.at
+		}
+		ev, ok := board.nextRenewalAfter(ctx, after, 5*time.Second, finished)
+		if !ok {
+			t.Fatalf("第 %d 次接管尝试前未观测到原 TTL 之后的一次成功续期"+
+				"（续期节拍被饿死 ⇒ 租约按设计过期 ⇒ 前提不成立）：%s", i+1, board.diag())
+		}
+		last = ev
+		// 「原 TTL 已过期而租约仍被续着」的直接证据：续期后的到期时刻
+		// 必须晚于原到期时刻。
+		if !ev.until.After(origExpiry) {
+			t.Fatalf("第 %d 次尝试前的续期没有把租约推过原到期时刻（原 %v，续期后 %v）",
+				i+1, origExpiry, ev.until)
+		}
+		// 接管尝试：此刻租约刚被续过，剩余有效期是一整个 TTL。
 		_, claimErr := board.Claim(ctx, "t1", "w-b", taskboard.ClaimRequest{TTL: time.Minute})
 		if !errors.Is(claimErr, taskboard.ErrTaken) {
 			t.Fatalf("续期期间第 %d 次接管尝试必须被拒（ErrTaken），实得 %v", i+1, claimErr)
 		}
+		tasks, _ := board.List(ctx)
+		if len(tasks) != 1 || tasks[0].State != taskboard.StateClaimed {
+			t.Fatalf("第 %d 次尝试后任务必须仍是被认领态（放行前不可能终态）：%+v", i+1, tasks)
+		}
 	}
 
+	// 放行长任务：它必须完整收场。
+	unblock()
 	ra := <-res
 	if ra.err != nil {
 		t.Fatalf("长任务在续期保护下应完整收场：%v", ra.err)
@@ -155,8 +215,8 @@ func TestManagedExecutorRenewalPreventsTakeover(t *testing.T) {
 		t.Fatalf("应得到 applied：%s", ra.outcome)
 	}
 	tasks, _ := board.List(ctx)
-	if tasks[0].State != taskboard.StateDone {
-		t.Fatalf("任务应完成：%+v", tasks[0])
+	if len(tasks) != 1 || tasks[0].State != taskboard.StateDone {
+		t.Fatalf("任务应完成：%+v", tasks)
 	}
 }
 
@@ -335,4 +395,5 @@ var (
 	_ LeasedProgress            = (*blockingLeasedProgress)(nil)
 	_ checkpoint.FencedStoreCAS = (*memFencedWorker)(nil)
 	_ taskboard.RenewingBoard   = (*leaseStubBoard)(nil)
+	_ taskboard.RenewingBoard   = (*renewObserverBoard)(nil)
 )
