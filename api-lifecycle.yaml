@@ -292,3 +292,7 @@ packages:
     level: Experimental
     since: v0.38.0
     reason: 运行中接管五件套（ErrSteered Cause / 保产摘要 / 回可认领态 / 队列感知 / 单协程迁移）刚下沉——摘要文案头与排队结算留宿主注入，判据面待第二个宿主验证。
+  - pkg: roundguard
+    level: Experimental
+    since: v0.52.0
+    reason: 回合守卫三件套刚下沉：结局分类的取值集合与「不得续跑」的判据边界仍待第二个宿主验证（比照 steer 的定级理由）。
