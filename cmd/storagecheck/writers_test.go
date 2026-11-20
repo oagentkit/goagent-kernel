@@ -106,3 +106,77 @@ func TestMultiWriterSetDerivedFromMatrix(t *testing.T) {
 	// demo-store 是单写者档位，却认领了（矩阵里被标成多写者的）cap-persist ⇒ 红。
 	requireViolation(t, probs, "却认领了多写者能力")
 }
+
+// TestCheckRejectsUnreferencedScenarioWriterForm scenario_writers 里没有任何场景
+// 引用的形态键 ⇒ 红（陈旧声明当天即红）。
+//
+// 与「陈旧存储当天即红」同款：形态已从矩阵里删掉，写者数表却还留着它 ⇒ 没人
+// 引用，却躺在声明面里等人以为它还有效。
+//
+// 只判「矩阵里的形态都登记了」不判反方向 ⇒ 这一半可以静默腐烂（那张表只增
+// 不减，最容易漏的判据就是它）。
+func TestCheckRejectsUnreferencedScenarioWriterForm(t *testing.T) {
+	s := strings.Replace(demoSelection, "  multi-node: 2\n", "  multi-node: 2\n  legacy-node: 3\n", 1)
+	root := writeRoot(t, demoMatrix, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
+	}
+	requireViolation(t, probs, "没有任何场景引用")
+	joined := strings.Join(probs, "\n")
+	if !strings.Contains(joined, "legacy-node") {
+		t.Fatalf("违反必须点名那个陈旧键，实得:\n%s", joined)
+	}
+	if len(probs) != 1 {
+		t.Fatalf("一个陈旧键只应报一条违反，实得 %d 条:\n%s", len(probs), joined)
+	}
+}
+
+// TestCheckReportsBadMaxWritersOncePerStorage 同一存储的非法 max_writers
+// **只报一次**，且报告里列出引用它的场景。
+//
+// 旧实现逐场景解析上限 ⇒ 同一存储被 N 个场景引用时同一条错误报 N 遍 ⇒ 报告里
+// 全是同文噪声，读者得自己数一遍才知道那是同一件事。
+//
+// 判定面不变（仍然判同一件事）：照样红，只是红一条。
+func TestCheckReportsBadMaxWritersOncePerStorage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		bad  string
+		want string
+	}{
+		{"零", "0", "max_writers 至少为 1"},
+		{"非数字", "zero", "max_writers 必须是数字或 unlimited"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// 两个场景都引用 demo-store ⇒ 旧实现会报两遍。
+			m := strings.Replace(demoMatrix, "  - id: scene-two\n", `  - id: scene-three
+    title: 单节点副本
+    storage: demo-store
+    worker: single-node
+    required: [cap-persist]
+    readiness: available
+  - id: scene-two
+`, 1)
+			s := strings.Replace(demoSelection, "    max_writers: 1\n", "    max_writers: "+tc.bad+"\n", 1)
+			root := writeRoot(t, m, s)
+			probs, _, err := check(root)
+			if err != nil {
+				t.Fatalf("判定出错: %v", err)
+			}
+			requireViolation(t, probs, tc.want)
+			joined := strings.Join(probs, "\n")
+			if n := strings.Count(joined, tc.want); n != 1 {
+				t.Fatalf("同一存储的非法上限只应报一次，实得 %d 次:\n%s", n, joined)
+			}
+			for _, sc := range []string{"scene-one", "scene-three"} {
+				if !strings.Contains(joined, sc) {
+					t.Fatalf("报告必须列出引用它的场景 %q，实得:\n%s", sc, joined)
+				}
+			}
+			if len(probs) != 1 {
+				t.Fatalf("只应有一条违反（去重后不多报），实得 %d 条:\n%s", len(probs), joined)
+			}
+		})
+	}
+}

@@ -25,6 +25,20 @@ import (
 // shared-authority / regional-authority）——新增一个类别是一次**声明面变更**，
 // 必须同时改这里（否则新类别当场红 ⇒ 逼着人走一次有意识的决定，而不是
 // 「随手加个字就过了」）。
+//
+// # ⚠ 其中两个取值与真实存储 id **同名**——这是事实，不是错
+//
+// kindMemory（"memory"）与 kindRegionalAuthority（"regional-authority"）
+// **恰好**也是 docs/STORAGE-SELECTION.yaml 里的两条存储的 id。
+// 同名是**事实**（派单裁决 D 指定的就是这个取值集合）⇒ **不改取值**，
+// 但必须把两个维度说清，否则读声明面的人会把「这是 kind 值」误读成
+// 「这是存储 id」：
+//
+//   - kind = **引擎类别**（机制面的封闭词表，由本判据管）；
+//   - 存储 id = **声明面里的档位名**（宿主资产，门禁代码里不许出现）。
+//
+// 同名但**不是同一个维度**：声明面里 kind: memory 这一行说的是「这条存储
+// 用内存型引擎」，**不是**在说「这条存储的 id 叫 memory」。
 const (
 	kindMemory            = "memory"
 	kindSQLite            = "sqlite"

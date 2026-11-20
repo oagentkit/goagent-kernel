@@ -72,3 +72,36 @@ func TestKnownKindClosed(t *testing.T) {
 		}
 	}
 }
+
+// TestKindVocabularyKeepsCollidingSpellings kind 词表里有两个取值**恰好**也是
+// 真实存储 id（memory / regional-authority）——同名是**事实**（派单裁决 D 指定的
+// 取值集合）⇒ 本用例把「不改取值」钉住：将来谁想「顺手改名消歧」，这条会红。
+//
+// ⚠ 同名 ≠ 同维度：kind 是**引擎类别**，存储 id 是**声明面里的档位名**。
+func TestKindVocabularyKeepsCollidingSpellings(t *testing.T) {
+	for _, want := range []string{kindMemory, kindRegionalAuthority} {
+		if !knownKind(want) {
+			t.Fatalf("取值 %q 必须仍在封闭词表内（与存储 id 同名是事实，不是错）", want)
+		}
+	}
+}
+
+// TestStorageIdAndKindAreDifferentDimensions 存储 id 与 kind 是**两个维度**：
+// id 叫 memory 的存储用 sqlite 引擎不判红（门禁不拿 kind 词表去反查 id）。
+//
+// 这条把「同名不是同维度」从注释变成机器可判的事实：若哪天有人把两者混成一
+// 个维度（拿 kind 词表反查存储 id），这条会红。
+func TestStorageIdAndKindAreDifferentDimensions(t *testing.T) {
+	m := strings.Replace(demoMatrix, "storage: demo-store", "storage: memory", 1)
+	s := strings.Replace(demoSelection, "  - id: demo-store\n", "  - id: memory\n", 1)
+	s = strings.Replace(s, "    kind: memory\n", "    kind: sqlite\n", 1)
+	s = strings.Replace(s, "storages: [demo-store, demo-other]", "storages: [memory, demo-other]", 1)
+	root := writeRoot(t, m, s)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("存储 id 与 kind 是两个维度，不该判红: %v", probs)
+	}
+}

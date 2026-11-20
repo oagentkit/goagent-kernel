@@ -200,6 +200,9 @@ func checkWriters(m *Matrix, sel *Selection) []string {
 				selectionPath, sc.ID, sc.Worker))
 		}
 	}
+	// 写者上限非法**按存储报一次**（去重）：同一存储被 N 个场景引用时，
+	// 逐场景报会把同一条错误报 N 遍（报告里全是同文噪声）。见 writers.go。
+	probs = append(probs, checkStorageMaxWriters(m, sel)...)
 	for _, sc := range m.Scenarios {
 		writers, ok := sel.ScenarioWriters[sc.Worker]
 		if !ok {
@@ -211,8 +214,7 @@ func checkWriters(m *Matrix, sel *Selection) []string {
 		}
 		limit, unbounded, err := parseMaxWriters(st.MaxWriters)
 		if err != nil {
-			probs = append(probs, fmt.Sprintf("%s: 存储 %q 的 %v", selectionPath, st.ID, err))
-			continue
+			continue // 上限非法已按存储报过（见 checkStorageMaxWriters）
 		}
 		if unbounded {
 			continue

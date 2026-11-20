@@ -23,10 +23,20 @@
 //
 // 多写者集合 = 矩阵里标了 requires_multi_writer: true 的能力 ⇒ 代码里**没有**
 // 任何能力 id ⇒ 矩阵改了多写者清单，门禁跟着改（不会「代码里的清单过期」）。
+//
+// # 本文件另外判两条（与 W1/W2 同源，口径一致）
+//
+//   - W3（陈旧形态键）：scenario_writers 里没有任何场景引用的形态键 ⇒ 红
+//     （与「陈旧存储当天即红」同款：没人引用的声明躺在那里 = 有人以为它还有效）。
+//     两个方向合起来才是「两张表互洽」：矩阵里的形态必须登记写者数，登记的
+//     形态必须被矩阵引用。
+//   - 写者上限非法**按存储报一次**（同一存储被 N 个场景引用时，同一条错误会
+//     按场景报 N 遍 ⇒ 报告里全是同文噪声，压过信号）。
 package main
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -93,14 +103,52 @@ func checkStorageWriterTier(sel *Selection, multi map[string]bool) []string {
 	return probs
 }
 
+// checkScenarioWriterFormsReferenced scenario_writers 里**没有任何场景引用**的
+// 形态键 ⇒ 红（陈旧声明当天即红）。
+//
+// 为什么与「陈旧存储当天即红」同款：形态已从矩阵里删掉，写者数表却还留着
+// 它 ⇒ 它躺在声明面里等人以为它还有效（下次有人「照着它加一个场景」就会
+// 复活一个已经不存在的形态）。
+//
+// 两个方向合起来才是「两张表互洽」：矩阵里的每个形态都必须登记写者数
+// （漏登记 ⇒ 硬边界无从下手，见 checkWriters），而登记的每个形态都必须被
+// 矩阵引用（没人引用 ⇒ 陈旧声明）。只判一头 ⇒ 另一头可以静默腐烂。
+//
+// 报告顺序稳定：map 遍历顺序随机 ⇒ 先把陈旧键排序再逐条报（不然同一份声明面
+// 每次报的行序都不同，diff 出来的噪声比信号多）。
+func checkScenarioWriterFormsReferenced(m *Matrix, sel *Selection) []string {
+	referenced := map[string]bool{}
+	for _, sc := range m.Scenarios {
+		referenced[sc.Worker] = true
+	}
+	var stale []string
+	for form := range sel.ScenarioWriters {
+		if !referenced[form] {
+			stale = append(stale, form)
+		}
+	}
+	sort.Strings(stale)
+	var probs []string
+	for _, form := range stale {
+		probs = append(probs, fmt.Sprintf(
+			"%s: 场景形态 %q 登记了写者数，但矩阵里没有任何场景引用它（陈旧声明当天即红）",
+			selectionPath, form))
+	}
+	return probs
+}
+
 // checkScenarioWriterTier 写者数交叉校验的**场景侧**（W2）。
 //
 // 形态的并发写者数与该形态下场景**实际要求的能力**必须自洽。
 //
 // 报红时点名形态与具体场景：形态写者数 ≥2 却没有任何场景要求多写者能力 ⇒
 // 说明那张表被改弱了（这时「多写者场景不得选单写者档位」已经没人撑）。
+//
+// 兼判 scenario_writers 表自身的陈旧键（W3，见 checkScenarioWriterFormsReferenced）：
+// 场景侧判据读的就是这张表 ⇒ 表里没人引用的键由这里一并判红。
 func checkScenarioWriterTier(m *Matrix, sel *Selection, multi map[string]bool) []string {
 	var probs []string
+	probs = append(probs, checkScenarioWriterFormsReferenced(m, sel)...)
 	forms := map[string][]Scenario{}
 	for _, sc := range m.Scenarios {
 		forms[sc.Worker] = append(forms[sc.Worker], sc)
@@ -139,6 +187,44 @@ func checkScenarioWriterTier(m *Matrix, sel *Selection, multi map[string]bool) [
 			probs = append(probs, fmt.Sprintf(
 				"%s: 场景形态 %q 只有 1 个并发写者，但它下面的场景要求了多写者能力 %s",
 				selectionPath, sc.Worker, strings.Join(withMulti, "、")))
+		}
+	}
+	return probs
+}
+
+// checkStorageMaxWriters 写者上限非法**按存储报一次**（去重）。
+//
+// 为什么：写者上限写在**存储**上，而场景循环是按场景走的 ⇒ 同一存储被 N 个
+// 场景引用时，同一条错误会报 N 遍 ⇒ 报告里 N 条同文噪声压过信号（读者得
+// 自己数一遍才知道那是同一件事）。报红时列出引用它的场景 ⇒ 一眼看出影响面。
+//
+// 判定面与旧实现**逐字一致**：只判「被至少一个**已登记写者数形态**的场景
+// 引用」的存储（漏登记形态的场景由「没有登记写者数」那条判据管；存储不在
+// 允许集内由判据 1 管）—— 本函数只改**报几次**，不改**判什么**。
+//
+// 报红按存储在声明面里的出现顺序（不按场景顺序）⇒ 同一份声明面的报告稳定。
+func checkStorageMaxWriters(m *Matrix, sel *Selection) []string {
+	// 引用该存储的全部场景（按矩阵里的出现顺序）。
+	refs := map[string][]string{}
+	// 是否被**已登记写者数形态**的场景引用（旧实现的触发条件，保持不变）。
+	triggered := map[string]bool{}
+	for _, sc := range m.Scenarios {
+		if _, ok := findStorage(sel.Storages, sc.Storage); !ok {
+			continue // 存储不在允许集内 ⇒ 判据 1 已报
+		}
+		refs[sc.Storage] = append(refs[sc.Storage], sc.ID)
+		if _, ok := sel.ScenarioWriters[sc.Worker]; ok {
+			triggered[sc.Storage] = true
+		}
+	}
+	var probs []string
+	for _, st := range sel.Storages {
+		if !triggered[st.ID] {
+			continue
+		}
+		if _, _, err := parseMaxWriters(st.MaxWriters); err != nil {
+			probs = append(probs, fmt.Sprintf("%s: 存储 %q 的 %v（被场景 %s 引用）",
+				selectionPath, st.ID, err, strings.Join(refs[st.ID], "、")))
 		}
 	}
 	return probs
