@@ -52,7 +52,8 @@ policy:
 
     ⚠ 一条**两侧共有**的契约边界（不是 SQLite 的短板）：
     版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入检测不到。
-    PostgreSQL 侧逐字同款（pgref_control_version 只出现在 pgstore/control.go）。
+    PostgreSQL 侧逐字同款（版本锚的推进只在 pgstore/control.go 的控制面提交
+    路径上；建表 DDL 在 pgstore/schema.go，不推进版本）。
 
     ⚠ 装载入口语义（SQLite 侧）：SeedRun 不覆盖 seq、**丢弃租约字段**
     （owner / token / fence / until 置空）⇒ 与本包 BoardStore.Seed 同口径。
@@ -435,8 +436,10 @@ known_unbacked_accessors:
     accessor: Downstream
     reason: |
       下游栅栏面在部署矩阵的能力表里没有对应条目（矩阵的能力表里没有
-      「下游栅栏」这一项）⇒ 该面访问器没有能力落点。它只被 known_asymmetries
-      的 batch-cursor-write 引用，而那不是能力证据。
+      「下游栅栏」这一项）⇒ 该面访问器没有能力落点。声明面里没有任何能力证据
+      指向它：known_asymmetries 的 batch-cursor-write 引用的落点是
+      examples/pgstore/cursor.go#rejectBatchCursorWrite（批内游标写的拒绝逻辑），
+      不是这个面访问器。
   - storage: PostgreSQL
     accessor: TenantDownstream
     reason: |
@@ -530,7 +533,8 @@ known_asymmetries:
     summary: |
       版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入（如任务板侧的
       写入）检测不到。**这是两侧共有的契约边界**，不是 SQLite 的短板
-      （PostgreSQL 侧逐字同款：pgref_control_version 只出现在 pgstore/control.go）。
+      （PostgreSQL 侧逐字同款：版本锚的推进只在 pgstore/control.go 的控制面提交
+      路径上；建表 DDL 在 pgstore/schema.go，不推进版本）。
     evidence:
       - kind: contract
         ref: examples/sqliteadapter/control.go#ControlStore

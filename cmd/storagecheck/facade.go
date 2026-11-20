@@ -1,23 +1,21 @@
 // facade.go —— 门面「同款集合」的相等性机判（台账 §28 建议 4）。
 //
 // 背景：examples/pgstore/store.go 断言「两侧门面暴露**同款集合** ⇒ 对位成为**事实**」，
-// 可那条断言此前**没有**机器判据 ⇒ 删掉一侧的面访问器、全仓门禁照绿。事实对了、
-// 判据没有 ⇒ 下一次改动就会悄悄推翻它且无人收到信号。
+// 可那条断言此前**没有**机器判据 ⇒ 删掉一侧的面访问器、全仓门禁照绿。
 //
 // 五条判据：
 //
-//	F1：代码派生集（go/ast：门面包内门面上的**全部导出方法**）
-//	    == accessors ∪ other_methods，**双向**差集都红。
+//	F1：代码派生集（go/ast）== accessors ∪ other_methods，**双向**差集都红。
+//	    ⚠ 门面类型含**嵌入字段** ⇒ 导出方法集含**提升方法** ⇒ go/ast 派生集
+//	    不完整 ⇒ 直接判红（fail-closed：不拿不完整的派生集去比）。
 //	F2：accessors 非空、accessors ∩ other_methods == ∅、两个列表内部不重复。
 //	F3：**各门面的 accessors 集合必须相等**（差集非空即红，点名差哪几个）。
-//	F4：每个 accessor 必须要么被能力证据引用、要么登记进
-//	    known_unbacked_accessors ⇒ 两者都没有即红；登记若其实已被证据覆盖
-//	    ⇒ 红（过期登记当天即删）。
+//	F4：每个 accessor 要么被能力证据引用、要么登记进 known_unbacked_accessors
+//	    ⇒ 都没有即红；登记若其实已被证据覆盖 ⇒ 红（过期登记当天即删）。
 //	F5：声明面里出现**方法级落点**却没写 facade 段 ⇒ 红（防真空绿）。
 //
 // 判定单元是**门面**而不是存储：两个存储可以共用同一扇门（PostgreSQL 与
-// shared-authority-pg 共用 examples/pgstore）⇒ 证据与登记都按门面归集，
-// 否则同一扇门会同时出现「有落点」与「无落点」两份互相矛盾的声明。
+// shared-authority-pg 共用 examples/pgstore）⇒ 证据与登记都按门面归集。
 package main
 
 import (
@@ -25,6 +23,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,9 +43,7 @@ type facadeDecl struct {
 	storages  []string // 声明了这个门面的存储 id（按出现顺序）
 }
 
-// checkFacades 门面侧的判据（F1–F5）。
-//
-// 返回 (违反, 说明)。说明里带每个门面的**形状**——门面是门禁要判的东西，形状就该看得见。
+// checkFacades 门面侧的判据（F1–F5）。返回 (违反, 说明)；说明里带每个门面的**形状**。
 func checkFacades(root string, sel *Selection) ([]string, []string) {
 	var probs, notes []string
 	facades, order := collectFacades(sel, &probs)
@@ -59,9 +56,7 @@ func checkFacades(root string, sel *Selection) ([]string, []string) {
 	probs = append(probs, checkFacadeParity(order, facades)...)        // F3
 	probs = append(probs, checkFacadeCoverage(sel, order, facades)...) // F4
 	probs = append(probs, checkFacadeDeclared(sel)...)                 // F5
-	if len(order) == 0 {
-		notes = append(notes, "说明 声明面里没有任何门面声明（门面相等性判据没有判定面）")
-	}
+	notes = append(notes, fmt.Sprintf("说明 门面判定面：%d 扇门面（%s）", len(order), joinOrNone(order)))
 	return probs, notes
 }
 
@@ -94,9 +89,7 @@ func collectFacades(sel *Selection, probs *[]string) (map[string]*facadeDecl, []
 			continue
 		}
 		if !sameStringSet(fd.accessors, f.Accessors) || !sameStringSet(fd.others, f.OtherMethods) {
-			*probs = append(*probs, fmt.Sprintf(
-				"%s: 存储 %s 与存储 %s 共用门面 %s，但两份声明的面访问器/其它方法不一致（同一扇门只能有一份声明）",
-				selectionPath, st.ID, strings.Join(fd.storages, "、"), key))
+			*probs = append(*probs, fmt.Sprintf("%s: 存储 %s 与存储 %s 共用门面 %s，但两份声明的面访问器/其它方法不一致（同一扇门只能有一份声明）", selectionPath, st.ID, strings.Join(fd.storages, "、"), key))
 		}
 		fd.storages = append(fd.storages, st.ID)
 	}
@@ -114,8 +107,7 @@ func checkFacadeLists(f *facadeDecl) []string {
 	probs = append(probs, dupViolations(where+" 的 other_methods", f.others)...)
 	for _, a := range f.accessors {
 		if slices.Contains(f.others, a) {
-			probs = append(probs, fmt.Sprintf(
-				"%s: %q 同时出现在 accessors 与 other_methods（面访问器与其余导出方法必须分开登记）", where, a))
+			probs = append(probs, fmt.Sprintf("%s: %q 同时出现在 accessors 与 other_methods（面访问器与其余导出方法必须分开登记）", where, a))
 		}
 	}
 	return probs
@@ -124,9 +116,14 @@ func checkFacadeLists(f *facadeDecl) []string {
 // checkFacadeAgainstCode F1：声明面与代码派生集**双向**比对。
 func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 	where := fmt.Sprintf("%s: 门面 %s", selectionPath, f.key)
-	methods, err := facadeMethods(root, f.pkg, f.typ)
+	methods, embedded, err := facadeMethods(root, f.pkg, f.typ)
 	if err != nil {
 		return []string{where + " 派生失败：" + err.Error()}, nil
+	}
+	// fail-closed：派生集不完整 ⇒ 不拿它判「逐字相符」，直接判红。
+	if len(embedded) > 0 {
+		return []string{fmt.Sprintf("%s: 门面类型含嵌入字段（%s）⇒ 其导出方法集含**提升方法**，go/ast 派生集不完整 ⇒ 判红；请改为显式委托方法，或扩展本判据以纳入提升方法", where, strings.Join(embedded, "、"))},
+			[]string{fmt.Sprintf("说明 门面 %s（%s）：含嵌入字段 %s ⇒ 派生集不完整，已判红", f.key, strings.Join(f.storages, "、"), strings.Join(embedded, "、"))}
 	}
 	declared := map[string]bool{}
 	for _, a := range f.accessors {
@@ -150,14 +147,10 @@ func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 	sort.Strings(missing)
 	var probs []string
 	if len(extra) > 0 {
-		probs = append(probs, fmt.Sprintf(
-			"%s: 代码里有未登记的导出方法 %s（门面加了方法却没人登记 ⇒ 声明面已漂移）",
-			where, strings.Join(extra, "、")))
+		probs = append(probs, fmt.Sprintf("%s: 代码里有未登记的导出方法 %s（门面加了方法却没人登记 ⇒ 声明面已漂移）", where, strings.Join(extra, "、")))
 	}
 	if len(missing) > 0 {
-		probs = append(probs, fmt.Sprintf(
-			"%s: 登记了 %s，但代码里没有这个导出方法（登记与代码不符）",
-			where, strings.Join(missing, "、")))
+		probs = append(probs, fmt.Sprintf("%s: 登记了 %s，但代码里没有这个导出方法（登记与代码不符）", where, strings.Join(missing, "、")))
 	}
 	note := fmt.Sprintf("说明 门面 %s（%s）：%d 个面访问器 + %d 个其它导出方法（代码派生集 %d 个）",
 		f.key, strings.Join(f.storages, "、"), len(f.accessors), len(f.others), len(methods))
@@ -175,9 +168,7 @@ func checkFacadeParity(order []string, facades map[string]*facadeDecl) []string 
 			if len(onlyA) == 0 && len(onlyB) == 0 {
 				continue
 			}
-			probs = append(probs, fmt.Sprintf(
-				"%s: 门面 %s 与 %s 的面访问器集合不相等（%s 独有 %s；%s 独有 %s）——两侧必须同款",
-				selectionPath, a.key, b.key, a.key, joinOrNone(onlyA), b.key, joinOrNone(onlyB)))
+			probs = append(probs, fmt.Sprintf("%s: 门面 %s 与 %s 的面访问器集合不相等（%s 独有 %s；%s 独有 %s）——两侧必须同款", selectionPath, a.key, b.key, a.key, joinOrNone(onlyA), b.key, joinOrNone(onlyB)))
 		}
 	}
 	return probs
@@ -185,8 +176,8 @@ func checkFacadeParity(order []string, facades map[string]*facadeDecl) []string 
 
 // checkFacadeCoverage F4：每个面访问器都要有能力落点或登记。
 //
-// 登记面本身也要判：存储必须存在且有门面、访问器必须落在该门面的 accessors
-// 列表里、理由必须写、不得重复登记、不得**过期**（已被证据覆盖 ⇒ 当天删掉）。
+// 登记面本身也要判：存储必须存在且有门面、访问器必须落在该门面的 accessors 列表里、
+// 理由必须写、不得重复登记、不得**过期**（已被证据覆盖 ⇒ 当天删掉）。
 func checkFacadeCoverage(sel *Selection, order []string, facades map[string]*facadeDecl) []string {
 	var probs []string
 	registered := map[string]map[string]bool{}
@@ -237,24 +228,18 @@ func checkFacadeCoverage(sel *Selection, order []string, facades map[string]*fac
 			missing = append(missing, a)
 		}
 		if len(missing) > 0 {
-			probs = append(probs, fmt.Sprintf(
-				"%s: 门面 %s 的面访问器 %s 既没有能力落点，也没有登记进 known_unbacked_accessors",
-				selectionPath, key, strings.Join(missing, "、")))
+			probs = append(probs, fmt.Sprintf("%s: 门面 %s 的面访问器 %s 既没有能力落点，也没有登记进 known_unbacked_accessors", selectionPath, key, strings.Join(missing, "、")))
 		}
 		for _, a := range fd.accessors { // 登记过期即红
 			if registered[key][a] && covered[a] {
-				probs = append(probs, fmt.Sprintf(
-					"%s: 门面 %s 的面访问器 %s 已登记为「无能力落点」，但它已被能力证据覆盖（登记过期，当天删掉）",
-					selectionPath, key, a))
+				probs = append(probs, fmt.Sprintf("%s: 门面 %s 的面访问器 %s 已登记为「无能力落点」，但它已被能力证据覆盖（登记过期，当天删掉）", selectionPath, key, a))
 			}
 		}
 	}
 	return probs
 }
 
-// coveredAccessors 门面里被**能力证据**引用到的面访问器。
-//
-// 证据口径：ref 形如「包目录/文件#门面类型.访问器」。共用门面的证据合起来算。
+// coveredAccessors 门面里被**能力证据**引用到的面访问器（共用门面的证据合起来算）。
 func coveredAccessors(sel *Selection, f *facadeDecl) map[string]bool {
 	out := map[string]bool{}
 	for _, id := range f.storages {
@@ -283,10 +268,9 @@ func coveredAccessors(sel *Selection, f *facadeDecl) map[string]bool {
 
 // checkFacadeDeclared F5：有方法级落点的存储必须登记 facade 段。
 //
-// 为什么需要这条：F1–F4 都以「门面声明」为判定面 ⇒ 整段 facade: 被删掉时那些
-// 判据无从下手（真空绿）。⇒ 用**派生面**兜住：能力证据里出现了该存储**自己
-// 代码根下**的方法级落点（ref 的符号名带一个点 ⇒ 它是「类型.方法」形态），
-// 说明该存储确实有门面 ⇒ 必须登记。
+// 为什么需要这条：F1–F4 都以「门面声明」为判定面 ⇒ 整段 facade: 被删掉时那些判据
+// 无从下手（真空绿）。⇒ 用**派生面**兜住：能力证据里出现了该存储**自己代码根下**
+// 的方法级落点（ref 的符号名带一个点 ⇒ 它是「类型.方法」形态）⇒ 该存储确实有门面。
 func checkFacadeDeclared(sel *Selection) []string {
 	var probs []string
 	for _, st := range sel.Storages {
@@ -302,28 +286,30 @@ func checkFacadeDeclared(sel *Selection) []string {
 				if !underRoot(st.CodeRoot, path) {
 					continue
 				}
-				probs = append(probs, fmt.Sprintf(
-					"%s: 存储 %s 的能力 %q 的落点 %s 是**方法级**（门面访问器）⇒ 该存储必须登记 facade 段（否则「两侧同款」无人判定：真空绿）",
-					selectionPath, st.ID, c.ID, ev.Ref))
+				probs = append(probs, fmt.Sprintf("%s: 存储 %s 的能力 %q 的落点 %s 是**方法级**（门面访问器）⇒ 该存储必须登记 facade 段（否则「两侧同款」无人判定：真空绿）", selectionPath, st.ID, c.ID, ev.Ref))
 			}
 		}
 	}
 	return probs
 }
 
-// facadeMethods 派生「门面包内某类型上的全部导出方法」。
+// facadeMethods 派生「门面包内某类型上的全部导出方法」，并报出该类型的**嵌入字段**。
 //
 // 口径：指定**包目录**下（**只取生产代码**，跳过 _test.go）指定**类型**上的全部
 // **导出方法**。用 go/ast 判（与 symbols.go 同一口径）：逐行正则判不出「方法挂在
 // 哪个接收者上」，而门面要的恰恰是「这一扇门上有什么」。接收者写法（*T / T）
 // 由 receiverName 归一。
-func facadeMethods(root, pkg, typ string) (map[string]bool, error) {
+//
+// ⚠ **嵌入字段**（匿名字段）不在这个口径内：嵌入类型的方法会被**提升**到门面类型
+// ⇒ 门面的导出方法集比「直接声明的」大 ⇒ 派生集不完整 ⇒ 判据会漏算 ⇒ 报出来判红。
+func facadeMethods(root, pkg, typ string) (map[string]bool, []string, error) {
 	dir := filepath.Join(root, pkg)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil, errors.Wrap(err, "读门面包失败", "package", pkg)
+		return nil, nil, errors.Wrap(err, "读门面包失败", "package", pkg)
 	}
 	out := map[string]bool{}
+	var embedded []string
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -332,23 +318,35 @@ func facadeMethods(root, pkg, typ string) (map[string]bool, error) {
 		fset := token.NewFileSet()
 		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
-			return nil, errors.Wrap(err, "解析门面包失败", "file", name)
+			return nil, nil, errors.Wrap(err, "解析门面包失败", "file", name)
 		}
 		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Recv == nil || len(fd.Recv.List) == 0 {
-				continue
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil || len(d.Recv.List) == 0 || receiverName(d.Recv.List[0].Type) != typ || !ast.IsExported(d.Name.Name) {
+					continue
+				}
+				out[d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok || ts.Name.Name != typ {
+						continue
+					}
+					st, ok := ts.Type.(*ast.StructType)
+					if !ok {
+						continue
+					}
+					for _, fld := range st.Fields.List {
+						if len(fld.Names) == 0 { // 匿名 ⇒ 嵌入 ⇒ 其方法被提升
+							embedded = append(embedded, types.ExprString(fld.Type))
+						}
+					}
+				}
 			}
-			if receiverName(fd.Recv.List[0].Type) != typ {
-				continue
-			}
-			if !ast.IsExported(fd.Name.Name) {
-				continue
-			}
-			out[fd.Name.Name] = true
 		}
 	}
-	return out, nil
+	return out, embedded, nil
 }
 
 // dupViolations 列表里的重复项。
@@ -376,17 +374,19 @@ func missingFrom(a, b []string) []string {
 	return out
 }
 
-// sameStringSet 两个列表按集合比较是否相等（忽略顺序，重复项由 F2 单独判）。
+// sameStringSet 两个列表按**集合**比较是否相等（忽略顺序；重复项由 F2 单独判）。
+//
+// 为什么先归一：[A,A] 与 [A,B] 逐元素包含判断会返回「相等」⇒ 两份不一样的清单
+// 被判成一样 ⇒ 归一（去重 + 排序）后再比才是集合语义。
 func sameStringSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for _, v := range a {
-		if !slices.Contains(b, v) {
-			return false
-		}
-	}
-	return true
+	return slices.Equal(normSet(a), normSet(b))
+}
+
+// normSet 归一：去重 + 排序（集合语义的可比形态）。
+func normSet(list []string) []string {
+	out := append([]string{}, list...)
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // joinOrNone 把一组名字连起来（空 ⇒ 「无」）。

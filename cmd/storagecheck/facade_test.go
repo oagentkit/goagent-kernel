@@ -9,6 +9,7 @@
 package main
 
 import (
+	"bytes"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -289,4 +290,102 @@ func TestFacadeRejectsDivergentSharedDeclaration(t *testing.T) {
 	s := strings.Replace(facadeSelection, "  - id: beta", facadeSharedStorage+"  - id: beta", 1)
 	root := facadeRoot(t, s)
 	requireViolation(t, facadeOnly(t, root), "两份声明的面访问器/其它方法不一致")
+}
+
+// facadeAlphaEmbeddedSrc 合成代码：门面类型**嵌入**一个带导出方法的类型。
+// 嵌入类型的方法会被**提升**到门面类型 ⇒ 只数「直接声明的方法」的派生集**漏算**
+// ⇒ 外部包真能调 s.ExtraPromoted()，而判据全绿（评审点出的那个洞）。
+const facadeAlphaEmbeddedSrc = `package pkgalpha
+
+// Extra 合成嵌入类型（它的导出方法会被提升到门面类型上）。
+type Extra struct{}
+
+// ExtraPromoted 提升方法（外部包可经门面类型调到它）。
+func (e Extra) ExtraPromoted() {}
+
+// Store 合成门面类型（含嵌入字段 ⇒ 派生集不完整）。
+type Store struct{ Extra }
+
+// Board 合成面访问器。
+func (s *Store) Board() {}
+
+// Events 合成面访问器。
+func (s *Store) Events() {}
+
+// Apply 合成其它导出方法。
+func (s *Store) Apply() error { return nil }
+`
+
+// TestFacadeRejectsEmbeddedField 门面类型含嵌入字段 ⇒ 红（F1 的 fail-closed 侧）。
+// 两种坏实现都会被抓住：① 压根不检测嵌入字段（派生集漏算提升方法 ⇒ 全绿）；
+// ② 检测了却不判红。
+func TestFacadeRejectsEmbeddedField(t *testing.T) {
+	root := facadeRoot(t, facadeSelection)
+	mustWrite(t, filepath.Join(root, "pkgalpha", "store.go"), facadeAlphaEmbeddedSrc)
+	probs := facadeOnly(t, root)
+	requireViolation(t, probs, "嵌入字段")
+	if !strings.Contains(strings.Join(probs, "\n"), "Extra") {
+		t.Fatalf("报错要点名嵌入的字段，实得:\n%s", strings.Join(probs, "\n"))
+	}
+}
+
+// TestSameStringSetUsesSetSemantics sameStringSet 必须是**真集合**比较。
+// 坏实现（逐元素包含判断）会让 [A,A] 与 [A,B] 返回「相等」⇒ 两份不一样的清单
+// 被判成一样 ⇒ 共用门面的两份声明不一致时**判不出来**。
+func TestSameStringSetUsesSetSemantics(t *testing.T) {
+	cases := []struct {
+		a, b []string
+		want bool
+		why  string
+	}{
+		{[]string{"A", "B"}, []string{"B", "A"}, true, "顺序不同、集合相同"},
+		{[]string{"A", "A"}, []string{"A", "A"}, true, "同一份重复清单"},
+		{[]string{"A", "A"}, []string{"A", "B"}, false, "重复项不能顶替另一个元素"},
+		{[]string{"A"}, []string{"A", "B"}, false, "元素个数不同"},
+		{[]string{"A", "B"}, []string{"A", "C"}, false, "元素不同"},
+	}
+	for _, c := range cases {
+		if got := sameStringSet(c.a, c.b); got != c.want {
+			t.Fatalf("%s：sameStringSet(%v, %v) = %v，期望 %v", c.why, c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestRunDoesNotClaimFacadeChecksWithoutFacade 零门面 ⇒ ✓ 文案**不许**宣称判过门面那几条。
+// 复现评审的 Major 2：删光 facade: 段 + 把方法级落点降级为类型级 ⇒ 门禁绿，但文案
+// 若仍宣称「两侧门面的面访问器集合相等 + …」就是**谎报**（三项一项都没判）。
+// ⚠ 本轮**不做**「零门面即红」——那会把门禁形状硬编码成「必须两扇门」（逼人编门，
+// 且会打红既有合成夹具）⇒ 留作后续议题。
+func TestRunDoesNotClaimFacadeChecksWithoutFacade(t *testing.T) {
+	root := writeRoot(t, demoMatrix, demoSelection) // 合成夹具：零门面
+	var stdout, stderr bytes.Buffer
+	if rc := run([]string{root}, &stdout, &stderr); rc != 0 {
+		t.Fatalf("零门面不该判红（本轮不做「零门面即红」），实得 %d；stderr=%s", rc, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "未判定") {
+		t.Fatalf("零门面必须如实说「未判定」，实得:\n%s", out)
+	}
+	for _, claim := range []string{"两侧门面的面访问器集合相等", "门面的导出方法集合与代码派生集逐字相符"} {
+		if strings.Contains(out, claim) {
+			t.Fatalf("零门面时文案不得宣称判过 %q，实得:\n%s", claim, out)
+		}
+	}
+}
+
+// TestRunClaimsFacadeChecksWithFacades 有门面 ⇒ ✓ 文案**要**逐条列出判过什么。
+// 反向用例：条件化不能变成「一律不说」——有门面时若不宣称，读的人就不知道绿盖住了什么。
+func TestRunClaimsFacadeChecksWithFacades(t *testing.T) {
+	root := facadeRoot(t, facadeSelection)
+	var stdout, stderr bytes.Buffer
+	if rc := run([]string{root}, &stdout, &stderr); rc != 0 {
+		t.Fatalf("正常形态应退出 0，实得 %d；stderr=%s", rc, stderr.String())
+	}
+	out := stdout.String()
+	for _, claim := range []string{"两侧门面的面访问器集合相等", "门面的导出方法集合与代码派生集逐字相符",
+		"每个面访问器都有能力落点或已登记", "有方法级落点的存储必须登记门面段"} {
+		if !strings.Contains(out, claim) {
+			t.Fatalf("有门面时文案必须宣称判过 %q，实得:\n%s", claim, out)
+		}
+	}
 }
