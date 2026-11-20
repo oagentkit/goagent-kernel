@@ -18,24 +18,33 @@ import (
 //  ① 「未导出类型被导出类型嵌入 ⇒ 它的导出方法被提升进导出面」这条关系要跨文件
 //     才看得出来（嵌入在 A 文件、被嵌入的类型声明在 B 文件）；
 //  ② 「给导出接口加一个方法 ⇒ 宿主实现方被迫多实现一个」这条关系必须按**方法集**
-//     而不是按**声明**来数。
-// 故先把整个包（生产文件）的类型与方法声明收成一张表，再逐文件计数。
+//     而不是按**声明**来数；
+//  ③ 「嵌入的接口贡献的方法集」**根本不是声明**——方法集写在类型声明
+//     （*ast.InterfaceType）里，**永远不是 FuncDecl** ⇒ 只收 FuncDecl 的话，
+//     嵌入接口的方法集对计数器**完全不可见**（声明面宣称覆盖、执行面没实现 ⇒
+//     声明/执行漂移）。
+// 故先把整个包（生产文件）的类型、**方法声明**与**接口方法集**收成三张表，再计数。
 
-// packageModel 汇总一个包的生产文件里的类型与方法声明。
+// packageModel 汇总一个包的生产文件里的类型、方法声明与接口方法集。
 //
-// 只收**导出方法名**（方法名导出即可；接收者类型导不导出是另一层判定）：
+// methods 只收**导出方法名**（方法名导出即可；接收者类型导不导出是另一层判定）：
 // 接收者类型是否导出，决定这条方法是不是「宿主 import 得到的名字」；而
 // 「被提升进导出面的方法」用的正是「方法名导出」这一半。
+//
+// ifaces 收**接口的方法集**（导出方法名，且只收**直接声明**的那些）：方法集写在
+// 类型声明里，不是声明 ⇒ 缺了这张表，嵌入接口贡献的方法集**永远不可见**。
 type packageModel struct {
 	types   map[string]*ast.TypeSpec
-	methods map[string]map[string]bool // 接收者类型名 → 导出方法名集合
+	methods map[string]map[string]bool // 接收者类型名 → 导出方法名（FuncDecl）
+	ifaces  map[string]map[string]bool // 接口类型名 → 其方法集里的导出方法名
 }
 
-// newPackageModel 收一张包级表（类型声明 + 方法声明）。
+// newPackageModel 收一张包级表（类型声明 + 方法声明 + 接口方法集）。
 func newPackageModel(files []*ast.File) *packageModel {
 	m := &packageModel{
 		types:   make(map[string]*ast.TypeSpec),
 		methods: make(map[string]map[string]bool),
+		ifaces:  make(map[string]map[string]bool),
 	}
 	for _, f := range files {
 		for _, decl := range f.Decls {
@@ -61,11 +70,46 @@ func newPackageModel(files []*ast.File) *packageModel {
 					if _, dup := m.types[ts.Name.Name]; !dup {
 						m.types[ts.Name.Name] = ts
 					}
+					// 接口的方法集：**不是声明** ⇒ 必须单收一张表。
+					if it, ok := ts.Type.(*ast.InterfaceType); ok {
+						m.ifaces[ts.Name.Name] = interfaceMethodNames(it)
+					}
 				}
 			}
 		}
 	}
 	return m
+}
+
+// interfaceMethodNames 取一个接口**直接声明**的导出方法名。
+//
+// 嵌入的接口（interface { io.Reader }）的方法集不在这里——它们要么在**它自己**
+// 的声明处被计过，要么属跨包边界（不可从本包 AST 解析）。
+func interfaceMethodNames(it *ast.InterfaceType) map[string]bool {
+	out := map[string]bool{}
+	if it == nil || it.Methods == nil {
+		return out
+	}
+	for _, field := range it.Methods.List {
+		for _, name := range field.Names {
+			if name.IsExported() {
+				out[name.Name] = true
+			}
+		}
+	}
+	return out
+}
+
+// embeddedTypes 列出一个类型**直接嵌入**的**本包**类型名。
+//
+// 跨包嵌入（pkg.Inner）不返回：它的方法集不在本包 AST 里 ⇒ 本包解析不到 ⇒
+// 其提升方法**不计入本包测量面**（口径的已知边界，见门禁文件头注）。
+func (m *packageModel) embeddedTypes(typeName string) []string {
+	ts, ok := m.types[typeName]
+	if !ok {
+		return nil
+	}
+	return embeddedLocalNames(ts.Type)
 }
 
 // exportedSurface 实测一个目录下的导出面（总数 + 逐文件）。
@@ -151,6 +195,9 @@ func baseTypeName(expr ast.Expr) string {
 }
 
 // embeddedFieldName 取嵌入字段的类型名（它同时是本包暴露出去的那个名字）。
+//
+// 跨包嵌入（pkg.Inner）也返回名字——那个名字宿主调得到 ⇒ 计入；只是它的**提升
+// 方法**不在本包测量面内（见 embeddedLocalName 的边界说明）。
 func embeddedFieldName(expr ast.Expr) string {
 	switch e := expr.(type) {
 	case *ast.Ident:
@@ -163,6 +210,53 @@ func embeddedFieldName(expr ast.Expr) string {
 		return embeddedFieldName(e.X)
 	case *ast.IndexListExpr:
 		return embeddedFieldName(e.X)
+	}
+	return ""
+}
+
+// embeddedLocalNames 列出一个类型（结构体或接口）里嵌入的**本包**类型名。
+//
+// 跨包嵌入（*ast.SelectorExpr）不返回：它的方法集不在本包 AST 里 ⇒ 其提升方法
+// 无法在本包解析 ⇒ 不计入本包测量面（口径的已知边界）。
+func embeddedLocalNames(expr ast.Expr) []string {
+	var fields *ast.FieldList
+	switch t := expr.(type) {
+	case *ast.StructType:
+		fields = t.Fields
+	case *ast.InterfaceType:
+		fields = t.Methods
+	default:
+		return nil
+	}
+	if fields == nil {
+		return nil
+	}
+	var out []string
+	for _, f := range fields.List {
+		if len(f.Names) != 0 {
+			continue // 具名字段不是嵌入
+		}
+		if name := embeddedLocalName(f.Type); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// embeddedLocalName 取嵌入字段的**本包**类型名（剥指针、剥泛型索引）。
+//
+// 跨包嵌入（pkg.T）返回空串 ⇒ 不参与提升解析（边界：跨包类型的方法集归它自己
+// 的包计）。
+func embeddedLocalName(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return e.Name
+	case *ast.StarExpr:
+		return embeddedLocalName(e.X)
+	case *ast.IndexExpr:
+		return embeddedLocalName(e.X)
+	case *ast.IndexListExpr:
+		return embeddedLocalName(e.X)
 	}
 	return ""
 }
