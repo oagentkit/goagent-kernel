@@ -1,6 +1,7 @@
 package roundguard_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/oekit/pkg/errors"
@@ -79,32 +80,72 @@ func TestCheckToolUnregisteredToolIsUnlimited(t *testing.T) {
 	}
 }
 
-// TestValidateRejectsNegative 钉住：负值上限非法（不是「不限」）——把写错的负值默默
-// 当成「不限」跑一整轮是 fail-open。
-func TestValidateRejectsNegative(t *testing.T) {
-	for _, b := range []roundguard.Budget{
-		{MaxRounds: -1},
-		{MaxToolCalls: -1},
-		{MaxPerTool: map[string]int{"read": -1}},
-	} {
-		if err := b.Validate(); err == nil {
-			t.Fatalf("负值上限应报错：%+v", b)
+// TestValidateRejectsIllegalBudgetsWithSentinel 钉住：**每一条**非法预算路径都
+// 带同一个哨兵（errors.Is 可判定），且错误文案点名具体的字段 / 键 / 口径。
+//
+// 为什么必须是表驱动而不是「每条路径各写一条」：docs/error-semantics.md 把
+// 「负值上限 / 空工具标识 / 未知处置口径」**三条**都登记在同一个哨兵名下
+// （ErrInvalidBudget）。若其中任何一条路径把 errors.Wrap(ErrInvalidBudget, …)
+// 写成 errors.New(…)，只断言「err != nil」的用例照样全绿，而宿主的
+// errors.Is(err, roundguard.ErrInvalidBudget) 对**那一条路径**静默失效——
+// 宿主拿不到哨兵就只能靠文案匹配，判定链断在那一处，且没有任何信号。
+//
+// 这张表逐条钉住哨兵可判定 + 文案点名，两件事一起断言：文案点名是为了让
+// 宿主与排查者知道**哪一维**声明非法，而不是只拿到一个笼统的「预算非法」。
+func TestValidateRejectsIllegalBudgetsWithSentinel(t *testing.T) {
+	cases := []struct {
+		name        string
+		budget      roundguard.Budget
+		wantMention string
+	}{
+		{"回合数上限为负", roundguard.Budget{MaxRounds: -1}, "回合数上限"},
+		{"工具调用上限为负", roundguard.Budget{MaxToolCalls: -1}, "工具调用上限"},
+		{"单工具上限为负", roundguard.Budget{MaxPerTool: map[string]int{"read": -1}}, "read"},
+		{"单工具上限键为空", roundguard.Budget{MaxPerTool: map[string]int{"": 1}}, "键不得为空串"},
+		{"未知处置口径", roundguard.Budget{Policy: "nonsense"}, "nonsense"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := c.budget.Validate()
+			if err == nil {
+				t.Fatalf("非法预算应报错：%+v", c.budget)
+			}
+			if !errors.Is(err, roundguard.ErrInvalidBudget) {
+				t.Fatalf("应能 errors.Is 判定 %v，实得 %v", roundguard.ErrInvalidBudget, err)
+			}
+			if !strings.Contains(err.Error(), c.wantMention) {
+				t.Fatalf("错误文案应点名 %q，实得 %q", c.wantMention, err.Error())
+			}
+		})
+	}
+}
+
+// TestValidateReportsDeterministicKey 钉住：多个非法键同时存在时，报出的是
+// **字典序第一个**键——不是 map 随机序。
+//
+// 为什么必须钉：同一份声明在两次装配里报出不同的键，调用方就没法把它当成稳定
+// 事实（报出的键进日志与排查记录，随机序 ⇒ 同一份配置两次排查看到两个键）。
+//
+// 为什么跑 20 遍：map 遍历顺序是**随机**的，单次跑有 1/5 的概率恰好撞上期望
+// 值 ⇒ 单次断言是概率性的；跑 20 遍并要求每次都一样，map 随机序的实现几乎
+// 必然被抓住（(1/5)^20）。
+func TestValidateReportsDeterministicKey(t *testing.T) {
+	b := roundguard.Budget{MaxPerTool: map[string]int{
+		"beta": -1, "alpha": -1, "gamma": -1, "delta": -1, "epsilon": -1,
+	}}
+	for i := 0; i < 20; i++ {
+		err := b.Validate()
+		if err == nil {
+			t.Fatal("负值单工具上限应报错")
 		}
-	}
-}
-
-// TestValidateRejectsEmptyToolKey 钉住：空工具标识无法计数 ⇒ 非法声明。
-func TestValidateRejectsEmptyToolKey(t *testing.T) {
-	b := roundguard.Budget{MaxPerTool: map[string]int{"": 1}}
-	if err := b.Validate(); err == nil {
-		t.Fatal("空工具标识应报错")
-	}
-}
-
-// TestValidateRejectsUnknownPolicy 钉住未知处置口径。
-func TestValidateRejectsUnknownPolicy(t *testing.T) {
-	if err := (roundguard.Budget{Policy: "nonsense"}).Validate(); err == nil {
-		t.Fatal("未知处置口径应报错")
+		if !strings.Contains(err.Error(), "alpha") {
+			t.Fatalf("第 %d 次应报字典序第一个键 alpha，实得 %v", i, err)
+		}
+		for _, other := range []string{"beta", "gamma", "delta", "epsilon"} {
+			if strings.Contains(err.Error(), other) {
+				t.Fatalf("第 %d 次只该报第一个键，不该出现 %q，实得 %v", i, other, err)
+			}
+		}
 	}
 }
 

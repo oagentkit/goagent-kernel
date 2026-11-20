@@ -120,6 +120,10 @@ type Verdict struct {
 // CheckRounds 判定下一回合能否开始（**模型调用前**检查；回合数额度）。
 //
 // 调用后检查意味着**最后一次昂贵调用已经发生** ⇒ 额度判定一律在调用前。
+//
+// 前置条件：**Budget 须先经 Validate**。未校验的负值上限在这里是 fail-open
+// （上限 <= 0 一律判成「不限」）——「负值 = 不限」在语义上是错的，故非法声明
+// 必须在装配期被 Validate 拒掉，而不是在这里被默默当成不限。
 func CheckRounds(b Budget, used Used) Verdict {
 	if b.MaxRounds <= 0 || used.Rounds < b.MaxRounds {
 		return Verdict{Allowed: true, Limit: LimitNone}
@@ -128,6 +132,10 @@ func CheckRounds(b Budget, used Used) Verdict {
 }
 
 // CheckToolCalls 判定本回合还能不能再调工具（**模型调用前**检查；工具调用总额度）。
+//
+// 前置条件：**Budget 须先经 Validate**。未校验的负值上限在这里是 fail-open
+// （上限 <= 0 一律判成「不限」）——「负值 = 不限」在语义上是错的，故非法声明
+// 必须在装配期被 Validate 拒掉，而不是在这里被默默当成不限。
 func CheckToolCalls(b Budget, used Used) Verdict {
 	if b.MaxToolCalls <= 0 || used.ToolCalls < b.MaxToolCalls {
 		return Verdict{Allowed: true, Limit: LimitNone}
@@ -139,6 +147,10 @@ func CheckToolCalls(b Budget, used Used) Verdict {
 //
 // 被拒时宿主仍须回灌一条失败结果给模型——否则 tool_call 没有配对的 tool_result，
 // 下一轮请求会被 provider 拒（配对纪律见 watchdog INV1）。
+//
+// 前置条件：**Budget 须先经 Validate**。未校验的负值上限在这里是 fail-open
+// （上限 <= 0 一律判成「不限」）——「负值 = 不限」在语义上是错的，故非法声明
+// 必须在装配期被 Validate 拒掉，而不是在这里被默默当成不限。
 func CheckTool(b Budget, used Used, toolID string) Verdict {
 	limit, ok := b.MaxPerTool[toolID]
 	if !ok || limit <= 0 || used.Tools[toolID] < limit {
