@@ -225,3 +225,57 @@ func TestRunClaimsFacadeChecksWithFacades(t *testing.T) {
 		}
 	}
 }
+
+// TestRunMarksFacadeParityUndecidedWithSingleFacade 恰好一扇门面 ⇒ F3 **未判定**，
+// 其余判据（F1/F2/F4/F5）照常宣称判过。
+//
+// 为什么必须钉住这条：F3 的判定面是「**两侧**门面的面访问器集合相等」⇒ 只剩
+// 一扇门时两侧比对退化成**自我比较（差集恒空 ⇒ 空真）**⇒ 此时宣称「判过」是
+// 过度宣称 ⇒ 如实说「未判定」。这段条件化此前**零用例覆盖**（把整段撤掉，
+// 测试套件仍全绿 ⇒ 那段代码不承重）⇒ 本条让它承重。
+//
+// ⚠ **两个方向都要钉**：
+// ① F3 如实说「未判定」，且不许宣称「两侧门面的面访问器集合相等」；
+// ② 其余判据**照常宣称判过**——不许把整段文案改成「一律未判定」
+// （那是另一个方向的谎报：把判过的说成没判）。
+// ⚠ 前提：单扇门是**合法形态** ⇒ 门禁本身必须绿（不许造出别的红来冒充
+// 「未判定」这个结论）。
+//
+// 反向验证（坏实现会红）：把 main.go 里的 `if count < 2` 分支删掉（F3 一律
+// 宣称已判）⇒ 本用例必须红；把分支还原 ⇒ 绿。原始输出见本轮修复报告。
+func TestRunMarksFacadeParityUndecidedWithSingleFacade(t *testing.T) {
+	root := facadeSingleRoot(t)
+	probs, _, err := check(root)
+	if err != nil {
+		t.Fatalf("判定出错: %v", err)
+	}
+	if len(probs) != 0 {
+		t.Fatalf("单扇门面是合法形态，不该判红（不许造出别的红来冒充「未判定」），实得 %v", probs)
+	}
+	var stdout, stderr bytes.Buffer
+	if rc := run([]string{root}, &stdout, &stderr); rc != 0 {
+		t.Fatalf("单扇门面应退出 0，实得 %d；stderr=%s", rc, stderr.String())
+	}
+	out := stdout.String()
+	// 方向一：F3 必须如实说「未判定」。
+	if !strings.Contains(out, "F3 两侧门面对位 **未判定**") {
+		t.Fatalf("单扇门面时 F3 必须如实说「未判定」，实得:\n%s", out)
+	}
+	if !strings.Contains(out, "门面判定面只有 1 扇") {
+		t.Fatalf("未判定文案必须点出门面数（1 扇），实得:\n%s", out)
+	}
+	if strings.Contains(out, "两侧门面的面访问器集合相等") {
+		t.Fatalf("单扇门面时不得宣称判过「两侧门面的面访问器集合相等」（自我比较 ⇒ 空真），实得:\n%s", out)
+	}
+	// 方向二：其余判据对那 1 扇门**照常判** ⇒ 文案必须逐条宣称判过。
+	for _, claim := range []string{
+		"门面清单形状合法（F2",
+		"门面的导出方法集合与代码派生集逐字相符（F1）",
+		"每个面访问器都有能力落点或已登记（F4）",
+		"有方法级落点的存储必须登记门面段（F5）",
+	} {
+		if !strings.Contains(out, claim) {
+			t.Fatalf("单扇门面时 %q 仍照常判过（不许与 F3 一起归进「未判定」），实得:\n%s", claim, out)
+		}
+	}
+}

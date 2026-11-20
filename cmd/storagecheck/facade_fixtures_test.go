@@ -202,3 +202,72 @@ func (s *Store) Events() {}
 // Apply 合成其它导出方法。
 func (s *Store) Apply() error { return nil }
 `
+
+// facadeSingleMatrix 合成部署矩阵：一条能力、一个场景（**单扇门面的最小形态**）。
+//
+// ⚠ 写者数两张表必须自洽（W1/W2）：一条 requires_multi_writer: false 的能力 +
+// 一个 worker: single-node 的场景 + scenario_writers: {single-node: 1} +
+// 存储 max_writers: 1 ⇒ 两侧都判「单写者」⇒ 不触发任何写者数判据。
+const facadeSingleMatrix = `version: 1
+capabilities:
+  - id: cap-persist
+    title: 状态持久化
+    requires_multi_writer: false
+scenarios:
+  - id: scene-single
+    title: 单节点
+    storage: alpha
+    worker: single-node
+    required: [cap-persist]
+`
+
+// facadeSingleSelection 合成选型声明面：**恰好一扇门面**。
+//
+// ⚠ 刻意只声明一扇门：F3 的判定面是「**两侧**门面的面访问器集合相等」⇒ 只剩
+// 一扇门时两侧比对退化成**自我比较（差集恒空 ⇒ 空真）**⇒ 这一侧门面根本不被判。
+// ⇒ 单扇门是**合法形态**（门禁不该硬编码「必须两扇门」）⇒ 声明面本身必须绿。
+//
+// F4 的两条腿都要用到：Board 靠**能力证据**覆盖，Events 靠**登记**覆盖
+// ⇒ 两个面访问器都不缺落点 ⇒ 门面覆盖面不红。
+const facadeSingleSelection = `version: 1
+policy:
+  notes: |
+    合成口径：只有一扇门面时 F3 没有判定面。
+    审计路径必须走独立句柄。
+  required_texts:
+    - id: demo-boundary
+      keywords: ["独立句柄"]
+scenario_writers:
+  single-node: 1
+storages:
+  - id: alpha
+    title: 合成档位甲
+    kind: memory
+    code_root: pkgalpha
+    max_writers: 1
+    facade:
+      package: pkgalpha
+      type: Store
+      accessors: [Board, Events]
+      other_methods: [Apply]
+    capabilities:
+      - id: cap-persist
+        source: storage
+        evidence:
+          - kind: contract
+            ref: pkgalpha/store.go#Store.Board
+known_unbacked_accessors:
+  - storage: alpha
+    accessor: Events
+    reason: 合成夹具：能力表里没有以事件面为落点的能力。
+`
+
+// facadeSingleRoot 造一个**恰好一扇门面**的仓根（不落 pkgbeta ⇒ 门面数 = 1）。
+func facadeSingleRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "docs", "DEPLOY-MATRIX.yaml"), facadeSingleMatrix)
+	mustWrite(t, filepath.Join(root, "docs", "STORAGE-SELECTION.yaml"), facadeSingleSelection)
+	mustWrite(t, filepath.Join(root, "pkgalpha", "store.go"), facadeAlphaSrc)
+	return root
+}
