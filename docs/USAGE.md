@@ -2670,7 +2670,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
-| `architecture-check` | 9 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
+| `architecture-check` | 10 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
@@ -2699,12 +2699,13 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
 | `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
-另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
+另有**六条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
 | `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
+| `harness-test-goroutine-joined` | 测试函数（`Test*`/`Benchmark*`/`Fuzz*`）里起了 goroutine，**而该函数或它调用的包内函数（深度 ≤2）里没有等待点**（接收表达式 `<-ch` 或 `X.Wait()`）⇒ 用例返回后 goroutine 仍可能在跑 | `policy.yaml` 的 `rules` 段（`check_kind: goroutine_join`）+ `archcheck/testgoroutine.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
 | `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询）；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
