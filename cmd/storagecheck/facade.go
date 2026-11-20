@@ -1,21 +1,18 @@
 // facade.go —— 门面「同款集合」的相等性机判（台账 §28 建议 4）。
 //
-// 背景：examples/pgstore/store.go 断言「两侧门面暴露**同款集合** ⇒ 对位成为**事实**」，
-// 可那条断言此前**没有**机器判据 ⇒ 删掉一侧的面访问器、全仓门禁照绿。
+// 背景：examples/pgstore/store.go 断言「两侧门面暴露**同款集合** ⇒ 对位成为**事实**」，可那条断言此前**没有**机器判据 ⇒ 删掉一侧的面访问器、全仓门禁照绿。
 //
 // 五条判据：
 //
 //	F1：代码派生集（go/ast）== accessors ∪ other_methods，**双向**差集都红。
-//	    ⚠ 门面类型含**嵌入字段** ⇒ 导出方法集含**提升方法** ⇒ go/ast 派生集
-//	    不完整 ⇒ 直接判红（fail-closed：不拿不完整的派生集去比）。
+//	    ⚠ 派生集不完整（类型声明不存在 / 嵌入字段 / 类型不是 struct 字面量）⇒ 直接判红（fail-closed）：这些形态下门面的导出方法集都比「直接声明的」大 ⇒ 漏算。
 //	F2：accessors 非空、accessors ∩ other_methods == ∅、两个列表内部不重复。
 //	F3：**各门面的 accessors 集合必须相等**（差集非空即红，点名差哪几个）。
 //	F4：每个 accessor 要么被能力证据引用、要么登记进 known_unbacked_accessors
 //	    ⇒ 都没有即红；登记若其实已被证据覆盖 ⇒ 红（过期登记当天即删）。
 //	F5：声明面里出现**方法级落点**却没写 facade 段 ⇒ 红（防真空绿）。
 //
-// 判定单元是**门面**而不是存储：两个存储可以共用同一扇门（PostgreSQL 与
-// shared-authority-pg 共用 examples/pgstore）⇒ 证据与登记都按门面归集。
+// 判定单元是**门面**而不是存储：两个存储可以共用同一扇门（PostgreSQL 与 shared-authority-pg 共用 examples/pgstore）⇒ 证据与登记都按门面归集。
 package main
 
 import (
@@ -27,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/oekit/pkg/errors"
@@ -116,21 +112,18 @@ func checkFacadeLists(f *facadeDecl) []string {
 // checkFacadeAgainstCode F1：声明面与代码派生集**双向**比对。
 func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 	where := fmt.Sprintf("%s: 门面 %s", selectionPath, f.key)
-	methods, embedded, err := facadeMethods(root, f.pkg, f.typ)
+	methods, incomplete, err := facadeMethods(root, f.pkg, f.typ)
 	if err != nil {
 		return []string{where + " 派生失败：" + err.Error()}, nil
 	}
 	// fail-closed：派生集不完整 ⇒ 不拿它判「逐字相符」，直接判红。
-	if len(embedded) > 0 {
-		return []string{fmt.Sprintf("%s: 门面类型含嵌入字段（%s）⇒ 其导出方法集含**提升方法**，go/ast 派生集不完整 ⇒ 判红；请改为显式委托方法，或扩展本判据以纳入提升方法", where, strings.Join(embedded, "、"))},
-			[]string{fmt.Sprintf("说明 门面 %s（%s）：含嵌入字段 %s ⇒ 派生集不完整，已判红", f.key, strings.Join(f.storages, "、"), strings.Join(embedded, "、"))}
+	if len(incomplete) > 0 {
+		return []string{fmt.Sprintf("%s: 存储 %s 的门面类型 %s 派生集不完整（%s）⇒ 判红", where, strings.Join(f.storages, "、"), f.typ, strings.Join(incomplete, "；"))},
+			[]string{fmt.Sprintf("说明 门面 %s（%s）：派生集不完整（%s）⇒ 已判红", f.key, strings.Join(f.storages, "、"), strings.Join(incomplete, "；"))}
 	}
 	declared := map[string]bool{}
-	for _, a := range f.accessors {
+	for _, a := range slices.Concat(f.accessors, f.others) {
 		declared[a] = true
-	}
-	for _, o := range f.others {
-		declared[o] = true
 	}
 	var extra, missing []string
 	for m := range methods {
@@ -143,8 +136,8 @@ func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 			missing = append(missing, d)
 		}
 	}
-	sort.Strings(extra)
-	sort.Strings(missing)
+	slices.Sort(extra)
+	slices.Sort(missing)
 	var probs []string
 	if len(extra) > 0 {
 		probs = append(probs, fmt.Sprintf("%s: 代码里有未登记的导出方法 %s（门面加了方法却没人登记 ⇒ 声明面已漂移）", where, strings.Join(extra, "、")))
@@ -152,9 +145,7 @@ func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 	if len(missing) > 0 {
 		probs = append(probs, fmt.Sprintf("%s: 登记了 %s，但代码里没有这个导出方法（登记与代码不符）", where, strings.Join(missing, "、")))
 	}
-	note := fmt.Sprintf("说明 门面 %s（%s）：%d 个面访问器 + %d 个其它导出方法（代码派生集 %d 个）",
-		f.key, strings.Join(f.storages, "、"), len(f.accessors), len(f.others), len(methods))
-	return probs, []string{note}
+	return probs, []string{fmt.Sprintf("说明 门面 %s（%s）：%d 个面访问器 + %d 个其它导出方法（代码派生集 %d 个）", f.key, strings.Join(f.storages, "、"), len(f.accessors), len(f.others), len(methods))}
 }
 
 // checkFacadeParity F3：各门面的面访问器集合必须相等。
@@ -280,10 +271,7 @@ func checkFacadeDeclared(sel *Selection) []string {
 		for _, c := range st.Capabilities {
 			for _, ev := range c.Evidence {
 				path, symbol, found := strings.Cut(ev.Ref, "#")
-				if !found || !strings.Contains(symbol, ".") {
-					continue
-				}
-				if !underRoot(st.CodeRoot, path) {
+				if !found || !strings.Contains(symbol, ".") || !underRoot(st.CodeRoot, path) {
 					continue
 				}
 				probs = append(probs, fmt.Sprintf("%s: 存储 %s 的能力 %q 的落点 %s 是**方法级**（门面访问器）⇒ 该存储必须登记 facade 段（否则「两侧同款」无人判定：真空绿）", selectionPath, st.ID, c.ID, ev.Ref))
@@ -293,15 +281,15 @@ func checkFacadeDeclared(sel *Selection) []string {
 	return probs
 }
 
-// facadeMethods 派生「门面包内某类型上的全部导出方法」，并报出该类型的**嵌入字段**。
+// facadeMethods 派生「门面包内某类型上的全部导出方法」，并报出该类型**派生集不完整**的原因。
 //
-// 口径：指定**包目录**下（**只取生产代码**，跳过 _test.go）指定**类型**上的全部
-// **导出方法**。用 go/ast 判（与 symbols.go 同一口径）：逐行正则判不出「方法挂在
-// 哪个接收者上」，而门面要的恰恰是「这一扇门上有什么」。接收者写法（*T / T）
-// 由 receiverName 归一。
+// 口径：指定**包目录**下（**只取生产代码**，跳过 _test.go）指定**类型**上的全部**导出方法**。
+// 用 go/ast 判（与 symbols.go 同一口径）：逐行正则判不出「方法挂在哪个接收者上」，而门面
+// 要的恰恰是「这一扇门上有什么」。接收者写法（*T / T）由 receiverName 归一。
 //
-// ⚠ **嵌入字段**（匿名字段）不在这个口径内：嵌入类型的方法会被**提升**到门面类型
-// ⇒ 门面的导出方法集比「直接声明的」大 ⇒ 派生集不完整 ⇒ 判据会漏算 ⇒ 报出来判红。
+// ⚠ **派生集不完整**有三种形态，都报出来判红（fail-closed）：① **类型声明不存在**——
+// 门包里根本没这个类型 ⇒ 无从派生；② **嵌入字段**——其方法被**提升**到门面类型；③
+// **类型不是 struct 字面量**——**解析不出 struct 字段** ⇒ 嵌入字段看不见。
 func facadeMethods(root, pkg, typ string) (map[string]bool, []string, error) {
 	dir := filepath.Join(root, pkg)
 	entries, err := os.ReadDir(dir)
@@ -309,7 +297,8 @@ func facadeMethods(root, pkg, typ string) (map[string]bool, []string, error) {
 		return nil, nil, errors.Wrap(err, "读门面包失败", "package", pkg)
 	}
 	out := map[string]bool{}
-	var embedded []string
+	var incomplete []string
+	typeFound := false
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -330,23 +319,35 @@ func facadeMethods(root, pkg, typ string) (map[string]bool, []string, error) {
 			case *ast.GenDecl:
 				for _, spec := range d.Specs {
 					ts, ok := spec.(*ast.TypeSpec)
-					if !ok || ts.Name.Name != typ {
-						continue
-					}
-					st, ok := ts.Type.(*ast.StructType)
-					if !ok {
-						continue
-					}
-					for _, fld := range st.Fields.List {
-						if len(fld.Names) == 0 { // 匿名 ⇒ 嵌入 ⇒ 其方法被提升
-							embedded = append(embedded, types.ExprString(fld.Type))
+					if ok && ts.Name.Name == typ {
+						typeFound = true
+						st, ok := ts.Type.(*ast.StructType)
+						if !ok {
+							// 类型别名 / 定义类型 ⇒ 解析不出 struct 字段 ⇒ 嵌入字段看不见
+							// ⇒ 派生集不完整 ⇒ 不拿它去比（fail-closed）。
+							shape := "定义类型，底层类型取自 " + types.ExprString(ts.Type)
+							if ts.Assign.IsValid() {
+								shape = "类型别名，指向 " + types.ExprString(ts.Type)
+							}
+							incomplete = append(incomplete, "门面类型 "+typ+" 不是 struct 字面量（"+shape+"）⇒ 解析不出 struct 字段 ⇒ 请写成 struct 字面量（或扩展本判据以解析别名/派生类型的结构）")
+							continue
+						}
+						for _, fld := range st.Fields.List {
+							if len(fld.Names) == 0 { // 匿名 ⇒ 嵌入 ⇒ 其方法被提升
+								incomplete = append(incomplete, "含嵌入字段（"+types.ExprString(fld.Type)+"）⇒ 其导出方法集含提升方法 ⇒ 请改为显式委托方法（或扩展本判据以纳入提升方法）")
+							}
 						}
 					}
 				}
 			}
 		}
 	}
-	return out, embedded, nil
+	// 整个门包里都没有这个类型的声明 ⇒ 无从派生 ⇒ 派生集不完整 ⇒ 判红。
+	// 为什么**追加**一条：真病因是「类型名根本不存在」，只报「登记与代码不符」会把排查方向带偏。
+	if !typeFound {
+		incomplete = append(incomplete, fmt.Sprintf("门面包 %s 里找不到类型 %s 的声明 ⇒ 派生集不完整", pkg, typ))
+	}
+	return out, incomplete, nil
 }
 
 // dupViolations 列表里的重复项。
@@ -376,8 +377,7 @@ func missingFrom(a, b []string) []string {
 
 // sameStringSet 两个列表按**集合**比较是否相等（忽略顺序；重复项由 F2 单独判）。
 //
-// 为什么先归一：[A,A] 与 [A,B] 逐元素包含判断会返回「相等」⇒ 两份不一样的清单
-// 被判成一样 ⇒ 归一（去重 + 排序）后再比才是集合语义。
+// 为什么先归一：[A,A] 与 [A,B] 逐元素包含判断会返回「相等」⇒ 两份不一样的清单被判成一样 ⇒ 归一（去重 + 排序）后再比才是集合语义。
 func sameStringSet(a, b []string) bool {
 	return slices.Equal(normSet(a), normSet(b))
 }
