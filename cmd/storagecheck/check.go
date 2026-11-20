@@ -69,6 +69,9 @@ func check(root string) ([]string, []string, error) {
 		probs = append(probs, selectionPath+": 没有任何存储（空声明面等于没有判据）")
 	}
 
+	// 声明面 basics：存储 kind 必须落在封闭值域内（自由标签 = 没有机器保证）。
+	probs = append(probs, checkStorageKinds(sel)...)
+
 	known := map[string]bool{}
 	for _, c := range m.Capabilities {
 		known[c.ID] = true
@@ -104,6 +107,8 @@ func check(root string) ([]string, []string, error) {
 				selectionPath, c.ID))
 		}
 	}
+	// 多写者标注必须**显式**（缺省即红：漏登记 ⇒ 写者数交叉校验对它无从下手）。
+	probs = append(probs, checkMultiWriterAnnotations(m)...)
 	probs = append(probs, checkAsymmetries(root, sel)...)
 
 	// 场景侧（判据 1 + 判据 2 + 硬边界 + 陈旧档位）。
@@ -113,6 +118,12 @@ func check(root string) ([]string, []string, error) {
 	probs = append(probs, scenarioProbs...)
 	notes = append(notes, scenarioNotes...)
 	probs = append(probs, checkWriters(m, sel)...)
+	// 写者数的**交叉校验**（W1 存储侧 / W2 场景侧）：把 scenario_writers 与
+	// max_writers 两张表互相钉住——原判据只由其中一张表撑着，改弱任一张都能
+	// 让一条注入变绿。多写者能力集合从矩阵派生（代码里不写死任何能力 id）。
+	multi := multiWriterCapabilities(m)
+	probs = append(probs, checkStorageWriterTier(sel, multi)...)
+	probs = append(probs, checkScenarioWriterTier(m, sel, multi)...)
 	probs = append(probs, checkStoragesReferenced(m, sel)...)
 
 	// 已知不对称的摘要：放最后（它是读报告时的补充说明，不是判定结论）。

@@ -38,6 +38,14 @@ type Matrix struct {
 type Capability struct {
 	ID    string `yaml:"id"`
 	Title string `yaml:"title"`
+	// RequiresMultiWriter 该能力是否要求**多写者**。
+	//
+	// 为什么是 *bool：nil = 未标注（缺失），&false = 显式单写者能力 ⇒ 两者必须
+	// 可区分——「显式 false」是一份声明，「没写」是漏登记（漏登记即红）。
+	//
+	// 谁判它：cmd/storagecheck 的写者数交叉校验（W1/W2，见 writers.go）。
+	// 本包只**容忍**这个字段的存在（矩阵是 deploycheck 的严格字段解析面）。
+	RequiresMultiWriter *bool `yaml:"requires_multi_writer,omitempty"`
 }
 
 // Scenario 矩阵里的一个部署场景。
