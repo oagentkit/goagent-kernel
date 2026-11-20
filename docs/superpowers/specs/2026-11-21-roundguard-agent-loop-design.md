@@ -113,6 +113,7 @@ grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限|StepBudget|TurnB
 | <https://www.technologyonthe.net/2026/10/loop-detection-and-step-budgets-for-llm.html> | 硬预算四件套 + **调用前检查**；五种失控形态 |
 | <https://codex.danielvaughan.com/2026/09/06/agentic-cloud-engineering-graph-loop-zero-trust-harness-codex-cli> | 图/循环/零信任三抽象；recovery loop 的 95.0%→12.9% 消融 |
 | <https://www.wqlblog.cn/posts/Pi_Agent_Core_%e6%9e%b6%e6%9e%84%e5%89%96%e6%9e%90/> | Pi 双层循环与三层退出条件 |
+| <https://github.com/smhanov/agentloop>（MIT，Go 1.21+） | **Go 的模型侧 loop 库实读**（2026-11-21 克隆到本地逐行读）：软硬两级预算与强制收尾、重复检测三档处置、中止尾部配对修复、压缩的临时视图替换、导出 API 面上限门禁 —— 本设计 §6.1.1 / §7.5 / §13 的主要依据 |
 
 ## 3. 命名：必须先解决的一个撞词
 
@@ -166,9 +167,47 @@ grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限|StepBudget|TurnB
 | 无进展检测 | 最近这几圈是不是白转 | `Detect` | `Observation[]` |
 | 组合 | 一条可执行结论 | `Decide` | 以上全部 |
 
+### 4.2 组合结论的形状
+
+```go
+// Snapshot 一回合末尾的完整事实（宿主组装）。
+type Snapshot struct {
+    Outcome Outcome
+    Used    Used
+    Obs     []Observation // 回合历史（含本回合，按时间序）
+}
+
+// Decision 一条可执行结论（组合判定面）。
+type Decision struct {
+    Reason   Reason // 结局分类
+    Continue bool   // 允许**按原样**进入下一回合
+    Limit    Limit  // 命中的上限（LimitNone = 未因上限叫停）
+    Shape    Shape  // 无进展形态（仅 LimitStalled 时有效）
+    Warn     bool   // 无进展**首档**：只该警告回灌，不停止
+    Used     Used   // 判定时的用量快照（留痕用）
+}
+
+// Decide 合成一条结论：结局 → 硬上限 → 软上限 → 无进展。
+func Decide(s Snapshot, b Budget, cfg Config) Decision
+```
+
+**判定优先级（顺序即语义）**：
+
+1. **结局终局优先**：模型给了终答 / 交接 / 报错 / 中止 ⇒ 以结局为准，
+   **不被预算打断**（模型说完了就是完了——哪怕刚好撞上上限）。
+2. 否则（结局要求继续）：回合数**硬上限**已用尽 ⇒ `ReasonBudgetExhausted`。
+3. 否则：工具调用**软上限**已用尽 ⇒ `ReasonForcedFinal`（转强制收尾）。
+4. 否则：无进展命中 ⇒ `ReasonStalled`（按档位决定 `Continue`）。
+5. 否则：`Continue=true`，照常进入下一回合。
+
+⚠️ `Continue=false` 有**三种含义**，靠 `Reason` 区分，宿主不得一律当失败处理：
+`ReasonFailed`/`ReasonNoOutcome`/`ReasonAborted`/`ReasonBudgetExhausted` 是
+**失败型**（`IsFailure()==true`）；`ReasonForcedFinal` 是**转强制收尾**；
+`ReasonStalled` 是**温和叫停**。
+
 ## 5. 机制一：回合结局分类
 
-### 5.1 词表（判定词表，九值）
+### 5.1 词表（判定词表，十值）
 
 ```go
 // Reason 回合结局（判定词表：backing roundReasonAll / enum AllRoundReasons / predicate Reason.Valid）。
@@ -179,17 +218,39 @@ const (
     ReasonToolCalls        Reason = "tool_calls"         // 模型请求工具 → 允许进入下一回合
     ReasonHandedOff        Reason = "handed_off"         // 模型请求交接给别的执行方 → 收敛并移交
     ReasonPaused           Reason = "paused"             // 服务端要求原样再问 → 允许进入下一回合
-    ReasonFailed           Reason = "failed"             // 模型调用或工具执行明确报错 → 收敛
-    ReasonNoOutcome        Reason = "no_outcome"         // 本回合无任何产出 → 收敛（保守侧）
-    ReasonAborted          Reason = "aborted"            // 被中止（用户取消 / 停机 / 接管）→ 收敛
-    ReasonBudgetExhausted  Reason = "budget_exhausted"   // 次数预算耗尽 → 收敛，且不得续跑
-    ReasonStalled          Reason = "stalled"            // 无进展 → 收敛，且不得续跑
+    ReasonFailed           Reason = "failed"             // 模型调用或工具执行明确报错 → **失败型**收敛
+    ReasonNoOutcome        Reason = "no_outcome"         // 本回合无任何产出 → **失败型**收敛（保守侧）
+    ReasonAborted          Reason = "aborted"            // 被中止（用户取消 / 停机 / 接管）→ **失败型**收敛
+    ReasonBudgetExhausted  Reason = "budget_exhausted"   // 回合数**硬上限**耗尽 → **失败型**收敛
+    ReasonForcedFinal      Reason = "forced_final"       // 工具调用**软上限**耗尽 → 强制收尾（不是失败）
+    ReasonStalled          Reason = "stalled"            // 无进展 → **温和叫停**（不是失败）
 )
+
+// IsFailure 报告该结局是否为**失败型**收敛。
+//
+// 为什么要单独一个判据而不是让宿主自己列清单：「被温和收停」与「真的坏了」
+// 在宿主侧必须可区分——前者仍有可用产出（模型已给出终答、或证据已齐备只差
+// 收束），后者只有半截 transcript。两类混在一张「都收敛了」的清单里，
+// 宿主就会把「被上限温和收停」也当故障上报（假红）。
+//
+// 与上游模型侧实现的同构：agentloop 的 AnswerStatus 把 StatusStopped
+// （hook 跳过 / 重复检测命中）与 StatusFailed（传输/hook/ctx 错误）分成两个值。
+func (r Reason) IsFailure() bool {
+    switch r {
+    case ReasonFailed, ReasonNoOutcome, ReasonAborted, ReasonBudgetExhausted:
+        return true
+    }
+    return false
+}
 ```
 
-**为什么把「预算耗尽」「无进展」也放进结局词表**：它们不是模型的语义，是内核判出来的
-停法；混进同一张表，宿主才能用**一张词表**判「这一回合怎么结束的」，
+**为什么把「强制收尾」「硬上限」「无进展」也放进结局词表**：它们不是模型的语义，
+是内核判出来的停法；混进同一张表，宿主才能用**一张词表**判「这一回合怎么结束的」，
 而不用再分「模型说的」与「内核说的」两套。
+
+⚠️ **失败型与温和型必须可区分**（`IsFailure()`）：`failed`/`no_outcome`/`aborted`/
+`budget_exhausted` 是**失败型**（只有半截 transcript）；`forced_final`/`stalled` 是
+**温和型**（产出仍在，只是被内核收住）。
 
 **为什么「没产出」与「报错」分开**：`failed` 是**有**错误，`no_outcome` 是**什么都没有**
 （模型既没要工具也没给终答）。按本仓既有纪律（`budget` 的
@@ -202,7 +263,7 @@ const (
 `statemachine.StepStatus` 的零值处理同款：读不懂 ≠ 合法迁移）。
 「忘填结局会不会被当成完成」的防线**不在 Reason 上，在 `Route` 上**：
 `Route.Continue` 的零值是 `false` ⇒ 宿主自造一个零值 `Route` 时，本包判**收敛**
-而非继续。`Classify` 的七个分支穷尽 ⇒ 它的返回值必在词表内（非法值不可能从本包
+而非继续。`Classify` 的八个分支穷尽 ⇒ 它的返回值必在词表内（非法值不可能从本包
 流出）。
 
 ### 5.2 输入面
@@ -216,6 +277,9 @@ type Outcome struct {
     Paused    bool   // 服务端要求原样再问（pause_turn）
     Failed    error  // 模型调用或工具执行的错误（nil = 无）
     Aborted   bool   // ctx 被取消
+    // ForcedFinal 本回合是「工具预算耗尽后的强制收尾步」：宿主已禁用工具，
+    // 要求模型用已收集的证据给出终答。它是**产出仍然可用**的收束，不是失败。
+    ForcedFinal bool
 }
 ```
 
@@ -240,14 +304,20 @@ func Classify(o Outcome) Route
 | 2 | `o.Failed != nil` | `ReasonFailed` | false |
 | 3 | `o.Handoff` | `ReasonHandedOff` | false |
 | 4 | `o.ToolCalls > 0` | `ReasonToolCalls` | **true** |
-| 5 | `o.Completed` | `ReasonCompleted` | false |
-| 6 | `o.Paused` | `ReasonPaused` | **true** |
-| 7 | 都不成立（零值形态） | `ReasonNoOutcome` | false |
+| 5 | `o.ForcedFinal` | `ReasonForcedFinal` | false |
+| 6 | `o.Completed` | `ReasonCompleted` | false |
+| 7 | `o.Paused` | `ReasonPaused` | **true** |
+| 8 | 都不成立（零值形态） | `ReasonNoOutcome` | false |
 
 **为什么「要工具」排在「给终答」前面**：模型可以同时给文本与工具调用；此时
 「还要工具」才是决定下一步的事实（文本是给用户看的，工具调用才是控制流）。
 把终答排前面会让「模型一边收尾一边补一个工具调用」被误判成已完成——而工具
 **还没执行**，判完成就是谎报已完成。
+
+**为什么「强制收尾」排在「给终答」前面**：强制收尾步本身就是「模型用已有证据作答」的
+那一步——它同时满足 `Completed`。若把 `Completed` 排前面，强制收尾会被判成普通终答，
+宿主就分不出「这是被上限逼出来的收尾」还是「模型自己写的结论」——两者的后续处置
+不同（前者要留痕说「是被预算收住的」）。
 
 **为什么「暂停」排在最后**：它是**最少证据**的一条——只说明「本回合什么实质都没发生」。
 前面任何一条成立就说明本回合有实质内容，不该被降级成「暂停」。
@@ -261,11 +331,17 @@ func Classify(o Outcome) Route
 ### 6.1 预算面
 
 ```go
-// Budget 回合次数预算（宿主给；内核不解释工具标识的含义）。
+// Budget 回合预算（宿主给；内核不解释工具标识的含义）。
+//
+// **软硬两级 + 按工具一层**——三者耗尽后的处置完全不同，混成一个上限就会
+// 把「逼出答案」与「腰斩答案」混为一谈（详见 §6.1 的取舍说明）。
 type Budget struct {
-    // MaxRounds 回合数上限（<=0 = 不限）。
+    // MaxRounds 回合数**硬上限**（0 = 不限）。耗尽 ⇒ 失败型收敛（ReasonBudgetExhausted）。
     MaxRounds int
-    // MaxPerTool 按工具标识的调用次数上限（开放键；值为 0 = 该工具不限）。
+    // MaxToolCalls 工具调用**软上限**（0 = 不限）。耗尽 ⇒ **强制收尾**
+    //（ReasonForcedFinal）：不再给工具，要求模型用已收集的证据给出终答。
+    MaxToolCalls int
+    // MaxPerTool 单工具调用上限（开放键；值为 0 = 该工具不限）。
     // 工具标识是宿主词表——内核只做键存在性与计数判定，不解释它是哪个工具。
     MaxPerTool map[string]int
 }
@@ -274,18 +350,46 @@ type Budget struct {
 func (b Budget) Validate() error
 ```
 
-⚠️ **`Validate` 与「零值 = 不限」的关系**：`MaxRounds == 0` 是**显式关闭**回合上限
-（合法的「不限」），`MaxPerTool[v] == 0` 同义。**负值一律非法**（装配期报错）——
-把一个写错的负值默默当成「不限」跑一整轮，是典型的 fail-open；宁可装配期报错。
-另：`MaxPerTool` 的**键不得为空串**（空标识无法计数，等于声明了一个无法判的上限）。
+⚠️ **`Validate` 与「零值 = 不限」的关系**：`MaxRounds == 0`、`MaxToolCalls == 0`、
+`MaxPerTool[v] == 0` 都是**显式关闭**对应上限（合法的「不限」）。**负值一律非法**
+（装配期报错）——把一个写错的负值默默当成「不限」跑一整轮，是典型的 fail-open；
+宁可装配期报错。另：`MaxPerTool` 的**键不得为空串**（空标识无法计数，等于声明了
+一个无法判的上限）。
+
+### 6.1.1 软硬两级为什么要分开（本设计最重要的一处取舍）
+
+**证据（2026-11-21 实读 smhanov/agentloop 的 loop.go）**：该实现把两个上限的处置
+分成两档——
+
+- **工具预算耗尽** ⇒ 不再给工具（`llmhub.NoToolChoice`）+ 追加一条 user 角色通知，
+  要求模型「用已收集的证据给出终答，不要再叙述你的下一步计划」。这一步**仍然算完成**
+  （它的 `StatusCompleted` 注释明写「including the forced answer delivered under
+  NoToolChoice after the tool budget ran out」）。
+- **推理轮次天花板（MaxSteps）触顶** ⇒ 才是 `ErrBudgetExhausted`（失败）。
+
+**为什么这个区分是对的**：预算的目的是**逼出答案**，不是**丢弃已采集的证据**。硬砍的
+代价是：模型正要收束的那一刻被腰斩，前面几十次工具调用的成果全部白费，且宿主拿到的
+是一个「失败」而不是一个「有依据的结论」。
+
+**本设计据此**：
+
+| 上限 | 耗尽后的走向 | 结局值 | 失败型？ |
+|---|---|---|---|
+| `MaxToolCalls`（软） | 转强制收尾：禁工具、要求模型用已有证据作答 | `ReasonForcedFinal` | 否 |
+| `MaxRounds`（硬） | 失败型收敛 | `ReasonBudgetExhausted` | 是 |
+| `MaxPerTool[id]` | 该次调用被拒（并回灌一条失败结果给模型，配对不破） | 工具级拒绝 | 否 |
+
+**强制收尾那一步不可否决**：内核判出的停优先于宿主的否决——否则宿主可以在最后一刻
+把强制收尾翻回「继续调工具」，预算就形同虚设。
 
 ### 6.2 用量面
 
 ```go
-// Used 当前用量（回合数 + 按工具的调用次数）。
+// Used 当前用量（回合数 + 工具调用总数 + 按工具的调用次数）。
 type Used struct {
-    Rounds int
-    Tools  map[string]int
+    Rounds    int
+    ToolCalls int            // 工具调用总数（软上限用）
+    Tools     map[string]int // 按工具的调用次数（单工具上限用）
 }
 
 // Meter 进程内回合账（只数不判；跨进程不累计，见 §8 末条）。
@@ -305,8 +409,9 @@ type Limit string
 
 const (
     LimitNone      Limit = "none"        // 未因上限叫停
-    LimitRounds    Limit = "rounds"      // 回合数超限
-    LimitToolCalls Limit = "tool_calls"  // 某工具调用次数超限
+    LimitRounds    Limit = "rounds"      // 回合数硬上限耗尽 ⇒ 失败型收敛
+    LimitToolCalls Limit = "tool_calls"  // 工具调用软上限耗尽 ⇒ 转强制收尾
+    LimitPerTool   Limit = "per_tool"    // 单工具调用上限耗尽 ⇒ 该次调用被拒
     LimitStalled   Limit = "stalled"     // 无进展（由 Detect 产出，见 §7）
 )
 
@@ -317,16 +422,27 @@ type Verdict struct {
     Detail  string  // 机械留痕（命中的工具标识等）；**展示文案归宿主**
 }
 
-// CheckRounds 判定下一回合能否开始（模型调用前检查）。
+// CheckRounds 判定下一回合能否开始（**模型调用前**检查；硬上限）。
 func CheckRounds(b Budget, used Used) Verdict
 
-// CheckTool 判定某工具的下一次调用能否进行（工具执行前检查）。
+// CheckToolCalls 判定本回合还能不能再调工具（**模型调用前**检查；软上限）。
+func CheckToolCalls(b Budget, used Used) Verdict
+
+// CheckTool 判定某工具的下一次调用能否进行（**工具执行前**检查；单工具上限）。
 func CheckTool(b Budget, used Used, toolID string) Verdict
 ```
 
 **为什么必须调用前检查**：调用后检查意味着**最后一次昂贵调用已经发生**。
-本包的两个 `Check*` 都是**纯函数**（输入用量快照，输出判定），宿主在两个时点各调一次：
-模型调用前调 `CheckRounds`，每次工具执行前调 `CheckTool`。
+本包的三个 `Check*` 都是**纯函数**（输入用量快照，输出判定），宿主在两个时点各调：
+
+| 时点 | 调用 | `Allowed=false` 的含义 |
+|---|---|---|
+| 模型调用前 | `CheckRounds` | **本回合不能开始** ⇒ 失败型收敛，不再调模型 |
+| 模型调用前 | `CheckToolCalls` | **不能再调工具**（但本回合可继续）⇒ 转入强制收尾 |
+| 工具执行前 | `CheckTool` | **这一次的调用被拒** ⇒ 宿主回灌一条失败结果给模型（配对不破），本回合继续 |
+
+⚠️ 三个 `Allowed=false` 的语义**不同**：混用会得出「预算耗尽就整个停下来」的错误结论，
+把「逼出答案」做成「腰斩答案」（§6.1.1）。
 
 **为什么按工具也要有上限**：主流实现都带 `per_tool_caps`——一个**有副作用**的工具
 （发信、建单）上限应当远低于只读工具。总回合数管不住「同一个副作用工具连调 50 次」。
@@ -337,8 +453,11 @@ func CheckTool(b Budget, used Used, toolID string) Verdict
 
 | 情形 | 判据 | 理由（与 `retryplan` 同族的取舍） |
 |---|---|---|
-| 预算耗尽 | `LimitRounds` / `LimitToolCalls` | 续跑会再撞同一个上限——「没有幂等键就不许猜着重试」的同款保守侧 |
+| 回合数硬上限耗尽 | `LimitRounds` | 续跑会再撞同一个上限——「没有幂等键就不许猜着重试」的同款保守侧 |
 | 无进展 | `LimitStalled` | 续跑会再转同一段死循环 |
+
+⚠️ **工具软上限耗尽（`LimitToolCalls`）不在此表**：它的处置是**强制收尾**（把已有证据
+结算成一个终答），不是「不许续跑」——本回合仍会再走一次模型调用，只是不再给工具。
 
 其余情形（尤其 `ReasonFailed`）**本包不判**「能不能续跑」——那是
 `toolfail`（该不该重试）+ `retryplan`（原样重发 / 幂等键重放）的活。
@@ -361,6 +480,15 @@ type Observation struct {
     Failed bool
     // Settled 本回合是否已收敛（终答 / 交接）。
     Settled bool
+    // ResultChanged 本回合的结果与上一轮**同指纹**的结果不同（true = 有进展）。
+    //
+    // 为什么必须显式给这个事实：「相同调用但输出变了」是**进展**，不是重复。
+    // 只看参数的去重会把「换个页码再查一次」这类**有意义的重试**误判成循环，
+    // 也会把「同一个轮询工具连续返回不同状态」误判成失控（而轮询类动作
+    // 本就靠输出变化表达进展）。
+    ResultChanged bool
+    // Exempt 本回合不参与重复检测（轮询 / 查状态类动作：输出变了才是进展信号）。
+    Exempt bool
 }
 ```
 
@@ -385,9 +513,13 @@ const (
 
 // Finding 无进展检测结果。
 type Finding struct {
+    // Stalled 已达**停止档**：应当温和叫停。
     Stalled bool
-    Shape   Shape
-    Since   int  // 从第几回合起（1 起；0 = 判不出）
+    // Warn 首档命中：只该**警告回灌**，不停止——给模型一次自我修正的机会
+    // （处置分档见 §7.5）。
+    Warn bool
+    Shape Shape
+    Since int  // 从第几回合起（1 起；0 = 判不出）
 }
 
 // Config 无进展检测参数（零值 = 缺省）。
@@ -402,7 +534,9 @@ func Detect(obs []Observation, cfg Config) Finding
 
 ### 7.3 判定顺序（取病因最具体的那条）
 
-设 `w` = 最近 `min(len(obs), Window)` 个回合，`k` = `Repeat`：
+设 `w` = 最近 `min(len(obs), Window)` 个回合，`k` = `Repeat`；
+**参与计算的回合** = 窗口内 `Exempt == false` 的回合（豁免的回合不计数，但占窗口位置）；
+**连续性**会被 `ResultChanged == true` 的回合打断（它表达进展，不是重复）：
 
 | 序 | 条件 | Shape |
 |---|---|---|
@@ -412,6 +546,15 @@ func Detect(obs []Observation, cfg Config) Finding
 | 4 | 最近 k 回合 `Normalized` 全等 **且** `Fingerprint` 不全等 | `ShapeDrift` |
 | 5 | 最近 k 回合 `Tools == 0` 且 `Settled` 全为 false | `ShapeIdle` |
 
+**定档规则（命中 ≠ 立刻停）**：每种形态求出它在尾部的**连续成立长度 L**
+（该形态的模式连续成立的最大长度；W = 该形态的最小命中窗口）：
+
+- `L == W` ⇒ **首档**（`Warn=true`）：刚好凑够一次——值得提醒模型一次。
+- `L > W` ⇒ **停止档**（`Stalled=true`）：模式还在延续 ⇒ 温和叫停。
+
+⚠️ 这一档之差是 §7.5 的分档处置的**判据来源**——没有它，「给模型一次自我修正机会」
+就没有可判的落点。
+
 **为什么错误螺旋排在重复前面**：`A A A`（同动作连着来）同时命中「重复」与「错误螺旋」。
 前者只说**形状**，后者额外携带**失败事实**——处置完全不同（重复 ⇒ 可能调参就能过；
 错误螺旋 ⇒ 这条路根本走不通）。按证据强度取更硬的那条。
@@ -419,11 +562,40 @@ func Detect(obs []Observation, cfg Config) Finding
 **为什么「空转」排在最后**：空转（只说不做）是最弱的信号——很多正常回合也零工具
 （例如模型在组织语言）。它只在其它四条都不成立时成立。
 
-### 7.4 「错误重试螺旋」的失败事实从哪来
+### 7.4 失败事实与进展事实从哪来
 
 宿主在工具执行后把失败**如实回灌**给模型（模型据此自行修正），同时**记一条**
 `Observation{Failed: true}`。失败回灌本身是模型侧的事（内核不调模型），
 本包只消费那条**机械事实**。
+
+同理，「结果变了」由宿主记为 `Observation{ResultChanged: true}`——内核不比对输出
+内容（那是模型的产物，且可能很大），只消费这条布尔事实。
+
+### 7.5 处置分三档（不要一命中就停）
+
+**证据（agentloop 的重复调用处置）**：该实现对「相同调用 + 相同输出」的连续重复
+**不是**一命中就停，而是三档——
+
+1. 达到重复阈值的那一次**仍然执行**，但把警告**追加**到真实输出之后回灌给模型
+   （警告带一段输出摘录作证据，摘录有长度上限），
+2. **再犯一次**才停止，且停止发生在**执行之前**（该次调用不执行，但仍给模型回灌
+   一条说明为什么停的结果），
+3. 另有 `Repetitive` 标记：**轮询 / 查状态类工具豁免**重复检测——「输出变了才是
+   进展信号」。
+
+**为什么照抄这个分档**：重复循环的成因常常是**模型没意识到自己在重复**。一次带证据的
+警告回灌比内核直接掐死更可能让模型换路；而「再犯一次才停」保证了警告不是摆设。
+一命中就停会把「模型还需要一次提示」的场合变成「任务无产出地失败」。
+
+**本设计的落法**（判定面只出**事实与档位**，**回灌文案归宿主**）：
+
+| 档 | `Finding` | 宿主该做什么 |
+|---|---|---|
+| 首档 | `Warn=true` | 把警告回灌给模型（不停止），下一回合继续观察 |
+| 停止档 | `Stalled=true` | 温和叫停（不是失败）；把「为什么停」也回灌给模型 |
+| 豁免 | `Exempt=true`（由 Observation 给出） | 该回合不参与计数 |
+
+⚠️ 「温和叫停」与「失败」的可区分性由 `Reason.IsFailure()` 保证（§5.1）。
 
 ## 8. 边界：与既有机制逐条划界
 
@@ -439,7 +611,10 @@ func Detect(obs []Observation, cfg Config) Finding
 | `guardset` | 多守卫拒绝合成 | 一次只管一个维度 | 本包不聚合多守卫 |
 | `steer` | 运行中用户接管 | 回合末判定接管后如何收敛 | 接管 Cause 由 `steer` 产出，本包只在 `ReasonAborted` 侧消费事实 |
 | `delegate` / `handoff` | 委托 / 跨进程交接 | `ReasonHandedOff`（模型请求交接） | 本包只判「模型要求移交」这一事实，交接契约不重做 |
-| **跨进程回合账** | —— | **不提供** | 本包的 `Meter` 是**进程内**的。跨进程续跑时回合数**不随之累计**——跨进程累计需要存储形态，那是宿主资产。要跨进程累计的宿主须自行落库并把 `Used` 灌回本包 |
+| **模型侧 loop 库**（agentloop 等） | 驱动整个循环（调模型 / 执行工具 / 回灌） | **判据层**，不驱动 | 见 §13：两者不竞争，是**驱动层 + 判据层**的上下关系 |
+| **压实：视图替换 vs 真源替换** | —— | 本仓 `budget.Compact` 是**真源替换 + 原文归档句柄** | 模型侧库（agentloop 的 Compactor / RebuildContext）通常是**临时视图替换**（真源保留，只换发给模型的那份）。两者可共存：视图替换可回看，真源替换省内存（原文已归档） |
+| **强制收尾这一步的否决权** | —— | **内核判出的停不可否决** | 与 agentloop 的硬规则同构：强制收尾步「veto or not」都结束。否则宿主能在最后一刻翻回「继续调工具」，预算形同虚设 |
+| **跨进程回合账** | —— | **不提供** | 本包的 `Meter` 是**进程内**的。跨进程续跑时回合数**不随之累计**——跨进程累计需要存储形态，那是宿主资产。要跨进程累计的宿主须自行落库并把 `Used` 灌回本包（外部实现同样不做：agentloop 全程进程内） |
 
 ## 9. 登记面与门禁（先改声明面，再写代码）
 
@@ -471,13 +646,13 @@ func Detect(obs []Observation, cfg Config) Finding
       enum: AllRoundReasons
       predicate: Reason.Valid
       family: Reason
-      desc: 回合结局词表（9 值）
+      desc: 回合结局词表（10 值）
     - pkg: roundguard
       backing: roundLimitAll
       enum: AllLimits
       predicate: Limit.Valid
       family: Limit
-      desc: 回合上限类别词表（4 值）
+      desc: 回合上限类别词表（5 值）
     - pkg: roundguard
       backing: roundShapeAll
       enum: AllShapes
@@ -568,7 +743,12 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 | 漂移检测 | `page=1/2/3`（`Normalized` 同）⇒ `ShapeDrift` | 用 `Fingerprint` 代替 `Normalized` 比较 ⇒ 红 |
 | 错误螺旋 | 三连 `Failed` ⇒ `ShapeErrorSpiral` | 把它排在重复之后 ⇒ 红（次序即语义） |
 | 空转检测 | 三回合零工具且未收敛 ⇒ `ShapeIdle` | 去掉 `Settled` 条件 ⇒ 红（会把正常回合判空转） |
-| 组合结论 | 预算超限 ⇒ `ReasonBudgetExhausted`+`Limit=LimitRounds`；命中停滞 ⇒ `ReasonStalled`+`Limit=LimitStalled`；**结局终局优先于预算**（`Completed` 且已超限 ⇒ `ReasonCompleted`） | 去掉「终局优先」分支 ⇒ 红 |
+| 组合结论 | 回合硬上限超限 ⇒ `ReasonBudgetExhausted`+`Limit=LimitRounds`；命中停滞 ⇒ `ReasonStalled`+`Limit=LimitStalled`；**结局终局优先于预算**（`Completed` 且已超限 ⇒ `ReasonCompleted`） | 去掉「终局优先」分支 ⇒ 红 |
+| 软硬两级 | 工具软上限耗尽 ⇒ `Limit=LimitToolCalls` 且**不判失败**（`Reason.IsFailure()==false`）；回合硬上限耗尽 ⇒ `ReasonBudgetExhausted` 且 `IsFailure()==true` | 把两者合并成一个上限 ⇒ 红 |
+| 失败/温和可区分 | `ReasonForcedFinal`/`ReasonStalled` ⇒ `IsFailure()==false`；`ReasonFailed`/`ReasonAborted`/`ReasonNoOutcome`/`ReasonBudgetExhausted` ⇒ `IsFailure()==true` | 让 `IsFailure` 对全部取值返回 true ⇒ 红 |
+| 处置分档 | 首次命中 ⇒ `Warn=true` 且 `Stalled=false`；再犯 ⇒ `Stalled=true` | 让首次命中直接 `Stalled=true` ⇒ 红 |
+| 进展不打断 | 连续同指纹但 `ResultChanged=true` ⇒ **不判重复** | 去掉 `ResultChanged` 打断 ⇒ 红 |
+| 豁免面 | `Exempt=true` 的回合不参与连续计数 | 去掉豁免 ⇒ 红 |
 
 ### 10.2 其余门禁
 
@@ -587,40 +767,52 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 
 ```go
 // —— 宿主侧（模型面）：内核不调模型，这段在宿主仓 ——
-b := roundguard.Budget{MaxRounds: 40, MaxPerTool: map[string]int{"send_email": 2}}
+b := roundguard.Budget{
+    MaxRounds:    40,                              // 硬上限：回合数天花板
+    MaxToolCalls: 20,                              // 软上限：工具调用预算
+    MaxPerTool:   map[string]int{"send_email": 2}, // 单工具上限
+}
 cfg := roundguard.Config{}
 meter := roundguard.NewMeter()
 var obs []roundguard.Observation
 
 for {
-    // ① 模型调用前：次数上限
+    // ① 模型调用前：回合硬上限 ⇒ 真失败（IsFailure()==true）
     if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {
-        // 预检分支：此时只有 Verdict（还没有 Outcome），宿主按 Verdict 填终局结论
         return finish(roundguard.Decision{Reason: roundguard.ReasonBudgetExhausted, Limit: v.Limit})
     }
-    resp := model.Call(ctx, msgs, tools)     // 宿主调模型
-    meter.Round()                             // 记一回合
 
-    // ② 工具执行前：按工具上限
+    // ② 模型调用前：工具软上限 ⇒ 转入**强制收尾**（禁工具，要求模型用已有证据作答）
+    forceFinal := !roundguard.CheckToolCalls(b, meter.Used()).Allowed
+    resp := model.Call(ctx, msgs, tools, optNoTools(forceFinal)) // 宿主调模型
+    meter.Round()
+
+    // ③ 工具执行前：单工具上限 ⇒ 否决这一次，但**配对不破**
     var results []toolResult
     for _, tc := range resp.ToolCalls {
         if v := roundguard.CheckTool(b, meter.Used(), tc.Name); !v.Allowed {
-            results = append(results, toolResult{ID: tc.ID, Err: errors.New(v.Detail)})  // 作为失败事实回灌
+            results = append(results, toolResult{ID: tc.ID, Err: errors.New(v.Detail)}) // 回灌失败结果
             continue
         }
         res := execTool(ctx, tc)
         meter.Tool(tc.Name)
         results = append(results, res)
-        obs = append(obs, hostObservation(tc, res))   // 宿主算指纹/归一指纹/失败事实
+        obs = append(obs, hostObservation(tc, res)) // 宿主算指纹/归一指纹/失败/进展事实
     }
 
-    // ③ 回合末：一条结论
+    // ④ 回合末：一条结论
     d := roundguard.Decide(roundguard.Snapshot{
-        Outcome: hostOutcome(resp, results),   // 宿主把模型回复映射成 Outcome
+        Outcome: hostOutcome(resp, results, forceFinal), // 宿主把模型回复映射成 Outcome
         Used:    meter.Used(),
         Obs:     obs,
     }, b, cfg)
+
+    if d.Warn {
+        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会
+        msgs = append(msgs, hostWarnMessage(d.Shape))
+    }
     if !d.Continue {
+        // Reason 决定动作：failed/aborted ⇒ 失败；forced_final ⇒ 强制收尾；stalled ⇒ 温和叫停
         return finish(d)
     }
     msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
@@ -631,8 +823,10 @@ for {
 
 1. **失败要回灌、要记账**：工具失败既作为 `tool_result` 回灌给模型（模型自行修正），
    又作为 `Observation.Failed` 记一条——只回灌不记账 ⇒ 无进展检测永远看不到错误螺旋。
-2. **指纹要稳定**：指纹由宿主算，同一逻辑动作必须给同一指纹；归一指纹要抹掉
-   **易变部分**（页码/时间戳/行号），否则漂移检测永远不命中。
+2. **指纹要稳定，且要带上「结果变了」**：指纹由宿主算，同一逻辑动作必须给同一指纹；
+   归一指纹要抹掉 **易变部分**（页码/时间戳/行号），否则漂移检测永远不命中。
+   「相同调用但输出变了」必须显式记为 `ResultChanged: true`——那是**进展**，
+   不记就会把有意义的重试误判成循环。轮询 / 查状态类动作要记 `Exempt: true`。
 
 ## 12. 未决点（评审需拍板）
 
@@ -643,9 +837,62 @@ for {
 | 3 | `Meter` 是否并发安全 | **带锁**（宿主不必各自发明加锁方式） | 无锁 + 包注释要求调用方加锁 |
 | 4 | `Outcome.Completed` 与 `ToolCalls>0` 同时成立时 | 「要工具」优先（§5.3） | 终答优先（会让未执行的工具被吞） |
 | 5 | `Config.Window` / `Repeat` 缺省值 | 6 / 3 | 8 / 3（更钝）/ 4 / 2（更敏） |
-| 6 | 跨进程回合累计 | **不做**（§8 末条） | 做（需新增存储面契约，范围显著变大） |
+| 6 | 跨进程回合累计 | **不做**（§8 末条；外部实现同样全程进程内） | 做（需新增存储面契约，范围显著变大） |
+| 7 | 回合预算的**缺省值** | 不设缺省（全 0 = 不限，交给宿主显式声明） | 设缺省（agentloop 的缺省是 `MaxToolCalls=5`、`MaxSteps=2×5+2=12`） |
+| 8 | 导出 API 面上限 | **设门禁**（见 §13 的抄法） | 不设（导出面随实现自由生长） |
 
-## 13. 变更历史
+## 13. 与模型侧 loop 库的关系（2026-11-21 补）
+
+**结论：不竞争，是上下两层。**
+
+`smhanov/agentloop`（MIT，Go 1.21+，约 19.6k 行含测试，依赖只有姊妹项目 `llmhub` +
+`yaml.v3`）已经把模型侧 loop 做成了一个可直接 import 的库：预算、hooks、skills、
+压缩、流式、trace 全齐，另带 search / bash 两个 preset。
+
+⇒ **模型侧 loop 不必由本仓或宿主重写**；宿主可以直接用它。
+
+**那本包还有什么位置**：模型侧库是**驱动层**（谁去调模型、谁去执行工具），
+本包是**判据层**（什么算停、什么算超限、什么算没进展）。差别在**可替换性**：
+
+| | 模型侧库（agentloop） | 本包（roundguard） |
+|---|---|---|
+| 判据位置 | **内置**在库里（`dupCallLimit` 等是库的实现细节） | 独立判据包，宿主可换口径 |
+| 跨宿主 | 库是单宿主直接 import | 多宿主共享同一份判定 |
+| 覆盖范围 | 重复检测**单形态**（连续同调用同输出） | 五形态（重复 / 震荡 / 漂移 / 错误螺旋 / 空转） |
+| 进程边界 | 全程进程内 | 进程内（跨进程账仍不做，§8） |
+
+**接缝（很干净）**：agentloop 的 `Hooks` 正好是本包判据的落点——
+
+| 库里的 hook | 本包对应的判定 | 宿主怎么用 |
+|---|---|---|
+| `AfterGenerate`（`Finish` 可翻转） | `Classify`（回合结局） | 判出的 `Continue=false` ⇒ 让 hook 结束本回合 |
+| `AfterToolBatch`（`Skip` ⇒ 优雅停止） | `Decide`（组合结论） | `Finding.Stalled` / `LimitRounds` ⇒ 置 `Skip`，**温和叫停**（不是失败） |
+| `BeforeGenerate`（`Skip` ⇒ 停止） | `CheckRounds` / `CheckToolCalls` | 硬上限 ⇒ 置 `Skip`；软上限 ⇒ 不 Skip，改由库自己的强制收尾生效 |
+| `BeforeToolCall`（`ErrSkipToolCall` 否决单次调用） | `CheckTool`（单工具上限） | 超限 ⇒ 否决该次调用，但**仍回灌一条失败结果**给模型（配对不破） |
+
+⇒ 宿主用 agentloop 做驱动、用 roundguard 做判据，**两层不重复**：库的硬上限与
+强制收尾是它的实现，我们的判据是可替换的那一层。
+
+**另抄一条工程做法——导出 API 面上限门禁**：agentloop 用 `apibudget_test.go` 把三个
+包的**导出符号总数**钉在天花板（引入时实测 196 = core 112 + search 51 + bash 33，
+再 +10% 取整），理由是「加公开 API 必须是一次自觉行为，抬高天花板要单独一次变更并
+附理由」。本包照抄：**`roundguard` 的导出符号总数应有上限**，超限即红，抬上限的
+变更必须自带理由（§12 未决点 #8）。
+
+**不要抄的**：agentloop 把「模型侧 loop」与「判据」焊在一个库里（判据内置、不可替换）。
+本仓的纪律正相反——判定语义归内核、判定依据归宿主。模型侧库是**下游消费者**，
+不是本包的竞品。
+
+## 14. 变更历史
 
 - 2026-11-21：初稿（设计待评审）。基于 2026-11-21 的外部参照系调研与仓内实测
   （`MaxTurns|maxSteps|…` 全仓零命中）成文。
+- 2026-11-21（修订 r1）：实读 `smhanov/agentloop` 源码后改了六处判断——
+  ① 预算拆**软硬两级**（工具预算耗尽 ⇒ 强制收尾而非失败；回合硬上限才是失败）；
+  ② 结局词表加 `forced_final`，并新增 `Reason.IsFailure()` 判据区分
+  **失败型收敛**与**温和叫停**；
+  ③ `Observation` 加 `ResultChanged`（输出变了 = 进展）与 `Exempt`（轮询类豁免）；
+  ④ 重复检测处置**分三档**（警告回灌 → 再犯才停），不再一命中就停；
+  ⑤ §8 划界表补「压实：真源替换 vs 临时视图替换」与「强制收尾不可否决」；
+  ⑥ 新增 §13：与模型侧 loop 库的关系（**驱动层 / 判据层**，不竞争）+ 抄它的
+  **导出 API 面上限门禁**。
