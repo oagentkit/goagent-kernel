@@ -2596,7 +2596,8 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 - **两侧门面「同款集合」相等性（F1–F4）**：F1 声明面的 `accessors` ∪ `other_methods`
   与代码派生集（go/ast）**双向**相等；F2 清单形状（面访问器非空 / 不重复 / 与其它导出
   方法不重叠）；F3 各门面的面访问器集合必须相等（差集非空即红，并点名差哪几个）；
-  F4 每个面访问器要么被能力证据引用、要么登记 ⇒ 都没有即红。
+  F4 每个面访问器要么被能力证据引用、要么登记 ⇒ 都没有即红；F5 有方法级落点的存储**必须**登记
+  `facade:` 段 ⇒ 整段删掉不会「真空绿」。
   ⇒ 「两侧门面同款」从此是**机判事实**，不是散文里的断言。
 - **`known_unbacked_accessors` 登记面**：没有能力落点的面访问器登记在这里，并写明事实
   理由。⚠ **登记表示「当前没有能力断言覆盖它」，不表示它已被覆盖**；登记若其实已被
@@ -2666,7 +2667,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
-| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点 / 存储 `kind` 不在封闭值域内 / 写者数与写者上限交叉校验（W1 存储侧 + W2 场景侧 + W3 陈旧形态键）/ 两侧门面的面访问器集合相等（F3）+ 门面清单与代码派生集双向相等（F1）+ 清单形状（F2）+ 每个面访问器都有能力落点或已登记（F4）——见 `docs/STORAGE-SELECTION.yaml` |
+| `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点 / 存储 `kind` 不在封闭值域内 / 写者数与写者上限交叉校验（W1 存储侧 + W2 场景侧 + W3 陈旧形态键）/ 两侧门面的面访问器集合相等（F3）+ 门面清单与代码派生集双向相等（F1）+ 清单形状（F2）+ 每个面访问器都有能力落点或已登记（F4）+ 有方法级落点的存储必须登记门面段（F5）——见 `docs/STORAGE-SELECTION.yaml` |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
