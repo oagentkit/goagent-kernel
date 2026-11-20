@@ -184,14 +184,23 @@ func TestDetectDriftBreaksOnLastResultChanged(t *testing.T) {
 // 「结果变了」的打断：交替序列中任一**非末轮**出现进展标记 ⇒ 那一段连续性从
 // 该处重新起算 ⇒ 不判震荡。
 //
+// ⚠ 覆盖**全部非末轮位置**（2026-11-21 补）：震荡判据里有两处 RC 判据——循环体
+// 里的 `seq[i].ResultChanged ||`（管位置 0..n-3）与末对的 `prev.ResultChanged`
+// （管位置 n-2）。先前只钉了位置 0..3 ⇒ **末对那一位没有任何用例钉住**
+// （实测：删掉 `prev.ResultChanged` ⇒ 整套 roundguard 用例仍全绿）。
+//
 // 反向验证：删掉 `trailingAlternating` 循环里的 `seq[i].ResultChanged ||`
-// ⇒ 六轮交替被误判成震荡（首档）⇒ 本用例红（四个位置逐个钉）。
+// ⇒ 六轮交替被误判成震荡（首档）⇒ 本用例红；
+// 删掉末对的 `prev.ResultChanged` ⇒ 第 4 轮出现进展标记仍被判成震荡 ⇒ 本用例红。
 func TestDetectOscillationBreaksOnEarlierResultChanged(t *testing.T) {
-	for pos := 0; pos < 4; pos++ {
-		seq := altSeq(6)
-		for i := range seq {
-			seq[i].Tools = 1 // 有工具调用 ⇒ 不落到空转那一档
-		}
+	base := altSeq(6)
+	for i := range base {
+		base[i].Tools = 1 // 有工具调用 ⇒ 不落到空转那一档
+	}
+	// 全部非末轮位置逐个钉（末轮那条由 TestDetectResultChangedBreaksOscillation 钉）。
+	for pos := 0; pos < len(base)-1; pos++ {
+		seq := make([]roundguard.Observation, len(base))
+		copy(seq, base)
 		seq[pos].ResultChanged = true
 		f := roundguard.Detect(seq, roundguard.Config{})
 		if f.Shape == roundguard.ShapeOscillation {

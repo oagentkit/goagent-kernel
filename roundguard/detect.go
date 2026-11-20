@@ -123,7 +123,7 @@ func Detect(obs []Observation, cfg Config) Finding {
 	}
 	// 漂移带「原指纹不全等」这一条（spec §7.3 第 4 行）：归一后同但**原指纹
 	// 全等**的那串是「重复」（或被进展打断），不是漂移。
-	if L := trailingSameNormalized(seq); L >= k && !allSameFingerprint(seq[len(seq)-L:]) {
+	if L, ok := driftCandidate(seq, k); ok {
 		return tierFinding(idx, ShapeDrift, L, k)
 	}
 	if L := trailingIdle(seq); L >= k {
@@ -246,6 +246,27 @@ func allSameFingerprint(run []Observation) bool {
 		}
 	}
 	return true
+}
+
+// driftCandidate 漂移分支的候选判定：尾部归一指纹连续长度 ≥ k，**且**原指纹不全等。
+//
+// 为什么收成独立函数（判定语义一字未改，只把内联条件逐字收口）：
+// 这条分支上挂着一道**承重守卫**（原指纹不全等），而它在整条判定链上**不可达**
+// ——「原指纹全等」的那串必被**先判的重复形态**判走（两处耦合：① 重复分支先于
+// 漂移分支；② 两者同用阈值 k，见 spec §7.3）⇒ 黑盒观察不到 ⇒ **守卫被删掉时
+// 没有任何用例会红**（2026-11-21 实测：删守卫后整套 roundguard 用例仍全绿）。
+//
+// 收成函数是为了让这道守卫**可白盒直钉**：守卫的契约（该进⇒进、该挡⇒挡）从此
+// 有用例，删掉守卫 ⇒ 白盒用例当场红 ⇒ 守卫从「惰性断言」变成「承重判据」。
+func driftCandidate(seq []Observation, k int) (int, bool) {
+	L := trailingSameNormalized(seq)
+	if L < k {
+		return 0, false
+	}
+	if allSameFingerprint(seq[len(seq)-L:]) {
+		return 0, false
+	}
+	return L, true
 }
 
 // trailingIdle 尾部「零工具且未收敛」的连续长度。
