@@ -176,6 +176,11 @@ func ruleFiles(root string, r Rule) ([]string, error) {
 }
 
 func checkRule(root string, r Rule) ([]Violation, error) {
+	if r.CheckKind != "" {
+		// 结构化执行体（check_kind）：判据不是「文本里有没有某个形状」，
+		// 而是**结构关系**（见 policy.go 的 CheckKind 字段注）。
+		return checkKindViolations(root, r)
+	}
 	if r.ForbidImport != "" {
 		// import 规则走语法树判定，不走逐行正则——理由见 imports.go 头注。
 		return importViolations(root, r)
