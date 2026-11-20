@@ -111,6 +111,14 @@ func check(root string) ([]string, []string, error) {
 	probs = append(probs, checkMultiWriterAnnotations(m)...)
 	probs = append(probs, checkAsymmetries(root, sel)...)
 
+	// 门面侧（F1–F5）：两侧门面的「同款集合」必须是**机判事实**。
+	//
+	// 此前那只是一句散文断言（examples/pgstore/store.go 里写着「两侧同款」）
+	// ⇒ 删掉一侧的面访问器 / 给一侧加一个另一侧没有的访问器，全仓门禁照绿。
+	facadeProbs, facadeNotes := checkFacades(root, sel)
+	probs = append(probs, facadeProbs...)
+	notes = append(notes, facadeNotes...)
+
 	// 场景侧（判据 1 + 判据 2 + 硬边界 + 陈旧档位）。
 	// 场景说明排在能力说明之后：先看「有哪些档位、各认领几项」，再看
 	// 「每个场景选了谁、齐不齐」——读起来是一条从面到点的链。
