@@ -94,10 +94,17 @@ const (
 	PathReplayed
 )
 
+// pathNoneName 档位名「不重试」。
+//
+// **本包自起名字**（不是引用别家的常量）：这一串拼写与 roundguard 的额度类别
+// "none"（未因额度叫停）只是同形，概念不同——本包说的是**重试路径**，不是额度
+// 判定；字面量只允许出现在常量定义处。
+const pathNoneName = "none"
+
 func (p Path) String() string {
 	switch p {
 	case PathNone:
-		return "none"
+		return pathNoneName
 	case PathDirect:
 		return "direct"
 	case PathReplayed:

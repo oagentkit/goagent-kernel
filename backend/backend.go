@@ -95,8 +95,15 @@ const (
 	IsolationVM
 )
 
+// isolationNoneName 档位名「无隔离」。
+//
+// **本包自起名字**（不是引用别家的常量）：这一串拼写与 roundguard 的额度类别
+// "none"（未因额度叫停）只是同形，概念不同——本包说的是**隔离档位**，不是额度
+// 判定；字面量只允许出现在常量定义处。
+const isolationNoneName = "none"
+
 // isolationNames 档位名，下标即档位序。
-var isolationNames = [...]string{"none", "process", "container", "vm"}
+var isolationNames = [...]string{isolationNoneName, "process", "container", "vm"}
 
 // String 档位名（声明与错误文案用）。
 func (i Isolation) String() string {

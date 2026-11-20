@@ -257,6 +257,12 @@
 | `ErrInvalidSignature` | 绑定调用形态串非法（装配期缺陷，非程序问题） | 修声明：修正装配期签名 |
 | `ErrMemoryLimitUnsupported` | 本环境无法施加内存上限 | 换执行环境或去掉该要求；**与执行域异常终止是两类失败**，不得合并处置 |
 
+### roundguard
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrInvalidBudget` | 装配期 `Budget.Validate` 判负值上限 / 空工具标识 / 未知处置口径 | 修声明（调用方配置错，重试无意义） |
+
 ### scheduling
 
 | 哨兵 | 触发条件 | 调用方处置 |

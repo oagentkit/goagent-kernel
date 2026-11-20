@@ -1992,6 +1992,25 @@ word_tables:
       predicate: Reason.Valid
       family: Reason
       desc: 回合结局词表（10 值）
+    # 额度类别：额度用尽在哪一维上（回合数 / 工具调用总数 / 单工具 / 无进展）。
+    # 与 roundReasonAll 同形但**不同概念**：Reason 判「这一回合以什么结束」，
+    # Limit 判「哪一维额度被用尽」——同一串字面量在两处含义不同，故 relations
+    # 段按 distinct 显式登记。
+    - pkg: roundguard
+      backing: roundLimitAll
+      enum: AllLimits
+      predicate: Limit.Valid
+      family: Limit
+      desc: 额度类别词表（5 值）
+    # 处置口径：额度用尽之后怎么办（强制收尾 / 直接失败）。**策略**而非事实——
+    # 各家没有共识，故单列一张表，且口径**不按额度维度分别配置**（一个口径管
+    # 全部额度 ⇒ 跨宿主口径一致）。
+    - pkg: roundguard
+      backing: stopPolicyAll
+      enum: AllStopPolicies
+      predicate: StopPolicy.Valid
+      family: Policy
+      desc: 额度用尽后的处置口径词表（2 值）
   # relations：**同形取值的两张表之间的关系**声明（中心清单）。
   #
   # 为什么需要它：同一个拼写可能是**多张判定词表**的取值，而它们的**含义**
@@ -2080,6 +2099,19 @@ word_tables:
     # 任务失败 ≠ 回合失败（taskboard 的 failed 允许重新认领，非终态）。
     - a: {pkg: taskboard, enum: AllStates}
       b: {pkg: roundguard, enum: AllRoundReasons}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 回合结局 ≠ 额度类别：同包两张表，**同形异义**。
+    #   - "tool_calls"：回合结局里是「模型要工具」（控制流事实），
+    #     额度类别里是「工具调用总额度用尽」（额度判定）；
+    #   - "stalled"：回合结局里是「本回合无进展、温和叫停」（结局分类），
+    #     额度类别里是「无进展这一维额度被命中」（额度判定）。
+    # 前者答「这一回合以什么结束」，后者答「哪一维额度被用尽」⇒ 不同概念，
+    # 手抄任一家都可能是语义损坏（引用别人的常量会把语义装错）。
+    - a: {pkg: roundguard, enum: AllRoundReasons}
+      b: {pkg: roundguard, enum: AllLimits}
       relation: distinct
       anchors:
         a: [{all: true}]

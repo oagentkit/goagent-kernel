@@ -35,3 +35,47 @@ func AllRoundReasons() []string {
 	slices.Sort(out)
 	return out
 }
+
+// stopPolicyAll 处置口径词表 → 成员（单一事实源）。
+//
+// 键是 **StopPolicy**（与 roundReasonAll 同款：键就是常量本身，成员判定与枚举
+// 出口都不必转字符串——键型与取值型不一致时，多一次转换就多一处能写错的地方）。
+var stopPolicyAll = map[StopPolicy]bool{
+	PolicyForceFinal: true,
+	PolicyFailFast:   true,
+}
+
+// AllStopPolicies 返回处置口径词表的全集（排序后的**新切片**）。
+//
+// 返回的是副本：调用方改写它不影响判定面。
+func AllStopPolicies() []string {
+	out := make([]string, 0, len(stopPolicyAll))
+	for s := range stopPolicyAll {
+		out = append(out, string(s))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// roundLimitAll 额度类别词表 → 成员（单一事实源）。
+//
+// 键是 **Limit**（同款理由）。
+var roundLimitAll = map[Limit]bool{
+	LimitNone:      true,
+	LimitRounds:    true,
+	LimitToolCalls: true,
+	LimitPerTool:   true,
+	LimitStalled:   true,
+}
+
+// AllLimits 返回额度类别词表的全集（排序后的**新切片**）。
+//
+// 返回的是副本：调用方改写它不影响判定面。
+func AllLimits() []string {
+	out := make([]string, 0, len(roundLimitAll))
+	for s := range roundLimitAll {
+		out = append(out, string(s))
+	}
+	slices.Sort(out)
+	return out
+}
