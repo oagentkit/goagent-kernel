@@ -317,11 +317,15 @@ func TestEventStoreTailerEndToEnd(t *testing.T) {
 	gaps := make(chan [2]uint64, 8)
 	tctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go eventbus.NewTailer(evs, hub,
-		eventbus.WithTailInterval(10*time.Millisecond),
-		eventbus.WithTailStartCursor(0),
-		eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
-	).Run(tctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		eventbus.NewTailer(evs, hub,
+			eventbus.WithTailInterval(10*time.Millisecond),
+			eventbus.WithTailStartCursor(0),
+			eventbus.WithTailOnGap(func(from, to uint64) { gaps <- [2]uint64{from, to} }),
+		).Run(tctx)
+	}()
 
 	for _, want := range []struct {
 		id  uint64
@@ -351,4 +355,5 @@ func TestEventStoreTailerEndToEnd(t *testing.T) {
 		t.Fatalf("回滚空洞不得触发永久丢失判据（哨兵静默）: [%d,%d]", g[0], g[1])
 	case <-time.After(100 * time.Millisecond):
 	}
+	stopTailer(t, cancel, done, "端到端尾随")
 }

@@ -68,10 +68,14 @@ func TestTailCursorReadFailureStallsTailer(t *testing.T) {
 	defer stop()
 	run, cancel := context.WithCancel(ctx)
 	defer cancel()
-	go eventbus.NewTailer(counted, hub,
-		eventbus.WithTailInterval(10*time.Millisecond),
-		eventbus.WithTailCursorStore(cs),
-	).Run(run)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		eventbus.NewTailer(counted, hub,
+			eventbus.WithTailInterval(10*time.Millisecond),
+			eventbus.WithTailCursorStore(cs),
+		).Run(run)
+	}()
 
 	select {
 	case ev := <-ch:
@@ -81,4 +85,5 @@ func TestTailCursorReadFailureStallsTailer(t *testing.T) {
 	if n := counted.maxIDCalls.Load(); n != 0 {
 		t.Fatalf("读失败时 Tailer 绝不得回退 MaxID（调了 %d 次 = 跳过停机窗口）", n)
 	}
+	stopTailer(t, cancel, done, "读失败停摆尾随")
 }
