@@ -112,20 +112,8 @@ func (s *Store) Events() {}
 func (s *Store) Apply() error { return nil }
 `
 
-const facadeBetaSrc = `package pkgbeta
-
-// Store 合成门面类型。
-type Store struct{}
-
-// Board 合成面访问器。
-func (s *Store) Board() {}
-
-// Events 合成面访问器。
-func (s *Store) Events() {}
-
-// Apply 合成其它导出方法。
-func (s *Store) Apply() error { return nil }
-`
+// facadeBetaSrc 合成代码：与 alpha 侧**同款**（只换包名 ⇒ 两侧形状可比）。
+var facadeBetaSrc = strings.ReplaceAll(facadeAlphaSrc, "pkgalpha", "pkgbeta")
 
 // facadeRoot 造一个带两扇合成门面的仓根。
 func facadeRoot(t *testing.T, selection string) string {
@@ -292,10 +280,11 @@ func TestFacadeRejectsDivergentSharedDeclaration(t *testing.T) {
 	requireViolation(t, facadeOnly(t, root), "两份声明的面访问器/其它方法不一致")
 }
 
-// facadeAlphaEmbeddedSrc 合成代码：门面类型**嵌入**一个带导出方法的类型。
-// 嵌入类型的方法会被**提升**到门面类型 ⇒ 只数「直接声明的方法」的派生集**漏算**
-// ⇒ 外部包真能调 s.ExtraPromoted()，而判据全绿（评审点出的那个洞）。
-const facadeAlphaEmbeddedSrc = `package pkgalpha
+// facadeAlphaShapeSrc 合成代码：门面类型**声明那一行**由用例替换（三种形态）——三种形态都让
+// 「派生集不完整」：① struct 字面量**含嵌入字段** ⇒ 其方法被提升；② **类型别名**（type Store =
+// storeImpl）/ ③ **定义类型**（type Store storeImpl）⇒ 解析不出 struct 字段 ⇒ 嵌入字段看不见
+// ⇒ 外部包真能调 s.ExtraPromoted() ⇒ 旧实现（只认 struct 字面量）门禁全绿。
+const facadeAlphaShapeSrc = `package pkgalpha
 
 // Extra 合成嵌入类型（它的导出方法会被提升到门面类型上）。
 type Extra struct{}
@@ -303,7 +292,10 @@ type Extra struct{}
 // ExtraPromoted 提升方法（外部包可经门面类型调到它）。
 func (e Extra) ExtraPromoted() {}
 
-// Store 合成门面类型（含嵌入字段 ⇒ 派生集不完整）。
+// storeImpl 合成实现体（含嵌入字段 ⇒ 提升方法 ⇒ 派生集不完整）。
+type storeImpl struct{ Extra }
+
+// Store 合成门面类型（形态由用例替换：含嵌入字段 / 类型别名 / 定义类型）。
 type Store struct{ Extra }
 
 // Board 合成面访问器。
@@ -316,16 +308,24 @@ func (s *Store) Events() {}
 func (s *Store) Apply() error { return nil }
 `
 
-// TestFacadeRejectsEmbeddedField 门面类型含嵌入字段 ⇒ 红（F1 的 fail-closed 侧）。
-// 两种坏实现都会被抓住：① 压根不检测嵌入字段（派生集漏算提升方法 ⇒ 全绿）；
-// ② 检测了却不判红。
-func TestFacadeRejectsEmbeddedField(t *testing.T) {
-	root := facadeRoot(t, facadeSelection)
-	mustWrite(t, filepath.Join(root, "pkgalpha", "store.go"), facadeAlphaEmbeddedSrc)
-	probs := facadeOnly(t, root)
-	requireViolation(t, probs, "嵌入字段")
-	if !strings.Contains(strings.Join(probs, "\n"), "Extra") {
-		t.Fatalf("报错要点名嵌入的字段，实得:\n%s", strings.Join(probs, "\n"))
+// TestFacadeRejectsIncompleteDerivedSet 派生集不完整的三种形态 ⇒ 红（F1 的 fail-closed 侧）。
+//
+// ① 含嵌入字段；② **类型别名**（type Store = storeImpl）；③ **定义类型**（type Store storeImpl）。
+// 坏实现（②③ 解析不出 struct 字段就当空集跳过 ⇒ 拿不完整的派生集去比）⇒ 全绿 ⇒ 必须失败。
+func TestFacadeRejectsIncompleteDerivedSet(t *testing.T) {
+	for _, c := range []struct{ name, src, want string }{
+		{"含嵌入字段", facadeAlphaShapeSrc, "嵌入字段"},
+		{"类型别名", strings.Replace(facadeAlphaShapeSrc, "type Store struct{ Extra }", "type Store = storeImpl", 1), "类型别名"},
+		{"定义类型", strings.Replace(facadeAlphaShapeSrc, "type Store struct{ Extra }", "type Store storeImpl", 1), "定义类型"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			root := facadeRoot(t, facadeSelection)
+			mustWrite(t, filepath.Join(root, "pkgalpha", "store.go"), c.src)
+			probs := facadeOnly(t, root)
+			requireViolation(t, probs, c.want)
+			requireViolation(t, probs, "门面类型 Store")
+			requireViolation(t, probs, "存储 alpha")
+		})
 	}
 }
 
@@ -370,6 +370,14 @@ func TestRunDoesNotClaimFacadeChecksWithoutFacade(t *testing.T) {
 		if strings.Contains(out, claim) {
 			t.Fatalf("零门面时文案不得宣称判过 %q，实得:\n%s", claim, out)
 		}
+	}
+	// F5 判的是「有方法级落点却没写 facade 段」⇒ 零门面下**照样判过**（口径不许含糊）。
+	clause := out[strings.Index(out, "未判定"):]
+	if i := strings.Index(clause, "；"); i >= 0 {
+		clause = clause[:i]
+	}
+	if strings.Contains(clause, "F5") || !strings.Contains(out, "已判定") {
+		t.Fatalf("F5 判过 ⇒ 不许与「未判定」并列，且必须如实说判过，实得:\n%s", out)
 	}
 }
 
