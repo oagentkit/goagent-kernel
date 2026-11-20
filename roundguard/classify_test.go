@@ -163,24 +163,36 @@ func TestClassifyPaused(t *testing.T) {
 	}
 }
 
-// TestClassifyTakesHardestEvidenceFirst 钉住**判定次序**整体：多个事实同时成立时，
-// 取证据最硬的那条（中止 > 报错 > 交接 > 要工具 > 强制收尾 > 终答 > 原样再问）。
+// TestClassifyPriorityChain 钉住**判定次序**整体：优先级链上每一对相邻臂各给
+// 一条成对断言——每次只留相邻两条事实，断言先者胜。
 //
-// 这条用例是上面五条单臂用例的**反面**：单臂用例只钉「每条臂各归各的」，
-// 本条钉「它们排在一起时先听谁的」——次序写反的实现（把终答排到最前、把中止
-// 排到最后）会在这里转红，而单臂用例照样全绿。
-func TestClassifyTakesHardestEvidenceFirst(t *testing.T) {
-	r := roundguard.Classify(roundguard.Outcome{
-		Aborted:     true,
-		Failed:      errors.New("合成失败"),
-		Handoff:     true,
-		ToolCalls:   3,
-		ForcedFinal: true,
-		Completed:   true,
-		Paused:      true,
-	})
-	if r.Reason != roundguard.ReasonAborted {
-		t.Fatalf("多事实并存应取最硬的一条 %q，实得 %q", roundguard.ReasonAborted, r.Reason)
+// 为什么必须**逐对**钉：只断言「全部事实同时置真时胜者是中止」只钉住链头，
+// 中间两条换位照样全绿（实测：把 Handoff 移到 Failed 之前、Completed 移到
+// Paused 之前，14 条用例无一变红，而「报错回合被静默重分类成温和交接」已经
+// 发生——IsFailure() 由 true 翻 false，宿主据此不上报故障）。
+//
+// 逐对钉住后，任何一条臂换位都至少撞上一对断言：链上相邻关系全对 ⇒ 全序不变。
+func TestClassifyPriorityChain(t *testing.T) {
+	failed := errors.New("合成失败")
+	cases := []struct {
+		name string
+		o    roundguard.Outcome
+		want roundguard.Reason
+	}{
+		{"中止压报错", roundguard.Outcome{Aborted: true, Failed: failed}, roundguard.ReasonAborted},
+		{"报错压交接", roundguard.Outcome{Failed: failed, Handoff: true}, roundguard.ReasonFailed},
+		{"交接压要工具", roundguard.Outcome{Handoff: true, ToolCalls: 1}, roundguard.ReasonHandedOff},
+		{"要工具压强制收尾", roundguard.Outcome{ToolCalls: 1, ForcedFinal: true}, roundguard.ReasonToolCalls},
+		{"强制收尾压终答", roundguard.Outcome{ForcedFinal: true, Completed: true}, roundguard.ReasonForcedFinal},
+		{"终答压原样再问", roundguard.Outcome{Completed: true, Paused: true}, roundguard.ReasonCompleted},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := roundguard.Classify(c.o)
+			if got.Reason != c.want {
+				t.Fatalf("应判 %q，实得 %q", c.want, got.Reason)
+			}
+		})
 	}
 }
 
