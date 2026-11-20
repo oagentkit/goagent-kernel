@@ -4,6 +4,27 @@
 
 ## [v0.51.0] — 2026-11-20
 
+### 修复(examples)：尾随游标 / 事件面用例未等 goroutine 退出 ⇒ 门禁 cover-gate 段偶发红
+
+`examples/sqliteadapter` 与 `examples/pgstore` 的尾随游标 / 事件面用例在用例内起 goroutine
+跑 `eventbus.Tailer`，只 `defer cancel()` 而**不等 goroutine 退出**。`Tailer.Run` 的退出式是
+`select{ctx.Done, ticker.C}`，两者同时就绪时 select 随机取 ⇒ 取消后 tailer 可能连转若干拍
+才退出 ⇒ 用例一返回、`t.Cleanup` 先关存储再删临时目录，残留 goroutine 仍在**存储已交还
+之后**去动它 ⇒ SQLite(WAL) 侧的只读句柄在清理窗口内重建 `-wal`/`-shm` 伴生文件
+（此时目录**仍在**，被删掉的是库文件本体 `state.db`；伴生文件在 `RemoveAll` 的
+readdir+unlink 之后、最后一次 rmdir 之前被重建）⇒ 最后那次 rmdir 撞 ENOTEMPTY
+⇒ `t.TempDir()` 的 RemoveAll 报 `directory not empty`。
+
+⚠ **既有潜伏缺陷，不是本轮回归**：本轮对 sqliteadapter 只改过注释；单跑 10/10 绿，全量
+套件并行负载下才现形 ⇒ **负载依赖型**。
+
+- 两侧各新增 `stopTailer` 助手（取消 → 等 done → 2s 超时兜底 `t.Fatalf`）：等的是
+  goroutine **真退出**，不是只等取消信号 ⇒ 存储在用例返回前才被交还。
+- 落点：`examples/sqliteadapter/{cursor_tail_test.go,cursor_fail_test.go,event_tail_test.go}`
+  （5 处收尾点）+ `examples/pgstore/{pg_cursor_test.go,pg_event_test.go}`（4 处）。
+- ⚠ 「用例内 goroutine 必须在用例返回前收尾」这条纪律**当前未被机判**（仓里没有查它的
+  规则）——详见台账 §30。
+
 ### 修复(pgstore)：#425 快照序号溢出守卫——两侧对位补齐
 
 PG 侧的快照面此前**缺**序号溢出守卫（SQLite 侧有同款）：`Seq > math.MaxInt64` 被静默
