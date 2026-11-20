@@ -41,6 +41,14 @@ type Capability struct {
 	State       string     `yaml:"state"`
 	Evidence    []Evidence `yaml:"evidence"`
 	DeliveredBy string     `yaml:"delivered_by,omitempty"`
+	// RequiresMultiWriter 该能力是否要求**多写者**。
+	//
+	// 用 *bool：nil = 未标注，&false = 显式单写者能力（两者必须可区分）。
+	//
+	// ⚠ 本门禁**不判**这个字段——它由 cmd/storagecheck 的写者数交叉校验
+	// （W1/W2）判。但本门禁的清单是**严格字段**解析（KnownFields(true)）⇒
+	// 结构体里没有这个字段，声明面一加就当场红 ⇒ 这里必须**容忍**它。
+	RequiresMultiWriter *bool `yaml:"requires_multi_writer,omitempty"`
 }
 
 // Evidence 一条可查事实。

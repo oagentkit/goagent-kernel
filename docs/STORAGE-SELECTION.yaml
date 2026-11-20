@@ -52,7 +52,8 @@ policy:
 
     ⚠ 一条**两侧共有**的契约边界（不是 SQLite 的短板）：
     版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入检测不到。
-    PostgreSQL 侧逐字同款（pgref_control_version 只出现在 pgstore/control.go）。
+    PostgreSQL 侧逐字同款（版本锚的推进只在 pgstore/control.go 的控制面提交
+    路径上；建表 DDL 在 pgstore/schema.go，不推进版本）。
 
     ⚠ 装载入口语义（SQLite 侧）：SeedRun 不覆盖 seq、**丢弃租约字段**
     （owner / token / fence / until 置空）⇒ 与本包 BoardStore.Seed 同口径。
@@ -119,6 +120,36 @@ storages:
     code_root: examples/sqliteadapter
     # 写者上限：单写者模型 ⇒ 1。并发写者场景选它 ⇒ 门禁当场红。
     max_writers: 1
+    # 门面声明：这一扇门上有哪些面访问器（**两侧必须同款** ⇒ F3 机判）。
+    #
+    # accessors 与 other_methods 的口径：accessors = 宿主真正拿到的**面访问器**
+    # （两侧逐字对位的那一扇扇门）；other_methods = 门面上其余导出方法
+    # （两侧**不对位**是正常的：建表入口只有 SQLite 侧有，见 known_asymmetries
+    # 的 facade-schema-bootstrap）。
+    #
+    # 本清单必须与代码派生集逐字相符（F1）⇒ 门面加了方法却没人登记 ⇒ 当天红。
+    facade:
+      package: examples/sqliteadapter
+      type: Store
+      accessors:
+        - Board
+        - Effects
+        - Snapshots
+        - Events
+        - TenantEffects
+        - TenantEvents
+        - Downstream
+        - TenantDownstream
+        - TailCursors
+        - TenantTailCursors
+        - Control
+      other_methods:
+        - Apply
+        - Close
+        - DB
+        - EnsureSchema
+        - Path
+        - UseClock
     notes: |
       门面暴露 11 个面访问器（任务板 / 副作用 / 租户作用域副作用 / 进度快照 /
       事件 / 租户作用域事件 / 下游栅栏 / 租户作用域栅栏 / 尾随游标 / 租户作用域
@@ -162,6 +193,8 @@ storages:
           - kind: contract
             ref: examples/sqliteadapter/tenant.go#Store.TenantEffects
           - kind: contract
+            ref: examples/sqliteadapter/tenant.go#Store.TenantEvents
+          - kind: contract
             ref: examples/sqliteadapter/tenant.go#NewTenantEffectStore
           - kind: contract
             ref: examples/sqliteadapter/tenant.go#NewTenantEventStore
@@ -177,6 +210,24 @@ storages:
     code_root: examples/pgstore
     # 写者上限：连接池多连接 ⇒ 不设上限。
     max_writers: unlimited
+    # 门面声明：与 examples/sqliteadapter 侧**同款**（accessors 逐字一致 ⇒ F3 机判）。
+    facade:
+      package: examples/pgstore
+      type: Store
+      accessors:
+        - Board
+        - Effects
+        - Snapshots
+        - Events
+        - TenantEffects
+        - TenantEvents
+        - Downstream
+        - TenantDownstream
+        - TailCursors
+        - TenantTailCursors
+        - Control
+      other_methods:
+        - Apply
     notes: |
       门面暴露 11 个面访问器（与 examples/sqliteadapter 侧**同款**）⇒ 门面可达性
       两侧对位（评审 I-3 的补齐结果）。能力落点一律指门面访问器，不指门面
@@ -235,9 +286,16 @@ storages:
             ref: examples/pgstore/store.go#Store.TenantEvents
       - id: reliable-events
         source: storage
+        # 尾随游标面**同属**可靠事件面：它是 eventbus.CursorStore 的落点
+        # （消费侧的续读水位线）⇒ 一并挂上落点，否则它成了一条「有门无落点」
+        # 的面访问器（声明面覆盖不全）。
         evidence:
           - kind: contract
             ref: examples/pgstore/store.go#Store.Events
+          - kind: contract
+            ref: examples/pgstore/store.go#Store.TailCursors
+          - kind: contract
+            ref: examples/pgstore/store.go#Store.TenantTailCursors
       - id: unified-lease
         source: kernel
         evidence:
@@ -271,6 +329,25 @@ storages:
     code_root: examples/pgstore
     # 写者上限：共享库 ⇒ 不设上限。
     max_writers: unlimited
+    # 门面声明：与 PostgreSQL 档位**共用同一扇门**（同一份 examples/pgstore 门面）
+    # ⇒ 本段必须与 PostgreSQL 档位逐字一致，否则声明面自相矛盾 ⇒ 当天红。
+    facade:
+      package: examples/pgstore
+      type: Store
+      accessors:
+        - Board
+        - Effects
+        - Snapshots
+        - Events
+        - TenantEffects
+        - TenantEvents
+        - Downstream
+        - TenantDownstream
+        - TailCursors
+        - TenantTailCursors
+        - Control
+      other_methods:
+        - Apply
     notes: |
       这不是本仓的一个包，是**部署形态**：多集群共用同一份权威 PostgreSQL。
       它的代码根与 PostgreSQL 同（能力由同一套参考实现交付），但权威面要求
@@ -286,9 +363,16 @@ storages:
             ref: examples/pgstore/store.go#Store.Control
       - id: reliable-events
         source: storage
+        # 尾随游标面**同属**可靠事件面：它是 eventbus.CursorStore 的落点
+        # （消费侧的续读水位线）⇒ 一并挂上落点，否则它成了一条「有门无落点」
+        # 的面访问器（声明面覆盖不全）。
         evidence:
           - kind: contract
             ref: examples/pgstore/store.go#Store.Events
+          - kind: contract
+            ref: examples/pgstore/store.go#Store.TailCursors
+          - kind: contract
+            ref: examples/pgstore/store.go#Store.TenantTailCursors
       - id: tenant-scoped-storage
         source: storage
         evidence:
@@ -329,6 +413,73 @@ storages:
         evidence:
           - kind: contract
             ref: handoff/desk.go#Desk
+
+# ── 无能力落点的面访问器（登记面）──────────────────────────────────────
+#
+# 门禁要求**每个面访问器**都要指向一条能力证据（ref 形如 包目录#门面类型.访问器）。
+# 但有些面在部署矩阵的能力表里**根本没有**对应的能力条目（如下游栅栏面），
+# 有些面则因为**本档位不认领**那条能力而没有落点（如 SQLite 档位不认领
+# reliable-events）⇒ 硬要求会逼人「为了绿去新增能力认领」——那正是最坏的
+# 结果（认领一个自己给不了的能力，比留一条登记坏得多）。
+#
+# ⇒ 这些面登记在这里，并写明**事实理由**。
+#
+# 两条纪律：
+#   1. 登记**按门面生效**：`storage` 指出这条登记挂在哪个存储的门面上；
+#      共用同一门面的多个存储（PostgreSQL 与 shared-authority-pg 共用
+#      examples/pgstore）⇒ 同一扇门，一条登记覆盖该门面的全部存储
+#      （按存储分别登记会让同一扇门出现互相矛盾的两份声明）。
+#   2. **登记过期即红**：它若其实已被能力证据覆盖 ⇒ 门禁当天报红，
+#      该登记当天删掉（与仓内「豁免失效即红」同款纪律）。
+known_unbacked_accessors:
+  - storage: PostgreSQL
+    accessor: Downstream
+    reason: |
+      下游栅栏面在部署矩阵的能力表里没有对应条目（矩阵的能力表里没有
+      「下游栅栏」这一项）⇒ 该面访问器没有能力落点。声明面里没有任何能力证据
+      指向它：known_asymmetries 的 batch-cursor-write 引用的落点是
+      examples/pgstore/cursor.go#rejectBatchCursorWrite（批内游标写的拒绝逻辑），
+      不是这个面访问器。
+  - storage: PostgreSQL
+    accessor: TenantDownstream
+    reason: |
+      租户作用域的下游栅栏面与下游栅栏面同款：能力表里没有对应条目 ⇒
+      该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: Effects
+    reason: |
+      副作用面在本档位没有能力认领：PG 侧指向 Store.Effects 的 database-clock
+      不声明给单写者档位（见本档位 capabilities 清单）⇒ 该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: Events
+    reason: |
+      可靠事件面在本档位没有能力认领：reliable-events 不声明给单写者档位
+      （见本档位 capabilities 清单）⇒ 该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: TailCursors
+    reason: |
+      尾随游标面（eventbus.CursorStore 的落点）随可靠事件面一同落在
+      reliable-events 上，而该能力不声明给本档位 ⇒ 该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: TenantTailCursors
+    reason: |
+      租户作用域的尾随游标面与尾随游标面同款：能力表里没有对应条目 ⇒
+      该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: Control
+    reason: |
+      控制面在本档位没有能力认领：authority-uniqueness 只由 shared-authority-pg
+      （多集群共享同一份权威库的部署形态）认领，单机 SQLite 档位不认领 ⇒
+      该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: Downstream
+    reason: |
+      下游栅栏面在部署矩阵的能力表里没有对应条目 ⇒ 该面访问器没有能力落点。
+  - storage: examples/sqliteadapter
+    accessor: TenantDownstream
+    reason: |
+      租户作用域的下游栅栏面与下游栅栏面同款：能力表里没有对应条目 ⇒
+      该面访问器没有能力落点。
 
 # ── 已知不对称（两侧机制不同、语义同构的那类差异）────────────────────────
 #
@@ -382,7 +533,8 @@ known_asymmetries:
     summary: |
       版本锚只被**控制面自身的提交**推进 ⇒ 对控制面之外的写入（如任务板侧的
       写入）检测不到。**这是两侧共有的契约边界**，不是 SQLite 的短板
-      （PostgreSQL 侧逐字同款：pgref_control_version 只出现在 pgstore/control.go）。
+      （PostgreSQL 侧逐字同款：版本锚的推进只在 pgstore/control.go 的控制面提交
+      路径上；建表 DDL 在 pgstore/schema.go，不推进版本）。
     evidence:
       - kind: contract
         ref: examples/sqliteadapter/control.go#ControlStore

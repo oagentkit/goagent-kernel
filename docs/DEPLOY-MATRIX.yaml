@@ -33,12 +33,31 @@
 #   ⇒ 「矩阵 4 条、选型面 1 条」**不是一份漏了三条**，是同一能力的两种粒度：
 #     矩阵回答「这个能力由哪些面兑现」，选型面回答「这个引擎能不能兑现它」。
 #
+# **requires_multi_writer**（2026-11-20 声明面收紧，issue #424 的后续）：
+
+#   每条能力必须**显式**标注 true（多写者能力）/ false（单写者能力）——
+#   **缺省即红**（漏登记 = 该能力对判据无从下手 = 判据静默失效）。
+#
+#   ⚠ 这个字段**不由 deploycheck 判**（deploycheck 只**容忍**它）⇒ 由
+#   `make storagecheck` 的写者数交叉校验判：
+#
+#     W1（存储侧）：存储的写者上限是多写者档位（≥2 或 unlimited）
+#         ⟺ 它认领了至少一项多写者能力；
+#     W2（场景侧）：场景形态的写者数 ≥2 ⟺ 该形态下至少一个场景的 required
+#         含多写者能力；形态写者数 ==1 ⇒ 该形态下**所有**场景的 required
+#         都不含多写者能力。
+#
+#   ⇒ 「多写者场景不得选单写者档位」这条硬边界不再只由 scenario_writers 一张
+#   表撑着：改弱那张表（scenario_writers）或改弱存储的 max_writers，**各自都会
+#   当场红**（两张表互相钉住）。
+#
 # 能力没主 = 没人推进。每条缺口都必须挂 issue（或已经落到 contract/gate 上）。
 version: 1
 
 capabilities:
   - id: idempotency-key-scope
     title: 幂等键作用域（租户 / 运行进键，Attempt 不进键）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -49,6 +68,7 @@ capabilities:
 
   - id: context-cancellation
     title: Context 取消与在途收口
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -58,6 +78,7 @@ capabilities:
 
   - id: taskboard-persistence
     title: 任务板持久化（单机文件 / PG）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -69,6 +90,7 @@ capabilities:
 
   - id: startup-recovery
     title: 启动恢复（重放 / 截断残尾 / 续读）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -78,6 +100,7 @@ capabilities:
 
   - id: single-store-full-state
     title: 单一存储覆盖全部状态（任务板之外还含副作用 / 事件 / 快照）
+    requires_multi_writer: false
     state: available
     delivered_by: "#419"
     evidence:
@@ -92,6 +115,7 @@ capabilities:
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -101,6 +125,7 @@ capabilities:
 
   - id: multi-process-claim
     title: 多进程竞争认领（原子读-判-写）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -110,6 +135,7 @@ capabilities:
 
   - id: unified-lease
     title: 统一租约（令牌由存储铸造、代次单调）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -120,6 +146,7 @@ capabilities:
 
   - id: lease-renewal
     title: 长任务租约自动续期 + 资格确认
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -130,6 +157,7 @@ capabilities:
 
   - id: database-clock
     title: 数据库时钟作为过期判定的唯一权威
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -139,6 +167,7 @@ capabilities:
 
   - id: cross-process-token
     title: 跨进程令牌（存储侧铸造、不靠进程内自增）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -146,6 +175,7 @@ capabilities:
 
   - id: tenant-scoped-storage
     title: 租户隔离落到持久化面（effect / 事件表租户维度 + 缺租户 fail-closed）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -158,6 +188,7 @@ capabilities:
 
   - id: reliable-events
     title: 可靠事件面（Outbox / 已提交水位线，无空洞推进）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -170,6 +201,7 @@ capabilities:
 
   - id: quota-reclaim
     title: 配额预占的 TTL / 归属与安全回收
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -180,6 +212,7 @@ capabilities:
 
   - id: job-idempotency
     title: 外部作业的稳定执行幂等标识
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -190,6 +223,7 @@ capabilities:
 
   - id: network-egress-enforcement
     title: K8s 出站禁网的实测校验（策略接受 ≠ 数据面生效）
+    requires_multi_writer: false
     state: available
     evidence:
       - kind: contract
@@ -204,6 +238,7 @@ capabilities:
 
   - id: authority-uniqueness
     title: 控制面与任务板共享同一份权威状态（不写第二份任务状态）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -214,6 +249,7 @@ capabilities:
 
   - id: ownership-epoch
     title: 跨区域所有权代次（Ownership Epoch + 转移确认）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -226,6 +262,7 @@ capabilities:
 
   - id: partition-write-fencing
     title: 分区期间旧区域写入被 fence 拒绝
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
@@ -238,6 +275,7 @@ capabilities:
 
   - id: reliable-handoff
     title: 可靠交接（回执 + 代次 + 台面状态）
+    requires_multi_writer: true
     state: available
     evidence:
       - kind: contract
