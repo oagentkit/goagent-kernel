@@ -1,75 +1,21 @@
 package roundguard_test
 
-import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"os"
-	"path/filepath"
-	"slices"
-	"strconv"
-	"strings"
-	"testing"
-)
+import "go/ast"
 
-// ── 导出面计数引擎（判据在 exportbudget_test.go，这里只管「怎么数」）──
+// ── 导出面计数口径（判据在 exportbudget_test.go，这里是它的执行面）──
 //
 // 口径（什么算、什么不算）写在门禁文件的头注里——那里是**规则的声明面**，
-// 本文件是它的**执行面**。两者分开放的理由与本仓「声明面 / 执行面分离」同款：
+// 本文件是**规则怎么落地**。两者分开放的理由与本仓「声明面 / 执行面分离」同款：
 // 规则改在声明面，执行面不动；反过来，执行面被放松时，门禁文件里的自检用例
 // （TestCountingRules*）会当场变红。
 //
 // 为什么全走 go/ast 而不逐行看文本：import / 声明 / 字段 / 方法的书写形态远不止
 // 一种，逐行正则必然漏，且漏得毫无声响（与本仓 archcheck 当年同一个病）。
-
-// exportedSurface 实测一个目录下的导出面（总数 + 逐文件）。
-func exportedSurface(t *testing.T, dir string) (int, map[string]int) {
-	t.Helper()
-	files, err := productionGoFiles(dir)
-	if err != nil {
-		t.Fatalf("列生产文件失败：%v", err)
-	}
-	total := 0
-	perFile := make(map[string]int, len(files))
-	for _, path := range files {
-		fset := token.NewFileSet()
-		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-		if perr != nil {
-			t.Fatalf("解析 %s 失败：%v", path, perr)
-		}
-		n := countExportedSymbols(f)
-		perFile[filepath.Base(path)] = n
-		total += n
-	}
-	return total, perFile
-}
-
-// productionGoFiles 列目录下的**生产** .go 文件（排除 _test.go）。
 //
-// 排除 _test.go 是口径的一部分，不是实现细节：门禁数的是**交付面**（宿主
-// import 得到的符号），测试函数宿主 import 不到。
-func productionGoFiles(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		name := e.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		out = append(out, filepath.Join(dir, name))
-	}
-	slices.Sort(out)
-	return out, nil
-}
+// 包级模型（类型与方法声明的跨文件汇总）与 AST 辅助在 exportbudget_model_test.go。
 
 // countExportedSymbols 数一个文件里的导出符号数（口径见门禁文件头注）。
-func countExportedSymbols(f *ast.File) int {
+func countExportedSymbols(f *ast.File, m *packageModel) int {
 	n := 0
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
@@ -82,7 +28,8 @@ func countExportedSymbols(f *ast.File) int {
 				continue
 			}
 			// 导出方法：方法名导出 **且** 接收者类型名导出
-			//（未导出类型上的方法宿主 import 不到，不算交付面）。
+			//（未导出类型上的方法宿主 import 不到——除非它被**提升**进某个导出
+			// 类型，那一路在类型声明处按「提升方法」计，见 promotedMethods）。
 			if d.Name.IsExported() && ast.IsExported(receiverTypeName(d.Recv)) {
 				n++
 			}
@@ -92,7 +39,7 @@ func countExportedSymbols(f *ast.File) int {
 				case *ast.TypeSpec:
 					if s.Name.IsExported() {
 						n++
-						n += countExportedFields(s.Type)
+						n += m.countTypeMembers(s)
 					}
 				case *ast.ValueSpec:
 					for _, name := range s.Names {
@@ -107,18 +54,38 @@ func countExportedSymbols(f *ast.File) int {
 	return n
 }
 
-// countExportedFields 数一个导出结构体的导出字段数。
-func countExportedFields(expr ast.Expr) int {
-	st, ok := unwrapStruct(expr)
-	if !ok {
-		return 0
+// countTypeMembers 数一个导出类型的**成员面**。
+//
+// 结构体：导出具名字段 + 导出嵌入字段 + 提升进来的导出方法。
+// 接口：导出方法集 + 提升进来的导出方法。
+func (m *packageModel) countTypeMembers(ts *ast.TypeSpec) int {
+	switch t := ts.Type.(type) {
+	case *ast.StructType:
+		return m.countStructMembers(ts, t)
+	case *ast.InterfaceType:
+		return m.countInterfaceMembers(ts, t)
 	}
+	return 0
+}
+
+// countStructMembers 数导出结构体的成员面。
+func (m *packageModel) countStructMembers(ts *ast.TypeSpec, st *ast.StructType) int {
 	n := 0
+	promoted := map[string]bool{}
 	for _, field := range st.Fields.List {
 		if len(field.Names) == 0 {
-			// 嵌入字段：被嵌入类型的名字成为本包的名字（并把它的导出方法提升上来）。
-			if name := embeddedFieldName(field.Type); ast.IsExported(name) {
+			// 嵌入字段。
+			name := embeddedFieldName(field.Type)
+			if ast.IsExported(name) {
+				// 嵌入的**导出**类型：它的名字成为本包的导出名（+1）；它的导出方法
+				// 已在**它自己的声明处**计过 ⇒ 不重复计（否则同一个方法被数两次）。
 				n++
+				continue
+			}
+			// 嵌入的**未导出**类型：宿主拿不到那个类型，但它的**导出方法被提升**
+			// 进本结构体 ⇒ 宿主能调用 Outer.Promoted() ⇒ 属交付面。
+			for meth := range m.promotedMethods(name, map[string]bool{}) {
+				promoted[meth] = true
 			}
 			continue
 		}
@@ -128,94 +95,108 @@ func countExportedFields(expr ast.Expr) int {
 			}
 		}
 	}
+	// 本类型自己声明的导出方法**遮蔽**提升上来的同名方法（Go 规则：浅层赢）
+	// ⇒ 被遮蔽的那些不是新名字，不计。
+	for meth := range promoted {
+		if !m.methods[ts.Name.Name][meth] {
+			n++
+		}
+	}
 	return n
 }
 
-// unwrapStruct 取类型表达式底层的结构体（泛型要拆一层索引）。
-func unwrapStruct(expr ast.Expr) (*ast.StructType, bool) {
-	switch e := expr.(type) {
-	case *ast.StructType:
-		return e, true
-	case *ast.IndexExpr:
-		return unwrapStruct(e.X)
-	case *ast.IndexListExpr:
-		return unwrapStruct(e.X)
-	}
-	return nil, false
-}
-
-// receiverTypeName 取接收者类型名（剥指针、剥泛型索引）。
+// countInterfaceMembers 数导出**接口的方法集**。
 //
-// 跨包接收者（a.T）取不到本包的类型名 ⇒ 返回空串 ⇒ 不计入（那种方法不可能声明
-// 在本包文件里，但口径上要认得出来）。
-func receiverTypeName(recv *ast.FieldList) string {
-	if recv == nil || len(recv.List) == 0 {
-		return ""
+// 为什么接口方法必须计入：给导出接口加一个方法，宿主侧的实现方就被迫多实现
+// 一个 ⇒ **破坏性变更**。只数「接口类型本身」的话，这类改动对计数完全不可见
+// ⇒ 「精确计数」在一条增长路径上彻底失明。
+func (m *packageModel) countInterfaceMembers(ts *ast.TypeSpec, it *ast.InterfaceType) int {
+	n := 0
+	promoted := map[string]bool{}
+	for _, field := range it.Methods.List {
+		if len(field.Names) == 0 {
+			// 嵌入接口：其方法集被提升进本接口。
+			name := embeddedFieldName(field.Type)
+			if name != "" && !ast.IsExported(name) {
+				// 本包内的**未导出**接口：它的导出方法被提升 ⇒ 属交付面。
+				for meth := range m.promotedMethods(name, map[string]bool{}) {
+					promoted[meth] = true
+				}
+			}
+			// 导出的嵌入接口：其方法在**它自己的声明处**已计过（跨包嵌入的则不可
+			// 从本包 AST 解析 ⇒ 不计，属口径的已知边界）。
+			continue
+		}
+		for _, name := range field.Names {
+			if name.IsExported() {
+				n++
+			}
+		}
 	}
-	return baseTypeName(recv.List[0].Type)
+	for meth := range promoted {
+		if !m.methods[ts.Name.Name][meth] {
+			n++
+		}
+	}
+	return n
 }
 
-// baseTypeName 取类型表达式的名字（剥指针与泛型索引）。
-func baseTypeName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.StarExpr:
-		return baseTypeName(e.X)
-	case *ast.IndexExpr:
-		return baseTypeName(e.X)
-	case *ast.IndexListExpr:
-		return baseTypeName(e.X)
+// promotedMethods 列出某个类型经嵌入链**提升**上来的导出方法名。
+//
+// 「提升」= Go 的方法提升：外层类型嵌入内层类型后，内层的导出方法成为外层的
+// 方法。于是内层类型虽然未导出，宿主仍能通过外层（导出）类型调用它 ⇒ 属交付面。
+//
+// 遮蔽规则：浅层赢 ⇒ 合并深层结果时，已在浅层出现的名字不重复计。
+// visited 防环（畸形文件里可能出现自嵌入链）。
+func (m *packageModel) promotedMethods(typeName string, visited map[string]bool) map[string]bool {
+	out := map[string]bool{}
+	if typeName == "" || visited[typeName] {
+		return out
 	}
-	return ""
+	visited[typeName] = true
+	for name := range m.methods[typeName] {
+		out[name] = true
+	}
+	ts, ok := m.types[typeName]
+	if !ok {
+		return out
+	}
+	for _, inner := range embeddedTypeNames(ts.Type) {
+		if ast.IsExported(inner) {
+			// 导出的嵌入类型：其方法已在它自己的声明处计过 ⇒ 不重复计。
+			continue
+		}
+		for name := range m.promotedMethods(inner, visited) {
+			if !out[name] {
+				out[name] = true
+			}
+		}
+	}
+	return out
 }
 
-// embeddedFieldName 取嵌入字段的类型名（它同时是本包暴露出去的那个名字）。
-func embeddedFieldName(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.StarExpr:
-		return embeddedFieldName(e.X)
-	case *ast.SelectorExpr:
-		return e.Sel.Name
-	case *ast.IndexExpr:
-		return embeddedFieldName(e.X)
-	case *ast.IndexListExpr:
-		return embeddedFieldName(e.X)
+// embeddedTypeNames 列出一个类型（结构体或接口）里嵌入的类型名。
+func embeddedTypeNames(expr ast.Expr) []string {
+	var fields *ast.FieldList
+	switch t := expr.(type) {
+	case *ast.StructType:
+		fields = t.Fields
+	case *ast.InterfaceType:
+		fields = t.Methods
+	default:
+		return nil
 	}
-	return ""
-}
-
-// countSource 解析一段源码并数它的导出符号数（自检夹具的入口）。
-func countSource(t *testing.T, src string) int {
-	t.Helper()
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "fixture.go", src, parser.SkipObjectResolution)
-	if err != nil {
-		t.Fatalf("解析夹具源码失败：%v", err)
+	if fields == nil {
+		return nil
 	}
-	return countExportedSymbols(f)
-}
-
-// writeFile 写一个夹具文件。
-func writeFile(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("写 %s 失败：%v", path, err)
+	var out []string
+	for _, f := range fields.List {
+		if len(f.Names) != 0 {
+			continue // 具名字段不是嵌入
+		}
+		if name := embeddedFieldName(f.Type); name != "" {
+			out = append(out, name)
+		}
 	}
-}
-
-// formatPerFile 把逐文件计数排成一行（失败信息要能一眼看出是哪个文件变了）。
-func formatPerFile(perFile map[string]int) string {
-	names := make([]string, 0, len(perFile))
-	for name := range perFile {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	parts := make([]string, 0, len(names))
-	for _, name := range names {
-		parts = append(parts, name+"="+strconv.Itoa(perFile[name]))
-	}
-	return strings.Join(parts, " ")
+	return out
 }
