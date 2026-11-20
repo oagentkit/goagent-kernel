@@ -68,13 +68,41 @@ grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限|StepBudget|TurnB
 放在宿主侧的后果与本仓其它机制被推给宿主时完全同形：每个宿主各写一遍组合逻辑，
 而组合逻辑里恰好藏着必须全局一致的判定——
 
-- 同一个循环，在 A 宿主被算成「第 12 圈，超了」��在 B 宿主被算成「第 8 圈，还能转」；
+- 同一个循环，在 A 宿主被算成「第 12 圈，超了」、在 B 宿主被算成「第 8 圈，还能转」；
 - 同一段动作序列，在 A 宿主被判「重复」而在 B 宿主被判「正常推进」；
 - 一轮失败后能不能续跑，A 宿主放行、B 宿主拦下。
 
 两边都没写错，只是各判一套，且**没有任何机器能发现**。这与 `guardset` 面对的是
 同一类问题（守卫怎么装配）、与 `retryplan` 面对的是同一类问题（组合逻辑归内核，
 判定归各自机制）——故本包与它们同族。
+
+### 1.4 五家实现的实测对照（2026-11-21 克隆到本地逐行读）
+
+| 实现 | 上限维度 | 触顶处置 | 仍产出终答？ | 「停止 vs 失败」可区分？ | 无进展检测 | 重复调用检测 |
+|---|---|---|---|---|---|---|
+| `smhanov/agentloop`（Go，MIT，143★） | maxToolCalls(5) / maxSteps(2×5+2) | 工具预算：禁工具 + user 通知，要求模型用已有证据作答；maxSteps：`ErrBudgetExhausted` | 工具预算 ✅ / maxSteps ❌ | ✅（`StatusStopped` vs `StatusFailed`） | ❌ | ✅（连续同调用同输出；三档处置 + `Repetitive` 豁免） |
+| `openai/openai-agents-python`（21k★） | max_turns(10) | 抛 `MaxTurnsExceeded`，**除非装了 max-turn handler**（由 handler 产出合成输出） | 装了 handler ✅ / 没装 ❌ | ✅（异常 vs 正常返回） | ❌ | ❌ |
+| `pydantic/pydantic-ai`（21k★） | request_limit(50) / tool_calls_limit / input·output·total tokens / per-request tokens / cost_limit | 一律抛 `UsageLimitExceeded`（**硬**） | ❌ | ✅（异常） | ❌ | ❌ |
+| `huggingface/smolagents`（30k★） | max_steps(20) | `_handle_max_steps_reached()` → **单独再调一次模型**产出终答，步骤标 `AgentMaxStepsError`，state=`max_steps_error` | ✅（带错误标记） | ~（有错误标记，终答仍返回） | ❌（但有 `planning_interval`：**周期性强制重规划**） | ❌ |
+| `anthropics/claude-agent-sdk-python`（8.6k★） | max_turns | `error_max_turns`（错误） | ❌ | ✅（`terminal_reason`：completed / max_turns / aborted_streaming / aborted_tools） | ❌ | ❌ |
+
+**三条跨实现结论**：
+
+1. **上限触顶的处置没有共识**——五家有三种口径：硬失败（pydantic-ai / Claude）、
+   强制收尾（agentloop 工具预算 / OpenAI handler / smolagents 终答化）、失败但仍留
+   终答（smolagents）。⇒ 本包**不把「软 / 硬」写死成两个字段的语义**（r1 那版是
+   过拟合到 agentloop 一家），改为「**额度维度（事实）+ 处置口径（可配）**」（§6.1.1）。
+2. **「回合」是国际共识词，且定义逐字同义**——OpenAI 的原话是「A turn is defined as
+   one AI invocation (including any tool calls that might occur)」；pydantic-ai 的
+   `request_limit` 注释说它「bounds the number of turns of the agent loop」；
+   agentloop 的 `Steps` 注释说「one step = one inference plus its tool executions」。
+   三家都指**模型往返**。⇒ 只有本仓的 `eventbus` 用 turn 指编排会话运行 ⇒ §3 的三分
+   表是必要的，且「回合」这个中文名与国际实现对得上。
+3. **无进展（震荡 / 漂移 / 空转 / 错误螺旋）检测：五家全是空白**——逐仓 grep
+   `oscillat|stagnat|no_progress|drift`（排除测试与 schema / 时钟语境）命中 0 处；
+   唯一的循环级检测是 agentloop 的**单一形态**重复调用检测。⇒ 本包机制三是
+   **没有对照实现可抄**的那一块：没有外部先例可反查，风险只能靠自带的反向验证用例
+   兜住（§10）。
 
 ## 2. 目标与非目标
 
@@ -114,6 +142,10 @@ grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限|StepBudget|TurnB
 | <https://codex.danielvaughan.com/2026/09/06/agentic-cloud-engineering-graph-loop-zero-trust-harness-codex-cli> | 图/循环/零信任三抽象；recovery loop 的 95.0%→12.9% 消融 |
 | <https://www.wqlblog.cn/posts/Pi_Agent_Core_%e6%9e%b6%e6%9e%84%e5%89%96%e6%9e%90/> | Pi 双层循环与三层退出条件 |
 | <https://github.com/smhanov/agentloop>（MIT，Go 1.21+） | **Go 的模型侧 loop 库实读**（2026-11-21 克隆到本地逐行读）：软硬两级预算与强制收尾、重复检测三档处置、中止尾部配对修复、压缩的临时视图替换、导出 API 面上限门禁 —— 本设计 §6.1.1 / §7.5 / §13 的主要依据 |
+| <https://github.com/openai/openai-agents-python> | **源码实读**：turn 的定义（one AI invocation + 其工具调用）、`DEFAULT_MAX_TURNS=10`、max-turn handler 的合成输出路径 |
+| <https://github.com/pydantic/pydantic-ai> | **源码实读**：`UsageLimits` 多维限额（request / tool_calls / 三种 token / per-request / cost）、`check_before_request` 的调用前检查、`request_limit` 的「回合 ≠ 请求数」口径 |
+| <https://github.com/huggingface/smolagents> | **源码实读**：`max_steps` 默认 20 与触顶后的 `_handle_max_steps_reached`（再调一次模型出终答 + 标错误）、`planning_interval` 的周期性强制重规划 |
+| <https://github.com/anthropics/claude-agent-sdk-python> | **源码实读**：`max_turns` 选项、`error_max_turns` 子类型、`terminal_reason`（completed / max_turns / aborted_streaming / aborted_tools） |
 
 ## 3. 命名：必须先解决的一个撞词
 
@@ -135,6 +167,14 @@ grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限|StepBudget|TurnB
 两个同形不同义的名字共用一个词——正是本仓包头反复声明要避免的「同词不同域」，
 而那种撞车在本仓**已被证明会真实发生**（`delegate.Status.failed` 与
 `contract.StatusFailed` 的同形异义，issue #358 用类型别名处理）。
+
+**外部印证（2026-11-21 实读三家源码）**：OpenAI Agents SDK 的原话是「A turn is
+defined as one AI invocation (including any tool calls that might occur)」；
+pydantic-ai 的 `request_limit` 注释说它「bounds the number of turns of the agent
+loop」；agentloop 的 `Steps` 注释说「one step = one inference plus its tool
+executions」——**三家指的全是「模型往返」，与我们定的「回合」逐字同义**。
+⇒ 国际实现里 `turn` / `step` 都指模型往返；**只有本仓的 `eventbus` 用 turn 指编排
+会话运行**。这既说明三分表是必要的，也说明中文「回合」与国际实现对得上。
 
 **备选（评审时可推翻）**：`modelturn`（包名长但绝对无歧义）、`iterationguard`
 （与 Go 1.23+ 的 `iter` 包名族太近，不取）。**本设计推荐 `roundguard`**。
@@ -195,10 +235,11 @@ func Decide(s Snapshot, b Budget, cfg Config) Decision
 
 1. **结局终局优先**：模型给了终答 / 交接 / 报错 / 中止 ⇒ 以结局为准，
    **不被预算打断**（模型说完了就是完了——哪怕刚好撞上上限）。
-2. 否则（结局要求继续）：回合数**硬上限**已用尽 ⇒ `ReasonBudgetExhausted`。
-3. 否则：工具调用**软上限**已用尽 ⇒ `ReasonForcedFinal`（转强制收尾）。
-4. 否则：无进展命中 ⇒ `ReasonStalled`（按档位决定 `Continue`）。
-5. 否则：`Continue=true`，照常进入下一回合。
+2. 否则（结局要求继续）：**额度用尽** ⇒ 按 `Budget.Policy` 处置——
+   `PolicyForceFinal` ⇒ `ReasonForcedFinal`（转强制收尾，产物仍可用）；
+   `PolicyFailFast` ⇒ `ReasonBudgetExhausted`（失败型收敛）。
+3. 否则：无进展命中 ⇒ `ReasonStalled`（按档位决定 `Continue`）。
+4. 否则：`Continue=true`，照常进入下一回合。
 
 ⚠️ `Continue=false` 有**三种含义**，靠 `Reason` 区分，宿主不得一律当失败处理：
 `ReasonFailed`/`ReasonNoOutcome`/`ReasonAborted`/`ReasonBudgetExhausted` 是
@@ -221,8 +262,8 @@ const (
     ReasonFailed           Reason = "failed"             // 模型调用或工具执行明确报错 → **失败型**收敛
     ReasonNoOutcome        Reason = "no_outcome"         // 本回合无任何产出 → **失败型**收敛（保守侧）
     ReasonAborted          Reason = "aborted"            // 被中止（用户取消 / 停机 / 接管）→ **失败型**收敛
-    ReasonBudgetExhausted  Reason = "budget_exhausted"   // 回合数**硬上限**耗尽 → **失败型**收敛
-    ReasonForcedFinal      Reason = "forced_final"       // 工具调用**软上限**耗尽 → 强制收尾（不是失败）
+    ReasonBudgetExhausted  Reason = "budget_exhausted"   // 额度用尽且按**失败**口径处置 → **失败型**收敛
+    ReasonForcedFinal      Reason = "forced_final"       // 额度用尽但按**强制收尾**口径处置 → 产物仍可用
     ReasonStalled          Reason = "stalled"            // 无进展 → **温和叫停**（不是失败）
 )
 
@@ -333,17 +374,18 @@ func Classify(o Outcome) Route
 ```go
 // Budget 回合预算（宿主给；内核不解释工具标识的含义）。
 //
-// **软硬两级 + 按工具一层**——三者耗尽后的处置完全不同，混成一个上限就会
-// 把「逼出答案」与「腰斩答案」混为一谈（详见 §6.1 的取舍说明）。
+// **额度维度（事实）与处置口径（策略）分开**——前者各家一致，后者没有共识
+// （详见 §6.1.1 与 §1.4 的五家实测对照）。
 type Budget struct {
-    // MaxRounds 回合数**硬上限**（0 = 不限）。耗尽 ⇒ 失败型收敛（ReasonBudgetExhausted）。
+    // MaxRounds 回合数上限（0 = 不限）。
     MaxRounds int
-    // MaxToolCalls 工具调用**软上限**（0 = 不限）。耗尽 ⇒ **强制收尾**
-    //（ReasonForcedFinal）：不再给工具，要求模型用已收集的证据给出终答。
+    // MaxToolCalls 工具调用总数上限（0 = 不限）。
     MaxToolCalls int
     // MaxPerTool 单工具调用上限（开放键；值为 0 = 该工具不限）。
     // 工具标识是宿主词表——内核只做键存在性与计数判定，不解释它是哪个工具。
     MaxPerTool map[string]int
+    // Policy 额度用尽后的处置口径（零值 = PolicyForceFinal）。
+    Policy StopPolicy
 }
 
 // Validate 校验预算声明（装配期用）。非法值一律报错，不静默降级为「不限」。
@@ -356,28 +398,45 @@ func (b Budget) Validate() error
 宁可装配期报错。另：`MaxPerTool` 的**键不得为空串**（空标识无法计数，等于声明了
 一个无法判的上限）。
 
-### 6.1.1 软硬两级为什么要分开（本设计最重要的一处取舍）
+### 6.1.1 额度维度 vs 处置口径（本设计最重要的一处取舍）
 
-**证据（2026-11-21 实读 smhanov/agentloop 的 loop.go）**：该实现把两个上限的处置
-分成两档——
+**先分清两件事**：
 
-- **工具预算耗尽** ⇒ 不再给工具（`llmhub.NoToolChoice`）+ 追加一条 user 角色通知，
-  要求模型「用已收集的证据给出终答，不要再叙述你的下一步计划」。这一步**仍然算完成**
-  （它的 `StatusCompleted` 注释明写「including the forced answer delivered under
-  NoToolChoice after the tool budget ran out」）。
-- **推理轮次天花板（MaxSteps）触顶** ⇒ 才是 `ErrBudgetExhausted`（失败）。
+- **额度维度（事实）**：跑了多少回合 / 多少工具调用 / 某工具调了多少次。
+  这一层各家**完全一致**——都是计数器 + 「用尽了吗」。
+- **处置口径（策略）**：用尽之后怎么办——硬失败，还是转强制收尾（拿已有证据作答）？
+  这一层**五家没有共识**（§1.4 实测出三种口径）。
 
-**为什么这个区分是对的**：预算的目的是**逼出答案**，不是**丢弃已采集的证据**。硬砍的
-代价是：模型正要收束的那一刻被腰斩，前面几十次工具调用的成果全部白费，且宿主拿到的
-是一个「失败」而不是一个「有依据的结论」。
+**证据（2026-11-21 逐仓实读）**：pydantic-ai 与 Claude 是硬失败；agentloop 把工具
+预算做成强制收尾（禁工具 + user 通知 + 要求模型用已有证据作答，那一步仍算完成）；
+OpenAI 默认抛 `MaxTurnsExceeded`，但**装了 max-turn handler 就由 handler 产出
+合成输出**；smolagents 触顶后**单独再调一次模型**产出终答、同时把步骤标成错误。
 
-**本设计据此**：
+**为什么不能把「软 / 硬」写死成两个字段的语义**：r1 曾把「工具预算 = 软（强制收尾）/
+回合上限 = 硬（失败）」写成固定语义——那是**过拟合到 agentloop 一家**：同一份代码在
+pydantic-ai 宿主里就是硬失败。⇒ 本设计改为「**额度维度（事实）+ 处置口径（可配）**」：
 
-| 上限 | 耗尽后的走向 | 结局值 | 失败型？ |
-|---|---|---|---|
-| `MaxToolCalls`（软） | 转强制收尾：禁工具、要求模型用已有证据作答 | `ReasonForcedFinal` | 否 |
-| `MaxRounds`（硬） | 失败型收敛 | `ReasonBudgetExhausted` | 是 |
-| `MaxPerTool[id]` | 该次调用被拒（并回灌一条失败结果给模型，配对不破） | 工具级拒绝 | 否 |
+```go
+// StopPolicy 额度用尽后的处置口径。
+type StopPolicy string
+
+const (
+    // PolicyForceFinal 强制收尾：不再给工具（模型面），要求模型用已收集的
+    // 证据给出终答；产物仍然可用（不是失败）。
+    PolicyForceFinal StopPolicy = "force_final"
+    // PolicyFailFast 直接失败：本次运行以失败收场。
+    PolicyFailFast StopPolicy = "fail_fast"
+)
+```
+
+**缺省 = `PolicyForceFinal`**：腰斩最接近答案的那一刻，代价是丢弃全部已采集的证据
+（这正是 r1 认定的错）。宿主可显式改成 `PolicyFailFast`（并留痕）。
+
+⚠️ **处置口径不按额度维度分别配置**——那会让「同一个上限在不同宿主得到不同处置」
+变成常态，而那正是本包存在的理由（§1.3）。一个 policy 管全部额度 ⇒ 跨宿主口径一致。
+
+⚠️ **处置口径属判定语义，归内核**；但「能不能强制收尾」最终取决于模型面有没有那个
+接缝（能不能禁工具再问一次）——宿主若没有该接缝，只能用 `PolicyFailFast`。
 
 **强制收尾那一步不可否决**：内核判出的停优先于宿主的否决——否则宿主可以在最后一刻
 把强制收尾翻回「继续调工具」，预算就形同虚设。
@@ -401,6 +460,12 @@ func (m *Meter) Tool(toolID string) int      // 记一次工具调用并返回�
 func (m *Meter) Used() Used                  // 导出用量快照
 ```
 
+⚠️ **回合数 ≠ 模型请求数**：本包的 `Rounds` 数的是**回合**（一次模型往返），
+不是「发往 provider 的请求数」——fallback 重试、provider 侧重试、续跑请求都可能让
+请求数大于回合数。pydantic-ai 的 `request_limit` 注释明确写了这条区分（"bounds the
+number of turns of the agent loop, not the number of requests sent to the provider"）
+⇒ 口径必须写死，否则两个宿主会把同一个数字当两件事用。
+
 ### 6.3 判定面（**调用前**检查）
 
 ```go
@@ -409,9 +474,9 @@ type Limit string
 
 const (
     LimitNone      Limit = "none"        // 未因上限叫停
-    LimitRounds    Limit = "rounds"      // 回合数硬上限耗尽 ⇒ 失败型收敛
-    LimitToolCalls Limit = "tool_calls"  // 工具调用软上限耗尽 ⇒ 转强制收尾
-    LimitPerTool   Limit = "per_tool"    // 单工具调用上限耗尽 ⇒ 该次调用被拒
+    LimitRounds    Limit = "rounds"      // 回合数额度用尽（处置按 Budget.Policy）
+    LimitToolCalls Limit = "tool_calls"  // 工具调用总额度用尽（处置按 Budget.Policy）
+    LimitPerTool   Limit = "per_tool"    // 单工具额度用尽 ⇒ 该次调用被拒
     LimitStalled   Limit = "stalled"     // 无进展（由 Detect 产出，见 §7）
 )
 
@@ -431,6 +496,9 @@ func CheckToolCalls(b Budget, used Used) Verdict
 // CheckTool 判定某工具的下一次调用能否进行（**工具执行前**检查；单工具上限）。
 func CheckTool(b Budget, used Used, toolID string) Verdict
 ```
+
+**三个 `Check*` 只判「额度用尽没有」这个事实**，不判处置——处置由 `Budget.Policy`
+在 `Decide` 里决定（§4.2）。`Verdict.Limit` 是**命中的额度维度**。
 
 **为什么必须调用前检查**：调用后检查意味着**最后一次昂贵调用已经发生**。
 本包的三个 `Check*` 都是**纯函数**（输入用量快照，输出判定），宿主在两个时点各调：
@@ -453,11 +521,12 @@ func CheckTool(b Budget, used Used, toolID string) Verdict
 
 | 情形 | 判据 | 理由（与 `retryplan` 同族的取舍） |
 |---|---|---|
-| 回合数硬上限耗尽 | `LimitRounds` | 续跑会再撞同一个上限——「没有幂等键就不许猜着重试」的同款保守侧 |
+| 回合数上限用尽 | `LimitRounds` | 续跑会再撞同一个上限——「没有幂等键就不许猜着重试」的同款保守侧 |
 | 无进展 | `LimitStalled` | 续跑会再转同一段死循环 |
 
-⚠️ **工具软上限耗尽（`LimitToolCalls`）不在此表**：它的处置是**强制收尾**（把已有证据
-结算成一个终答），不是「不许续跑」——本回合仍会再走一次模型调用，只是不再给工具。
+⚠️ **处置口径决定这条表的适用范围**：`PolicyFailFast` 下「额度用尽」一律落到本表；
+`PolicyForceFinal` 下，`LimitRounds`/`LimitToolCalls` 走的是**强制收尾**（本回合
+仍会再走一次模型调用，只是不再给工具），只有 `LimitStalled` 才真的「不许续跑」。
 
 其余情形（尤其 `ReasonFailed`）**本包不判**「能不能续跑」——那是
 `toolfail`（该不该重试）+ `retryplan`（原样重发 / 幂等键重放）的活。
@@ -487,7 +556,15 @@ type Observation struct {
     // 也会把「同一个轮询工具连续返回不同状态」误判成失控（而轮询类动作
     // 本就靠输出变化表达进展）。
     ResultChanged bool
-    // Exempt 本回合不参与重复检测（轮询 / 查状态类动作：输出变了才是进展信号）。
+    // Exempt 本回合**不参与无进展判定**（重复计数与空转计数都不参与）。
+    //
+    // 两个已知的必须豁免的场景：
+    // ① 轮询 / 查状态类动作——「输出变了才是进展信号」（agentloop 的
+    //    `Repetitive` 标记同款）；
+    // ② **刻意的规划步**——smolagents 的 `planning_interval` 会每隔 N 步插一个
+    //    规划回合，而规划回合**必然零工具调用**。按「连续 k 回合零工具且未收敛」
+    //    的空转判据，它会被误判成停滞（`planning_interval=1` 时必然误判）。
+    //    宿主把这类回合标 Exempt 即可豁免。
     Exempt bool
 }
 ```
@@ -614,6 +691,7 @@ func Detect(obs []Observation, cfg Config) Finding
 | **模型侧 loop 库**（agentloop 等） | 驱动整个循环（调模型 / 执行工具 / 回灌） | **判据层**，不驱动 | 见 §13：两者不竞争，是**驱动层 + 判据层**的上下关系 |
 | **压实：视图替换 vs 真源替换** | —— | 本仓 `budget.Compact` 是**真源替换 + 原文归档句柄** | 模型侧库（agentloop 的 Compactor / RebuildContext）通常是**临时视图替换**（真源保留，只换发给模型的那份）。两者可共存：视图替换可回看，真源替换省内存（原文已归档） |
 | **强制收尾这一步的否决权** | —— | **内核判出的停不可否决** | 与 agentloop 的硬规则同构：强制收尾步「veto or not」都结束。否则宿主能在最后一刻翻回「继续调工具」，预算形同虚设 |
+| **限额声明面** | —— | `budget`（估算）与 `roundguard`（约束）**分属两包** | pydantic-ai 把多种限额聚在一个 `UsageLimits` 类型里（含「请求前预估拦截」开关 `count_tokens_before_request`）。拆分在本仓的代价是宿主要装配两个对象，收益是「估」与「判」的口径不会互相污染；跨实现看**限额类型聚合是主流**（pydantic-ai），本仓的拆分是一个**可被推翻的取舍** |
 | **跨进程回合账** | —— | **不提供** | 本包的 `Meter` 是**进程内**的。跨进程续跑时回合数**不随之累计**——跨进程累计需要存储形态，那是宿主资产。要跨进程累计的宿主须自行落库并把 `Used` 灌回本包（外部实现同样不做：agentloop 全程进程内） |
 
 ## 9. 登记面与门禁（先改声明面，再写代码）
@@ -743,12 +821,14 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 | 漂移检测 | `page=1/2/3`（`Normalized` 同）⇒ `ShapeDrift` | 用 `Fingerprint` 代替 `Normalized` 比较 ⇒ 红 |
 | 错误螺旋 | 三连 `Failed` ⇒ `ShapeErrorSpiral` | 把它排在重复之后 ⇒ 红（次序即语义） |
 | 空转检测 | 三回合零工具且未收敛 ⇒ `ShapeIdle` | 去掉 `Settled` 条件 ⇒ 红（会把正常回合判空转） |
-| 组合结论 | 回合硬上限超限 ⇒ `ReasonBudgetExhausted`+`Limit=LimitRounds`；命中停滞 ⇒ `ReasonStalled`+`Limit=LimitStalled`；**结局终局优先于预算**（`Completed` 且已超限 ⇒ `ReasonCompleted`） | 去掉「终局优先」分支 ⇒ 红 |
+| 组合结论 | 回合额度用尽 ⇒ 按 Policy 判 `ReasonForcedFinal`/`ReasonBudgetExhausted`+`Limit=LimitRounds`；命中停滞 ⇒ `ReasonStalled`+`Limit=LimitStalled`；**结局终局优先于预算**（`Completed` 且已超限 ⇒ `ReasonCompleted`） | 去掉「终局优先」分支 ⇒ 红 |
 | 软硬两级 | 工具软上限耗尽 ⇒ `Limit=LimitToolCalls` 且**不判失败**（`Reason.IsFailure()==false`）；回合硬上限耗尽 ⇒ `ReasonBudgetExhausted` 且 `IsFailure()==true` | 把两者合并成一个上限 ⇒ 红 |
 | 失败/温和可区分 | `ReasonForcedFinal`/`ReasonStalled` ⇒ `IsFailure()==false`；`ReasonFailed`/`ReasonAborted`/`ReasonNoOutcome`/`ReasonBudgetExhausted` ⇒ `IsFailure()==true` | 让 `IsFailure` 对全部取值返回 true ⇒ 红 |
 | 处置分档 | 首次命中 ⇒ `Warn=true` 且 `Stalled=false`；再犯 ⇒ `Stalled=true` | 让首次命中直接 `Stalled=true` ⇒ 红 |
 | 进展不打断 | 连续同指纹但 `ResultChanged=true` ⇒ **不判重复** | 去掉 `ResultChanged` 打断 ⇒ 红 |
-| 豁免面 | `Exempt=true` 的回合不参与连续计数 | 去掉豁免 ⇒ 红 |
+| 豁免面 | `Exempt=true` 的回合既不参与重复计数、也不参与空转判定 | 让豁免只对重复生效 ⇒ 红 |
+| 处置口径分流 | `PolicyForceFinal` ⇒ 超限判 `ReasonForcedFinal`（`IsFailure()==false`）；`PolicyFailFast` ⇒ 判 `ReasonBudgetExhausted`（`IsFailure()==true`） | 让两种 policy 走同一条分支 ⇒ 红 |
+| 回合数口径 | `Used.Rounds` 数的是**回合**不是 provider 请求数（同一个值两种解释） | 把 `Rounds` 改成记请求数 ⇒ 红（口径即契约） |
 
 ### 10.2 其余门禁
 
@@ -768,21 +848,27 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 ```go
 // —— 宿主侧（模型面）：内核不调模型，这段在宿主仓 ——
 b := roundguard.Budget{
-    MaxRounds:    40,                              // 硬上限：回合数天花板
-    MaxToolCalls: 20,                              // 软上限：工具调用预算
+    MaxRounds:    40,                              // 回合数上限
+    MaxToolCalls: 20,                              // 工具调用总数上限
     MaxPerTool:   map[string]int{"send_email": 2}, // 单工具上限
+    Policy:       roundguard.PolicyForceFinal,     // 缺省即此；改 FailFast 即失败即止
 }
 cfg := roundguard.Config{}
 meter := roundguard.NewMeter()
 var obs []roundguard.Observation
 
 for {
-    // ① 模型调用前：回合硬上限 ⇒ 真失败（IsFailure()==true）
+    // ① 模型调用前：回合上限用尽？⇒ 按 Policy 处置
     if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {
+        if b.Policy == roundguard.PolicyForceFinal {
+            // 软：不再给工具，让模型用已有证据作答（还需再走一次模型调用）
+            return forceFinal(meter.Used(), v)
+        }
+        // 硬：失败即止
         return finish(roundguard.Decision{Reason: roundguard.ReasonBudgetExhausted, Limit: v.Limit})
     }
 
-    // ② 模型调用前：工具软上限 ⇒ 转入**强制收尾**（禁工具，要求模型用已有证据作答）
+    // ② 模型调用前：工具调用上限用尽？⇒ 同样按 Policy 处置（转强制收尾）
     forceFinal := !roundguard.CheckToolCalls(b, meter.Used()).Allowed
     resp := model.Call(ctx, msgs, tools, optNoTools(forceFinal)) // 宿主调模型
     meter.Round()
@@ -838,8 +924,10 @@ for {
 | 4 | `Outcome.Completed` 与 `ToolCalls>0` 同时成立时 | 「要工具」优先（§5.3） | 终答优先（会让未执行的工具被吞） |
 | 5 | `Config.Window` / `Repeat` 缺省值 | 6 / 3 | 8 / 3（更钝）/ 4 / 2（更敏） |
 | 6 | 跨进程回合累计 | **不做**（§8 末条；外部实现同样全程进程内） | 做（需新增存储面契约，范围显著变大） |
-| 7 | 回合预算的**缺省值** | 不设缺省（全 0 = 不限，交给宿主显式声明） | 设缺省（agentloop 的缺省是 `MaxToolCalls=5`、`MaxSteps=2×5+2=12`） |
+| 7 | 额度用尽后的**缺省处置口径** | `PolicyForceFinal`（腰斩最接近答案的那一刻，代价最大） | `PolicyFailFast`（pydantic-ai / Claude 的主流口径：失败即止） |
 | 8 | 导出 API 面上限 | **设门禁**（见 §13 的抄法） | 不设（导出面随实现自由生长） |
+| 9 | 处置口径是否**按额度维度分别配置** | **不配置**（一个 policy 管全部额度 ⇒ 跨宿主口径一致） | 允许分别配置（更灵活，但「同一上限不同宿主不同处置」的风险回来了） |
+| 10 | 额度维度的**缺省值** | 不设缺省（全 0 = 不限，交给宿主显式声明） | 设缺省（agentloop 的缺省是 `MaxToolCalls=5`、`MaxSteps=2×5+2=12`） |
 
 ## 13. 与模型侧 loop 库的关系（2026-11-21 补）
 
@@ -872,6 +960,18 @@ for {
 
 ⇒ 宿主用 agentloop 做驱动、用 roundguard 做判据，**两层不重复**：库的硬上限与
 强制收尾是它的实现，我们的判据是可替换的那一层。
+
+**另三家的接缝**（同一套判据接不同实现，宿主按自己用的那家接线即可）：
+
+| 实现 | 它提供的接缝 | 本包对应的判定 | 备注 |
+|---|---|---|---|
+| OpenAI Agents SDK | `max_turns` + **max-turn handler**（handler 产出合成输出） | `Budget.Policy=PolicyForceFinal` 的等价物 | handler 是宿主可插拔的兜底，与我们的 policy 是同一件事的两种放法 |
+| OpenAI Agents SDK | `RunHooks`（lifecycle 回调） | `Classify` / `Decide` | 与 agentloop 的 Hooks 同构 |
+| pydantic-ai | `UsageLimits`（request / tool_calls / 三种 token / per-request / cost） | 只接**次数**维度（`MaxRounds`/`MaxToolCalls`/`MaxPerTool`） | token 与 cost 维度归本仓 `budget`/`cost`；它的 `check_before_request` 与我们的「调用前检查」同形 |
+| pydantic-ai | `request_limit` 的口径 | `Used.Rounds`（回合 ≠ 请求数） | §6.2 的口径条款即抄它 |
+| smolagents | `_handle_max_steps_reached()`（触顶后再调一次模型出终答） | `PolicyForceFinal` 的第二种实现 | 差别：它把该步标成错误（产物可用但带错误标记） |
+| smolagents | `planning_interval`（周期性强制重规划） | `Observation.Exempt` 的第二个豁免场景 | §7.1 的真冲突：规划步零工具调用，会被空转判据误伤 |
+| Claude Agent SDK | `max_turns` + `terminal_reason` | `LimitRounds` + `Reason` 词表 | 它是纯硬口径（`error_max_turns`），对应我们的 `PolicyFailFast` |
 
 **另抄一条工程做法——导出 API 面上限门禁**：agentloop 用 `apibudget_test.go` 把三个
 包的**导出符号总数**钉在天花板（引入时实测 196 = core 112 + search 51 + bash 33，
