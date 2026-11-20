@@ -2,8 +2,9 @@
 //
 // # 为什么要有 Apply
 //
-// 五个面各自提交 ⇒ 「任务做完了但没留痕」「留痕了但没做完」两类半截状态
-// 结构性地可能。Apply 把五个面的变更收进**同一次提交**，失败即作废整批
+// 本文件覆盖的这几张面（任务 / 副作用 / 快照 / 事件 / 下游栅栏）各自提交 ⇒
+// 「任务做完了但没留痕」「留痕了但没做完」两类半截状态结构性地可能。
+// Apply 把各面的变更收进**同一次提交**，失败即作废整批
 // （即使调用方吞掉了内层的错误）。
 //
 // # 三条最容易踩的坑（用例逐条钉住）
@@ -39,10 +40,11 @@ func appCtx(t *testing.T) context.Context {
 	return ctx
 }
 
-// TestApplyCommitsAllFacesAtomically 五个面的变更落进**同一次提交**。
+// TestApplyCommitsAllFacesAtomically 本用例覆盖的这几张面（任务 / 副作用 /
+// 快照 / 事件 / 下游栅栏）的变更落进**同一次提交**。
 //
-// 判据：提交后五面都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部不生效
-// （见下面两条用例）。
+// 判据：提交后这几张面都读得到（一次提交 ⇒ 全部生效），且任一面失败则全部
+// 不生效（见下面两条用例）。
 func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 	ctx := appCtx(t)
 	s := openStore(t)
@@ -80,7 +82,7 @@ func TestApplyCommitsAllFacesAtomically(t *testing.T) {
 		t.Fatalf("Apply 失败: %v", err)
 	}
 
-	// 五个面都读得到（⇒ 五面变更同生共死）。
+	// 本用例覆盖的这几张面都读得到（⇒ 变更同生共死）。
 	tasks, err := s.Board().List(ctx)
 	if err != nil {
 		t.Fatalf("读任务失败: %v", err)

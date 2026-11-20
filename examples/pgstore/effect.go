@@ -132,7 +132,7 @@ func (s *EffectStore) nowIn(ctx context.Context, tx pgx.Tx) (time.Time, error) {
 // **复用它**——不新开事务、**也不提交**（提交权归放 tx 的那一方）。否则照旧
 // 自己开一个（自开自提交）。
 //
-// 这一处改动让四个面全部支持跨面原子提交：Apply 开一个 tx 塞进 ctx，
+// 这一处改动让门面暴露的各个面全部支持跨面原子提交：Apply 开一个 tx 塞进 ctx，
 // 各面方法经 withinTx/withinTx2/withinTx3 → runTx 拿到同一个 tx ⇒
 // 跨面变更落进同一次提交。
 //
