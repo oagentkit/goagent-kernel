@@ -227,7 +227,7 @@ type Decision struct {
     Used     Used   // 判定时的用量快照（留痕用）
 }
 
-// Decide 合成一条结论：结局 → 硬上限 → 软上限 → 无进展。
+// Decide 合成一条结论：结局 → 额度用尽（按 Budget.Policy 处置）→ 无进展。
 func Decide(s Snapshot, b Budget, cfg Config) Decision
 ```
 
@@ -285,7 +285,7 @@ func (r Reason) IsFailure() bool {
 }
 ```
 
-**为什么把「强制收尾」「硬上限」「无进展」也放进结局词表**：它们不是模型的语义，
+**为什么把「强制收尾」「额度用尽」「无进展」也放进结局词表**：它们不是模型的语义，
 是内核判出来的停法；混进同一张表，宿主才能用**一张词表**判「这一回合怎么结束的」，
 而不用再分「模型说的」与「内核说的」两套。
 
@@ -447,7 +447,7 @@ const (
 // Used 当前用量（回合数 + 工具调用总数 + 按工具的调用次数）。
 type Used struct {
     Rounds    int
-    ToolCalls int            // 工具调用总数（软上限用）
+    ToolCalls int            // 工具调用总数（MaxToolCalls 额度用）
     Tools     map[string]int // 按工具的调用次数（单工具上限用）
 }
 
@@ -487,10 +487,10 @@ type Verdict struct {
     Detail  string  // 机械留痕（命中的工具标识等）；**展示文案归宿主**
 }
 
-// CheckRounds 判定下一回合能否开始（**模型调用前**检查；硬上限）。
+// CheckRounds 判定下一回合能否开始（**模型调用前**检查；回合数额度）。
 func CheckRounds(b Budget, used Used) Verdict
 
-// CheckToolCalls 判定本回合还能不能再调工具（**模型调用前**检查；软上限）。
+// CheckToolCalls 判定本回合还能不能再调工具（**模型调用前**检查；工具调用总额度）。
 func CheckToolCalls(b Budget, used Used) Verdict
 
 // CheckTool 判定某工具的下一次调用能否进行（**工具执行前**检查；单工具上限）。
@@ -822,7 +822,7 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 | 错误螺旋 | 三连 `Failed` ⇒ `ShapeErrorSpiral` | 把它排在重复之后 ⇒ 红（次序即语义） |
 | 空转检测 | 三回合零工具且未收敛 ⇒ `ShapeIdle` | 去掉 `Settled` 条件 ⇒ 红（会把正常回合判空转） |
 | 组合结论 | 回合额度用尽 ⇒ 按 Policy 判 `ReasonForcedFinal`/`ReasonBudgetExhausted`+`Limit=LimitRounds`；命中停滞 ⇒ `ReasonStalled`+`Limit=LimitStalled`；**结局终局优先于预算**（`Completed` 且已超限 ⇒ `ReasonCompleted`） | 去掉「终局优先」分支 ⇒ 红 |
-| 软硬两级 | 工具软上限耗尽 ⇒ `Limit=LimitToolCalls` 且**不判失败**（`Reason.IsFailure()==false`）；回合硬上限耗尽 ⇒ `ReasonBudgetExhausted` 且 `IsFailure()==true` | 把两者合并成一个上限 ⇒ 红 |
+| 处置口径分流 | 同一额度用尽：`PolicyForceFinal` ⇒ `ReasonForcedFinal`（`IsFailure()==false`）；`PolicyFailFast` ⇒ `ReasonBudgetExhausted`（`IsFailure()==true`） | 让两种 policy 走同一条分支 ⇒ 红 |
 | 失败/温和可区分 | `ReasonForcedFinal`/`ReasonStalled` ⇒ `IsFailure()==false`；`ReasonFailed`/`ReasonAborted`/`ReasonNoOutcome`/`ReasonBudgetExhausted` ⇒ `IsFailure()==true` | 让 `IsFailure` 对全部取值返回 true ⇒ 红 |
 | 处置分档 | 首次命中 ⇒ `Warn=true` 且 `Stalled=false`；再犯 ⇒ `Stalled=true` | 让首次命中直接 `Stalled=true` ⇒ 红 |
 | 进展不打断 | 连续同指纹但 `ResultChanged=true` ⇒ **不判重复** | 去掉 `ResultChanged` 打断 ⇒ 红 |
@@ -955,7 +955,7 @@ for {
 |---|---|---|
 | `AfterGenerate`（`Finish` 可翻转） | `Classify`（回合结局） | 判出的 `Continue=false` ⇒ 让 hook 结束本回合 |
 | `AfterToolBatch`（`Skip` ⇒ 优雅停止） | `Decide`（组合结论） | `Finding.Stalled` / `LimitRounds` ⇒ 置 `Skip`，**温和叫停**（不是失败） |
-| `BeforeGenerate`（`Skip` ⇒ 停止） | `CheckRounds` / `CheckToolCalls` | 硬上限 ⇒ 置 `Skip`；软上限 ⇒ 不 Skip，改由库自己的强制收尾生效 |
+| `BeforeGenerate`（`Skip` ⇒ 停止） | `CheckRounds` / `CheckToolCalls` | 额度用尽 ⇒ 置 `Skip`；若走 `PolicyForceFinal` 则不 Skip，改由库自己的强制收尾生效 |
 | `BeforeToolCall`（`ErrSkipToolCall` 否决单次调用） | `CheckTool`（单工具上限） | 超限 ⇒ 否决该次调用，但**仍回灌一条失败结果**给模型（配对不破） |
 
 ⇒ 宿主用 agentloop 做驱动、用 roundguard 做判据，**两层不重复**：库的硬上限与
@@ -996,3 +996,22 @@ for {
   ⑤ §8 划界表补「压实：真源替换 vs 临时视图替换」与「强制收尾不可否决」；
   ⑥ 新增 §13：与模型侧 loop 库的关系（**驱动层 / 判据层**，不竞争）+ 抄它的
   **导出 API 面上限门禁**。
+- 2026-11-21（修订 r2）：**五家实现对拍后**改三处判断——
+  ① **r1 的「软硬两级」是过拟合到 agentloop 一家**：五家实测出三种触顶口径
+  （pydantic-ai / Claude 硬失败；agentloop 工具预算强制收尾；OpenAI 装了 max-turn
+  handler 就产出合成输出；smolagents 触顶后再调一次模型出终答并标错误）⇒ 改为
+  **「额度维度（事实）+ 处置口径（可配）」**：新增 `StopPolicy`（缺省
+  `PolicyForceFinal`）、`Budget.Policy`、`Decide` 按 policy 分流；§1.4 新增
+  五家实测对照表。
+  ② **「回合」拿到外部印证**：OpenAI「A turn is defined as one AI invocation
+  (including any tool calls that might occur)」；pydantic-ai 的 `request_limit`
+  「bounds the number of turns of the agent loop」；agentloop 的 Steps
+  「one step = one inference plus its tool executions」——三家都指模型往返，
+  只有本仓 `eventbus` 用 turn 指编排会话运行 ⇒ §3 三分表必要且中文名对得上。
+  ③ **smolagents 的 `planning_interval` 暴露一个真冲突**：它每隔 N 步插一个规划
+  回合，而规划回合必然零工具调用 ⇒ 会被我们的空转判据误判成停滞 ⇒
+  `Observation.Exempt` 扩为通用豁免面（不再只管重复计数），§7.1 写明两个必须
+  豁免的场景（轮询类动作 / 刻意规划步）。
+  另补：pydantic-ai 的 `request_limit` 明确「回合数 ≠ provider 请求数」⇒ §6.2
+  写死 `Used.Rounds` 口径；§8 补「限额声明面」一行（记为可被推翻的取舍）；
+  §13 接缝表扩到四家；§11 示例按 Policy 更新；§12 未决点增至 10 条。
