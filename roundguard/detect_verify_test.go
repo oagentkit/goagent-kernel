@@ -143,6 +143,66 @@ func TestDetectResultChangedBreaksEarlierStreak(t *testing.T) {
 	}
 }
 
+// TestDetectDriftBreaksOnLastResultChanged 钉住**末轮**「结果变了」对漂移的
+// 打断：漂移判据必须与重复判据**同口径**（末轮结果变了 ⇒ 连续长度重起算）。
+//
+// 触发形态**不需要宿主违约**：`ResultChanged` 的含义是「与上一轮**同指纹**的
+// 结果不同」，而末轮复用了更早出现过的指纹（如 p0）时，宿主合法置真。
+//
+// 反向验证：去掉 `trailingSameNormalized` 里的末轮 RC 分支 ⇒ 这串序列被判成
+// 漂移（三轮首档 / 四轮直接停止档）⇒ 本用例红。
+func TestDetectDriftBreaksOnLastResultChanged(t *testing.T) {
+	three := []roundguard.Observation{
+		{Fingerprint: "p0", Normalized: "pN", Tools: 1},
+		{Fingerprint: "p1", Normalized: "pN", Tools: 1},
+		{Fingerprint: "p0", Normalized: "pN", Tools: 1, ResultChanged: true},
+	}
+	f := roundguard.Detect(three, roundguard.Config{})
+	if f.Shape == roundguard.ShapeDrift {
+		t.Fatalf("末轮结果变了不该判漂移：%+v", f)
+	}
+	if f.Shape != roundguard.ShapeNone || f.Warn || f.Stalled {
+		t.Fatalf("末轮有进展的序列不该判任何形态：%+v", f)
+	}
+
+	four := []roundguard.Observation{
+		{Fingerprint: "p0", Normalized: "pN", Tools: 1},
+		{Fingerprint: "p1", Normalized: "pN", Tools: 1},
+		{Fingerprint: "p0", Normalized: "pN", Tools: 1},
+		{Fingerprint: "p1", Normalized: "pN", Tools: 1, ResultChanged: true},
+	}
+	g := roundguard.Detect(four, roundguard.Config{})
+	if g.Shape == roundguard.ShapeDrift {
+		t.Fatalf("末轮结果变了不该判漂移：%+v", g)
+	}
+	if g.Shape != roundguard.ShapeNone || g.Warn || g.Stalled {
+		t.Fatalf("末轮有进展的序列不该判任何形态：%+v", g)
+	}
+}
+
+// TestDetectOscillationBreaksOnEarlierResultChanged 钉住震荡判据里**前轮**
+// 「结果变了」的打断：交替序列中任一**非末轮**出现进展标记 ⇒ 那一段连续性从
+// 该处重新起算 ⇒ 不判震荡。
+//
+// 反向验证：删掉 `trailingAlternating` 循环里的 `seq[i].ResultChanged ||`
+// ⇒ 六轮交替被误判成震荡（首档）⇒ 本用例红（四个位置逐个钉）。
+func TestDetectOscillationBreaksOnEarlierResultChanged(t *testing.T) {
+	for pos := 0; pos < 4; pos++ {
+		seq := altSeq(6)
+		for i := range seq {
+			seq[i].Tools = 1 // 有工具调用 ⇒ 不落到空转那一档
+		}
+		seq[pos].ResultChanged = true
+		f := roundguard.Detect(seq, roundguard.Config{})
+		if f.Shape == roundguard.ShapeOscillation {
+			t.Fatalf("第 %d 轮出现进展标记不该判震荡：%+v", pos, f)
+		}
+		if f.Shape != roundguard.ShapeNone {
+			t.Fatalf("第 %d 轮出现进展标记不该判任何形态：%+v", pos, f)
+		}
+	}
+}
+
 // TestDetectResultChangedBreaksOscillation 钉住连续性打断：结果变了 ⇒ 震荡不成立。
 //
 // 反向验证：去掉震荡判据里的「结果变了」打断 ⇒ 六回合交替被误判成震荡 ⇒ 红。

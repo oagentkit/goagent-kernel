@@ -74,6 +74,10 @@ type Config struct {
 	// 不可达等于判据不存在。故此处向上钳位（不是判不出）。
 	Window int
 	// Repeat 连续几回合构成重复（0 = DefaultRepeat）。
+	//
+	// **至少取 2**：取 1 是**退化档**——「尾部同指纹连续长度」恒 ≥ 1 ⇒ 任意单个
+	// 回合即判重复（首档）；且漂移形态在 Repeat=1 下**永不成立**（单元素的
+	// 「原指纹不全等」恒假 ⇒ 漂移那一档没有落点）。
 	Repeat int
 }
 
@@ -109,21 +113,21 @@ func Detect(obs []Observation, cfg Config) Finding {
 		return Finding{Shape: ShapeNone}
 	}
 	if L := trailingFailed(seq); L >= k {
-		return tierFinding(seq, idx, ShapeErrorSpiral, L, k)
+		return tierFinding(idx, ShapeErrorSpiral, L, k)
 	}
 	if L := trailingSameFingerprint(seq); L >= k {
-		return tierFinding(seq, idx, ShapeRepeat, L, k)
+		return tierFinding(idx, ShapeRepeat, L, k)
 	}
 	if L := trailingAlternating(seq); L >= 2*k {
-		return tierFinding(seq, idx, ShapeOscillation, L, 2*k)
+		return tierFinding(idx, ShapeOscillation, L, 2*k)
 	}
 	// 漂移带「原指纹不全等」这一条（spec §7.3 第 4 行）：归一后同但**原指纹
 	// 全等**的那串是「重复」（或被进展打断），不是漂移。
 	if L := trailingSameNormalized(seq); L >= k && !allSameFingerprint(seq[len(seq)-L:]) {
-		return tierFinding(seq, idx, ShapeDrift, L, k)
+		return tierFinding(idx, ShapeDrift, L, k)
 	}
 	if L := trailingIdle(seq); L >= k {
-		return tierFinding(seq, idx, ShapeIdle, L, k)
+		return tierFinding(idx, ShapeIdle, L, k)
 	}
 	return Finding{Shape: ShapeNone}
 }
@@ -201,17 +205,24 @@ func trailingAlternating(seq []Observation) int {
 }
 
 // trailingSameNormalized 尾部归一指纹相同的连续长度。
+//
+// **与 trailingSameFingerprint 同口径**：末轮「结果变了」⇒ 连续长度**重新起算**
+// （只算末轮那一轮）。少了这一条，两条姊妹判据的「连续性」定义就不一致 ⇒
+// 一串「末轮结果变了」的漂移序列会被判成漂移（假阳：序列明明显示了进展）。
 func trailingSameNormalized(seq []Observation) int {
 	if len(seq) == 0 {
 		return 0
 	}
-	last := seq[len(seq)-1].Normalized
-	if last == "" {
+	last := seq[len(seq)-1]
+	if last.Normalized == "" {
 		return 0 // 没有归一指纹 ⇒ 无法判漂移（内核不猜「什么是易变部分」）
+	}
+	if last.ResultChanged {
+		return 1 // 末轮结果变了 ⇒ 连续长度重起算（与 trailingSameFingerprint 同口径）
 	}
 	n := 1
 	for i := len(seq) - 2; i >= 0; i-- {
-		if seq[i].Normalized != last || seq[i].ResultChanged {
+		if seq[i].Normalized != last.Normalized || seq[i].ResultChanged {
 			break
 		}
 		n++
@@ -250,7 +261,10 @@ func trailingIdle(seq []Observation) int {
 }
 
 // tierFinding 按连续成立长度定档：L == 阈值 ⇒ 首档；L > 阈值 ⇒ 停止档。
-func tierFinding(seq []Observation, idx []int, shape Shape, L, threshold int) Finding {
+//
+// 入参只有连续段的下标表（算 Since 用）——形态与连续段本身已由调用方判定完，
+// 再传一份用不到的序列进来只会让人以为这里还要看序列。
+func tierFinding(idx []int, shape Shape, L, threshold int) Finding {
 	since := 0
 	if len(idx) >= L {
 		since = idx[len(idx)-L] + 1
