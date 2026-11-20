@@ -601,7 +601,11 @@ type Finding struct {
 
 // Config 无进展检测参数（零值 = 缺省）。
 type Config struct {
-    Window int  // 看最近多少回合（0 = DefaultWindow = 6）
+    // Window 看最近多少回合（0 = DefaultWindow = 8 = 2×DefaultRepeat+2）。
+    //
+    // 下限会被向上钳位到 2×Repeat+2——震荡形态的停止档需要那么多回合才可达；
+    // 窗口不够时向上钳位（不是判不出）。
+    Window int
     Repeat int  // 连续几回合构成重复（0 = DefaultRepeat = 3）
 }
 
@@ -615,13 +619,23 @@ func Detect(obs []Observation, cfg Config) Finding
 **参与计算的回合** = 窗口内 `Exempt == false` 的回合（豁免的回合不计数，但占窗口位置）；
 **连续性**会被 `ResultChanged == true` 的回合打断（它表达进展，不是重复）：
 
-| 序 | 条件 | Shape |
-|---|---|---|
-| 1 | 最近 k 回合 `Failed` 全为 true | `ShapeErrorSpiral` |
-| 2 | 最近 k 回合 `Fingerprint` 全等 | `ShapeRepeat` |
-| 3 | 最近 2k 个回合**整体**呈周期 2 交替：∀i<2k-2 有 `f[i]==f[i+2]`，且 `f[0]!=f[1]`（`A A A` 不满足后者，故不与「重复」混淆） | `ShapeOscillation` |
-| 4 | 最近 k 回合 `Normalized` 全等 **且** `Fingerprint` 不全等 | `ShapeDrift` |
-| 5 | 最近 k 回合 `Tools == 0` 且 `Settled` 全为 false | `ShapeIdle` |
+| 序 | 条件（**尾部连续成立长度 L**） | Shape | 最小命中窗口 W |
+|---|---|---|---|
+| 1 | 尾部连续 `Failed` 全为 true，L ≥ k | `ShapeErrorSpiral` | k |
+| 2 | 尾部连续 `Fingerprint` 全等，L ≥ k | `ShapeRepeat` | k |
+| 3 | 尾部呈周期 2 交替：相邻不等且 `f[i]==f[i+2]`，L ≥ 2k（`A A A` 是周期 1，故不与「重复」混淆） | `ShapeOscillation` | 2k |
+| 4 | 尾部连续 `Normalized` 全等 **且** 原 `Fingerprint` 不全等，L ≥ k | `ShapeDrift` | k |
+| 5 | 尾部连续 `Tools == 0` 且 `Settled` 全为 false，L ≥ k | `ShapeIdle` | k |
+
+**为什么改成「尾部连续成立长度 L」**：定长窗口写法（「最近 k 回合全等」）的结论是
+**二值**的（命中 / 不命中），而处置要**三档**（不判 / 首档 / 停止档）——二值判据
+分不出首档与停止档，于是每次命中都直接停，模型没有一次自我修正的机会。尾部连续
+长度是**连续量**，天然带档位信息：L == W ⇒ 首档，L > W ⇒ 停止档（见下）。
+
+**窗口下限为什么是 2×Repeat+2**：停止档要求 L ≥ W+1，而震荡形态的 W = 2k
+（= 6）⇒ 停止档至少要 2k+1 个回合才**可达**；窗口小于这个数时，那一档**永不可达**
+（判据不可达 = 判据不存在）。故 `Window` 向上钳位到 2×Repeat+2（= 8）：窗口不够时
+**向上钳位**（不是判不出——判不出等于把「钝」当成「没有判据」）。
 
 **定档规则（命中 ≠ 立刻停）**：每种形态求出它在尾部的**连续成立长度 L**
 （该形态的模式连续成立的最大长度；W = 该形态的最小命中窗口）：
@@ -922,7 +936,7 @@ for {
 | 2 | 「回合」单位的中文名 | 回合 / round | 「迭代」（与 Go `iter` 包名族太近，不取） |
 | 3 | `Meter` 是否并发安全 | **带锁**（宿主不必各自发明加锁方式） | 无锁 + 包注释要求调用方加锁 |
 | 4 | `Outcome.Completed` 与 `ToolCalls>0` 同时成立时 | 「要工具」优先（§5.3） | 终答优先（会让未执行的工具被吞） |
-| 5 | `Config.Window` / `Repeat` 缺省值 | 6 / 3 | 8 / 3（更钝）/ 4 / 2（更敏） |
+| 5 | `Config.Window` / `Repeat` 缺省值 | 8 / 3（原定 6 / 3，因 §7.3 定档需 L>W ⇒ 窗口 6 时震荡停止档不可达，故改为 8 = 2×3+2 并向上钳位） | 4 / 2（更敏） |
 | 6 | 跨进程回合累计 | **不做**（§8 末条；外部实现同样全程进程内） | 做（需新增存储面契约，范围显著变大） |
 | 7 | 额度用尽后的**缺省处置口径** | `PolicyForceFinal`（腰斩最接近答案的那一刻，代价最大） | `PolicyFailFast`（pydantic-ai / Claude 的主流口径：失败即止） |
 | 8 | 导出 API 面上限 | **设门禁**（见 §13 的抄法） | 不设（导出面随实现自由生长） |

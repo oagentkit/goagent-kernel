@@ -79,3 +79,32 @@ func AllLimits() []string {
 	slices.Sort(out)
 	return out
 }
+
+// roundShapeAll 无进展形态词表 → 成员（单一事实源）。
+//
+// 键是 **Shape**（与 roundReasonAll 同款理由：键就是常量本身，成员判定与
+// 枚举出口都不必转字符串）。
+//
+// ⚠️ 键型不能写 map[string]bool：门禁的「取值派生」走 AST——键得是**常量名**
+// （*ast.Ident）才能解析出取值；写成 map[string]bool{string(X): true} 的话键是
+// 一个转换表达式，派生不出取值 ⇒ 当天即红（登记与事实已偏离）。
+var roundShapeAll = map[Shape]bool{
+	ShapeNone:        true,
+	ShapeRepeat:      true,
+	ShapeOscillation: true,
+	ShapeDrift:       true,
+	ShapeErrorSpiral: true,
+	ShapeIdle:        true,
+}
+
+// AllShapes 返回无进展形态词表的全集（排序后的**新切片**）。
+//
+// 返回的是副本：调用方改写它不影响判定面。
+func AllShapes() []string {
+	out := make([]string, 0, len(roundShapeAll))
+	for s := range roundShapeAll {
+		out = append(out, string(s))
+	}
+	slices.Sort(out)
+	return out
+}

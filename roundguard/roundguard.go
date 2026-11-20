@@ -1,5 +1,5 @@
-// Package roundguard 回合守卫：模型侧循环的**回合结局分类**——跨宿主共享的
-// 判据。
+// Package roundguard 回合守卫：模型侧循环的**结局分类 / 次数预算 / 无进展检测**
+// ——跨宿主共享的判据。
 //
 // 生命周期: Experimental（v0.52.0 定级）——本包仍会改、删、拆，不承诺任何
 // 兼容；升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
@@ -14,9 +14,9 @@
 // 「第 12 圈超了」、在 B 宿主算「第 8 圈还能转」，且没有任何机器能发现。
 //
 // 本包把这三问收成**机制面**：纯函数，零领域词，**内核不调模型**。
-// **本提交已落地的是前两问**（回合结局分类：Reason 词表 + Classify；回合次数
-// 预算：Budget / Used / Meter / 三个 Check*）；无进展检测属后续任务，
-// **本提交尚未实现**。
+// **三问的判定面已齐**（回合结局分类：Reason 词表 + Classify；回合次数预算：
+// Budget / Used / Meter / 三个 Check*；无进展检测：Shape 词表 + Detect），
+// **组合结论 `Decide` 属后续任务，本提交尚未实现**。
 //
 // # 与既有机制划界（同词不同域，互指不重复）
 //
@@ -40,10 +40,10 @@
 //
 // # 单元词表
 //
-// 回合结局（Reason，10 值）、额度类别（Limit，5 值）与处置口径（StopPolicy，
-// 2 值）是本包当前的判定词表：取值决定结论，别处出现必须引用本包的常量，
-// 不得手抄（登记面见 architecture-policy.yaml 的 word_tables 段）。无进展形态
-// （Shape）属后续任务，**本提交既未实现也未登记**。
+// 回合结局（Reason，10 值）、额度类别（Limit，5 值）、处置口径（StopPolicy，
+// 2 值）与无进展形态（Shape，6 值）是本包当前的判定词表：取值决定结论，
+// 别处出现必须引用本包的常量，不得手抄（登记面见 architecture-policy.yaml 的
+// word_tables 段）。
 package roundguard
 
 // Reason 回合结局（判定词表；主人表 roundReasonAll，枚举出口 AllRoundReasons）。
