@@ -13,20 +13,16 @@
 //	F5：声明面里出现**方法级落点**却没写 facade 段 ⇒ 红（防真空绿）。
 //
 // 判定单元是**门面**而不是存储：两个存储可以共用同一扇门（PostgreSQL 与 shared-authority-pg 共用 examples/pgstore）⇒ 证据与登记都按门面归集。
+//
+// 本文件只装**门面对位与派生集比较**（F1 / F2 / F3 / F5）与共享类型/助手：
+// 派生集扫描（go/ast）在 facade_derive.go，证据覆盖（F4）在 facade_coverage.go。
+// 拆分只为把「结构阈值余量」从 2 行拉回两位数，**判定语义与报错文案逐字未变**。
 package main
 
 import (
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"go/types"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
-
-	"github.com/oekit/pkg/errors"
 )
 
 // facadeDecl 一个门面的声明（若干存储可能共用同一份）。
@@ -165,98 +161,6 @@ func checkFacadeParity(order []string, facades map[string]*facadeDecl) []string 
 	return probs
 }
 
-// checkFacadeCoverage F4：每个面访问器都要有能力落点或登记。
-//
-// 登记面本身也要判：存储必须存在且有门面、访问器必须落在该门面的 accessors 列表里、
-// 理由必须写、不得重复登记、不得**过期**（已被证据覆盖 ⇒ 当天删掉）。
-func checkFacadeCoverage(sel *Selection, order []string, facades map[string]*facadeDecl) []string {
-	var probs []string
-	registered := map[string]map[string]bool{}
-	seen := map[string]bool{}
-	for _, r := range sel.KnownUnbackedAccessors {
-		where := fmt.Sprintf("%s: known_unbacked_accessors %s/%s", selectionPath, r.Storage, r.Accessor)
-		st, ok := findStorage(sel.Storages, r.Storage)
-		if !ok {
-			probs = append(probs, where+" 引用了未登记的存储")
-			continue
-		}
-		if st.Facade == nil {
-			probs = append(probs, where+" 的存储没有门面声明（登记必须挂在有门面的存储上）")
-			continue
-		}
-		if strings.TrimSpace(r.Reason) == "" {
-			probs = append(probs, where+" 缺 reason（登记必须写明事实理由）")
-			continue
-		}
-		key := st.Facade.Package + "#" + st.Facade.Type
-		fd, ok := facades[key]
-		if !ok {
-			continue // 门面声明本身非法，已由 collectFacades 报过
-		}
-		if !slices.Contains(fd.accessors, r.Accessor) {
-			probs = append(probs, where+" 不在该门面的 accessors 列表里（登记项必须落在面访问器上）")
-			continue
-		}
-		dupKey := r.Storage + "#" + r.Accessor
-		if seen[dupKey] {
-			probs = append(probs, where+" 重复登记")
-			continue
-		}
-		seen[dupKey] = true
-		if registered[key] == nil {
-			registered[key] = map[string]bool{}
-		}
-		registered[key][r.Accessor] = true
-	}
-	for _, key := range order {
-		fd := facades[key]
-		covered := coveredAccessors(sel, fd)
-		var missing []string
-		for _, a := range fd.accessors {
-			if covered[a] || registered[key][a] {
-				continue
-			}
-			missing = append(missing, a)
-		}
-		if len(missing) > 0 {
-			probs = append(probs, fmt.Sprintf("%s: 门面 %s 的面访问器 %s 既没有能力落点，也没有登记进 known_unbacked_accessors", selectionPath, key, strings.Join(missing, "、")))
-		}
-		for _, a := range fd.accessors { // 登记过期即红
-			if registered[key][a] && covered[a] {
-				probs = append(probs, fmt.Sprintf("%s: 门面 %s 的面访问器 %s 已登记为「无能力落点」，但它已被能力证据覆盖（登记过期，当天删掉）", selectionPath, key, a))
-			}
-		}
-	}
-	return probs
-}
-
-// coveredAccessors 门面里被**能力证据**引用到的面访问器（共用门面的证据合起来算）。
-func coveredAccessors(sel *Selection, f *facadeDecl) map[string]bool {
-	out := map[string]bool{}
-	for _, id := range f.storages {
-		st, ok := findStorage(sel.Storages, id)
-		if !ok {
-			continue
-		}
-		for _, c := range st.Capabilities {
-			for _, ev := range c.Evidence {
-				path, symbol, found := strings.Cut(ev.Ref, "#")
-				// ref 的 path 是**文件**路径，门面声明的 package 是**包目录**
-				// ⇒ 判「落点文件在这个门面包里」，不是判两者字面相等。
-				if !found || !underRoot(f.pkg, path) {
-					continue
-				}
-				for _, a := range f.accessors {
-					if symbol == f.typ+"."+a {
-						out[a] = true
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
 // checkFacadeDeclared F5：有方法级落点的存储必须登记 facade 段。
 //
 // 为什么需要这条：F1–F4 都以「门面声明」为判定面 ⇒ 整段 facade: 被删掉时那些判据
@@ -279,75 +183,6 @@ func checkFacadeDeclared(sel *Selection) []string {
 		}
 	}
 	return probs
-}
-
-// facadeMethods 派生「门面包内某类型上的全部导出方法」，并报出该类型**派生集不完整**的原因。
-//
-// 口径：指定**包目录**下（**只取生产代码**，跳过 _test.go）指定**类型**上的全部**导出方法**。
-// 用 go/ast 判（与 symbols.go 同一口径）：逐行正则判不出「方法挂在哪个接收者上」，而门面
-// 要的恰恰是「这一扇门上有什么」。接收者写法（*T / T）由 receiverName 归一。
-//
-// ⚠ **派生集不完整**有三种形态，都报出来判红（fail-closed）：① **类型声明不存在**——
-// 门包里根本没这个类型 ⇒ 无从派生；② **嵌入字段**——其方法被**提升**到门面类型；③
-// **类型不是 struct 字面量**——**解析不出 struct 字段** ⇒ 嵌入字段看不见。
-func facadeMethods(root, pkg, typ string) (map[string]bool, []string, error) {
-	dir := filepath.Join(root, pkg)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "读门面包失败", "package", pkg)
-	}
-	out := map[string]bool{}
-	var incomplete []string
-	typeFound := false
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
-		if err != nil {
-			return nil, nil, errors.Wrap(err, "解析门面包失败", "file", name)
-		}
-		for _, decl := range f.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				if d.Recv == nil || len(d.Recv.List) == 0 || receiverName(d.Recv.List[0].Type) != typ || !ast.IsExported(d.Name.Name) {
-					continue
-				}
-				out[d.Name.Name] = true
-			case *ast.GenDecl:
-				for _, spec := range d.Specs {
-					ts, ok := spec.(*ast.TypeSpec)
-					if ok && ts.Name.Name == typ {
-						typeFound = true
-						st, ok := ts.Type.(*ast.StructType)
-						if !ok {
-							// 类型别名 / 定义类型 ⇒ 解析不出 struct 字段 ⇒ 嵌入字段看不见
-							// ⇒ 派生集不完整 ⇒ 不拿它去比（fail-closed）。
-							shape := "定义类型，底层类型取自 " + types.ExprString(ts.Type)
-							if ts.Assign.IsValid() {
-								shape = "类型别名，指向 " + types.ExprString(ts.Type)
-							}
-							incomplete = append(incomplete, "门面类型 "+typ+" 不是 struct 字面量（"+shape+"）⇒ 解析不出 struct 字段 ⇒ 请写成 struct 字面量（或扩展本判据以解析别名/派生类型的结构）")
-							continue
-						}
-						for _, fld := range st.Fields.List {
-							if len(fld.Names) == 0 { // 匿名 ⇒ 嵌入 ⇒ 其方法被提升
-								incomplete = append(incomplete, "含嵌入字段（"+types.ExprString(fld.Type)+"）⇒ 其导出方法集含提升方法 ⇒ 请改为显式委托方法（或扩展本判据以纳入提升方法）")
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	// 整个门包里都没有这个类型的声明 ⇒ 无从派生 ⇒ 派生集不完整 ⇒ 判红。
-	// 为什么**追加**一条：真病因是「类型名根本不存在」，只报「登记与代码不符」会把排查方向带偏。
-	if !typeFound {
-		incomplete = append(incomplete, fmt.Sprintf("门面包 %s 里找不到类型 %s 的声明 ⇒ 派生集不完整", pkg, typ))
-	}
-	return out, incomplete, nil
 }
 
 // dupViolations 列表里的重复项。
