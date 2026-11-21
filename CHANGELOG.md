@@ -2,7 +2,6 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
-## [v0.62.1] — 2026-11-21
 ## [v0.63.0] — 2026-11-21
 
 ### 新增(archcheck)：「收尾等待点必须写成 defer」与「尺子必须是可观测事实」两条纪律变成门禁判定（#440 / #441）
@@ -100,6 +99,8 @@
   用**位置参数**写 `archcheck.Rule{...}` 字面量的下游代码**会编译不过**（具名字段字面量不受影响）；
 - **新增两个 `check_kind` 取值** ⇒ 宿主 policy 里用到新取值的，**旧版 archcheck 的 policy
   自校验会当场红**（未知取值当天即红）⇒ 须升级 archcheck。
+
+## [v0.62.1] — 2026-11-21
 
 ### 修复(examples)：尾随收尾点改成 defer 形态——失败路径仍 join（#431）
 
