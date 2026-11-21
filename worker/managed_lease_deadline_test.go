@@ -1,5 +1,5 @@
 // managed_lease_deadline_test.go —— 持续存储故障下的**本地资格截止**判据
-//（P0-B：不依赖「下一拍必然拿到 ErrLeaseLost 回包」这个在持续网络分区下
+// （P0-B：不依赖「下一拍必然拿到 ErrLeaseLost 回包」这个在持续网络分区下
 // 不成立的隐含前提）。
 //
 // 正对照：续期持续报错 + 本地时钟推过「最近确认 + TTL − margin」

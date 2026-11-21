@@ -121,7 +121,7 @@ type leaseSession struct {
 	done   chan struct{}
 
 	mu          sync.Mutex
-	lost        error    // 首个失格原因（失格后恒败——已死的租约不再重试）
+	lost        error     // 首个失格原因（失格后恒败——已死的租约不再重试）
 	confirmedAt time.Time // 最近一次续期成功的本地时刻（资格截止的锚）
 }
 
@@ -179,7 +179,7 @@ func NewLeaseSession(ctx context.Context, board taskboard.RenewingBoard, task ta
 //   - 成功 → 记录本地确认时刻，下一拍；
 //   - ErrLeaseLost → 失格：记因 + 取消会话 ctx（在途施加段封口）+ 退出；
 //   - 其它错误 → **先查本地资格截止**再决定重试：超过「最近确认 + TTL
-//     - margin」仍未确认持有权 ⇒ 主动失格（存储可能已把任务判给别人，
+//   - margin」仍未确认持有权 ⇒ 主动失格（存储可能已把任务判给别人，
 //     不能再等业务动作继续）；未超过 ⇒ 存储抖动，下一拍重试。
 func (s *leaseSession) renewLoop() {
 	defer close(s.done)
@@ -217,7 +217,7 @@ func (s *leaseSession) renewLoop() {
 }
 
 // pastDeadline 本地资格截止判定：最近一次续期成功时刻 + TTL - margin
-//（margin = TTL/10，吸收本地与存储时钟的传输漂移）。只读 confirmedAt，
+// （margin = TTL/10，吸收本地与存储时钟的传输漂移）。只读 confirmedAt，
 // 调用方决定处置——本方法不持锁（confirmedAt 的单次读竞态无害：判定的
 // 两端都是保守方向，多读一次少读一次不改变「必然失格」的结论）。
 func (s *leaseSession) pastDeadline() bool {
