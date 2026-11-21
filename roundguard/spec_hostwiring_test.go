@@ -16,7 +16,7 @@ import (
 // 宿主照抄 spec 就会把「零值缺省 = 强制收尾」误判成「没设」，且两套额度口径
 // 各判各的、漂了没人知道。
 //
-// 判定形态（**§11 的代码块内**）：
+// 判定形态（**§11 的代码块内**——围栏块与缩进块**同等**是代码面）：
 //
 //	① CheckRounds( / CheckToolCalls( 的**调用形态**（func 声明形态除外）；
 //	② 宿主侧**本地布尔兜底**（forceFinal := 这类）。
@@ -59,25 +59,78 @@ func specSectionBody(specText, sec string) string {
 	return strings.Join(lines[start:], "\n")
 }
 
-// fencedBlocks 抽出小节正文里的围栏代码块内容（三个反引号之间的行）。
-func fencedBlocks(body string) []string {
+// codeBlocks 抽出小节正文里的**代码面**：围栏代码块（三个反引号之间的行）
+// + 缩进代码块（4 空格 / Tab 起头的连续行）。
+//
+// 为什么也要收缩进块（终审复审 F3）：markdown 里缩进代码块与围栏块**同等**是
+// 代码面。只判围栏块 ⇒ 宿主把 §11 的接线示例改写成缩进写法时，这道闸**静默
+// 失明**（规则在、报告照常、就是判不到）——那正是本仓反复强调的最贵失效形态。
+//
+// 为什么缩进块要排除列表项续行：markdown 语义里「4 空格缩进的列表项」**不是**
+// 代码块；不排除会把普通列表文本扫进判定面 ⇒ 误报的门禁等于没有门禁。
+func codeBlocks(body string) []string {
 	var out []string
 	var cur []string
-	in := false
-	for _, ln := range strings.Split(body, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
-			if in {
-				out = append(out, strings.Join(cur, "\n"))
-				cur = nil
-			}
-			in = !in
-			continue
-		}
-		if in {
-			cur = append(cur, ln)
+	flush := func() {
+		if len(cur) > 0 {
+			out = append(out, strings.Join(cur, "\n"))
+			cur = nil
 		}
 	}
+	inFence := false
+	for _, ln := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			if inFence {
+				flush()
+				inFence = false
+				continue
+			}
+			flush() // 围栏之前的缩进块先结算
+			inFence = true
+			continue
+		}
+		if inFence {
+			cur = append(cur, ln)
+			continue
+		}
+		if isIndentedCodeLine(ln) {
+			cur = append(cur, ln)
+			continue
+		}
+		flush()
+	}
+	flush()
 	return out
+}
+
+// isIndentedCodeLine 判断一行是不是 markdown 的**缩进代码块**内容。
+//
+// 判据：4 空格 / Tab 起头，且去掉缩进后**不是**列表项起头
+// （markdown 语义：列表项的续行不算代码块）。
+func isIndentedCodeLine(ln string) bool {
+	if strings.TrimSpace(ln) == "" {
+		return false
+	}
+	if strings.HasPrefix(ln, "\t") {
+		return true
+	}
+	if !strings.HasPrefix(ln, "    ") {
+		return false
+	}
+	rest := strings.TrimLeft(ln, " ")
+	for _, mark := range []string{"- ", "* ", "+ ", "> "} {
+		if strings.HasPrefix(rest, mark) {
+			return false
+		}
+	}
+	digits := 0
+	for digits < len(rest) && rest[digits] >= '0' && rest[digits] <= '9' {
+		digits++
+	}
+	if digits > 0 && digits < len(rest) && (rest[digits] == '.' || rest[digits] == ')') {
+		return false // 有序列表项（「1. 」/「1) 」起头）
+	}
+	return true
 }
 
 // stripLineComment 去掉行尾注释（字符串字面量内的双斜杠不算）。
@@ -112,23 +165,24 @@ func hostWiringViolations(specText string) []string {
 	if body == "" {
 		return []string{"spec 里找不到 §11 宿主接线小节（登记面与 spec 漂了）"}
 	}
-	for _, blk := range fencedBlocks(body) {
+	for bi, blk := range codeBlocks(body) {
 		for i, ln := range strings.Split(blk, "\n") {
 			code := stripLineComment(ln)
 			if strings.TrimSpace(code) == "" {
 				continue
 			}
+			where := "§11 第 " + strconv.Itoa(bi+1) + " 个代码块第 " + strconv.Itoa(i+1) + " 行"
 			for _, m := range hostQuotaCallRe.FindAllStringSubmatch(code, -1) {
 				if m[1] != "" {
 					continue // 声明形态：不是宿主接线
 				}
-				out = append(out, "§11 代码块第 "+strconv.Itoa(i+1)+
-					" 行出现宿主侧额度判定**调用形态**："+m[2]+
+				out = append(out, where+
+					"出现宿主侧额度判定**调用形态**："+m[2]+
 					"( —— 额度判定只留 Decide 一处，宿主侧不得另开分支")
 			}
 			if hostLocalBoolRe.MatchString(code) {
-				out = append(out, "§11 代码块第 "+strconv.Itoa(i+1)+
-					" 行出现宿主侧**本地布尔兜底** forceFinal（绕过 Budget.EffectivePolicy()）")
+				out = append(out, where+
+					"出现宿主侧**本地布尔兜底** forceFinal（绕过 Budget.EffectivePolicy()）")
 			}
 		}
 	}
@@ -219,5 +273,24 @@ func TestSpecHostWiringAllowsDeclaredCheckSurface(t *testing.T) {
 	// 声明形态放在 §6.3，不在 §11 ⇒ §11 判据不该命中它
 	if v := hostWiringViolations(specText); len(v) > 0 {
 		t.Fatalf("§6.3 的声明形态被判成违规（误伤契约）：%v", v)
+	}
+}
+
+// TestSpecHostWiringRejectsInjectedIndentedHostSideQuotaBranch 反向验证：
+// **缩进**代码块（markdown 的另一种代码写法）里出现宿主侧额度判定 ⇒ 判据必须
+// 变红。
+//
+// 为什么必须钉这条（终审复审 F3）：原判据只扫围栏代码块 ⇒ 宿主把 §11 的接线
+// 示例改写成缩进写法时，这道闸**静默失明**——规则在、报告照常、就是判不到。
+// 只写「好实现能过」的用例，一个把判定面缩窄到围栏块的错实现照样全过 ⇒
+// 这条是「坏实现会红」的证据位。
+func TestSpecHostWiringRejectsInjectedIndentedHostSideQuotaBranch(t *testing.T) {
+	injected := "" +
+		"    if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {\n" +
+		"        return finish(v)\n" +
+		"    }"
+	v := hostWiringViolations(injectSectionBlock(readSpecText(t), "11", injected))
+	if len(v) == 0 {
+		t.Fatal("注入缩进代码块形态的宿主侧额度判定后判据仍判绿 ⇒ 这道判据只扫了围栏块")
 	}
 }
