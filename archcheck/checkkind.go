@@ -28,13 +28,24 @@ import (
 // 是否在测试侧被等待」。
 const checkKindGoroutineJoin = "goroutine_join"
 
+// checkKindDeferCleanup 是 check_kind 的取值域：判定「用例内起的 goroutine 的
+// 收尾等待点是否写在 defer 里」（issue #440）。
+//
+// 它补的是兄弟规则（goroutine_join）的**已知边界第 4 条**：那条规则判的是
+// 「测试侧有没有等待点」，判不出「那个等待点会不会被 Goexit 跳过」。
+const checkKindDeferCleanup = "defer_cleanup"
+
+// checkKindWallclockRuler 是 check_kind 的取值域：判定「测试面有没有拿裸
+// time.Sleep 当尺子」（issue #441）。
+const checkKindWallclockRuler = "wallclock_ruler"
+
 // knownCheckKind 判 check_kind 的取值是否已知。
 //
 // 取值域必须封闭的理由见文件头：写错的类别名若被当成「不是已知类别」，这条
 // 登记就静默降级成「不判」——登记了一张表却没生效，且没有任何机器能发现。
 func knownCheckKind(kind string) bool {
 	switch kind {
-	case checkKindGoroutineJoin:
+	case checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler:
 		return true
 	}
 	return false
@@ -42,7 +53,7 @@ func knownCheckKind(kind string) bool {
 
 // knownCheckKindList 列出已知取值域（报错文案用）。
 func knownCheckKindList() []string {
-	return []string{checkKindGoroutineJoin}
+	return []string{checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler}
 }
 
 // checkKindViolations 按 check_kind 分派到结构化执行体。
@@ -53,8 +64,27 @@ func checkKindViolations(root string, r Rule) ([]Violation, error) {
 	switch r.CheckKind {
 	case checkKindGoroutineJoin:
 		return testGoroutineViolations(root, r)
+	case checkKindDeferCleanup:
+		return deferCleanupViolations(root, r)
+	case checkKindWallclockRuler:
+		return wallclockRulerViolations(root, r)
 	default:
 		return nil, fmt.Errorf("规则 %s 的 check_kind %q 未知（没有对应执行体）", r.ID, r.CheckKind)
+	}
+}
+
+// checkKindSampleViolations 按 check_kind 分派到对应的样例判定核。
+//
+// 每个执行体都有**自己的**样例判定核，但它们都指向各自的**真判定核**
+// （dcJudgeFiles / wcJudgeFiles / gjJudgeFiles）⇒ 样例过了才说明真判定也过。
+func checkKindSampleViolations(r Rule, text string) ([]Violation, error) {
+	switch r.CheckKind {
+	case checkKindDeferCleanup:
+		return dcSampleViolations(r, text)
+	case checkKindWallclockRuler:
+		return wcSampleViolations(r, text)
+	default:
+		return gjSampleViolations(r, text)
 	}
 }
 

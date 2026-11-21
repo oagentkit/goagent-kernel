@@ -60,10 +60,23 @@ func TestTurnBracketOpenLeak(t *testing.T) {
 	w := NewWithConfig(r.pub, Config{OpenTTL: time.Millisecond, SweepEvery: time.Nanosecond})
 	w.observe(turnStarted("s1"))
 	w.observe(turnStarted("s1"))
-	time.Sleep(5 * time.Millisecond)
-	w.observe(benignEvent("s2")) // 注入事件驱动 TTL 清扫
 
-	got := reasons(r, eventbus.EventTurnBracketViolation)
+	// 等 TTL 到期并驱动清扫，直到真的报出 open_leak（**可观测事实**）——
+	// 而不是睡一个固定窗口：窗口长度单独决定结论（睡不够就不报 ⇒ 假红；
+	// 睡够了但清扫没被驱动 ⇒ 白测）。
+	var got []string
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		w.observe(benignEvent("s2")) // 注入事件驱动 TTL 清扫
+		got = reasons(r, eventbus.EventTurnBracketViolation)
+		if len(got) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("TTL 到期后清扫仍未报 open_leak")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	if len(got) != 1 || got[0] != ReasonTurnOpenLeak {
 		t.Fatalf("应恰好一条 open_leak: %v", got)
 	}

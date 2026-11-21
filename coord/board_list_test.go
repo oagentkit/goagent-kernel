@@ -141,6 +141,13 @@ func TestScanSnapshotIsPointInTime(t *testing.T) {
 			_, _ = b.Txn(ctx, nil, []Mutation{{Key: k, Val: []byte(`{"id":"` + string(rune('a'+round%8)) + `","round":` + strconv.Itoa(round) + `}`)}})
 		}
 	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：失败路径上（t.Fatalf → Goexit）
+	// 只执行 defer、不执行它之后的普通语句 ⇒ 写入方 goroutine 必须由 defer 收尾，
+	// 否则它会活过用例结束、继续动已被交还的后端。
+	defer func() {
+		close(stop)
+		wg.Wait()
+	}()
 
 	for i := 0; i < 200; i++ {
 		scan, err := b.ScanSnapshot(ctx, taskKeyPrefix)
@@ -162,8 +169,6 @@ func TestScanSnapshotIsPointInTime(t *testing.T) {
 			seen[id] = true
 		}
 	}
-	close(stop)
-	wg.Wait()
 }
 
 // TestMemoryBackendScanSnapshotCopyIndependence 值独立：改返回 map 的内容

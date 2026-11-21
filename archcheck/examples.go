@@ -73,8 +73,8 @@ func sampleFileName(r Rule) string {
 // 否则样例失配时只能看到「正例没判中」，看不到判据把它判成了什么。
 func (r Rule) sampleViolations(text string) ([]Violation, error) {
 	if r.CheckKind != "" {
-		// 结构化执行体的样例走**同一个判定核**（gjSampleViolations → gjJudgeFiles）。
-		return gjSampleViolations(r, text)
+		// 结构化执行体的样例走**同一个判定核**（各执行体自己的 SampleViolations）。
+		return checkKindSampleViolations(r, text)
 	}
 	if r.ForbidImport != "" {
 		re, err := regexp.Compile(r.ForbidImport)

@@ -236,6 +236,9 @@ func TestControlStoreSnapshotNeverMixesVersionAndState(t *testing.T) {
 			t.Errorf("CommitTask: %v", err)
 		}
 	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：失败路径上（t.Fatalf → Goexit）
+	// 不执行它之后的普通语句 ⇒ 提交 goroutine 必须由 defer join。
+	defer wg.Wait()
 	for range 200 {
 		got, err := c.SnapshotTask(ctx, "t1")
 		if err != nil {
@@ -246,7 +249,6 @@ func TestControlStoreSnapshotNeverMixesVersionAndState(t *testing.T) {
 			t.Fatalf("快照混读了两个瞬间：状态=%q 版本=%d", got.Task.State, got.Version)
 		}
 	}
-	wg.Wait()
 }
 
 // TestControlStoreCommitRejectsMissingTarget 目标不存在的提交 ⇒ ErrNotFound，

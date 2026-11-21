@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,12 +105,18 @@ func TestLeaseDeadlineAnchoredAfterRowLock(t *testing.T) {
 	type res struct {
 		err error
 	}
+	var wg sync.WaitGroup
+	wg.Add(1)
 	done := make(chan res, 1)
 	go func() {
+		defer wg.Done()
 		act := sideeffect.Action{Key: key, Resource: resource, Payload: []byte("p")}
 		_, _, _, err := eff.Acquire(ctx, act, ttl)
 		done <- res{err: err}
 	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：失败路径上（t.Fatalf → Goexit）
+	// 只执行 defer ⇒ Acquire goroutine 必须由 defer join。
+	defer wg.Wait()
 
 	time.Sleep(2500 * time.Millisecond) // 足够让 Acquire 卡进锁等待
 	if err := tx.Rollback(ctx); err != nil {
