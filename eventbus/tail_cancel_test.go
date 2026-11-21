@@ -25,6 +25,20 @@ func TestTailerRunReturnsCleanlyOnCancel(t *testing.T) {
 		NewTailer(store, hub, WithTailInterval(10*time.Millisecond)).Run(ctx)
 		close(done)
 	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
+	defer cancel()
 
 	// 先让循环转起来（至少完成初始化拍）。
 	deadline := time.Now().Add(2 * time.Second)

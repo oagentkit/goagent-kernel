@@ -82,6 +82,20 @@ func TestTailerCursorPersistsAcrossRestart(t *testing.T) {
 		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx1)
 		close(done1)
 	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-done1:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
+	defer cancel1()
 	deadline := time.Now().Add(2 * time.Second)
 	for tail.maxIDs() == 0 {
 		if time.Now().After(deadline) {
@@ -150,8 +164,25 @@ func TestTailerCursorLoadFailureStallsNeverSkips(t *testing.T) {
 	defer stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	tailerDone := make(chan struct{})
+	go func() {
+		defer close(tailerDone)
+		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-tailerDone:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
 	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
 
 	// 等「停摆语义真的持续过 N 拍」这个**事实**：Load 被尝试 N 次，且 N 次都失败。
 	// 不用墙钟窗口当尺子——尾随一拍都没转时，下面两条**负向**断言
@@ -248,8 +279,25 @@ func TestTailerCursorNotFoundFallsBackToMaxID(t *testing.T) {
 	defer stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	tailerDone := make(chan struct{})
+	go func() {
+		defer close(tailerDone)
+		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-tailerDone:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
 	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for tail.maxIDs() == 0 {
