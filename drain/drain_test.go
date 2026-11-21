@@ -20,9 +20,30 @@ type fakeTurns struct {
 	active int32
 	mu     sync.Mutex
 	causes []error
+	// probes 计 Active 被调用的次数：**可观测事实**——排水真的跑起来了
+	// （且跑了几轮）。断言等它，而不是睡一个固定墙钟窗口。
+	probes int32
 }
 
-func (f *fakeTurns) Active() int { return int(atomic.LoadInt32(&f.active)) }
+func (f *fakeTurns) Active() int {
+	atomic.AddInt32(&f.probes, 1)
+	return int(atomic.LoadInt32(&f.active))
+}
+
+// waitDrainPolled 等 Drain 至少观察过在途轮 registry n 次。
+//
+// 尺子是**可观测事实**（轮询次数），不是墙钟窗口：窗口长度单独决定结论。
+// n=2 表示 ticker 至少响过一次（收敛轮询间隔 200ms）⇒ Drain 已在**循环内**。
+func waitDrainPolled(t *testing.T, f *fakeTurns, n int32) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for atomic.LoadInt32(&f.probes) < n {
+		if time.Now().After(deadline) {
+			t.Fatalf("Drain 未在时限内观察 registry %d 次（实得 %d）", n, atomic.LoadInt32(&f.probes))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func (f *fakeTurns) CancelAll(cause error) {
 	f.mu.Lock()
@@ -91,7 +112,12 @@ func TestDrainCancelNotMisreportedAsDeadline(t *testing.T) {
 
 	// 让 Drain 先进入收敛等待再取消：覆盖的是循环内的 Done 分支（与入口即 Done
 	// 同一分支，但这是关停链二次取消的真实时序——排水已跑了一段时间）。
-	time.Sleep(50 * time.Millisecond)
+	//
+	// 尺子必须是**可观测事实**：等 Drain 的轮询真的转过一轮（它至少观察过
+	// registry 两次 ⇒ ticker 至少响过一次 ⇒ 已在循环内）。原写法睡 50ms，
+	// 而收敛轮询间隔是 200ms ⇒ 窗口落空，用例一直在覆盖「入口即 Done」分支
+	// （白测：注释说的分支与实际覆盖的分支不是同一个）。
+	waitDrainPolled(t, f, 2)
 	cancel()
 
 	select {

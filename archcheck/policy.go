@@ -47,8 +47,20 @@ type Rule struct {
 	// 取值域必须封闭：写错的类别名若被当成「不是已知类别」，这条登记就**静默降级**
 	// 成「不判」——登记了一张表却没生效，且没有任何机器能发现。未知类别当天即红
 	// （见 selfcheck.go）。
-	CheckKind string      `yaml:"check_kind"`
-	NegFollow []NegFollow `yaml:"negative_follow"`
+	CheckKind string `yaml:"check_kind"`
+	// ManagedHelpers 是「受管的等可观测事实辅助」清单：这些助手函数体内部的
+	// time.Sleep 不被 wallclock_ruler 判成尺子（当前只有 wallclock_ruler 用它）。
+	//
+	// 为什么声明在 policy 侧而不是硬编码在 archcheck 里：archcheck 是要跨宿主
+	// 复用的库，硬编码辅助名单等于把宿主的事写进内核——宿主仓的助手名各不相同。
+	//
+	// 取值形态：裸名（waitTail）或带包名的限定名（eventbus.waitTail）。
+	//
+	// 兼容性：这是**源码级 additive 变更**——给导出的结构体加字段，会让下游
+	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
+	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
+	ManagedHelpers []string    `yaml:"managed_helpers"`
+	NegFollow      []NegFollow `yaml:"negative_follow"`
 	// ImportExempt import 路径级的**精确**例外（issue #15）。
 	//
 	// 存在的原因：只有 `forbid_import_regex`（正则禁令）时，宿主若要放行

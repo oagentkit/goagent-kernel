@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -171,11 +172,17 @@ func TestStressSubprocessKillMidRunReaps(t *testing.T) {
 		Program:  `return await host.wait("{}");`,
 		Bindings: []ptc.Binding{block},
 		Timeout:  30 * time.Second})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	done := make(chan error, 1)
 	go func() {
+		defer wg.Done()
 		_, err := p.Exec(context.Background(), sandbox.Request{Program: ""})
 		done <- err
 	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：失败路径上（t.Fatalf → Goexit）
+	// 只执行 defer ⇒ 子进程执行 goroutine 必须由 defer join。
+	defer wg.Wait()
 
 	pid := readChildPID(t)
 	if !pidAlive(pid) {
