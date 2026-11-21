@@ -2730,10 +2730,6 @@ for {
         Obs:     obs,
     }, b, cfg)
 
-    if d.Warn {
-        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会
-        msgs = append(msgs, hostWarnMessage(d.Shape))
-    }
     if !d.Continue {
         if d.Reason == roundguard.ReasonForcedFinal {
             // 软：额度用尽但按「强制收尾」口径处置 ⇒ 再给模型一次**不带工具**的
@@ -2753,6 +2749,16 @@ for {
         return finish(d)
     }
     msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
+    if d.Warn {
+        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会。
+        // ⚠️ 必须排在 assistantMsg / toolResultsMsg **之后**：警告是针对**这一回合**的
+        //    判据 ⇒ 排在它前面 = 模型先看到警告、后看到触发警告的那一回合
+        //    （**语义倒置**；而配对不破 ⇒ 没有编译错误、没有断言能抓到它）。
+        // ⚠️ 这个位置**不会**漏掉警告：Warn=true ⇒ Continue=true（首档只警告不停止，
+        //    见 decide.go 的 tierFinding：Stalled 与 Warn 互斥）⇒ 上面那个
+        //    !d.Continue 分支在 Warn=true 时根本不会进。
+        msgs = append(msgs, hostWarnMessage(d.Shape))
+    }
 }
 ```
 
@@ -2806,6 +2812,10 @@ for {
   仍可用）与 `ReasonStalled`（温和叫停）都不是失败——一律当故障上报就是假红。
 - **无进展一命中就停**。首档（`Warn`）只该**警告回灌**，给模型一次自我修正的机会；
   停止档才温和叫停——一命中就停 = 模型永远没有自我修正的机会。
+- **警告回灌排在被评判回合之前**。首档的警告针对的是**这一回合**的判据 ⇒ 必须排在
+  本回合的 `assistantMsg` / `toolResultsMsg` **之后**回灌；排在它前面 = 模型先看到
+  警告、后看到触发警告的那一回合（**语义倒置**）。而这类错**配对不破**：没有编译
+  错误、没有断言会红 ⇒ spec §11 的接线示例由机器判据钉住这个顺序。
 - **零工具回合也要给指纹**。多个零工具回合若指纹全等（例如都留空），会先被「精确重复」
   判走（重复的判定次序在空转之前）⇒ **空转形态永远轮不到**。指纹取本回合的产出
   （如规划文本）即可。
