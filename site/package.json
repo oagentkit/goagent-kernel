@@ -4,8 +4,8 @@
   "type": "module",
   "description": "goagent-kernel 文档站（VuePress 2）。站点数字由 gen.mjs 从仓库事实生成，不手抄。",
   "scripts": {
-    "docs:dev": "node gen.mjs && vuepress dev docs",
-    "docs:build": "node gen.mjs && vuepress build docs"
+    "docs:dev": "node gen.test.mjs && node gen.mjs && vuepress dev docs",
+    "docs:build": "node gen.test.mjs && node gen.mjs && vuepress build docs"
   },
   "devDependencies": {
     "@vuepress/bundler-vite": "^2.0.0-rc.31",

@@ -74,7 +74,7 @@ title: 介绍
 |---|---|---|
 | 会话/环节状态存哪、怎么流转 | `contract` + `statemachine` | `RunContext` / `StepSink` 两个接口的实现 |
 | 模型输出怎么变成可信结构 | `protocol` | agent 名注册（可选）、报告标题（可选） |
-| 工具怎么被限制 | `tooldisclose` + `guardset` + `policy` | 工具目录、宿主守卫、拓扑 `EdgeSource` |
+| 工具怎么被限制 | `tooldisclose` + `guardset` | 工具目录、宿主守卫；审批门在上游 `toolgate/policy` |
 | 崩了怎么接着跑 | `checkpoint` + `commitgate` | `StoreCAS` 实现、终态词表注入 |
 | 上下文怎么不被撑爆 | `budget` + `spill` + `offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
 | 进度怎么推给前端 | `eventbus` + `watchdog` | 落库 + 广播、告警发布出口 |
@@ -131,8 +131,8 @@ Agent 编排、运行时基础设施；与 oekit 是姊妹项目（依赖其 pkg
 同为「框架耦合分层」组织。本仓的判定语义核心多落在它上面——派发守卫核心在
 `oagentkit/agent/dispatch`、判定环与沙箱在 `oagentkit/guardx`（invoke / sandbox /
 injectband）、审计门在 `oagentkit/toolgate`、进程原语在 `oagentkit/runtime/procx`；
-本仓的门面包（`dispatch` / `policy` / `reminder` / `toolfail` / `sandbox`）只做
-调用面转发，核心实现在上游——**跨宿主必须一致的判定语义不放两份实现**。
+本仓**不再保留转发门面**（`architecture-policy.yaml` 的 `facades` 段为空）——
+**跨宿主必须一致的判定语义不放两份实现**：要判定语义就直接依赖上游那份。
 🤖 AI 直读：[oagentkit.github.io/llms.txt](https://oagentkit.github.io/llms.txt)。
 
 - **独立发版、版本化引入、零 replace**：`go.mod` 含 replace 即门禁红（公开 module，
@@ -149,6 +149,7 @@ injectband）、审计门在 `oagentkit/toolgate`、进程原语在 `oagentkit/r
 |---|---|
 | [设计初衷](./philosophy.md) | 为什么长这样：编排是代码、机制与资产的分界、门禁文化 |
 | [怎么用](./getting-started.md) | 安装、三个约束、接入路线图、最小示例 |
+| [模型接入](./llm-guide.md) | 把模型接进来：模型看到什么、要吐出什么、被拒了会怎样、上下文从哪来 |
 | [能力详解](./capabilities.md) | 九组能力：解决什么问题、关键符号、什么时候用 |
 | [坑速查](../reference/pitfalls.md) | 接完线自查：症状 → 真因（从仓内 USAGE §6 生成） |
 | [包清单与机器事实](../reference/packages.md) | 包表、依赖版本、规则清单、阈值（机器生成） |

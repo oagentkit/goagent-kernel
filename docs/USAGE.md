@@ -28,7 +28,7 @@
 ⑩ 判定与改派    dispatch + roundguard + 上游 toolfail / policy / sandbox / injectband ← 失败与循环怎么判（上游四件的核心在 oagentkit，宿主直连上游）
 ```
 
-每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
+每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑 → 什么时候不该用**。
 最后一节 [§6 坑速查表](#6-坑速查表) 是全文浓缩，接线完成后拿它自查一遍。
 
 > **四个口径，各说一件事**（别混）：
@@ -108,6 +108,30 @@ v0.35.0 起本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox`
 
 ---
 
+### 0.4 模型侧怎么接
+
+内核与模型的分界线只有一条：**模型负责「说」，内核负责「判」与「记」。**
+
+| 归谁 | 做什么 |
+|---|---|
+| 模型 | 产出报告 JSON、决定调哪个工具、给环节终答、面对拒绝后自我修正 |
+| 内核 | 判定这次调用要不要放行、这条结论可不可信、上下文超没超、恢复从哪里接着跑 |
+| 宿主 | 提供模型客户端与工具实现；**在**内核判定之后**执行**或**拒绝** |
+
+**模型不负责、也不该负责的事**：守卫是否放行（`tooldisclose` / `guardset` / 上游 `policy`）、
+失败该不该重试（上游 `toolfail` / `retryplan`）、恢复计划怎么算（`checkpoint`）、
+上下文怎么压（`budget`）、副作用是不是已经做过（`sideeffect`）。
+模型**只消费结论**：`invoke.Verdict.Reason`（留痕版）与 `guardset.Outcome.Guidance()`（模型版）、
+`toolfail.Failure.Guidance()`、`spill.TruncHint`、`offload.Render` 的占位与取回指引。
+
+⇒ 模型侧要做的只有两件事：**按指引改**（指引里写明了该改什么、能不能靠重试解决）
+与 **把结论写进产物**（报告的 `steps` / `verdicts` / `evidence`）。
+
+模型侧的完整接法（提示词怎么写、输出怎么约束、被拒后怎么自我修正）见
+[模型侧接入指南](https://yi-nology.github.io/goagent-kernel/guide/llm-guide.html)。
+
+---
+
 ## 1. 引入
 
 ```bash
@@ -123,7 +147,7 @@ go get github.com/yi-nology/goagent-kernel@latest
 go get github.com/yi-nology/goagent-kernel@latest
 ```
 
-> **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.6.4，
+> **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.62.0，
 > 而它会随发版变旧。钉死的数字在几轮发版后就是**过期指引**——
 > 按它引入会拿到一个缺了好几轮能力的旧版本，且没有报错。
 > `go get @latest` 不会过期；要复现特定版本再显式钉。
@@ -180,6 +204,71 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 
 ## 3. 接入路线图
 
+<div align="center">
+<svg width="760" viewBox="0 0 760 250" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="250" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="28" y="30" font-size="14" fill="#e6edf3">接入全景：六段机制的依赖顺序</text>
+<text x="28" y="50" font-size="11" fill="#9aa7b8">前一段是后一段的前提——跳过任何一段，右侧的判据就失去依据</text>
+<rect x="28" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="80" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">① 契约面</text>
+<text x="80" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">contract</text>
+<text x="80" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">statemachine</text>
+<line x1="38" y1="136" x2="122" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="80" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主实现</text>
+<text x="80" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">RunContext+StepSink</text>
+<rect x="148" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="200" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">② 报告协议</text>
+<text x="200" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">protocol</text>
+<text x="200" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">报告 JSON → 报告</text>
+<line x1="158" y1="136" x2="242" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="200" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主喂原始 JSON</text>
+<text x="200" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">标题走注入</text>
+<rect x="268" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="320" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">③ 判定环</text>
+<text x="320" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">tooldisclose</text>
+<text x="320" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">guardset</text>
+<line x1="278" y1="136" x2="362" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="320" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主装 Stage 切片</text>
+<text x="320" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">工具目录自己登记</text>
+<rect x="388" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="440" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">④ 续跑</text>
+<text x="440" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">checkpoint</text>
+<text x="440" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">commitgate</text>
+<line x1="398" y1="136" x2="482" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="440" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主实现 StoreCAS</text>
+<text x="440" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">终态词表自己注入</text>
+<rect x="508" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="560" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">⑤ 上下文</text>
+<text x="560" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">budget</text>
+<text x="560" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">spill · offload</text>
+<line x1="518" y1="136" x2="602" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="560" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主实现三个接口</text>
+<text x="560" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">Summarizer 等</text>
+<rect x="628" y="70" width="104" height="94" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="680" y="94" font-size="11" fill="#e6edf3" text-anchor="middle">⑥ 程序化编排</text>
+<text x="680" y="114" font-size="8" fill="#58a6ff" text-anchor="middle">ptc</text>
+<text x="680" y="126" font-size="8" fill="#58a6ff" text-anchor="middle">进程内 goja VM</text>
+<line x1="638" y1="136" x2="722" y2="136" stroke="#262e3d" stroke-width="1"/>
+<text x="680" y="150" font-size="7.5" fill="#9aa7b8" text-anchor="middle">宿主提供 bindings</text>
+<text x="680" y="160" font-size="7.5" fill="#9aa7b8" text-anchor="middle">复用同一套 Stage</text>
+<line x1="134" y1="112" x2="142" y2="112" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="145,112 140,108.5 140,115.5" fill="#58a6ff"/>
+<line x1="254" y1="112" x2="262" y2="112" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="265,112 260,108.5 260,115.5" fill="#58a6ff"/>
+<line x1="374" y1="112" x2="382" y2="112" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="385,112 380,108.5 380,115.5" fill="#58a6ff"/>
+<line x1="494" y1="112" x2="502" y2="112" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="505,112 500,108.5 500,115.5" fill="#58a6ff"/>
+<line x1="614" y1="112" x2="622" y2="112" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="625,112 620,108.5 620,115.5" fill="#58a6ff"/>
+<rect x="28" y="180" width="704" height="54" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="44" y="202" font-size="10.5" fill="#e6edf3">不变量：内核只判定，不处置——判定依据由宿主给，处置动作由宿主执行</text>
+<text x="44" y="221" font-size="9" fill="#9aa7b8">旁挂（可后接）：eventbus/watchdog 进度 · delta/drain/pending 流式与退出 · netguard/pii 安全 · dispatch 改派 · roundguard 回合守卫</text>
+</svg>
+</div>
+
+*图 1：六段机制的依赖顺序。前五段是第六段的前提；旁挂的四组能力可以按需后接，互不依赖。*
+
 ### 3.1 契约面：`contract` + `statemachine`
 
 **这一层是你与内核之间的唯一边界。** 编排引擎不碰存储、不碰数据库——
@@ -187,7 +276,7 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 
 > **状态词表只有一个定义处**（issue #354/#357）：`contract` 单点定义会话与
 > 环节共用的状态取值，`statemachine` 的 12 个状态常量全部是它的别名
-> （标注 Deprecated，新代码请用 `contract.StatusX`）。终态判定的公开入口只有
+> （标注 Deprecated，新代码请直接用 `contract` 的状态常量，如 `contract.StatusCreated`）。终态判定的公开入口只有
 > 一份：`contract.IsTerminalStatus`；`statemachine.IsTerminal` 是环节侧的类型化
 > 入口，从转移表派生并与前者对 12 个环节状态逐条一致（跨包用例钉住）。
 > 别在宿主侧另抄一份终态清单——两份必然漂移，且今天看不出差别。
@@ -277,10 +366,58 @@ func advance(from, to statemachine.StepStatus) error {
 
 ---
 
+**什么时候不该用**
+
+- **你的编排里没有「环节」概念**（单步任务）——`contract` 的价值在于给多环节一份共同的词表；
+  没有多环节就别引入它，也别指望它替你管状态存储（本仓**不碰存储**，落库是你的事）。
+- **想把领域字段加进内核契约**——`SetField` 的开放键是给**运行时**数据用的；
+  形状上的领域字段属于宿主，进了内核就是边界纪律的破口。
+
 ### 3.2 报告协议：`protocol`
 
-模型输出的 JSON 不可信。`protocol` 给的是一条**五级容错解析 + 白名单校验 + 渲染**
-的流水线，核心思路是「能修就修，但该拦的拦死」。
+模型输出的 JSON 不可信。`protocol` 给的是一条**容错解析 + 白名单校验 + 渲染**
+的流水线（解析分**四级成功通道 + 一级兜底**），核心思路是「能修就修，但该拦的拦死」。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="330" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="24" font-size="13" fill="#e6edf3">报告解析与校验的分级：能修就修，但该拦的拦死</text>
+<rect x="16" y="40" width="380" height="272" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="64" font-size="11.5" fill="#e6edf3">解析：四级成功通道 + 一级兜底</text>
+<text x="32" y="84" font-size="8.5" fill="#9aa7b8">前置闸：&gt;2 MiB / 空串 / 无报告键 ⇒ ErrNotReport（不截断）</text>
+<rect x="32" y="94" width="348" height="32" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="46" y="114" font-size="9.5" fill="#e6edf3">① 直解：Normalize + Unmarshal</text>
+<text x="366" y="114" font-size="8.5" fill="#58a6ff" text-anchor="end">置信原样</text>
+<rect x="32" y="130" width="348" height="32" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="46" y="150" font-size="9.5" fill="#e6edf3">② 修复通道：尾逗号 / 坏转义 / 未闭合</text>
+<text x="366" y="150" font-size="8.5" fill="#a371f7" text-anchor="end">置信钳 low</text>
+<rect x="32" y="166" width="348" height="32" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="46" y="186" font-size="9.5" fill="#e6edf3">③ 提取通道：散文包裹的 JSON 对象</text>
+<text x="366" y="186" font-size="8.5" fill="#58a6ff" text-anchor="end">置信原样</text>
+<rect x="32" y="202" width="348" height="32" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="46" y="222" font-size="9.5" fill="#e6edf3">④ 提取 + 修复</text>
+<text x="366" y="222" font-size="8.5" fill="#a371f7" text-anchor="end">置信钳 low</text>
+<rect x="32" y="238" width="348" height="32" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="46" y="258" font-size="9.5" fill="#f85149">⑤ 全不中 ⇒ ErrNotReport（降级读正文）</text>
+<text x="32" y="292" font-size="8.5" fill="#9aa7b8">置信 high 只可能出现在直解 / 提取通道</text>
+<rect x="412" y="40" width="332" height="272" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="428" y="64" font-size="11.5" fill="#e6edf3">校验：Validate() 只分两级</text>
+<rect x="428" y="80" width="300" height="48" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="444" y="100" font-size="9.5" fill="#e6edf3">warn 级：证据 snippet 超长</text>
+<text x="444" y="117" font-size="8.5" fill="#9aa7b8">只留痕，不截断（证据保真）</text>
+<rect x="428" y="136" width="300" height="48" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="444" y="156" font-size="9.5" fill="#f85149">critical：steps 以 { 或 【 开头</text>
+<text x="444" y="173" font-size="8.5" fill="#9aa7b8">执行器会当 shell 跑 ⇒ 整份拦截</text>
+<rect x="428" y="192" width="300" height="48" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="444" y="212" font-size="9.5" fill="#f85149">critical：证据引用悬空</text>
+<text x="444" y="229" font-size="8.5" fill="#9aa7b8">ErrViolation：整份报告被拦</text>
+<rect x="428" y="248" width="300" height="48" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="444" y="268" font-size="9.5" fill="#58a6ff">信任级别分两入口</text>
+<text x="444" y="285" font-size="8.5" fill="#9aa7b8">ParseLLMReport 剥离五个引擎字段</text>
+</svg>
+</div>
+
+*图 4：左边是解析的降级阶梯（修复通道救回的报告置信被钳为 low），右边是校验的两级（warn 留痕 / critical 拦死）。*
 
 ```go
 package myapp
@@ -365,9 +502,70 @@ func toReport(raw string) (*protocol.Report, error) {
 
 ---
 
+**什么时候不该用**
+
+- **你的产出根本不是结构化报告**（纯文本回答）——`protocol` 只认带报告键的 JSON，其余一律判 `ErrNotReport`。
+- **你想要一个通用 JSON schema 校验器**——它只认本包那份报告 schema，通用校验请另找。
+- **想让引擎侧字段被模型回填后再落库**——那是 `ParseReport` 的路（保留五个引擎字段），
+  **不是** `ParseLLMReport`；走错入口等于把呈现权交给模型。
+
 ### 3.3 工具判定环：`tooldisclose` + `guardset` + 上游 `toolfail`
 
 这是 harness 里最核心的一组：**任何一次工具调用，都必须过同一套判定环。**
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="300" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="24" font-size="13" fill="#e6edf3">一次工具调用穿过 invoke 判定环：三条入口汇入一条链</text>
+<rect x="16" y="44" width="148" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="90" y="68" font-size="10.5" fill="#e6edf3" text-anchor="middle">普通工具调用</text>
+<text x="90" y="84" font-size="8.5" fill="#9aa7b8" text-anchor="middle">模型直接发起</text>
+<text x="90" y="98" font-size="8.5" fill="#58a6ff" text-anchor="middle">host 工具面</text>
+<rect x="16" y="132" width="148" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="90" y="156" font-size="10.5" fill="#e6edf3" text-anchor="middle">ptc 程序内调用</text>
+<text x="90" y="172" font-size="8.5" fill="#9aa7b8" text-anchor="middle">程序里 host.&lt;tool&gt;()</text>
+<text x="90" y="186" font-size="8.5" fill="#58a6ff" text-anchor="middle">进程内 goja VM</text>
+<rect x="16" y="220" width="148" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="90" y="244" font-size="10.5" fill="#e6edf3" text-anchor="middle">子进程侧调用</text>
+<text x="90" y="260" font-size="8.5" fill="#9aa7b8" text-anchor="middle">SubprocessProvider</text>
+<text x="90" y="274" font-size="8.5" fill="#58a6ff" text-anchor="middle">判定在父侧做</text>
+<line x1="166" y1="76" x2="196" y2="76" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="199,76 194,72.5 194,79.5" fill="#58a6ff"/>
+<line x1="166" y1="164" x2="196" y2="164" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="199,164 194,160.5 194,167.5" fill="#58a6ff"/>
+<line x1="166" y1="252" x2="196" y2="252" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="199,252 194,248.5 194,255.5" fill="#58a6ff"/>
+<rect x="200" y="44" width="196" height="240" rx="10" fill="#161b26" stroke="#a371f7" stroke-width="1.5"/>
+<text x="298" y="68" font-size="11.5" fill="#a371f7" text-anchor="middle">invoke.Chain</text>
+<text x="298" y="84" font-size="8.5" fill="#9aa7b8" text-anchor="middle">逐环短路，首拒即停</text>
+<rect x="212" y="96" width="172" height="44" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="298" y="114" font-size="9.5" fill="#e6edf3" text-anchor="middle">policy.Stage（审批）</text>
+<text x="298" y="130" font-size="8" fill="#9aa7b8" text-anchor="middle">上游 toolgate/policy</text>
+<rect x="212" y="148" width="172" height="44" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="298" y="166" font-size="9.5" fill="#e6edf3" text-anchor="middle">tooldisclose.Stage（披露）</text>
+<text x="298" y="182" font-size="8" fill="#9aa7b8" text-anchor="middle">目录内 + schema 已取回</text>
+<rect x="212" y="200" width="172" height="44" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="298" y="218" font-size="9.5" fill="#e6edf3" text-anchor="middle">guardset.Stage（合成）</text>
+<text x="298" y="234" font-size="8" fill="#9aa7b8" text-anchor="middle">多条拒绝合成一条</text>
+<text x="298" y="266" font-size="8" fill="#9aa7b8" text-anchor="middle">顺序即语义</text>
+<line x1="398" y1="112" x2="436" y2="112" stroke="#3fb950" stroke-width="1.5"/>
+<polygon points="439,112 434,108.5 434,115.5" fill="#3fb950"/>
+<line x1="398" y1="224" x2="436" y2="224" stroke="#f85149" stroke-width="1.5"/>
+<polygon points="439,224 434,220.5 434,227.5" fill="#f85149"/>
+<rect x="440" y="64" width="304" height="96" rx="8" fill="#161b26" stroke="#3fb950"/>
+<text x="456" y="88" font-size="11" fill="#3fb950">放行</text>
+<text x="456" y="108" font-size="9.5" fill="#e6edf3">宿主执行工具 → 结果回灌模型</text>
+<text x="456" y="126" font-size="9" fill="#9aa7b8">判定环不执行、不解释工具语义</text>
+<text x="456" y="144" font-size="9" fill="#9aa7b8">执行与拒绝都在宿主这一侧</text>
+<rect x="440" y="176" width="304" height="96" rx="8" fill="#161b26" stroke="#f85149"/>
+<text x="456" y="200" font-size="11" fill="#f85149">拒绝</text>
+<text x="456" y="220" font-size="9.5" fill="#e6edf3">Reason（留痕）/ Guidance（模型）</text>
+<text x="456" y="238" font-size="9" fill="#9aa7b8">拒绝走 (Verdict, nil)，不是 error</text>
+<text x="456" y="256" font-size="9" fill="#9aa7b8">模型只消费结论，不自己判</text>
+</svg>
+</div>
+
+*图 2：三条入口（普通调用 / ptc 程序内调用 / 子进程侧调用）汇入同一条 invoke 链。判定只装一次，处处生效。*
 
 #### 3.3.1 为什么不是「一条链逐个过」
 
@@ -378,6 +576,58 @@ func toReport(raw string) (*protocol.Report, error) {
 `guardset` 补的正是这一面：**一组相互独立的判定一并求值，多条拒绝合成一条**。
 二者叠加而非取代——`guardset.Set` 把自己接成 `invoke.Chain` 上的**一环**，
 链照旧短路，只是这一环内部已经把该说的都说了。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="300" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="22" font-size="13" fill="#e6edf3">两种组装形态：拒绝怎么送到模型面前</text>
+<rect x="16" y="36" width="352" height="248" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="60" font-size="11.5" fill="#f85149">invoke.Chain：逐个过，首拒即收口</text>
+<rect x="32" y="80" width="96" height="52" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="80" y="102" font-size="9.5" fill="#e6edf3" text-anchor="middle">配额守卫</text>
+<text x="80" y="120" font-size="9" fill="#f85149" text-anchor="middle">拒绝</text>
+<rect x="132" y="80" width="96" height="52" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="180" y="102" font-size="9.5" fill="#9aa7b8" text-anchor="middle">审计守卫</text>
+<text x="180" y="120" font-size="9" fill="#9aa7b8" text-anchor="middle">灰掉</text>
+<rect x="232" y="80" width="96" height="52" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="280" y="102" font-size="9.5" fill="#9aa7b8" text-anchor="middle">披露守卫</text>
+<text x="280" y="120" font-size="9" fill="#9aa7b8" text-anchor="middle">灰掉</text>
+<line x1="80" y1="134" x2="80" y2="158" stroke="#f85149" stroke-width="1.5"/>
+<polygon points="80,161 76,155 84,155" fill="#f85149"/>
+<rect x="32" y="162" width="296" height="48" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="48" y="182" font-size="9.5" fill="#e6edf3">模型只听到第 1 条理由</text>
+<text x="48" y="198" font-size="8.5" fill="#9aa7b8">改掉它 → 重试 → 再撞下一条</text>
+<text x="32" y="234" font-size="8.5" fill="#9aa7b8">后面的守卫永远没机会说话</text>
+<text x="32" y="252" font-size="8.5" fill="#9aa7b8">顺序即语义：换顺序就换结论</text>
+<text x="32" y="270" font-size="8.5" fill="#9aa7b8">需要严格先后时，仍然该直接排链</text>
+<rect x="392" y="36" width="352" height="248" rx="10" fill="#161b26" stroke="#3fb950" stroke-width="1.5"/>
+<text x="408" y="60" font-size="11.5" fill="#3fb950">guardset.Set：一并求值，合成一条</text>
+<rect x="408" y="80" width="96" height="52" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="456" y="102" font-size="9.5" fill="#e6edf3" text-anchor="middle">配额守卫</text>
+<text x="456" y="120" font-size="9" fill="#f85149" text-anchor="middle">拒绝</text>
+<rect x="508" y="80" width="96" height="52" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="556" y="102" font-size="9.5" fill="#e6edf3" text-anchor="middle">审计守卫</text>
+<text x="556" y="120" font-size="9" fill="#f85149" text-anchor="middle">拒绝</text>
+<rect x="608" y="80" width="96" height="52" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="656" y="102" font-size="9.5" fill="#e6edf3" text-anchor="middle">披露守卫</text>
+<text x="656" y="120" font-size="9" fill="#3fb950" text-anchor="middle">放行</text>
+<line x1="456" y1="134" x2="456" y2="158" stroke="#f85149" stroke-width="1.5"/>
+<polygon points="456,161 452,155 460,155" fill="#f85149"/>
+<line x1="556" y1="134" x2="556" y2="158" stroke="#f85149" stroke-width="1.5"/>
+<polygon points="556,161 552,155 560,155" fill="#f85149"/>
+<line x1="656" y1="134" x2="656" y2="158" stroke="#3fb950" stroke-width="1.5"/>
+<polygon points="656,161 652,155 660,155" fill="#3fb950"/>
+<rect x="408" y="162" width="296" height="80" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="424" y="184" font-size="9.5" fill="#e6edf3">合成拒绝 Outcome.Guidance()</text>
+<text x="424" y="202" font-size="8.5" fill="#9aa7b8">该调用未通过 2 项检查：1) … 2) …</text>
+<text x="424" y="218" font-size="8.5" fill="#9aa7b8">其中第 1 项无法通过重试解决，请优先处理它。</text>
+<text x="424" y="234" font-size="8.5" fill="#9aa7b8">全部可重试才算可重试（保守侧）</text>
+<text x="408" y="264" font-size="8.5" fill="#9aa7b8">Outcome.Reason() 是给审计的一行版</text>
+<text x="408" y="278" font-size="8.5" fill="#9aa7b8">守卫 panic / nil / 无理由 ⇒ 不可重试的拒绝</text>
+</svg>
+</div>
+
+*图 3：左＝链式逐个过，模型一轮只拿到一个理由；右＝一并求值后合成一条，并指出哪一项重试也解决不了。*
 
 #### 3.3.2 渐进式披露：`tooldisclose`
 
@@ -413,13 +663,17 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 		},
 	})
 
-	// ② 守卫集：披露门 + 宿主自己的守卫，一并求值
+	// ② 门禁：目录与门禁是两件事——Gate.Check 只判「能不能调」，
+	//    它**不产生任何副作用**（不会顺手把工具激活成已加载）。
+	gate := tooldisclose.NewGate(cat)
+
+	// ③ 守卫集：披露门 + 宿主自己的守卫，一并求值
 	set, err := guardset.New(
 		guardset.Guard{
 			Name: "tool_disclosure",
 			Rank: 10,
 			Check: func(ctx context.Context, c invoke.Call) invoke.Verdict {
-				if e := cat.Check(c.Name); e != nil {
+				if e := gate.Check(c.Name); e != nil {
 					return invoke.Verdict{
 						Allow:     false,
 						Reason:    tooldisclose.Guidance(e), // 给模型看，要能照着做
@@ -439,7 +693,7 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 		panic(err) // 空集合 / 空名 / 重名都在这里失败
 	}
 
-	// ③ 单一 Stage 出口。两个变体的差别只在 Reason 的用途：
+	// ④ 单一 Stage 出口。两个变体的差别只在 Reason 的用途：
 	//    Stage            → Reason = out.Reason()  （给人看，要全且准）
 	//    StageWithGuidance→ Reason = out.Guidance()（给模型看，要能照着做）
 	return guardset.StageWithGuidance(set), cat
@@ -448,14 +702,23 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 
 **判定环的严格二分**——`Gate.Check` 三种结局互不代偿：
 
-| 情形 | 结局 | 可重试 | 附带动作 |
+| 情形 | 结局 | 可重试 | 恢复动作 |
 |---|---|---|---|
-| 已加载 | `nil` | — | — |
-| 在目录内但未加载 | `*GateError`（`ErrNotLoaded`） | ✅ | **顺手 `Load` 激活** |
-| 不在目录内 | `*GateError`（`ErrNotInCatalog`） | ❌ | 就地终止 |
+| 已加载（`Catalog.Load` 已交付 schema） | `nil` | — | — |
+| 在目录内但未加载 | `*GateError`（`ErrNotLoaded`） | ✅ | **先 `Catalog.Load` 取回 schema**，再按 schema 构造参数调用 |
+| 不在目录内 | `*GateError`（`ErrNotInCatalog`） | ❌ | 就地终止，改用目录内的其他工具 |
 
-「拒绝即激活、重试不绕路」：第一次拒绝已经把工具激活了，同参重试必成。
-模型不需要换参数、换措辞再来一遍。
+⚠️ **门禁不产生副作用**（issue #286）：`Gate.Check` **从不**调用 `Catalog.Load`，
+被拒的尝试**不会**把工具变成已加载。`GateError.Activated` 字段保留只为兼容既有审计面，
+**恒为 false**。
+
+⇒ **恢复路径只有一条**：先取回 schema（`Catalog.Load`），再按 schema 构造参数调用。
+模型指引原文把这条钉死了——「schema 未取回前，**原样重试不会成功**」
+（`tooldisclose/gate.go` 的 `GateError.Guidance`）。**「原样重试不会成功」成立，
+「同参重试就过」不成立**——后者是 issue #286 之前的旧语义。
+
+两条指引的措辞也是契约的一部分：**未加载**一路**不得**出现「原样重试 / 以相同参数重新调用」；
+**不在目录**一路是「请不要重试，改用目录内的其他工具」。
 
 **关键符号**
 
@@ -494,6 +757,14 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
   且 `Retryable=false`——与「正常判定得出的拒绝」区分开，两者处置不同。
 - **拒绝走 `(Verdict, nil)`，不返回 error**——拒绝是正常判定结论，
   error 在链上会被归口成「这一环自己坏了」。
+
+**什么时候不该用**
+
+- **工具只有三五个、全塞进上下文也不占地方**——渐进披露省的是「几十个工具」那一档的固定成本，
+  工具少时它只增加装配面。
+- **想用 `Search` 的结果顺带把工具激活**——检索**只排序、不激活**；
+  「披露」的唯一写入口是 `Catalog.Load`。
+- **想让门禁替你执行工具**——它只判「能不能调」，不执行、不解释参数语义。
 
 #### 3.3.3 失败分类：上游 `toolfail`（`github.com/oagentkit/guardx/toolfail`）
 
@@ -551,6 +822,13 @@ func advise(err error) string {
   取值也不得含具体标识、数值与业务词面——它会原样进入提示词。
 - **`Code` 不得写入每次都变的内容**（数值、标识、耗时），它要跨版本稳定用于聚合。
 - **`RetryableReporter` 的实现方必须 nil-safe**：链上可能挂 typed-nil 指针。
+
+**什么时候不该用**
+
+- **工具失败没有稳定类别可归**——`toolfail` 的价值在**跨版本稳定的类别 + 码**；
+  每次都换的文案对它没用，只能自己去聚合。
+- **想让它替你决定重试**——它只给判定与指引，**退避与重试执行**归宿主。
+- **想知道「上一次到底生效没有」**——分类回答不了：要么用 `sideeffect` 的闸，要么查下游事实。
 
 #### 3.3.4 审批门接进判定环：`policy.Stage`
 
@@ -690,6 +968,13 @@ asm.Unsubscribe(h)
 
 ---
 
+**什么时候不该用**
+
+- **守卫之间有严格先后**（前一环的结论是后一环的输入）——那要**排进 `invoke.Chain`**；
+  塞进同一个 `Set` 会让一并求值改变单条判定的语义。
+- **运行期要临时增删守卫**——`Set` 构造后只读（那是它的不变量），要换份请用 `Assembly`。
+- **只有一条守卫**——一条守卫用 `invoke.Stage` 就够，`Set` 的价值在合成多条拒绝。
+
 ### 3.4 程序化工具编排：`ptc`
 
 模型写一段程序，进程内 goja VM 执行，程序内经 bindings 调宿主工具，
@@ -755,9 +1040,12 @@ return out;
 保守 JS 子集（无 fetch/fs/require，能力只来自 bindings）+ 墙钟 deadline（`vm.Interrupt`）、
 绑定调用数上限（`MaxCalls`）、绑定输出累计字节上限（`MaxBytes`）。
 
-**`ErrorKind` 取值全集**：`""`（成功）/ `deadline` / `budget_calls` / `budget_bytes` /
-`runtime` / `pending` / `bad_result` / `syntax` / `binding_collision` /
-`binding_signature` / `stage_denied` / `stage_failed`。
+**`ErrorKind` 取值全集**：`""`（成功）+ `ptc.AllErrorKinds()` 的 **14** 个：
+`""`（成功）/ `bad_result` / `binding_collision` / `binding_signature` /
+`budget_bytes` / `budget_calls` / `deadline` / `host_panic` / `pending` /
+`permission_denied` / `runtime` / `stage_denied` / `stage_failed` / `syntax` /
+`unmanaged`。词表与常量集同源，新增取值只改表，`AllErrorKinds()` 自动跟随
+（issue #365）。
 
 `stage_denied` 与 `stage_failed` 分开不是洁癖：前者是**正常裁决**（程序改不掉），
 后者是**宿主门禁自己坏了**（该修守卫代码，不是程序）。
@@ -802,6 +1090,13 @@ return out;
   分工前提是沙箱性质——**谁给 VM 加了 fetch，谁就得重新回答 netguard 该接在哪**。
 
 ---
+
+**什么时候不该用**
+
+- **只有一两个工具调用**——多写一段 JS 的成本高于省下的一轮往返。
+- **程序需要访问文件 / 网络 / 任意 shell**——goja 是**保守 JS 子集**（无 fetch / fs / require）；
+  要那种能力请换一个执行后端，而不是给 VM 开口子。
+- **编排只跑一次、不可重入**——`ptc` 的价值在「N 轮塌缩成 1 轮」，一次性任务用普通工具调用更直接。
 
 #### 3.4.1 执行沙箱的档位与后端协议：上游 `guardx/sandbox`
 
@@ -905,6 +1200,44 @@ if res.HasBlocking() { os.Exit(1) }
 | `offload` | 二进制本体躺在消息里 | 每轮装配 | 输入侧 |
 | `spill` | 输出超预算被截断 | 产出时 | 输出侧 |
 
+<div align="center">
+<svg width="760" viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="320" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="26" font-size="13" fill="#e6edf3">上下文三件套：三段各自的边界</text>
+<text x="16" y="48" font-size="10" fill="#9aa7b8">三段各管一件事，边界互不重叠；记账各归各，不可互相顶替</text>
+<rect x="16" y="76" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="102" font-size="11.5" fill="#58a6ff">budget</text>
+<text x="32" y="122" font-size="8.5" fill="#9aa7b8">输入侧 · 每轮前</text>
+<line x1="170" y1="88" x2="170" y2="128" stroke="#262e3d"/>
+<text x="186" y="98" font-size="8" fill="#9aa7b8">管什么</text>
+<text x="186" y="118" font-size="9.5" fill="#e6edf3">分段计量 + 压实计划（纯计算，无 I/O）</text>
+<line x1="460" y1="88" x2="460" y2="128" stroke="#262e3d"/>
+<text x="476" y="98" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
+<text x="476" y="118" font-size="9.5" fill="#e6edf3">不做摘要——摘要是一次 LLM 调用，归宿主</text>
+<rect x="16" y="152" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="178" font-size="11.5" fill="#a371f7">offload</text>
+<text x="32" y="198" font-size="8.5" fill="#9aa7b8">输入侧 · 每轮装配</text>
+<line x1="170" y1="164" x2="170" y2="204" stroke="#262e3d"/>
+<text x="186" y="174" font-size="8" fill="#9aa7b8">管什么</text>
+<text x="186" y="194" font-size="9.5" fill="#e6edf3">二进制本体外置为占位文本</text>
+<line x1="460" y1="164" x2="460" y2="204" stroke="#262e3d"/>
+<text x="476" y="174" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
+<text x="476" y="194" font-size="9.5" fill="#f85149">首次只标记不替换：内容原地保留</text>
+<rect x="16" y="228" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="254" font-size="11.5" fill="#3fb950">spill</text>
+<text x="32" y="274" font-size="8.5" fill="#9aa7b8">输出侧 · 产出时</text>
+<line x1="170" y1="240" x2="170" y2="280" stroke="#262e3d"/>
+<text x="186" y="250" font-size="8" fill="#9aa7b8">管什么</text>
+<text x="186" y="270" font-size="9.5" fill="#e6edf3">溢出存档的清单与分页取回</text>
+<line x1="460" y1="240" x2="460" y2="280" stroke="#262e3d"/>
+<text x="476" y="250" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
+<text x="476" y="270" font-size="9.5" fill="#e6edf3">不写盘：写侧与清理归宿主</text>
+<text x="16" y="308" font-size="9" fill="#9aa7b8">压实要显式 Shrink 改账；占位替换按轮提交；截断提示是双侧钉档契约——三件事各记各的账</text>
+</svg>
+</div>
+
+*图 6：budget 管输入侧的量，offload 管输入侧的大对象，spill 管输出侧的截断。三者的边界互不重叠，记账也不能互相顶替。*
+
 #### 3.5.1 `budget`：分段计量 + 压实计划
 
 分段计量不是为了好看——**只给总数无法区分「工具面膨胀」与「历史膨胀」**，
@@ -993,6 +1326,13 @@ func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
   反序可能出现「摘要已丢弃原文、摘要本身又没拿到」的净损失。
 - **`Apply` 的三条计划校验全在任何副作用之前**——被拒的调用不得留下任何副作用。
 
+**什么时候不该用**
+
+- **你的上下文窗口由模型侧固定、你根本不打算压**——接 `budget` 只是多一层账。
+- **想让内核替你摘要**——摘要是一次 LLM 调用，属模型面；`budget` 只给计划不给摘要
+  （`Summarizer` 由宿主实现）。
+- **需要删内容**——`budget` 只计量与计划，逐字丢弃是宿主在 `Apply` 这一侧的动作。
+
 #### 3.5.2 `spill`：输出溢出存档
 
 **本包不做写入**，只提供清单、分页取回与写侧清理。
@@ -1035,6 +1375,13 @@ func retrieve(root, sessionID, hint string) {
 - **`Prune` 是 best-effort**：无返回值、清理失败不影响本次存档。
 - `ReadPage` 边界钳位：`off<0` 视作 0、`off>total` 收到 `total`、`limit<=0` 用 `DefaultLimit`。
 - **`List` 返回 mtime 降序**，`spill` 侧有 `Prune` 而 `offload` 侧没有（回收由宿主决定）。
+
+**什么时候不该用**
+
+- **输出从不超长**——`spill` 只在超预算时才产生价值。
+- **你不打算给模型分页取回的能力**——`TruncHint` 是**双侧钉档契约**：前端按同一契约解析，
+  文案一改，模型侧的取回指引与前端就脱节。
+- **想要一个带写入的存档服务**——本包**不做写入**，只给清单、分页取回与写侧清理。
 
 #### 3.5.3 `offload`：内联大对象外置
 
@@ -1091,7 +1438,57 @@ func applyOffload(st *offload.State, msg []byte) offload.Report {
 
 ---
 
+**什么时候不该用**
+
+- **消息里没有大对象**（纯文本）——占位替换会白白增加 token。
+- **只是想「顺手压缩一下」**——`offload` 是**外置**不是压缩：本体还在磁盘上，模型靠 `read_blob` 取回。
+- **想在一轮内就替换掉**——本包**首次只标记不替换**，强行替换等于让模型凭空失去输入。
+
 ### 3.6 断点续跑：`checkpoint` + `commitgate`
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="310" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="24" font-size="13" fill="#e6edf3">恢复的两条判据：可信边界（checkpoint）与终态独占（commitgate）</text>
+<rect x="16" y="40" width="352" height="254" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="64" font-size="11.5" fill="#e6edf3">checkpoint：可信边界按依赖判定</text>
+<rect x="32" y="84" width="72" height="38" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="68" y="108" font-size="10" fill="#3fb950" text-anchor="middle">A 完成</text>
+<rect x="156" y="84" width="72" height="38" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="192" y="108" font-size="10" fill="#f85149" text-anchor="middle">B 未完成</text>
+<rect x="280" y="84" width="72" height="38" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="316" y="108" font-size="10" fill="#3fb950" text-anchor="middle">C 完成</text>
+<line x1="106" y1="103" x2="152" y2="103" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="155,103 150,99.5 150,106.5" fill="#58a6ff"/>
+<line x1="230" y1="103" x2="276" y2="103" stroke="#58a6ff" stroke-width="1.5"/>
+<polygon points="279,103 274,99.5 274,106.5" fill="#58a6ff"/>
+<text x="32" y="142" font-size="8.5" fill="#9aa7b8">完成集 = {A, C}，B 是空洞</text>
+<rect x="32" y="152" width="320" height="58" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="48" y="172" font-size="9.5" fill="#f85149">空洞之后一律不采信 ⇒ Skip = ∅</text>
+<text x="48" y="188" font-size="8.5" fill="#9aa7b8">A、C 一起进 Run（宁可多跑）</text>
+<text x="48" y="203" font-size="8.5" fill="#9aa7b8">报 AnomalyDoneOutOfOrder</text>
+<text x="32" y="232" font-size="8.5" fill="#9aa7b8">显式声明 DependsOn 后按各自前驱采信</text>
+<text x="32" y="250" font-size="8.5" fill="#9aa7b8">并行组不再被前缀规则整体作废</text>
+<text x="32" y="268" font-size="8.5" fill="#9aa7b8">终态快照 + 未完成步骤 ⇒ Blocked，不半截放行</text>
+<rect x="392" y="40" width="352" height="254" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="408" y="64" font-size="11.5" fill="#e6edf3">commitgate：终态独占靠令牌</text>
+<rect x="408" y="80" width="320" height="42" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="424" y="106" font-size="9.5" fill="#e6edf3">Acquire(ctx, Commit) ⇒ Lease{Token}</text>
+<line x1="568" y1="124" x2="568" y2="146" stroke="#3fb950" stroke-width="1.5"/>
+<polygon points="568,149 564,143 572,143" fill="#3fb950"/>
+<line x1="568" y1="124" x2="568" y2="190" stroke="#f85149" stroke-width="1.5"/>
+<polygon points="568,193 564,187 572,187" fill="#f85149"/>
+<rect x="408" y="150" width="320" height="36" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="424" y="173" font-size="9.5" fill="#3fb950">落库成功 ⇒ 闸保留（不回滚）</text>
+<rect x="408" y="194" width="320" height="36" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="424" y="217" font-size="9.5" fill="#f85149">落库失败 ⇒ ReleaseLease(令牌)</text>
+<text x="408" y="252" font-size="8.5" fill="#9aa7b8">旧 Release(c) 认内容（三元组不唯一）</text>
+<text x="408" y="268" font-size="8.5" fill="#9aa7b8">迟到的释放会放掉别人的闸 ⇒ 必须用令牌</text>
+<text x="408" y="284" font-size="8.5" fill="#9aa7b8">回滚要用 context.WithoutCancel(ctx)</text>
+</svg>
+</div>
+
+*图 5：左＝恢复计划按依赖定可信边界（失序时宁可多跑），右＝终态独占靠凭证放闸（靠内容会放错闸）。*
 
 #### 3.6.1 `checkpoint`：续跑而非重放
 
@@ -1204,6 +1601,13 @@ func resume(ctx context.Context, runID string, graph []checkpoint.StepDef) error
 - **`Seq == 0` 恒视为不参与单调判定**——不是一次真实提交。
 - **`store == nil` 时 `Commit` 恒失败**（`ErrStoreMissing`），**不静默放行**。
 
+**什么时候不该用**
+
+- **编排不可重演**（外部动作不可逆且无幂等键）——续跑的前提是「同样的步骤再做一次是安全的」，
+  否则宁可全量重来也不要半截续跑。
+- **想让内核替你落快照**——`StoreCAS` 由宿主实现；`SeqGate` 还是**进程内**的，重启即空。
+- **没有跨进程 / 跨重启的恢复需求**——单进程短命任务接这一套是净负担。
+
 #### 3.6.2 `commitgate`：终态独占提交闸
 
 **为什么 `statemachine` 排不出来**：它是**纯谓词**，只回答「这次迁移合不合法」，
@@ -1282,6 +1686,13 @@ func commitStep(ctx context.Context, g *commitgate.Guard, ref commitgate.Ref,
 
 ---
 
+**什么时候不该用**
+
+- **一个环节只有一个执行者、不会并发提交终态**——`statemachine` 的纯谓词就够。
+- **想用它判「这一步该不该跑」**——它只管**终态独占**，不管可达性也不管顺序。
+- **已经用 `sideeffect` 的幂等键覆盖了同一资源**——两个闸解决的是不同问题
+  （副作用只做一次 vs 终态只提交一次），别指望互相替代。
+
 ### 3.7 实时事件：`eventbus` + `watchdog`
 
 ```go
@@ -1358,6 +1769,13 @@ func runWatchdog(ctx context.Context, bus *eventbus.Bus) {
   载荷截断到 2000 字符，无法重算 checksum；内容级校验由守卫在源头全量覆盖。
 
 ---
+
+**什么时候不该用**
+
+- **单进程、无前端实时进度**——事件总线要落库 + 广播两套面，收益小于成本。
+- **指望它兜底裁决**——`watchdog` **只告警不裁决**，热路径裁决在守卫侧。
+- **需要「事件必达」**——总线**有损**（每订阅者 64 缓冲，满即丢），
+  补达责任在宿主的 DB 回放游标，不在本包。
 
 ### 3.8 流式与退出：`delta` + `drain` + `pending`
 
@@ -1578,6 +1996,13 @@ func updatePolicy() error {
 - `netguard` **不在工具调用的判定环上，这是有意的**——塞进去就得猜「哪个参数字段是 URL」，
   那是领域知识。
 
+**什么时候不该用**
+
+- **出站目标全是你自己声明的内网服务**——那不叫 SSRF 防护，叫自缚手脚；
+  真要放行请写出来（`Allow.Private` / `Allow.Loopback`），别靠默认。
+- **想用它判「工具参数里哪个字段是 URL」**——那需要领域知识，判据归宿主；本包判的是**字符串**。
+- **只做写面校验就以为安全了**——两次 DNS 解析之间有 rebinding 窗口，必须接 `DialFunc`。
+
 #### 3.9.1.1 拨号层接线：把 rebinding 窗口闭上
 
 写面校验（`CheckURLWith`）与实际请求分属两次 DNS 解析，两次之间权威 DNS 可以改口
@@ -1768,6 +2193,13 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 
 ---
 
+**什么时候不该用**
+
+- **你要脱敏的不是个人信息**（密钥、令牌）——那是值模式那一类，不是本包的价值面。
+- **想要一个「自动决定脱不脱」的策略**——本包 fail-closed：未登记的面、未登记的容器形状、
+  未注入密钥的 hash 档，一律整段替换 + 要求阻断；**阻断动作仍归宿主**。
+- **指望它识别任意标识符**——覆盖面只到大陆手机号与 18 位居民身份证。
+
 ### 3.10 副作用只做一次：`retryplan` + `sideeffect` + `sidetest`
 
 这三个包是一条链上的三段：**`retryplan` 判「该怎么重试」→ `sideeffect`
@@ -1909,12 +2341,20 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
 `Acquire` **必须是存储侧的一次原子操作**（一条带条件的 UPDATE / 一个 Lua 脚本 /
 一个 CAS 事务）——拆成「读闸 → 判 → 写闸」三步，去重就失效了。
 
+**什么时候不该用**
+
+- **动作天然幂等**（`PUT` 到固定路径、写同一个值）——直接重试即可，不需要跨进程闸。
+- **动作只在单进程内发生、进程崩了就作废**——那不必付跨进程原子性的成本。
+- **想让本包保证 exactly-once**——它承诺的是**至多一次**；
+  exactly-once 要求**下游也接受幂等键**，那是接线责任，不是本包能给的。
+
 #### 3.10.3 `sidetest`：给你的存储实现一份验收标准
 
 `Store` 的正确性无法靠「看起来对」保证，而**每家宿主都会自己写一遍存储实现**。
-`sidetest` 把「宿主实现必须满足什么」固化成 **22 条**可复跑的子测试
+`sidetest.Run` 把「宿主实现必须满足什么」固化成 **34 条**可复跑的子测试
 （v0.32.0 新增「结果未知」一族五条；v0.33.0 新增「执行意图」一族六条，
-外加「闸已释放后续期被拒」一条）：
+外加「闸已释放后续期被拒」一条）。下游若实现了 `FencedSink`，另跑
+`sidetest.RunSinkContract` 的 **6 条**栅栏契约子测试：
 
 ```go
 import "github.com/yi-nology/goagent-kernel/sidetest"
@@ -1938,6 +2378,13 @@ func TestMyStore(t *testing.T) {
 **注意**：本包**不提供**参考实现。一份「正确的内存实现」会被当成生产可用的存储，
 而它恰恰**不具备本包最核心的那条性质**（跨进程）——单进程内存实现无法提供
 「Acquire 是跨进程原子操作」，拿它上生产＝以为自己去重了，实际两个进程各做一次。
+
+**什么时候不该用**
+
+- **你的实现不想支持注入时钟**——那套件会退化成一组**空断言**：全绿，但什么都没验。
+  与其跑一个假的绿，不如不接。
+- **你想拿套件当参考实现抄**——本包**不提供**参考实现：
+  一份「正确的内存实现」不具备本包最核心的那条性质（跨进程），照抄上生产即等于自欺。
 
 #### 3.10.4 接线范式：`retryplan` → `sideeffect`
 
@@ -1974,6 +2421,45 @@ case retryplan.PathReplayed:
     return res2, nil
 }
 ```
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="0" y="0" width="760" height="320" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="16" y="26" font-size="13" fill="#e6edf3">「只做一次」的两段接线：决策说走哪条路，闸负责不再做第二次</text>
+<rect x="16" y="44" width="204" height="226" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="32" y="68" font-size="11.5" fill="#e6edf3">retryplan.Decide(err)</text>
+<rect x="32" y="84" width="172" height="42" rx="8" fill="#1c2330" stroke="#262e3d"/>
+<text x="46" y="102" font-size="9.5" fill="#9aa7b8">PathNone</text>
+<text x="46" y="118" font-size="8.5" fill="#9aa7b8">不重试，如实失败</text>
+<rect x="32" y="134" width="172" height="42" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="46" y="152" font-size="9.5" fill="#58a6ff">PathDirect</text>
+<text x="46" y="168" font-size="8.5" fill="#9aa7b8">原样重发安全，可直接重发</text>
+<rect x="32" y="184" width="172" height="42" rx="8" fill="#1c2330" stroke="#a371f7"/>
+<text x="46" y="202" font-size="9.5" fill="#a371f7">PathReplayed</text>
+<text x="46" y="218" font-size="8.5" fill="#9aa7b8">必须带幂等键重放</text>
+<text x="32" y="248" font-size="8.5" fill="#9aa7b8">可重试但不确定能否重发</text>
+<text x="32" y="264" font-size="8.5" fill="#9aa7b8">+ 没有幂等键 ⇒ PathNone</text>
+<line x1="222" y1="205" x2="242" y2="205" stroke="#a371f7" stroke-width="1.5"/>
+<polygon points="245,205 240,201.5 240,208.5" fill="#a371f7"/>
+<text x="234" y="196" font-size="7.5" fill="#9aa7b8" text-anchor="middle">同一 Key</text>
+<rect x="246" y="44" width="498" height="226" rx="10" fill="#161b26" stroke="#3fb950" stroke-width="1.5"/>
+<text x="262" y="68" font-size="11.5" fill="#3fb950">sideeffect 闸：同一个 act.Key 再跑一次</text>
+<rect x="262" y="84" width="466" height="46" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="278" y="104" font-size="9.5" fill="#3fb950">OutcomeReplayed：该 Key 已完成</text>
+<text x="278" y="121" font-size="8.5" fill="#9aa7b8">取回既有结果，不施加第二次</text>
+<rect x="262" y="138" width="466" height="46" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="278" y="158" font-size="9.5" fill="#f85149">OutcomeUncertain：结果未知</text>
+<text x="278" y="175" font-size="8.5" fill="#9aa7b8">禁止盲目重试，先查下游事实再 Reconcile</text>
+<rect x="262" y="192" width="466" height="46" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="278" y="212" font-size="9.5" fill="#58a6ff">OutcomeContended：资源被占</text>
+<text x="278" y="229" font-size="8.5" fill="#9aa7b8">退避后重试整个流程（不是重发这一次）</text>
+<text x="262" y="258" font-size="8.5" fill="#9aa7b8">Acquire 必须是存储侧的一次原子操作</text>
+<rect x="16" y="282" width="728" height="28" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="32" y="300" font-size="9.5" fill="#e6edf3">核心不变量：走 PathReplayed 必须用同一个 act.Key——换了 Key 就是两个动作，去重失效</text>
+</svg>
+</div>
+
+*图 7：左边只回答「该走哪条重试路径」，右边保证「再跑一次不会变成两次副作用」；两段之间靠幂等键对齐。*
 
 **接线的核心不变量**：走 `PathReplayed` 时**必须用同一个 `act.Key`**。
 换了 Key 就是两个不同的动作，去重失效——这正是本包要防的事。
@@ -2046,10 +2532,19 @@ _ = sandboxRegistry.Register(managed)
 **承诺边界**：本包只判「两层是否都同意」，**不判「实际隔离强度是否兑现声明」**
 ——档位是后端自报的，内核不校验其真实性（那要审后端实现，不是判据能做的事）。
 
+**什么时候不该用**
+
+- **你只有一层**（只有审批没有档位，或只有档位没有审批）——直接用上游的 `policy.Stage`
+  或 `sandbox.Execute` 就够，不必再叠一层判定。
+- **执行后端不受你控制**——本包只判「两层是否都同意」，**不判实际隔离强度**；
+  档位是后端自报的。
+- **想要本包替你选后端**——它不选；`sandbox.Registry.Resolve` 选不到满足档位的后端就是**拒绝**，
+  不降级。
+
 ### 3.12 门包清零之后：这几个包去哪找
 
-v0.35.0 起，本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox` 四个门面包
-（`architecture-policy.yaml` 的 `facades` 段是**空清单**）——它们整包迁到了上游矩阵，
+v0.35.0 起，本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox` / `dispatch`
+五个门包（`architecture-policy.yaml` 的 `facades` 段是**空清单**）——它们整包迁到了上游矩阵，
 宿主**直连上游**：
 
 | 本仓旧名 | 现居上游 | import 路径 |
@@ -2059,8 +2554,28 @@ v0.35.0 起，本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandb
 | `sandbox` | 执行沙箱的档位与后端协议 | `github.com/oagentkit/guardx/sandbox` |
 | `reminder` | 系统注入提示的防伪包裹 | `github.com/oagentkit/guardx/injectband` |
 
-⚠️ **本仓的 `dispatch` 不是旧门包**：v0.38.0 起它是**改派失败面**（三档分类 + 兜底
-改派环），与「权限即拓扑」无关——旧的门包语义随 v0.35.0 一起删掉了。
+⇒ **本仓现在一个门包都没有**。判定语义与实现都在上游那一侧，宿主 import 上游路径即可：
+
+- `policy`：`Gate` / `Decision` / `Op` / `Stage` / `AuditGate` / `LoadOverrides` /
+  `Normalize` / `Mutating` / `PolicyRejectedPrefix`。
+- `toolfail`：**9 个** `Class`（`ClassTransient` / `ClassPermanent` / `ClassAuthentication` /
+  `ClassNotFound` / `ClassPermissionDenied` / `ClassInvalidArgument` / `ClassRateLimited` /
+  `ClassSelfReported` / `ClassUnknown`）+ `PolicyOf` 的策略表
+  （`Retryable` / `Backoff` / `SurfaceDelay` / `NeedsOperator` / `SafeToResubmit` /
+  `Remediation`）。
+- `sandbox`：`Level`（四档）/ `Provider` / `Registry` / `Budget` / `Capable` / `FSFence`；
+  **选不到满足档位的后端即 `ErrNoProvider`，不静默降级**。
+- `injectband`：`Wrap` / `SanitizeBody`。
+
+本仓保留的是**组合层**（`gatecheck` 合成审批 × 档位、`preset` 收成具名组合、
+`egress` 判出口兑现）与**门面纪律**，不含判定本体。
+
+⚠️ **`dispatch` 同名不同物，别混**：旧门包 `dispatch`（权限即拓扑）随 v0.35.0 整包删除，
+消费方直连上游 `github.com/oagentkit/agent/dispatch`（allow 矩阵 / 深度上限 / 自派发拒绝，
+见本仓 `dispatch/dispatch.go` 包头「它回答的是第四问」）。
+本仓现存的 `dispatch`（v0.38.0 起，Experimental）是**派发域失败面**：
+三档分类（transient / fatal / other）+ 同域/跨域兜底改派环，与「权限即拓扑」无关。
+一句话分界：**可达性归上游，失败后还能不能派归本仓。**
 
 **门包纪律仍在**（`harness-facade-stays-facade`，error 级，走 `go/ast`）：本仓若再设
 门包，只允许四种声明——类型别名 / 常量别名 / 单条上游转发函数 / 允许集合内的 import；
@@ -2110,6 +2625,10 @@ return use(res.Slug, res.Err)
 
 - **判定面只读首次失败的原始错误**。累计错误里混进了改派说明
   （`%w（已同域改派 X 仍失败）`），二次判档读到的已不是真因——`FirstErr` 只放原始错误。
+- **`Classify` 是两级判据，顺序不能换**：第一级查上游 `toolgate/policy.Disposition(err)`
+  （**零文本匹配**，按 toolfail 类别分档）；链与协议层都判不出（`ClassUnknown`）才走
+  第二级**双语文本兜底**。状态码判定**必须带 `\b` 词边界**——裸 `strings.Contains("403")`
+  会被「省略中段 4032 字节」这类文本命中，把瞬态误判成 fatal（跨域兜底被错误抑制）。
 - **fatal 档不进任何改派**：换执行者也是白跑（同域兄弟与跨域候选共享同一套凭证与
   权限面）⇒ 直接终态。
 - **候选枚举与执行都是接缝**：本包不排序候选、不发事件、不落库——那些是宿主资产。
@@ -2190,11 +2709,14 @@ px, err := egressproxy.New(egressproxy.Policy{AllowHosts: []string{"api.internal
 if err != nil {
 	return err
 }
-if err := px.Start(); err != nil {
+// Start 返回**可直接用于环境变量的代理地址**（形如 "http://127.0.0.1:3128"），
+// 不是 error-only——声明里的地址必须是它真在听的那个。
+addr, err := px.Start()
+if err != nil {
 	return err
 }
 defer px.Close()
-spec.Proxy = "http://" + px.Addr()   // 声明里的地址必须是它真在听的那个
+spec.Proxy = addr
 
 prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 	Program:       program,   // 原有字段一律不变
@@ -2830,6 +3352,12 @@ for {
   不随之累计，要跨进程累计的宿主须自行落库并把 `Used` 灌回本包。
 
 ---
+**什么时候不该用**
+
+- **你的循环不会空转**（模型每次都给出新信息）——无进展检测只会误报。
+- **想要它替你调模型或执行工具**——本包**只给结论**：不调模型、不执行工具、不写产物、不解释工具语义。
+- **想做跨进程的回合累计**——`Meter` 是**进程内**的；跨进程累计要宿主自己落库并把 `Used` 灌回本包。
+
 ## 4. 门禁与提交前检查
 
 ### 4.1 一条命令
@@ -2852,7 +3380,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
-| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`，当前无豁免；实测值以该目标输出为准）|
+| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`；豁免分**三张表**：普通豁免（当前为空）、结构性豁免（`examples/pgstore`，环境依赖型）、零测试文件豁免（`cmd/archcheck`、`cmd/ptcchild`、`examples/pgstore/cmd/pgsmoke`）；实测值以该目标输出为准）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
@@ -2885,7 +3413,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-sandbox-execution-single-entry` | **error** | 外部程序执行只允许经 **`ptc` 执行后端**；其余生产代码不得直接 import os/exec（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
 | `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
-另有**六条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
+另有 **18 条**不走正则表、由 `go/ast` 判定的结构性规则（其中**六条**是租户隔离证据门，issue #177 补齐；含一条 policy 自校验）——判据是语法结构，逐行看文本判不出：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
@@ -3384,7 +3912,7 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 
 | 症状 | 真因 |
 |---|---|
-| 模型第一次调工具被拒，第二次同参重试就过了 | 正常行为——「拒绝即激活」。看 `Retryable(err)` 是不是 true |
+| 工具在目录内但 schema 未取回，模型原样重试仍被拒 | 正常行为——门禁**不激活**工具（issue #286）。恢复路径是「先取回 schema 再调用」，不是重试。看 `Retryable(err)` 是不是 true |
 | 同一个工具被反复拒，每次理由都不同 | 你没用 `guardset`，链在第一个拒绝处收口了 |
 | 重启后陈旧快照写畅通无阻 | `SeedFromStore` 没回灌，`SeqGate` 重启即空 |
 | 落库失败后某个环节再也提交不了终态 | `commitgate` 的 `Release` 没调 |
