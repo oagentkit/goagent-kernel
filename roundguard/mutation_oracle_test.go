@@ -218,6 +218,10 @@ func oracleDetect(obs []roundguard.Observation, cfg roundguard.Config) roundguar
 	if k <= 0 {
 		k = roundguard.DefaultRepeat
 	}
+	// 下界向上钳位到 2（spec §7.2）：k=1 时漂移形态永不可达（退化档）。
+	if k < 2 {
+		k = 2
+	}
 	window := cfg.Window
 	if window <= 0 {
 		window = roundguard.DefaultWindow
