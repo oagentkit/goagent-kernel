@@ -391,7 +391,8 @@ title: 能力详解
 
 `taskboard`（多 agent 认领与依赖）· `skilldisclose`（技能渐进披露）·
 `hookengine`（钩子装配）· `memorypipe`（记忆管道）· `ticket` / `trajectory`（工单与轨迹）·
-`toolname`（工具名净化）· `gatecheck`（审批 × 档位联合判据）· `sessionref` / `worktree` /
+`toolname`（工具名净化）· `gatecheck`（审批 × 档位联合判据）·
+`roundguard`（模型回合循环判据——结局分类 / 额度 / 无进展，详见 [模型接入](./llm-guide.md) 一节的「Agent Loop」）· `sessionref` / `worktree` /
 `delegate`（会话引用 / 工作树 / 委派）。
 跨宿主必须一致的判定语义**只在上游有一份**：失败分类 `guardx/toolfail`、
 隔离档位 `guardx/sandbox`、审批门 `toolgate/policy`、
