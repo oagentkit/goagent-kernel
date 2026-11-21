@@ -42,7 +42,8 @@
 > **编排是代码，LLM 只做单环节。**
 
 本仓只提供**确定性编排的机制面**（报告协议、环节状态机、事件总线、派发守卫、
-审计策略、溢出存档、PII 脱敏、出站守卫等 29 个包），**不认识任何领域概念**。
+审计策略、溢出存档、PII 脱敏、出站守卫等 **48** 个机制面包；另有契约套件 /
+组合机制 / 门禁执行体三类，见 §1.3），**不认识任何领域概念**。
 
 ### 1.2 判定口诀（改任何代码前先问这一句）
 
@@ -55,25 +56,30 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 51 个包分五组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 53 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（51 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **57 个**
+> 口径：与 README 包表（53 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **61 个**
 > 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
-> 上一版此表写「29 个包 / 门面 3 个」，与实际差在两处：`toolfail` / `sandbox` 早已转入
-> 门面（门面共 5 个），而 `trajectory` / `ticket` 漏登记。
+> 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
+> `toolfail` / `sandbox` 四个门面包在 v0.35.0 已整包删除（消费方直连上游），
+> 而 `scheduling` / `eval` / `coord` / `handoff` / `ownership` / `worker` /
+> `backend` / `metrics` / `cost` / `tenant` / `controlplane` / `roundguard`
+> 十二个包此前漏登记。
+> **包名顺序与 README 包表一致**——两处表若各自排序，读者要自己对齐。
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（36 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `tooldisclose` `toolname` `guardset` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `reconcile` `dispatch` `deadline` `pii` `netguard` `sideeffect` `trajectory` `ticket` `cmdpolicy` `egress` `sessionref` `taskboard` `skilldisclose` `hookengine` `memorypipe` `delegate` `worktree` `finalize` `steer` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
+| **机制面**（48 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `pii` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `toolname` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
 
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
-| **门面**（4 个） | `policy` `reminder` `toolfail` `sandbox` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`（`guardx/toolfail`、`guardx/sandbox`）。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
 
-> 门面包不可变是**硬约束**，不是建议。`docs/OAGENTKIT-OVERLAP.md` 里那句
-> 「保持门面，别再在本仓加逻辑」原本只是散文，散文不是门禁——所以才有了
-> `harness-facade-stays-facade` 这条 AST 规则。
+> **门包不可变是硬约束，不是建议**（当前 policy `facades: []`，清单为空；规则与
+> 执行体仍在）。`docs/OAGENTKIT-OVERLAP.md` 里那句「保持门面，别再在本仓加逻辑」
+> 原本只是散文，散文不是门禁——所以才有了 `harness-facade-stays-facade` 这条
+> AST 规则：门包只允许四种声明（类型别名 / 常量别名 / 单条上游转发函数 /
+> 允许集合内的 import），加真逻辑三者必居其一 ⇒ 当天即红。
 
 ### 1.4 三条贯穿全仓的纪律（改代码时会撞上）
 
@@ -94,7 +100,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（57 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（61 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -107,7 +113,7 @@
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # 全量单测（当前 156 个测试文件）
+make test                 # 全量单测（当前 518 个测试文件）
 make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令输出；本仓当前全绿）
 ```
 
@@ -122,7 +128,7 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 | 你要改的东西 | 去哪个包 | 注意 |
 |---|---|---|
 | 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
-| 环节状态流转 | `statemachine` | 纯函数件，79 行，零依赖 |
+| 环节状态流转 | `statemachine` | 纯函数件，305 行，依赖 oekit/pkg |
 | 工具失败分类（可重试/退避/需人工/重发安全） | `toolfail` | 分类是**数据表**，不要散落 if |
 | 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
@@ -497,7 +503,7 @@ make check
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的两张表：`PKG_COV_EXEMPT`（普通，当前为空）与 `PKG_COV_STRUCTURAL_EXEMPT`（结构性：包的性质决定通用判据不适用，自己达标不判红，但没命中任何包仍判红），两张表都失效即红|
-| `architecture-check` | 8 条规则 + 5 门包 + 各包依赖方向（包数以该命令输出为准）| 见下表 |
+| `architecture-check` | 9 条规则 + 0 个门包 + 各包依赖方向（**包数以该命令输出为准**）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
 | `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|

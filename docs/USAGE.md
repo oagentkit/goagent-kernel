@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 本文覆盖 24 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 本文覆盖 25 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -35,7 +35,7 @@
 >
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
-> | 本文覆盖 | 24 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **53** 个包 | README 包表口径（机器校验，`make docsync` 判）|
 > | policy 登记 | **61** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
 > | 生命周期登记 | **62** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
@@ -81,6 +81,7 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 执行的隔离强度怎么声明与保证 | `sandbox` | 执行后端（可选）、每次执行的档位要求 |
 | 副作用怎么保证只做一次 | `sideeffect` + `retryplan` | `Store` 实现（跨进程原子）、幂等键、下游拒收契约 |
 | 我的存储实现守没守住契约 | `sidetest` | 让实现支持注入时钟，然后跑一次套件 |
+| 模型侧循环还能不能转 / 是不是在空转 | `roundguard` | 回合事实（结局 / 用量 / 指纹）——模型与工具仍归宿主 |
 
 ### 0.3 三个必须先知道的约束
 
@@ -2642,6 +2643,135 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
   边界不可预期 ⇒ TTL 取 ≥ 1s。
 - **拿 SQLite 当「不用起 PG」的免维护方案**。它省掉的是**服务进程**，不是
   **运维**：WAL 文件、备份、跨机共享都得自己安排。
+
+### 3.18 回合守卫：模型侧循环还能不能转：`roundguard`
+
+#### 什么时候需要它
+
+你在宿主里写**模型侧循环**（模型请求工具 → 执行 → 回灌 → 继续；模型给终答 → 停）。
+循环本体早已收敛成同一段代码，各宿主真正不一致的是**循环周边**的三问：
+
+1. **这次还能不能转**（回合数 / 工具调用总数 / 单工具额度还剩多少）？
+2. **这一回合以什么结束**（终答 / 要工具 / 交接 / 报错 / 中止）？
+3. **这一圈是不是白转**（精确重复 / 震荡 / 缓慢漂移 / 错误螺旋 / 只规划不动手）？
+
+放在宿主侧的后果是**每个宿主各判一套**：同一段循环在 A 宿主算「第 12 圈超了」、
+在 B 宿主算「第 8 圈还能转」，且没有任何机器能发现。
+
+`roundguard` 是**判据层**：它**不调模型、不执行工具**，只回答这三问，并把三张判据
+合成**一条可执行结论**。**判据归内核，模型侧归宿主**——本包只给结论，不写产物、
+不解释工具语义。
+
+#### 最小集成片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/roundguard"
+
+// —— 装配期：声明额度与处置口径（负值 / 空工具标识 / 未知口径 ⇒ Validate 报错）——
+b := roundguard.Budget{
+    MaxRounds:    40,                              // 回合数上限
+    MaxToolCalls: 20,                              // 工具调用总数上限
+    MaxPerTool:   map[string]int{"send_email": 2}, // 单工具上限
+    Policy:       roundguard.PolicyForceFinal,     // 缺省即此；改 FailFast 即失败即止
+}
+if err := b.Validate(); err != nil {
+    return err // 非法声明在装配期红，不静默降级成「不限」
+}
+cfg := roundguard.Config{} // 零值 = 缺省：窗口 8 / 重复阈值 3
+meter := roundguard.NewMeter()
+var obs []roundguard.Observation
+
+for {
+    // ① 模型调用前：回合数额度用尽？⇒ 按处置口径分流
+    if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {
+        if b.EffectivePolicy() == roundguard.PolicyForceFinal {
+            // 软：不再给工具，让模型用已收集的证据给出终答（产物仍可用）
+            return forceFinal(meter.Used(), v)
+        }
+        // 硬：失败即止
+        return finish(roundguard.Decision{Reason: roundguard.ReasonBudgetExhausted, Limit: v.Limit})
+    }
+
+    // ② 模型调用前：工具调用总额度用尽？⇒ 同样按处置口径分流（转强制收尾）
+    forceFinal := !roundguard.CheckToolCalls(b, meter.Used()).Allowed
+    resp := model.Call(ctx, msgs, tools, optNoTools(forceFinal)) // 宿主调模型
+    meter.Round()
+
+    // ③ 工具执行前：单工具额度 ⇒ 否决这一次，但**配对不破**
+    var results []toolResult
+    for _, tc := range resp.ToolCalls {
+        if v := roundguard.CheckTool(b, meter.Used(), tc.Name); !v.Allowed {
+            results = append(results, toolResult{ID: tc.ID, Err: errors.New(v.Detail)}) // 回灌失败结果
+            continue
+        }
+        res := execTool(ctx, tc)
+        meter.Tool(tc.Name)
+        results = append(results, res)
+        obs = append(obs, hostObservation(tc, res)) // 宿主算指纹 / 归一指纹 / 失败 / 进展事实
+    }
+
+    // ④ 回合末：一条结论
+    d := roundguard.Decide(roundguard.Snapshot{
+        Outcome: hostOutcome(resp, results, forceFinal), // 宿主把模型回复映射成 Outcome
+        Used:    meter.Used(),
+        Obs:     obs,
+    }, b, cfg)
+
+    if d.Warn {
+        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会
+        msgs = append(msgs, hostWarnMessage(d.Shape))
+    }
+    if !d.Continue {
+        // Reason 决定动作：failed / aborted ⇒ 失败；forced_final ⇒ 强制收尾；stalled ⇒ 温和叫停
+        return finish(d)
+    }
+    msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
+}
+```
+
+#### 关键符号
+
+| 符号 | 作用 |
+|---|---|
+| `Classify(Outcome) Route` | 回合结局分类。判定次序「先具体后笼统，取证据最硬的那条」：中止 > 报错 > 交接 > 要工具 > 强制收尾 > 终答 > 原样再问 > 零值形态（保守收敛，不让空循环空转到超时）|
+| `Reason`（10 值）| 结局判定词表：`Reason.Valid()` 与 `AllRoundReasons()` 读**同一张表**（别处不得手抄取值）。`Reason.IsFailure()` 把**失败型收敛**与**温和叫停**分开 |
+| `Budget` / `Used` / `Meter` | 额度声明 / 当前用量 / 进程内回合账（带锁，**只数不判**；跨进程累计归宿主）|
+| `CheckRounds` / `CheckToolCalls` / `CheckTool` | 三条额度判据，**一律在调用前**判（调用后判意味着最后一次昂贵调用已经发生）|
+| `StopPolicy`（2 值）| 额度用尽后的处置口径（**策略**）：`PolicyForceFinal` / `PolicyFailFast`。**额度维度（事实）与处置口径（策略）分开**，且一个口径管全部额度 |
+| `Budget.EffectivePolicy()` | 取生效口径（零值缺省 = 强制收尾）。**别直接读 `Budget.Policy` 判口径**——零值是合法缺省，不是第三种口径 |
+| `Detect([]Observation, Config) Finding` | 无进展检测：**五形态 + 三档处置**（不判 / 首档 `Warn` 警告回灌 / 停止档 `Stalled` 温和叫停）。窗口向上钳位到 `2×Repeat+2`（否则震荡形态的停止档**永不可达**——判据不可达等于判据不存在）|
+| `Observation` | 宿主注入的回合事实。**指纹与归一指纹都由宿主算**（内核不猜「什么是易变部分」）；`ResultChanged` = 本轮有进展；`Exempt` = 本回合不参与判定（轮询 / 查状态类动作、刻意的规划步）|
+| `Decide(Snapshot, Budget, Config) Decision` | 组合结论：结局终局优先 → 额度按处置口径分流 → 无进展兜底。`Decision.Continue=false` 有**三种含义**（失败型 / 强制收尾 / 温和叫停），靠 `Reason` 区分 |
+
+#### 三条接线纪律
+
+1. **失败要回灌、也要记账**：工具失败既作为 `tool_result` 回灌给模型（模型自行修正），
+   又作为 `Observation.Failed` 记一条——只回灌不记账 ⇒ 无进展检测永远看不到错误螺旋。
+2. **指纹要稳定，且要带上「结果变了」**：同一逻辑动作必须给同一指纹；归一指纹要抹掉
+   易变部分（页码 / 时间戳 / 行号），否则漂移检测永远不命中。「相同调用但输出变了」
+   必须显式记为 `ResultChanged: true`——那是**进展**，不记就会把有意义的重试误判成
+   循环。轮询 / 查状态类动作、以及刻意的规划步，要记 `Exempt: true`。
+3. **「停止」与「失败」分开处置**：`Decision.Reason` 区分失败型收敛
+   （`IsFailure()==true`）与温和叫停 / 强制收尾——把「被上限温和收停」当故障上报
+   就是假红。
+
+#### 坑
+
+- **在调用后判额度**。最后一次昂贵调用已经发生，判定就晚了——三条 `Check*` 一律放在
+  **模型调用前** / **工具执行前**。
+- **不跑 `Budget.Validate` 就上线**。未校验的负值上限在 `Check*` 里是 **fail-open**
+  （上限 ≤ 0 一律判成「不限」）⇒ 非法声明必须在**装配期**被拒。
+- **用 `Budget.Policy` 直接判口径**。零值是**合法缺省**（= 强制收尾），拿它跟
+  `PolicyForceFinal` 比会把「没设」判成「不是强制收尾」⇒ 要生效口径用
+  `EffectivePolicy()`，要校验声明用 `Validate()`。
+- **`Decision.Continue == false` 一律当失败**。`ReasonForcedFinal`（强制收尾，产物
+  仍可用）与 `ReasonStalled`（温和叫停）都不是失败——一律当故障上报就是假红。
+- **无进展一命中就停**。首档（`Warn`）只该**警告回灌**，给模型一次自我修正的机会；
+  停止档才温和叫停——一命中就停 = 模型永远没有自我修正的机会。
+- **把指纹当内核的事**。指纹 / 归一指纹**由宿主算**：内核若自己决定「什么是易变部分」，
+  就成了领域解释者（形状判定归宿主、集合判定归本包）。
+- **拿 `Meter` 当跨进程回合账**。它是**进程内**的（带锁、只数不判）；跨进程续跑时回合数
+  不随之累计，要跨进程累计的宿主须自行落库并把 `Used` 灌回本包。
 
 ---
 ## 4. 门禁与提交前检查
