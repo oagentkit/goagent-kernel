@@ -392,13 +392,15 @@ title: 能力详解
 `taskboard`（多 agent 认领与依赖）· `skilldisclose`（技能渐进披露）·
 `hookengine`（钩子装配）· `memorypipe`（记忆管道）· `ticket` / `trajectory`（工单与轨迹）·
 `toolname`（工具名净化）· `gatecheck`（审批 × 档位联合判据）·
-`roundguard`（模型回合循环判据——结局分类 / 额度 / 无进展，详见 [模型接入](./llm-guide.md) 一节的「Agent Loop」）· `sessionref` / `worktree` /
-`delegate`（会话引用 / 工作树 / 委派）。
+`sessionref` / `worktree` / `delegate`（会话引用 / 工作树 / 委派）。
 跨宿主必须一致的判定语义**只在上游有一份**：失败分类 `guardx/toolfail`、
 隔离档位 `guardx/sandbox`、审批门 `toolgate/policy`、
 派发可达性 `oagentkit/agent/dispatch`——本仓不保留转发门面（`facades` 段为空）。
 本仓的 `dispatch` 是**派发失败面**（transient / fatal / other 三档 + 兜底改派环），
 不是可达性门面。
+**模型侧回合循环的判据在本仓 `roundguard`**（结局分类 / 额度 / 无进展，Experimental）——
+它与 `dispatch` 同属「失败与循环怎么判」这一族（USAGE.md 的 ⑩ 判定与改派），
+**不属协作治理面**，故不进上面的清单；详见 [模型接入](./llm-guide.md) 的「Agent Loop」一节。
 
 ## 怎么选：三个判断
 
