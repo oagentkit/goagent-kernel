@@ -31,7 +31,7 @@ func TestApplySpansSnapshotSurvivesConcurrentStrategyFlip(t *testing.T) {
 	txt := strings.Repeat("a "+synMobile+" b ", 32) + synID
 	// 先落进翻转集合再开跑：缺省策略是 mask，而上表的互斥关系只在 {redact, block}
 	// 这个集合内成立（mask 与 block 的处置形态相同，从文本上分不开）。
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 
@@ -46,8 +46,8 @@ func TestApplySpansSnapshotSurvivesConcurrentStrategyFlip(t *testing.T) {
 				return
 			default:
 			}
-			_ = SetStrategy(StrategyRedact)
-			_ = SetStrategy(StrategyBlock)
+			_ = setStrategyForTest(t, StrategyRedact)
+			_ = setStrategyForTest(t, StrategyBlock)
 		}
 	}()
 	defer func() {

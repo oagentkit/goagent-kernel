@@ -846,6 +846,8 @@ make check
 | `harness-no-domain-runtime-deps` | 对宿主仓 / 旧门面仓 / 已退役 `agentkit` 门面的 import | 改走 `github.com/oagentkit/*` |
 | `harness-no-bare-goroutine` | 生产代码裸 `go func` / `go someFunc()` | 走 `concurrency/async.GoSafe` |
 | `harness-test-goroutine-joined` | **用例内**起的 goroutine 在用例返回前没被等待（测试侧无等待点即违规）| 在用例内等它（`<-done` / `wg.Wait()` / 收尾助手）；「长得像等待、其实不是」（`<-ch` 写在**被启动的那个 goroutine 体内**）仍判红 |
+| `harness-test-defer-cleanup` | **用例内**起的 goroutine，其**收尾等待点**写在普通语句里，而它与 `go` 语句之间有 `t.Fatal` 族 / `runtime.Goexit` 的直接调用 ⇒ 失败路径上 Goexit 会跳过这一步 ⇒ goroutine 实际未被 join（**#440**）| 把收尾等待写进 `defer`（`defer func(){ <-done }()` 或 `defer` 收尾助手）；**同步等待**（go 之后到等待点之间没有任何能让用例提前终止的调用）不判 |
+| `harness-test-wallclock-ruler` | 测试函数体里的**裸 `time.Sleep`**（不在 for/range 循环体内）⇒ 拿墙钟窗口当尺子：窗口长度单独决定结论 ⇒ 机器一忙就假红、机制抢跑就白测（**#441**）| 改成「等可观测事实」（计数器 / 通道 / 标志 / 状态）；**轮询退避**（sleep 在循环体内）、**goroutine 体里**的 sleep、policy `managed_helpers:` 登记的**受管辅助**不判 |
 | `harness-no-printf-log-callback` | 公开 API 里的 `logf func(string, ...any)` | 留痕走 `logx.Delegating` 懒解析 |
 | `harness-single-errors-package` | stdlib `"errors"` 与 `github.com/pkg/errors` | 只用 `oekit/pkg/errors` 一套 |
 | `harness-sandbox-execution-single-entry` | 生产代码在 `ptc` 执行后端外直接 `import "os/exec"` | 外部程序执行只允许经 **`ptc` 执行后端**（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
@@ -965,6 +967,8 @@ make check
 | 18 | 「被拒的工具重试一次就放行」 | 以为「拒绝即激活」——**这条已被移除**（提交 `2ac10a4` / issue #286）：保留它会让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为最短路径，模型从未取回 schema，渐进披露省上下文的前提被自身恢复路径绕开 | **schema 未取回 ⇒ 原样重试不会成功**（`ErrNotLoaded` 的模型指引原文）。恢复路径是「先取回 schema，再构造参数调用」；`Catalog.Load` 是披露的**唯一写入口**，检索只排序不激活 | `test`（`tooldisclose/gate_recovery_test.go` 钉住）|
 | 19 | 提交用 `git add -A` 卷进 scratch 目录 / 中文文档批量编辑后出现 U+FFFD / macOS 下 `$VAR` 后紧跟中文被吞掉多字节首字节 | 习惯，不是判据 | 提交用 `git add <具体路径>`；编辑后 `grep U+FFFD` 自检；一律写 `${VAR}` | 无门禁 ⇒ 靠纪律 |
 | 20 | 接缝契约三形态没写齐（声明 / 调用点 / 三条约束）| 以为「接缝是注释」 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 | `seamcheck` |
+| 21 | `harness-test-defer-cleanup` 报红：收尾等待点写在普通语句里 | 用例体末尾（或中途）写 `stopTailer(...)` / `<-done` 这类**普通语句**当收尾点 ⇒ 用例中途 `t.Fatalf` 触发的 `runtime.Goexit` **会跳过它**（Goexit 只执行 defer）⇒ goroutine 活过用例结束 | 把收尾点写进 `defer`（`defer func(){ <-done }()` 或 `defer` 收尾助手）；**中途**收尾别一刀切 defer（会把 join 拖到用例结束 ⇒ 语义改变）⇒ 圈成闭包、defer 写闭包里 | `architecture-check`（`harness-test-defer-cleanup`）|
+| 22 | `harness-test-wallclock-ruler` 报红：拿裸 `time.Sleep` 当尺子 | 睡一段再断言计数 ⇒ 窗口长度单独决定结论：机器一忙就**假红**，机制抢跑就**白测**（什么都没验却绿）| 改成「等可观测事实」（计数器 / 通道 / 标志 / 状态）+ 明确的截止时间；**轮询间隔不是尺子**；确需在辅助里等事实的，在 policy 的 `managed_helpers:` 登记该辅助 | `architecture-check`（`harness-test-wallclock-ruler`）|
 
 ### 5.2 六条判据通则（跨模式复用）
 

@@ -82,6 +82,20 @@ func TestTailerCursorPersistsAcrossRestart(t *testing.T) {
 		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx1)
 		close(done1)
 	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-done1:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
+	defer cancel1()
 	deadline := time.Now().Add(2 * time.Second)
 	for tail.maxIDs() == 0 {
 		if time.Now().After(deadline) {
@@ -150,8 +164,25 @@ func TestTailerCursorLoadFailureStallsNeverSkips(t *testing.T) {
 	defer stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	tailerDone := make(chan struct{})
+	go func() {
+		defer close(tailerDone)
+		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-tailerDone:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
 	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
 
 	// 等「停摆语义真的持续过 N 拍」这个**事实**：Load 被尝试 N 次，且 N 次都失败。
 	// 不用墙钟窗口当尺子——尾随一拍都没转时，下面两条**负向**断言
@@ -228,16 +259,45 @@ func TestTailerCursorSaveFailureKeepsTailing(t *testing.T) {
 
 // TestTailerCursorNotFoundFallsBackToMaxID 首次部署（从未存过游标）回退
 // MaxID 初始化——持久化面不改变「补灌不是回放」的缺省语义。
+//
+// # 缺席断言的尺子：可观测的读拍数，不是墙钟窗口（#432 / #443）
+//
+// 与 TestTailerInitializesCursorFromMaxID 同款形态：先等「机制确实跑过
+// N 读拍」（夹具数出来的读拍数），再判「仍无事件到达」。
+//
+// 另有一处本轮补齐：原用例的夹具里**一条存量都没有**（maxID=5 但 evs 为空）
+// ⇒ 那条「存量不得回放」的负向断言即便机制压根没跑也照样绿（证据落空 ⇒
+// 白测）。现在把存量摆进去（两行，ID ≤ MaxID），缺席断言才有东西可验。
 func TestTailerCursorNotFoundFallsBackToMaxID(t *testing.T) {
 	tail := &fakeTailStore{maxID: 5}
-	cursor := &memCursorStore{} // saved=false
+	tail.append(Event{ID: 1, SessionID: "s", Type: "stored-1"}) // 存量：不得被回放
+	tail.append(Event{ID: 5, SessionID: "s", Type: "stored-5"}) // 存量：不得被回放
+
+	cursor := &memCursorStore{} // saved=false：首次部署
 	hub := NewHub()
 	ch, stop := hub.Subscribe("s")
 	defer stop()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	tailerDone := make(chan struct{})
+	go func() {
+		defer close(tailerDone)
+		NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（#440）：失败路径上 t.Fatalf 触发的
+	// runtime.Goexit 只执行 defer、不执行它之后的普通语句 ⇒ 写在普通语句里的
+	// 等待点会被跳过 ⇒ goroutine 实际未被 join。
+	//
+	// 注册顺序：**先注册 join、后注册 cancel** ⇒ LIFO ⇒ 退出时先 cancel 再 join
+	//（反过来会让 join 等一个「不取消就不返回」的 goroutine ⇒ 挂死）。
+	defer func() {
+		select {
+		case <-tailerDone:
+		case <-time.After(2 * time.Second):
+			t.Errorf("2s 内尾随未退出（失败路径收尾超时）")
+		}
+	}()
 	defer cancel()
-	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
 
 	deadline := time.Now().Add(2 * time.Second)
 	for tail.maxIDs() == 0 {
@@ -246,11 +306,9 @@ func TestTailerCursorNotFoundFallsBackToMaxID(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	select {
-	case ev := <-ch:
-		t.Fatalf("回退 MaxID 后存量不得回放（补灌不是回放）: %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-	}
+	// 等机制确实跑过 N 读拍 ⇒ 再判缺席（尺子见 waitTailReadBeats）。
+	waitTailReadBeats(t, tail, tailAbsenceReadBeats)
+	assertNoTailFrame(t, ch, tailAbsenceReadBeats)
 }
 
 // TestTailerCursorNotFoundUsesExplicitStart CursorStore 未命中时，**显式起点

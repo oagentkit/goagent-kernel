@@ -136,10 +136,10 @@ func TestNormalizationDoesNotWidenFalsePositives(t *testing.T) {
 // （归一化在处置路径上共用，不只是识别路径）。
 func TestNormalizedHashCorrelates(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey("0123456789abcdef"); err != nil {
+	if err := setDigestKeyForTest(t, "0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	plain, _ := Apply(SurfaceInput, "13812345678")

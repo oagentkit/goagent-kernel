@@ -76,10 +76,10 @@ func drain(t *testing.T, hs ...Subscription) {
 // 却以为自己已经跟上了。
 func TestSubscribeReceivesCurrentSnapshot(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
-	SetSurfaces(surfaceInputBit)
+	setSurfacesForTest(t, surfaceInputBit)
 
 	var r rec
 	h, err := Subscribe(r.fn)
@@ -115,7 +115,7 @@ func TestChangeNotifiesWithNewSnapshot(t *testing.T) {
 	drain(t, h)
 	r.reset()
 
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 
@@ -132,12 +132,12 @@ func TestChangeNotifiesWithNewSnapshot(t *testing.T) {
 
 	// 三个写侧都必须触发通知——漏掉任何一个都是一条静默失效的变更通道。
 	r.reset()
-	SetEnabled(false)
+	setEnabledForTest(t, false)
 	if got := r.count(); got != 1 {
 		t.Fatalf("SetEnabled 应触发通知，实得 %d", got)
 	}
 	r.reset()
-	SetSurfaces(surfaceOutputBit)
+	setSurfacesForTest(t, surfaceOutputBit)
 	if got := r.count(); got != 1 {
 		t.Fatalf("SetSurfaces 应触发通知，实得 %d", got)
 	}
@@ -172,7 +172,7 @@ func TestAllSubscribersNotified(t *testing.T) {
 		r.reset()
 	}
 
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	for i, r := range []*rec{&a, &b, &c} {
@@ -200,7 +200,7 @@ func TestUnsubscribeStopsNotifications(t *testing.T) {
 	drain(t, h)
 	r.reset()
 
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.count(); got != 1 {
@@ -210,7 +210,7 @@ func TestUnsubscribeStopsNotifications(t *testing.T) {
 	Unsubscribe(h)
 	r.reset()
 
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.count(); got != 0 {
@@ -239,7 +239,7 @@ func TestUnsubscribeTwiceSafe(t *testing.T) {
 	a.reset()
 	b.reset()
 
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	if got := a.count(); got != 0 {
@@ -272,7 +272,7 @@ func TestSubscribeNilCallbackRejected(t *testing.T) {
 	drain(t, good)
 	r.reset()
 
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.count(); got != 1 {

@@ -29,7 +29,7 @@ func TestRejectedStrategyDoesNotNotify(t *testing.T) {
 	drain(t, h)
 	r.reset()
 
-	if err := SetStrategy("nonsense"); err == nil {
+	if err := setStrategyForTest(t, "nonsense"); err == nil {
 		t.Fatal("未知策略应被拒绝")
 	}
 	if got := r.count(); got != 0 {
@@ -71,7 +71,7 @@ func TestSubscriberPanicDoesNotBreakOthers(t *testing.T) {
 	boom.reset()
 	after.reset()
 
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatalf("订阅者 panic 不得让 SetStrategy 变成失败：%v", err)
 	}
 
@@ -120,7 +120,7 @@ func TestSubscriberMaySetStrategyRecursively(t *testing.T) {
 			if calls.Add(1) != 2 {
 				return
 			}
-			if serr := SetStrategy(StrategyRedact); serr != nil {
+			if serr := setStrategyForTest(t, StrategyRedact); serr != nil {
 				select {
 				case failed <- serr:
 				default:
@@ -137,7 +137,7 @@ func TestSubscriberMaySetStrategyRecursively(t *testing.T) {
 			return
 		}
 		defer Unsubscribe(h)
-		if serr := SetStrategy(StrategyHash); serr != nil {
+		if serr := setStrategyForTest(t, StrategyHash); serr != nil {
 			select {
 			case failed <- serr:
 			default:
@@ -190,7 +190,7 @@ func TestConcurrentSubscribeUnsubscribeAndNotify(t *testing.T) {
 				return
 			default:
 			}
-			if err := SetStrategy(StrategyBlock); err != nil {
+			if err := setStrategyForTest(t, StrategyBlock); err != nil {
 				t.Error(err)
 				return
 			}

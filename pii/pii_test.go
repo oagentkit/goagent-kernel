@@ -180,7 +180,7 @@ func TestRedactValueStructures(t *testing.T) {
 
 func TestEnabledSwitch(t *testing.T) {
 	restore(t)
-	SetEnabled(false)
+	setEnabledForTest(t, false)
 	if redactIn(t, "13812345678") != "13812345678" {
 		t.Fatal("关闭时应原样透传")
 	}

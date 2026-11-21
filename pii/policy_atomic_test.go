@@ -33,7 +33,7 @@ import (
 // 必须整体按同一份快照处置，且 blocked 与处置形态同源。
 func TestApplyValueMultiLeafStaysSelfConsistent(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 
@@ -54,8 +54,8 @@ func TestApplyValueMultiLeafStaysSelfConsistent(t *testing.T) {
 				return
 			default:
 			}
-			_ = SetStrategy(StrategyRedact)
-			_ = SetStrategy(StrategyBlock)
+			_ = setStrategyForTest(t, StrategyRedact)
+			_ = setStrategyForTest(t, StrategyBlock)
 		}
 	}()
 	defer func() {

@@ -2,6 +2,105 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.63.0] — 2026-11-21
+
+### 本版与 v0.62.2 的边界（**先说清，避免同一件事被两个版本各领一次**）
+
+上一版（v0.62.2，tag `v0.62.2`）出货的是**两条纪律的规则本体**：新增
+`harness-test-defer-cleanup` / `harness-test-wallclock_ruler` 两条 `check_kind` 判定、
+被新规则照到的 **9 处**同形面用例改成「可观测事实 + defer 收尾」形态、以及 **8 条例外**
+登记（`eventbus/**` 6 处 + `pii/**` 1 处 + `examples/pgstore` 1 处）。
+
+**那 8 条例外里，有 6 条是当场就知道的假账**——它们登记的理由是「该包正由并行工作线
+改造，本轮不碰」，而那 6 处命中**形态是真的**（失败路径上 Goexit 确实会跳过那一步等待点）。
+⇒ 本版把其中**能改的 6 处真违规改成代码**，并让例外随修复同步删除（**例外不许无声失效**）。
+
+本版清偿的是**上一版没有落地的部分**：
+
+- **#442**（`pii` 全局态还原的**真缺陷**）：包内两套**相反**的还原约定 + `restore(t)`
+  只在 cleanup 还原、用例开始时不重置 + 还原在 goroutine 里跑且超时静默 ⇒
+  `-count>1` 下概率红 ⇒ 收进**一个**包级 helper。
+- **#443**（`eventbus` 两处「缺席类断言」仍是墙钟窗口 + `tail_test.go` 379/400 行）：
+  按关注点拆分 + 缺席断言改成「先等机制跑过 N 读拍」。
+- **判据精度修正**：`defer_cleanup` 把**非阻塞 drain**（带 `default` 的 select）误判成
+  等待点 ⇒ 给出「把 drain 塞进 defer」的错误处方 ⇒ 收窄口径 + 双向用例钉住。
+- **6 处 eventbus 真违规**改代码（不再挂例外）。
+
+### 修复(archcheck)：非阻塞 drain 不是等待点——判据精度修正
+
+新规则落地后把 `eventbus` 的两处缺席断言**误判**成违规：那两处的「等待点」在助手
+`assertNoTailFrame` 里，形态是 `select { case ev := <-ch: ...; default: }`——这个 select
+**带 default 分支** ⇒ 它**永不挂起** ⇒ 这处接收**不等任何东西**，它是**断言**（看此刻通道里
+有没有东西），不是 join。
+
+按宽口径把它算成等待点，判据就会给出「把这个 drain 塞进 defer」的处方——而 drain 本来就不等
+东西，塞进 defer 什么也等不到 ⇒ **判据指错路**（守卫抓不住 = 没有判据）。
+
+⇒ 修正：**非阻塞接收不算等待点**（走 `go/ast`：接收落在某个 select 的 CommClause 里、
+且该 select 带 default 分支 ⇒ 非阻塞）。**双向用例钉住**：带 default 的 drain 不判红；
+没有 default 的 select（带超时分支，仍会挂起）**仍判红**且必须点名用例名——少一条，
+另一条就成了「判据瘫掉也绿」的假绿。
+
+⚠ 兄弟规则 `harness-test-goroutine-joined` 仍用宽口径（任意接收表达式都算等待点）——
+那是它的**已登记边界 1**，本版不动（改它会把一批现存用例判红，属另一条登记行）。
+
+### 修复(pii)：全局策略的测试还原收进一个包级 helper（#442）
+
+`pii` 包内**两套相反**的全局态还原约定（`SetEnabled(false)` vs `SetEnabled(true)`；缺省值是
+**enabled = true**，secure by default），加上那个 `restore(t)` helper **只在 cleanup 里还原、
+用例开始时并不重置**，再叠加「还原动作在 goroutine 里跑且**超时后不报错**」⇒ 用例**起跑在脏
+状态上**、还原还可能落在下一个用例开始之后 ⇒ `-count>1` 下 `TestApplyHonorsStrategy` 概率红
+（`mask 应保长打码，实得 "13800001234"`，`-count=20` 红 19 次；main 上逐字复现 ⇒ 预存在）。
+
+⇒ 修法：**一个**包级 helper（`pii/policy_globals_test.go`）——setup 阶段**同步**把全局重置成
+缺省值；cleanup **同步**还原成缺省值，且**还原超时必须让用例失败**（静默通过正是串扰的来源）；
+包内 **105 处**直接调 `Set*` 的写法全部改走 helper。
+
+**证据**：基线 `-count=20` 红 19 次 ⇒ 修后 `-count=20` **全绿**、`-race` 全绿；反向验证两处
+注入（还原值改回旧约定 / 删掉 setup 重置）⇒ **都红**；两条护栏用例入库
+（`TestPolicyGlobalsSetupResetsToDefaults` / `TestPolicyGlobalsCleanupRestoresDefaults`）
+——它们断言的是**注入的那一条被看见了**，不是「有违规」。
+
+### 修复(test,eventbus)：tail_test.go 按关注点拆分 + 两处缺席断言可观测化（#443）
+
+- **结构**：`eventbus/tail_test.go` 原 **379/400 行**（离结构门禁只差 21 行）⇒ 按关注点拆成
+  5 个文件（夹具/助手、补达与初始化、读失败与幂等、取消与泄漏、装配校验），**最大 181 行**、
+  余量 ≥219；原文件**已不存在**；夹具与共享助手**只此一份**（未复制、未改名）。
+- **断言**：两处「50ms 内不该有事件」的墙钟窗口改成「**先等机制跑过 N 读拍**（夹具数出来的
+  读拍数 = 可观测事实）⇒ 再判缺席」；2s 只作**兜底上限**、不参与结论（拍数没跑满 ⇒ 直接红，
+  **不写成绿**——此刻判绿等于什么都没验）。
+
+**反向验证（这一条是本单的核心价值）**：注入「第 20 拍才回灌存量」的坏实现 ⇒ **新断言红**；
+**同一个坏实现在旧的 50ms 窗口写法下是绿的**（两个用例各 0.07s PASS）⇒ **旧守卫完全没抓到**
+（白测坐实）；再加一档「回灌前先卡 300ms」的慢实现 ⇒ 新断言仍红。
+
+### 修复(test,eventbus)：6 处 tailer goroutine 补 defer 收尾 join（上一版挂例外的真违规）
+
+上一版 `defer_cleanup` 照出 `eventbus` 里 6 处真违规，但当时**挂了例外**（理由是「该包正由
+并行工作线改造」）。⇒ 本版改代码：`tail_cancel_test.go` / `tail_delivery_test.go` /
+`tail_failure_test.go` / `tail_cursorstore_test.go` 六处收尾等待点改成 `defer` 形态。
+
+**注册顺序**先 join 后 cancel ⇒ `defer` 是 LIFO ⇒ 实际执行**先 cancel 再 join**（互不等待）；
+join 带 2s 兜底上限。
+
+⇒ **例外随修复同步删除**（`architecture-policy.yaml` 的 `eventbus/**` 6 条全删）：
+例外命中不到任何违反却仍留在声明面上 ⇒ 就是「僵尸例外」，已登记为 #447。
+
+### 门禁口径：例外从 8 条降到 2 条（且两条都是真债）
+
+删掉 `eventbus/**` 6 条（已改代码）⇒ 只剩 **2 条真实债**，各带 `until: 2026-12-21` 与
+拆除条件：`examples/pgstore/pg_clock_test.go:121`（替代判据需要 PG 侧可观测事实，
+本机无 PostgreSQL 验不了）、`pii/policy_cas_test.go:43`（语义上等不到「PG 已落库」这个
+可观测事实）。
+
+### 依赖地板与导出面
+
+- **依赖地板零变化**（`go.mod` / `go.sum` 未动）⇒ 下游**无需 `go mod tidy`**；
+- **导出面审计三问**：零导出符号消失 / 零既有接口加方法 / 零既有导出函数签名变更 ⇒
+  内核包公开契约面**逐字未变**（`archcheck.Rule` 的 `ManagedHelpers` 字段随 v0.62.2 出货）；
+- **本版唯一的新增判定面**：`defer_cleanup` 的**非阻塞 drain 豁免**——判定口径收窄，
+  **不新增字段、不新增 `check_kind` 取值** ⇒ 宿主 policy **无需改动**。
+
 ## [v0.62.2] — 2026-11-21
 
 ### 新增(archcheck)：「收尾等待点必须写成 defer」与「尺子必须是可以观测事实」两条纪律变成门禁判定（#440 / #441）

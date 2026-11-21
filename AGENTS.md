@@ -1621,6 +1621,12 @@ v0.47.0 的 tag run **7/7 绿**，且 unit 层日志里 `releasecheck` **判了*
 （archcheck 的 `harness-test-goroutine-joined` 判的是**静态形状**，判不出这个 ⇒
 门禁绿着，机制不成立）。
 
+⇒ **这条纪律已有门禁**（v0.62.2，issue #440）：规则 `harness-test-defer-cleanup`
+（`check_kind: defer_cleanup`）专判这一条——用例内起的 goroutine，其收尾等待点
+写在**普通语句**里、且它与 `go` 语句之间存在 `t.Fatal` 族 / `runtime.Goexit` 的
+直接调用 ⇒ **红**（失败路径上 Goexit 会跳过这一步 ⇒ goroutine 实际未被 join）。
+**同步等待**（go 之后到等待点之间没有任何能让用例提前终止的调用）**不判**。
+
 ⇒ 实测两条，供照抄：① defer 里的 `t.Fatalf` 在 Goexit 失败路径上**安全**（不会
 挡住更早注册的 defer，也不会触发嵌套退出）⇒ 收尾助手不必换掉 Fatalf 语义；
 ② 判定核与断言可以分开（收尾助手返回一个 bool，断言交给调用方）⇒ 失败路径上的
@@ -1643,6 +1649,12 @@ defer ⇒ join 被拖到整个用例结束 ⇒ **语义改变**（例：尾随�
 + 窗口：机制压根没跑起来时，「没发生」照样成立 ⇒ 用例绿了却什么都没验到）。
 
 **判别的口径**：一个断言若**只靠时间流逝**才可能成立，它就是拿墙钟当尺子。
+
+⇒ **这条纪律已有门禁**（v0.62.2，issue #441）：规则 `harness-test-wallclock-ruler`
+（`check_kind: wallclock_ruler`）判测试函数体里的**裸 `time.Sleep`**（不在 for/range
+循环体内）⇒ **红**。**显式登记的三条边界**：轮询退避（sleep 在循环体内）、
+goroutine 体里的 sleep（那是被测机制自己的节奏）、policy `managed_helpers:` 登记的
+**受管辅助**。
 
 **配套两条**：① 正向断言改成「轮询直到**那个可观测事实**成立」，带明确的截止时间，
 超时才红（轮询间隔用毫秒级，**间隔不是尺子**，尺子是那个事实）；② 负向断言在当前

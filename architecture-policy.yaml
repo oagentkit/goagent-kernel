@@ -2468,77 +2468,12 @@ thresholds:
 
 exceptions:
   # ── issue #440（harness-test-defer-cleanup）────────────────────────────
-  # 命中形态是真的：失败路径上（t.Fatalf → runtime.Goexit）那一步等待点
-  # 根本不执行 ⇒ tailer goroutine 活过用例结束。本轮不碰 eventbus 包
-  # （并行工作线正在改它），故登记例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_cursorstore_test.go
-    line: 81
-    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-done1"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 88 行的 t.Fatal 会让 Goexit 跳过第 94 行的 <-done1。
-    until: "2026-12-21"
-    removal: |
-      该等待点改成 defer 形态（defer func(){ <-done1 }()），或由并行工作线
-      在 eventbus 改造中一并清偿；改完后删掉本行例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_cursorstore_test.go
-    line: 154
-    violation: "普通语句里调用 waitTail（助手里的 <-ch）"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 170 行的 t.Fatalf 会让 Goexit 跳过第 187 行的 waitTail。
-    until: "2026-12-21"
-    removal: |
-      该收尾等待改成 defer 形态（defer 调用的收尾助手），或由并行工作线在
-      eventbus 改造中一并清偿；改完后删掉本行例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_cursorstore_test.go
-    line: 240
-    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 245 行的 t.Fatal 会让 Goexit 跳过第 250 行的 <-ch。
-    until: "2026-12-21"
-    removal: |
-      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
-      改完后删掉本行例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_test.go
-    line: 156
-    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 162 行的 t.Fatal 会让 Goexit 跳过第 167 行的 <-ch。
-    until: "2026-12-21"
-    removal: |
-      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
-      改完后删掉本行例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_test.go
-    line: 225
-    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 239 行的 t.Fatalf 会让 Goexit 跳过第 242 行的 <-ch。
-    until: "2026-12-21"
-    removal: |
-      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
-      改完后删掉本行例外。
-  - rule: harness-test-defer-cleanup
-    path: eventbus/tail_test.go
-    line: 274
-    violation: "go func(){ NewTailer(...).Run(ctx) }() + 普通语句里的 <-done"
-    reason: |
-      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
-      命中形态为真：第 283 行的 t.Fatal 会让 Goexit 跳过第 289 行的 <-done。
-    until: "2026-12-21"
-    removal: |
-      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
-      改完后删掉本行例外。
-
-  # ── issue #441（harness-test-wallclock-ruler）──────────────────────────
+  # 本规则落地后，eventbus 侧的 6 处命中**已全部清偿**：3 处站点改成 defer
+  # 形态（收尾 join 写进 defer，失败路径也 join）、3 处所在文件按关注点拆分
+  # （issue #443 线）⇒ 相应例外已删除。
+  # ⇒ **不留「命中不到任何东西」的僵尸例外**：例外一旦失效就静默放过，
+  # 债便可以无限期豁免——那是本仓最贵的失效形态之一（另开单跟踪，
+  # 见台账 §34「例外静默失效」那条边界）。
   - rule: harness-test-wallclock-ruler
     path: examples/pgstore/pg_clock_test.go
     line: 121
@@ -2557,14 +2492,15 @@ exceptions:
     line: 43
     violation: "time.Sleep(2 * time.Millisecond)"
     reason: |
-      pii 包正由并行工作线改造（issue #442 线），本轮不碰该包。
       该 sleep 在一个「放慢 mutate、把窗口插在 Load 与 Store 之间」的闭包里，
-      是**制造竞争窗口的机制**而不是断言的尺子；判据按形状报它，处置留给
-      该工作线（把闭包挪进包内助手并登记为受管辅助，或改用其它造窗口手段）。
+      是**制造竞争窗口的机制**而不是断言的尺子——判据按形状报它，按理由
+      不判（⇒ **按形状的真阳性 / 按理由的假阳性**，如实登记）。
+      真正的替代是「用可控同步点代替 sleep」（在写侧注入点上加闸门），
+      但那要动 `updatePolicy` 的注入面（**生产面**）⇒ 本轮登记例外。
     until: "2026-12-21"
     removal: |
-      由并行工作线在该闭包被挪进受管辅助（或换成不靠墙钟窗口的造窗口手段）
-      后删掉本行例外。
+      把「睡 2ms 造窗口」换成可控同步点（写侧注入闸门 / 显式握手），
+      或把该闭包挪进受管辅助并登记后，删掉本行例外。
 # 当前无其它例外。
 #
 # 历史（已清偿，保留记录以免将来重复犯）：
