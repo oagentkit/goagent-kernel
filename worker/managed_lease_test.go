@@ -7,6 +7,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,125 @@ func newRealtimeBoard() *coord.BoardAdapter {
 		panic("worker: 测试装配 BoardAdapter 失败: " + err.Error())
 	}
 	return b
+}
+
+// renewalEvent 一次成功续期的事实。
+type renewalEvent struct {
+	at    time.Time // 续期判定时刻（由板返回的到期时刻回推，不含调用耗时）
+	until time.Time // 本次续期后的租约到期时刻
+}
+
+// renewObserverBoard 测试侧的任务板包装器：包一层 *coord.BoardAdapter，
+// 覆写 Renew 与 Claim，让「成功续期的时刻」与「认领时刻」对用例可见。
+//
+// # 为什么接缝只在测试侧
+//
+// 内核的续期节拍对调用方不可见（会话自管），而「续期防接管」这条判据
+// **必须**证明「租约刚被续过、剩余有效期是一整个 TTL」——不观测续期就只能
+// 回到「按墙钟排程去撞窗口」，那正是该用例原先的脆点（issue #430）。
+// 生产代码不因这条判据加接缝。
+type renewObserverBoard struct {
+	*coord.BoardAdapter
+
+	mu       sync.Mutex
+	claimAt  time.Time
+	renewals []renewalEvent
+	changed  chan struct{}
+}
+
+// newRenewObserverBoard 构造观测板（包住一块真实时间的任务板）。
+func newRenewObserverBoard(inner *coord.BoardAdapter) *renewObserverBoard {
+	return &renewObserverBoard{BoardAdapter: inner, changed: make(chan struct{}, 1)}
+}
+
+// Claim 认领（覆写）：记下**首次成功认领**的时刻——接管尝试的计时基准。
+func (b *renewObserverBoard) Claim(ctx context.Context, id taskboard.TaskID, agent taskboard.AgentID, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	task, err := b.BoardAdapter.Claim(ctx, id, agent, req)
+	if err == nil {
+		b.mu.Lock()
+		if b.claimAt.IsZero() {
+			b.claimAt = time.Now()
+		}
+		b.mu.Unlock()
+	}
+	return task, err
+}
+
+// Renew 续期（覆写）：成功时记下「判定时刻」与「续期后的到期时刻」。
+//
+// 判定时刻由板返回的到期时刻回推（到期时刻 = 判定时刻 + TTL），不用调用
+// 之后的墙钟——后者会把「判定到返回」这段耗时算进租约余量里（偏乐观）。
+func (b *renewObserverBoard) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	task, err := b.BoardAdapter.Renew(ctx, id, token, req)
+	if err != nil {
+		return task, err
+	}
+	at := time.Now()
+	if req.TTL > 0 && !task.Lease.Until.IsZero() {
+		at = task.Lease.Until.Add(-req.TTL)
+	}
+	b.mu.Lock()
+	b.renewals = append(b.renewals, renewalEvent{at: at, until: task.Lease.Until})
+	b.mu.Unlock()
+	select {
+	case b.changed <- struct{}{}:
+	default:
+	}
+	return task, nil
+}
+
+// claimTime 首次成功认领的时刻。
+func (b *renewObserverBoard) claimTime() time.Time {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.claimAt
+}
+
+// nextRenewalAfter 等到「晚于 after」的一次成功续期。
+//
+// 等的是**条件**不是时长：条件一旦成立立刻返回（不多等）。abort 非空时，
+// 执行器提前收场（租约易主 / 施加失败）立即中止等待——不让用例挂在超时上。
+func (b *renewObserverBoard) nextRenewalAfter(ctx context.Context, after time.Time, timeout time.Duration, abort <-chan struct{}) (renewalEvent, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		b.mu.Lock()
+		var found renewalEvent
+		ok := false
+		for _, ev := range b.renewals {
+			if ev.at.After(after) {
+				found, ok = ev, true
+				break
+			}
+		}
+		b.mu.Unlock()
+		if ok {
+			return found, true
+		}
+		if !time.Now().Before(deadline) {
+			return renewalEvent{}, false
+		}
+		select {
+		case <-b.changed:
+		case <-abort:
+			return renewalEvent{}, false
+		case <-ctx.Done():
+			return renewalEvent{}, false
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+// diag 观测面摘要（失败时的诊断串）。
+func (b *renewObserverBoard) diag() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	const layout = "15:04:05.000"
+	if len(b.renewals) == 0 {
+		return fmt.Sprintf("认领于 %v，成功续期 0 次", b.claimAt.Format(layout))
+	}
+	last := b.renewals[len(b.renewals)-1]
+	return fmt.Sprintf("认领于 %v，成功续期 %d 次，最后一次判定于 %v（距认领 %v）",
+		b.claimAt.Format(layout), len(b.renewals), last.at.Format(layout), last.at.Sub(b.claimAt))
 }
 
 // gatedEffects 控制施加时机的副作用编排面替身：Apply 在门上等测试放行，

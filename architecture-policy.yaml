@@ -1277,6 +1277,88 @@ rules:
         want: miss
 
 
+  # 规则（issue #428）：用例内起的 goroutine 必须在用例返回前被等待。
+  #
+  # 形态：测试函数里 go 了某个东西，而**测试侧**没有任何等待点 ⇒ goroutine
+  # 可能在用例返回后仍在跑，撞上用例交还资源的那道窗口（关存储 / 删临时目录）。
+  # 典型症状是 SQLite(WAL) 在已删目录里重建 -wal/-shm ⇒ t.TempDir() 的
+  # RemoveAll 报 directory not empty（负载依赖型，单跑不复现）。
+  #
+  # 这条纪律在 v0.51.0 已由人工落到 9 处用例上，但**没有任何规则在查** ⇒ 同一个
+  # 形态可以随时再长出来。这条规则把那条纪律变成门禁。
+  #
+  # 判据走 **go/ast**（check_kind: goroutine_join），不走正则：这条规则判的是
+  # 「用例体内有没有 go 语句」与「测试侧有没有等待点」两件**结构**的事，逐行正则
+  # 既认不全 go 语句的形态，也认不全等待点的形态。
+  #
+  # 等待点 = 接收表达式 <-ch，或调用 X.Wait()；**包内助手**（同目录同包名，
+  # 深度 ≤2）里的等待点同样算数——收尾助手是本仓惯用范式
+  # （examples/sqliteadapter 的 stopTailer：cancel → <-done → 超时兜底），
+  # 只按用例体判会把已经修好的用例判成违规（误报到没人信它 = 门禁等于没有）。
+  - id: harness-test-goroutine-joined
+    desc: 用例内起的 goroutine 必须在用例返回前被等待（测试侧无等待点即违规）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    only_test: true
+    check_kind: goroutine_join
+    examples:
+      # ① 违规形态：起了 goroutine，测试侧完全没有等待点 ⇒ hit。
+      - text: |-
+          package sample
+
+          func TestLeak(t *testing.T) {
+              go worker()
+          }
+        want: hit
+      # ② 合规形态：用例体内直接 <-done 等它 ⇒ miss。
+      - text: |-
+          package sample
+
+          func TestJoined(t *testing.T) {
+              done := make(chan struct{})
+              go func() { close(done) }()
+              <-done
+          }
+        want: miss
+      # ③ 助手形态：收尾助手在同包函数里等 ⇒ miss。
+      - text: |-
+          package sample
+
+          func TestViaHelper(t *testing.T) {
+              done := make(chan struct{})
+              go func() { close(done) }()
+              stopIt(done)
+          }
+
+          func stopIt(done <-chan struct{}) {
+              <-done
+          }
+        want: miss
+      # ④ 长得像等待、其实不是：<-ch 写在**被启动的那个 goroutine 体内**，
+      #    那是它在等别人，不是测试侧在等它 ⇒ hit。
+      - text: |-
+          package sample
+
+          func TestSelfWait(t *testing.T) {
+              ch := make(chan struct{})
+              go func() { <-ch }()
+          }
+        want: hit
+      # ⑤ X.Wait() 也是等待点 ⇒ miss。
+      - text: |-
+          package sample
+
+          func TestWaitGroup(t *testing.T) {
+              var wg sync.WaitGroup
+              wg.Add(1)
+              go func() { defer wg.Done() }()
+              wg.Wait()
+          }
+        want: miss
+
+
   # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
   # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
   # 内核不必把日志函数收回参数（那会让每次调用都要包一层 adapter）。

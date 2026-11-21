@@ -220,8 +220,24 @@ func TestWatchdogRunSmoke(t *testing.T) {
 	r := &rec{}
 	w := New(r.pub)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go w.Run(ctx, bus)
+	// 用例返回前必须**等 Run 真的退出**（issue #428 的纪律）：否则它在用例
+	// 交还资源之后仍去动 bus ⇒ 后面的用例可能看到上一个 goroutine 的副作用。
+	//
+	// 收尾放在 defer 里：失败路径（t.Fatal 触发 Goexit）同样会执行 defer，
+	// 不会因为「用例没过」就把 goroutine 漏在用例边界之外。
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		w.Run(ctx, bus)
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("ctx 取消后 Run 应在 2s 内退出：用例不得在它退出前返回")
+		}
+	}()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
