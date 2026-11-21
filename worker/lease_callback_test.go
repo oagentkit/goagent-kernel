@@ -3,8 +3,13 @@
 // 两条判据：
 //   - 回调在 claimed.mu **之外**：回调内同 goroutine 回查本包（这里用
 //     beginFinalize 抢同一把锁）必须在超时内返回，不得挂死；
-//   - 回调 panic 不得掀翻心跳协程：续期次数必须在观测窗口内持续增长
+//   - 回调 panic 不得掀翻心跳协程：续期次数必须**真的涨到第 3 次**
 //     （旧实现里 panic 逃出 heartbeat，全部在途租约停止续期）。
+//
+// 判据一律「等可观测事实」：等续期次数涨到目标值，不用墙钟窗口当尺子——
+// 窗口里机器一忙，心跳可能一拍都没拍到（窗口落空 ⇒ 假红）；窗口长短与
+// 心跳拍数本就无关。轮询间隔（1ms）不是尺子，尺子是「续期次数到 N 次」
+// 这个可观测事实。
 package worker
 
 import (
@@ -119,9 +124,19 @@ func TestOnLeaseLostPanicKeepsHeartbeatAlive(t *testing.T) {
 		}
 	}
 	first := board.renews.Load()
-	time.Sleep(80 * time.Millisecond) // 至少十几个心跳拍
-	if got := board.renews.Load(); got < first+3 {
-		t.Fatalf("回调 panic 后心跳必须继续续期（%d → %d）——panic 逃出 heartbeat 了", first, got)
+	// 等「第 3 次续期真的发生」这个**事实**（有界），不用墙钟窗口当尺子：
+	// 续期次数是心跳存活的唯一观测面，窗口长短与心跳拍数无关——机器一忙，
+	// 窗口里可能一拍都没拍到（假红），窗口够长也证明不了「心跳还在跑」。
+	// 轮询间隔（1ms）不是尺子，尺子是「续期次数到 first+3」这个事实。
+	want := first + 3
+	renewDeadline := time.After(5 * time.Second)
+	for board.renews.Load() < want {
+		select {
+		case <-renewDeadline:
+			t.Fatalf("回调 panic 后心跳必须在 5s 内续期到 %d 次（实得 %d）——panic 逃出 heartbeat 了",
+				want, board.renews.Load())
+		case <-time.After(time.Millisecond):
+		}
 	}
 	if reported.Load() == 0 {
 		t.Fatal("被隔离的回调 panic 必须上报到 async 观测面")

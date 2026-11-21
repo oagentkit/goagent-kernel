@@ -79,12 +79,36 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 
 判定口诀：**「这个包需要知道自己在给谁干活吗？」需要 → 属于宿主。**
 
+<div align="center">
+<svg width="760" viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="276" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<rect x="30" y="36" width="300" height="200" rx="8" fill="#161b26" stroke="#58a6ff"/>
+<text x="48" y="64" font-size="14" fill="#58a6ff">内核（本仓）＝机制面</text>
+<text x="48" y="98" font-size="12" fill="#e6edf3">判定语义：状态词表 / 迁移 / 档位</text>
+<text x="48" y="124" font-size="12" fill="#e6edf3">契约面：执行 / 交接 / 所有权</text>
+<text x="48" y="150" font-size="12" fill="#e6edf3">门禁：依赖方向 / 结构阈值</text>
+<text x="48" y="176" font-size="12" fill="#e6edf3">工具判定环：披露 / 合成 / 分类</text>
+<text x="48" y="208" font-size="12" fill="#9aa7b8">不认识：这套机制在给谁干活</text>
+<rect x="430" y="36" width="300" height="200" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="448" y="64" font-size="14" fill="#a371f7">宿主 ＝ 资产面</text>
+<text x="448" y="98" font-size="12" fill="#e6edf3">拓扑内容：谁允许派发谁</text>
+<text x="448" y="124" font-size="12" fill="#e6edf3">存储实现：快照 / 幂等键落哪</text>
+<text x="448" y="150" font-size="12" fill="#e6edf3">展示文案：报告长什么样</text>
+<text x="448" y="176" font-size="12" fill="#e6edf3">领域判据：巡检 / 审批 / 成本</text>
+<text x="448" y="208" font-size="12" fill="#9aa7b8">领域词表：进内核即判红</text>
+<line x1="380" y1="36" x2="380" y2="236" stroke="#262e3d" stroke-dasharray="4 4"/>
+<rect x="30" y="250" width="700" height="28" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="380" y="269" font-size="12.5" text-anchor="middle" fill="#e6edf3">判定口诀：这个包需要知道自己在给谁干活吗？需要 → 属于宿主</text>
+</svg>
+</div>
+<div align="center"><em>图 1 · 内核只放机制面：判定语义归内核，判定依据与展示文案归宿主。</em></div>
+
 ## 包清单
 
 | 包 | 生产行数 | 外部依赖 | 职责 |
 |---|---|---|---|
 | `protocol` | 2341 | oekit/pkg、jsonschema | Report 契约 + 五级容错解析 + 白名单校验 + Markdown 渲染 |
-| `scheduling` | 793 | oekit/pkg | Agent 调度的**判据面**（优先级 / 加权公平 / 资源配额 / 背压，issue #108）：归属结论见 ADR-0008——上游 `oagentkit/agent/dispatch` 的全部判定面是 allow 矩阵 + 深度 + 自派发三条（证据见 ADR 的「证据」节），四样判据上游确实没有，落本仓**纯函数面**：优先级排序**平局有名字层裁决且不依赖输入次序**（一次无关的配置重排不得换掉执行次序）、加权公平按 `served_i/w_i` 欠账最小者先服务（同状态重建选择序列逐字相同）、配额账本**整单占用不做部分占用 + 超释放显式拒**（钳位会把重复释放吞成静默）、背压裁决**拒绝必须带机器可判的原因**且在途满优先于队列满（容量问题的处置是扩容/收敛，拥塞问题的处置是退避，先报哪条决定宿主去找谁）。**不做队列不做执行**（宿主的活）、**不判可达性**（dispatch 门面的活）——不与上游并存第二份实现；上游若收编某样，对应判据转门面（ADR-0008 写明后续动作）。**多副本全局配额原语 `QuotaStore`**（issue #189）：Reserve/Release 在存储侧原子扣减、凭租约全额归账（重复释放显式拒，余额不虚增）；`MemQuotaStore` 是进程内参考实现，跨进程落库归宿主 |
+| `scheduling` | 793 | oekit/pkg | Agent 调度的**判据面**（优先级 / 加权公平 / 资源配额 / 背压，issue #108）：归属结论见 ADR-0009——上游 `oagentkit/agent/dispatch` 的全部判定面是 allow 矩阵 + 深度 + 自派发三条（证据见 ADR 的「证据」节），四样判据上游确实没有，落本仓**纯函数面**：优先级排序**平局有名字层裁决且不依赖输入次序**（一次无关的配置重排不得换掉执行次序）、加权公平按 `served_i/w_i` 欠账最小者先服务（同状态重建选择序列逐字相同）、配额账本**整单占用不做部分占用 + 超释放显式拒**（钳位会把重复释放吞成静默）、背压裁决**拒绝必须带机器可判的原因**且在途满优先于队列满（容量问题的处置是扩容/收敛，拥塞问题的处置是退避，先报哪条决定宿主去找谁）。**不做队列不做执行**（宿主的活）、**不判可达性**（上游 `oagentkit/agent/dispatch` 的活）——不与上游并存第二份实现；上游若收编某样，对应判据交回上游（ADR-0009 写明后续动作）。**多副本全局配额原语 `QuotaStore`**（issue #189）：Reserve/Release 在存储侧原子扣减、凭租约全额归账（重复释放显式拒，余额不虚增）；`MemQuotaStore` 是进程内参考实现，跨进程落库归宿主 |
 | `eventbus` | 1410 | oekit/concurrency、oekit/logx | 进程内有损广播（缓冲 chan）；可选 durable 发布面 `DurablePublisher` 收口「落库取游标→广播、失败不广播」（#160，Store 由宿主实现，包零存储依赖）；可选 event-tail 补灌面 `Tailer` 收口「初始化 MaxID → 轮询 id>游标 → 回灌 Hub → 推进」（#166，读侧对偶，TailStore 契约含「ID 序 == 提交可见序」的**无空洞推进硬要求**（#183，DB 序列下迟到提交的小 ID 不得被跳过）、读失败游标不动幂等补读、可选 `CursorStore` 游标持久化接缝（重启从上次停点续随，停机窗口内事件仍被补灌）与 `WithTailOnGap` 空洞哨兵（跳号从静默丢帧变响亮告警）；**scope:replica 每副本一条，不套 leader 门**——套了非 leader 副本就收不到他副本事件；重复帧不归它去重，归订阅侧游标）。跨实例面在 `Relay` 接缝之后（#145）：缺省无 Relay = 进程内限定，装配后 Publish 本地先/Relay 后/解锁后调用，别处事件经 `Inject` 回注（不回流防环） |
 | `dispatch` | 380 | oagentkit/guardx、oagentkit/toolgate | 改派失败面（issue #169）：三档分类词表（transient 可跨域兜底 / fatal 换谁白跑直接终态 / other 仅同域重试）+ **两级判定**（第一级消费上游 `toolgate/policy.Disposition` 单源——toolfail 链 → MCP 协议层，零文本匹配；链与协议层都 Unknown 才落文本兜底，状态码判定带 `\b` 词边界：「省略中段 4032 字节」不得被裸 `Contains("403")` 命中）+ 改派环骨架（同域 N 次 → 瞬态跨域兜底一次 → fatal 直接终态；候选枚举 `FailoverCandidates(slug, tried, sameDomain)` 与执行步 `Attempt` 经回调注入，与宿主注册表/能力画像无关）+ 四级数据化策略解析（条目 > 表级 > conf > 代码缺省，指针区分「未声明」与「显式 0/false」）。**判定面只读首次失败的原始错误**——改派说明 `%w（已同域改派 X 仍失败）` 只进事件与最终消息。回答的是第四问「失败后还能不能再派、派给谁」：不碰可达性（上游 allow 矩阵/深度/自派发）、不做队列（`scheduling`）、不答「要不要原样重发」（`toolfail`） |
 | `spill` | 341 | oekit/pkg | 输出预算溢出：提示契约 / 取回（分页**rune 无损**，#199——页边界不切坏多字节字符，逐页拼接与原文逐字节相等）/ 按龄清理 |
@@ -96,10 +120,10 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `commitgate` | 484 | oekit/logx、oekit/pkg | 环节终态独占提交闸：同一 (run, 环节) 的终态只允许被提交一次（`statemachine` 是纯谓词，`SeqGate` 只排快照序号，两者都排不出「两条分支都赢了」）。终态词表由宿主注入。**放闸靠凭证**：`Acquire` 返回唯一令牌、`ReleaseLease` 凭令牌精确释放——靠 (状态,分支,序号) 认人的旧 `Release` 分辨不出两次同名同序的占用，迟到的释放会放掉别人的闸。状态在 `Store` 接缝之后（#145）：判定留 Guard、**令牌由存储铸造**（跨副本不撞），进程内参考实现 `NewMemoryStore` 不得上生产。回灌面 fail-loud（#204）：`SeedE` 对 Store 故障响亮上抛（吞掉 = 闸为空、重复终态提交重新敞开），Deprecated `Seed` 走 `SeedWarn` 钩子/logx warn 留痕 |
 | `budget` | 750 | oekit/pkg | 上下文预算：分段计量 + 窗口钳位 + 压实计划骨架（三重空转守卫；摘要生成与原文落盘各留宿主接口）|
 | `offload` | 587 | oekit/pkg | 内联大对象外置：sha 去重 + **两阶段**（首次标记、后续轮才替换占位）+ fail-soft（与 `spill` 是姊妹机制）|
-| `tooldisclose` | 959 | oagentkit/guardx、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝即激活**，重试不绕路）+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
+| `tooldisclose` | 959 | oagentkit/guardx、oekit/pkg | 渐进式工具披露（确定性打分检索换完整 schema）+ 执行门禁（**未加载可重试 / 不在目录禁止绕过** 两类严格二分，**拒绝不激活**——门禁只读已加载态，`Catalog.Load` 是唯一写入口；schema 未取回前原样重试不会成功（issue #286））+ 接成 `invoke` 链的一环（`Stage`，链上 Reason 直接回面向模型的指引）|
 | `toolname` | 96 | 无 | 工具名 → 程序内可用的 JS 标识符：**一条单一真相**。`IsJSIdent`（能不能直接用）+ `Normalize`（不能的话用哪个）。生产侧（`tooldisclose` 派生调用形态）与消费侧（`ptc` 挂载绑定并校验形态里的函数名）共用它——两侧必须逐字一致，否则就是「这里派得出、那里认不出」的夹缝。规整**不保证唯一**（`get-logs` 与 `get_logs` 同名），撞不撞由调用方判 |
 | `sideeffect` | 1360 | oekit/pkg | 副作用「至多一次」的跨进程契约：**幂等键**（同一逻辑动作重试不重复施加）+ **租约**（同一资源独占，带 TTL）+ **栅栏令牌**（过期持有者的迟到写入被下游拒绝）+ **下游拒收契约**（`FencedSink`：比较与写入须同一次原子操作，否则两个持有者会同时读到同一个旧值、双双通过检查，更旧的那次写入反而后落覆盖新的）。上游三个判据共用**一次原子操作**（`Store.Acquire`）——拆成三份存储就会出现「租约过了但幂等没过」的夹缝，允许同一动作被施加两次。执行失败**不记账**（没做成的不能记成做成了），但**释放闸**（否则失败残留的闸会把后续重试全挡成「别人占着」）。**v0.32.0 起施加失败且无法判定远端是否已生效 ⇒ 结果未知**（`OutcomeUncertain`）：该 Key **禁止重试**，必须先对账（`Reconcile`）——「响应丢了」与「远端没做」在调用方看来完全一样，而前者重试就是**重复施加**；执行器同时拿到**栅栏令牌**（`lease.Fence`）好把陈旧写拒在下游。**施加前有资格检查**（`ExecuteWith` 两段式：准备 → 检查 → 施加）——闸已易主时**根本不施加**，因为 Complete 被拒只说明没记上账，**副作用早已生效，事后补救不了**。承诺的是**至多一次**而非 exactly-once——后者要求下游也接受幂等键。**v0.33.0 起补上「执行意图」**：`Acquire` 原子地登记「本次尝试还在」（Key 级 IN_FLIGHT），于是**进程死在施加成功之后、记账之前**这一形态在存储侧留有痕迹——租约过期且未裁决时，同一 Key 转入**需对账态**（`OutcomeUncertain`）而**不是**重新授予执行权（声明了 `RetrySafetySafe` 的除外：下游按幂等键去重，重做安全）。配套把两条出口拆开：`Abandon`（确定没生效 ⇒ 撤销意图 + 放闸）与 `Release`（**只**放闸，不动意图）——「可能已生效」那条路若顺手撤销意图，重复施加的入口就重新打开 |
-| `sidetest` | 1911 | oekit/concurrency、oekit/pkg | sideeffect.Store 的**共享契约测试套件**：宿主写完存储实现后跑一遍，违反哪条契约就红在哪一条——免得「各写一遍必然各判一套，漂移到没人发现为止」。**33 条子测试**覆盖「只做一次 / 已完成优先于占用 / 未过期时争用 / 过期后接管 / 令牌单调 / 过期持有者不得记账 / 过期持有者不得放闸 / 释放不等于完成 / 续期延长且不换令牌 / 闸已易主后续期被拒 / **闸已释放后续期被拒**（只比令牌会漏掉的那条）/ **过期且无人接管后续期被拒**（过期即资格终止，与 taskboard 同口径）」，外加「结果未知」一族五条（未知态禁止再执行 / 裁决未生效允许重试 / 裁决已生效记结果 / 裁决先到者为准 / 过期栅栏不得转未知）与「**执行意图**」一族六条（未裁决不得重新授予执行权 / 过期未裁决转入需对账态 / 声明可安全重试则过期后可重授 / 显式放弃后重新可执行 / **只放闸不撤销意图** / 放弃只认本次尝试的令牌）、「**持有者身份**」一族三条（身份由存储铸造 / **偷到令牌的组件冒充持有者被拒** / 跨资源凭据被拒）、「**标记失败**」一族一条（**标记写失败后不得授予执行权**，套件内置故障注入装饰器）、「**重试安全三档**」一族两条（**Unsafe 裁决未生效仍阻塞** / 显式决策才放行）与「**对账占用**」一族四条（占用挡住第二个对账者 / 占用过期可重入且不放行 / **带凭据的裁决只认当前有效占用**（迟到的对账者提交被拒，OwnedResolveStore）/ **认领 TTL 必须为正**）以及「**动作身份**」一族四条（改 RetrySafety / 改 Resource / 改 Payload 被拒为 `ErrActionConflict` / 已完成后改身份不重放旧结果——身份首次登记后不可变）。范式沿用上游 `cachetest` / `singleflighttest`：**硬失败不静默跳过**（显式接入套件＝声明要满足契约，跳过等于把「没测过」伪装成「通过了」）。时钟可注入（`ClockedStore`），否则过期场景恒不触发，套件会变成一组空断言。另有**下游栅栏**一族六条在 `RunSinkContract`（v0.33.0 起，issue #84：新令牌接受 / **等于也接受** / 陈旧拒收且零写入 / 新先旧后保最大 / 并发陈旧被拒 / **写入体失败不部分写**）——判据收编自 sideeffect 包内对内存替身的用例（只有一份），内存替身与 PostgreSQL 参考实现（examples/pgstore）跑同一段断言；并发场景走 `async.GoSafe`（本仓禁止裸 goroutine） |
+| `sidetest` | 1911 | oekit/concurrency、oekit/pkg | sideeffect.Store 的**共享契约测试套件**：宿主写完存储实现后跑一遍，违反哪条契约就红在哪一条——免得「各写一遍必然各判一套，漂移到没人发现为止」。**34 条子测试**覆盖「只做一次 / 已完成优先于占用 / 未过期时争用 / 过期后接管 / 令牌单调 / 过期持有者不得记账 / 过期持有者不得放闸 / 释放不等于完成 / 续期延长且不换令牌 / 闸已易主后续期被拒 / **闸已释放后续期被拒**（只比令牌会漏掉的那条）/ **过期且无人接管后续期被拒**（过期即资格终止，与 taskboard 同口径）」，外加「结果未知」一族五条（未知态禁止再执行 / 裁决未生效允许重试 / 裁决已生效记结果 / 裁决先到者为准 / 过期栅栏不得转未知）与「**执行意图**」一族六条（未裁决不得重新授予执行权 / 过期未裁决转入需对账态 / 声明可安全重试则过期后可重授 / 显式放弃后重新可执行 / **只放闸不撤销意图** / 放弃只认本次尝试的令牌）、「**持有者身份**」一族三条（身份由存储铸造 / **偷到令牌的组件冒充持有者被拒** / 跨资源凭据被拒）、「**标记失败**」一族一条（**标记写失败后不得授予执行权**，套件内置故障注入装饰器）、「**重试安全三档**」一族两条（**Unsafe 裁决未生效仍阻塞** / 显式决策才放行）与「**对账占用**」一族四条（占用挡住第二个对账者 / 占用过期可重入且不放行 / **带凭据的裁决只认当前有效占用**（迟到的对账者提交被拒，OwnedResolveStore）/ **认领 TTL 必须为正**）以及「**动作身份**」一族一条（四项断言：改 RetrySafety / 改 Resource / 改 Payload 被拒为 `ErrActionConflict` / 已完成后改身份不重放旧结果——身份首次登记后不可变）。范式沿用上游 `cachetest` / `singleflighttest`：**硬失败不静默跳过**（显式接入套件＝声明要满足契约，跳过等于把「没测过」伪装成「通过了」）。时钟可注入（`ClockedStore`），否则过期场景恒不触发，套件会变成一组空断言。另有**下游栅栏**一族六条在 `RunSinkContract`（v0.33.0 起，issue #84：新令牌接受 / **等于也接受** / 陈旧拒收且零写入 / 新先旧后保最大 / 并发陈旧被拒 / **写入体失败不部分写**）——判据收编自 sideeffect 包内对内存替身的用例（只有一份），内存替身与 PostgreSQL 参考实现（examples/pgstore）跑同一段断言；并发场景走 `async.GoSafe`（本仓禁止裸 goroutine） |
 | `cmdpolicy` | 527 | oagentkit/tools、oekit/pkg | 命令级判据：把判定面从「工具调用」**向下延伸到工具内部实际执行的那条命令**。此前边界停在工具名上——一次 `exec` 审批通过后，它内部跑的是 `git status` 还是 `rm -rf /` 没有任何机制面看得见，宿主只能靠正则黑名单兜，而黑名单在「写法与语义不一致」时必然失效。本包用**前缀 token 规则**（先分词再比 token，不随引号/转义/空白漂移）+ **三态裁决**（allow/prompt/forbidden，与 toolgate 词表同义不另立口径）+ **规则自带样例**（每条规则可带 Match/NotMatch，`New` 在**加载期**用真实判定路径跑一遍，不一致即报错——这是「从没见过它触发的规则等于没有规则」的机器化：规则会随命令名漂移，而漂移不会报错，只会静静地不再命中）。冲突口径确定性：前缀更长者胜 → 同长度取更严 → 同档取名字字典序最小。`SplitCommands` 单独存在是因为前缀判据的典型绕过：`git status; rm -rf /` 的前缀是 `git`，对整串只判一次就会让一条 git 的 allow 规则放行后半段。**分词面已收编上游 `oekit/pkg/shellx`**（2026-11-11）：口径归上游一处，本仓不再维护第二份分词器；顺带修掉手写版三处 POSIX 错误（双引号内反斜杠被丢弃、分隔符按 token 相邻误合并、CR 未归空白），且 `SplitCommands` 的段文本改用上游 `QuoteArgv` 拼装，**段可往返**（段再分词得回原 token——否则含空格的备选前缀永不命中，是安全方向的漏判）。**事实面已收编上游 `oagentkit/tools/bashguard`**（真 shell AST）：前缀判据的三类典型绕过（多段 `git status; rm -rf /`、命令替换 `echo $(rm -rf /)`、写重定向 `git status > /etc/passwd`）由「全调用面取最严 + 事实面下限（写重定向/动态展开 ⇒ 不低于 prompt）」闭合，本仓不手写 shell 解析器 |
 | `egress` | 504 | oagentkit/guardx、oekit/pkg | 出口策略：**三档**（`ModeUnrestricted` < `ModeProxy` < `ModeDenied`，单调可比、零值即最松）+ 声明自检（`Validate`）+ 兑现判据（`Env` / `Verify`）+ 后端能力问询（`SatisfiedBy`）+ **兑现强度**（`VerifyVerdict` / `SatisfiedVerdict`：**环境变量兑现出来的永远是建议型**；**v0.33.0 起自报与实测分开**——后端只是**声明**能力（`Enforcer`）⇒ 强度是 `declared`，**不是** `enforced`；只有后端能**实测**（`EgressVerifier`）并给出证据时才判 `enforced`——「代理档已兑现」不等于「出站已被强制隔离」，而后端自报恰恰是最容易被读成事实的那种声明）。本包**不含代理本体**（那是上游 `guardx` 与宿主的活），只回答此前没人回答的三件事：这次执行要求哪一档出口 / 宿主给的环境是否**真的**兑现了那一档 / 某个沙箱后端能不能兑现它。两条底线都是「沉默与伪造都落在安全的那一侧」：**后端不声明就按最弱处理**（不是「没说不支持」＝满足，否则从没实现过出口控制的后端会被选中，声明与实际之间的落差没有信号）；**禁网档拒绝伪造**（`ModeDenied` 的 `Env`/`Verify` 直接报错，不做「尽力而为」——假装禁网比明确拒绝更危险，报告会显示「已兑现」而网络其实通着） |
 | `gatecheck` | 599 | oagentkit/guardx、oagentkit/toolgate、oekit/pkg | 审批层与沙箱层的**联合判据**：Codex 的两层安全模型是「沙箱强制 + 审批策略，**两层都同意才放行**」。上游 `guardx/sandbox`（档位×预算）与 `toolgate/policy`（审批裁决）各自完整但**互不知情**——「两层是否都同意」这个判定没有单点，落在各宿主手里必然漂移。本包只做**合成**（不重新实现任何一层，那会造成与上游并存的第二份真相）。判据顺序有意为之：**审批已否 ⇒ 直接否**（档位再高也不该执行）；**需人审 ⇒ 优先于档位不足**（人该在场，而不是让宿主去找后端——否则这次调用既没执行也没人管，**静默丢失**）；**计划模式单列**（只审不执行 ≠ 拒绝）。`Managed` 是**受管后端**（把真后端包起来）：判据不通过就**不委派**（副作用不会发生）——判据与执行**不可分**，否则「判过的后端 ≠ 实际跑的后端」又有了信号落差 |
@@ -117,7 +141,7 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 | `backend` | 579 | oagentkit/guardx、oekit/pkg | 任务式执行后端的**契约面**（issue #109）：隔离轴（none/process/container/vm——上游 `Level` 词表的枚举值即强弱序，往中间插容器档等于跨仓破坏性变更，故本包立自己的轴，与 `sandbox.Level` 的对应关系**只写在注释里、不写进代码**——代码级映射是第二真相）。三条判据与既有执行面同源：能力**自报**（`EgressEnforcer` / `Capable` 与 sandbox 同构同词表，**沉默按最弱**——未声明出站能力面的后端连「我能禁网」都说不出口）、要求对照 **fail-closed**（`Spec.SatisfiedBy`：词表外档位不是「更强」而是声明缺陷；要求内存必须实现 `Capable` 且自报兜得住）、登记簿 **无满足者即拒绝不降级 / 满足者取最弱、同档按 ID 字典序**（与登记顺序无关，一次无关的配置重排不会换掉执行方）。进程内兜底 `Inline` **显式自报 IsolationNone**（零值=最弱档是刻意的：漏声明的后端拿到的是最弱选择，不是最强豁免）。Docker Engine 与 Kubernetes Job 两份参考实现在 `examples/containerbackend`（宿主抄它、不 import 它） |
 | `watchdog` | 351 | 无| 被动配对不变量监视：INV1/INV2 工具调用级（**配对键与 trajectory 同源：`eventbus.ToolCallID` 的全局 call_id，不含 step**——结果可跨环节到达、同号声明可跨环节重试；INV1 的判定时刻是会话收口或 TTL 清扫，不是环节收口；缺口按 declared_not_executed / unpaired_result / duplicate_result / duplicate_call 告警，无 call_id 不记缺口），INV3 轮级括号（`turn_started`/`turn_ended` 配对 + `closed_by` 归因词表 + contract 终态 status + 开放超 TTL 泄漏；停机留开放=合法态）；**只告警不裁决**（热路径裁决在守卫侧）|
 | `guardset` | 1027 | oagentkit/guardx、oekit/pkg | 守卫装配契约：一组**相互独立**的判定一并求值，多条拒绝合成一条（按 Rank 定序、**不可重试优先**的保守裁决、指引指向真正卡住的那一条）。接成 `invoke` 链上单独一环——链在第一个拒绝处就收口，后面的守卫永远没机会说话，模型一次只听得到一个理由，这正是本包补的那一面；链本身的顺序/留痕/panic 兜底沿用上游，不重复实现。**装配面 `Assembly` 提供「撤销」的机械路径**：撤销 = **换整份**，不是改其中一条——改其中一条会让「当前有哪些守卫」出现两个真相；换份走 **CAS + mutate(旧值)**（并发撤销**不丢更新**，否则「撤销被撤销」）、代次住在被换的那份里（全局代次是投影）、链不用重接、旧份不被修改、在途判定跑在旧份上；「全部撤销」不是降级是失守（换上去的那份永远非空） |
-| `archcheck` | 9371 | gopkg.in/yaml.v3、x/tools | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / 门包判定 / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**执行沙箱后端的档位登记**（`sandbox_providers` 段 ↔ 代码事实，走 `go/ast` 按方法指纹认出后端实现，核对档位漂移与未登记）。**租户过滤漏拼门**（`tenant_gate` 段）：服务层「授权上下文形参 + 租户域返回」必须有隔离证据（共享判定面 / 过滤列 / `tenant:iso` 声明），登记在册的共享判定面必须真实存在；形状全由 policy 声明，租户类型由代码推导。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
+| `archcheck` | 9371 | gopkg.in/yaml.v3、x/tools | 架构门禁执行体：`architecture-policy.yaml` 的**可执行面**（规则判定 / **门包规则（清单已清零、规则保留）** / 依赖方向判定 / policy 自校验 / 结构阈值）。**可导入包**——宿主仓复用同一套判据，不必各写一遍（各写一遍必然各判一套，漂移到没人发现为止）。判据与执行体分离：结构性判定一律走 `go/ast`（import 声明有六种以上书写形态，逐行正则必然漏）。依赖方向判三条：越界内部依赖 / 越界跨仓依赖（`ext:` 登记）/ 未登记包目录。**执行沙箱后端的档位登记**（`sandbox_providers` 段 ↔ 代码事实，走 `go/ast` 按方法指纹认出后端实现，核对档位漂移与未登记）。**租户过滤漏拼门**（`tenant_gate` 段）：服务层「授权上下文形参 + 租户域返回」必须有隔离证据（共享判定面 / 过滤列 / `tenant:iso` 声明），登记在册的共享判定面必须真实存在；形状全由 policy 声明，租户类型由代码推导。**陈旧包根当天即红**——root 指向空目录即「声明与事实已偏离」，而没有执行体时这句话没人读 |
 | `trajectory` | 1535 | 无 | 轨迹投影器：**事件流 → 一轮 turn 的步骤序列**（增量投影：喂新事件继续更新既有行）。行含 kind / 起止时刻 / **实测耗时**（起止相减现算）/ 工具调用**配对状态**（paired / missing_result / duplicate_result / unpaired_result / duplicate_call / no_call_id）/ 摘要；**无 call_id 的调用/结果按到达顺序归并、不记缺口**。⭐ **结构上不设时长字段**——时长唯一来源是起止相减，**估算值无处安放**（没有实测就是没有实测，不拿 payload 体积之类糊过去）；配对缺口语义分两层：`missing_result`/`unpaired_result` 是**当前状态**（等到了会被清掉），`duplicate_*` 是**发生过**（永久留在清单里）。事件倒挂（结果先于调用）按「就地补起点」处理且此时判为无实测值。与 `watchdog` 分工：watchdog 判**不变量**（只告警），本包判**这一轮的流水**（给宿主渲染）。另有 **OTel 映射契约**（`otelmap.go`）：每个属性写明来源字段 / 取值域（含 Go 类型）/ 基数上界 / 能否进 metric label，`Span.ParentID` 声明父子，**trace 边界定在轮**（`Row.ID` 的唯一性范围恰好就是轮内）；无界看似维度的字段（`session_id`/`agent_slug`）列进禁区清单。**v0.33.0 起覆盖 `sideeffect` / `checkpoint` 行**（副作用阶段与快照序号，属性命名与既有类目同构；点事件落孤儿行——没有实测时长就不写时长） |
 | `eval` | 491 | oekit/pkg | 轨迹的**录制 → 重放 → 差异比对**与**确定性评估**（issue #111）：锚点是 `trajectory` 的确定性行 ID（同一条事件流投出的行 ID 必然相同，「同一条轨迹」由此可谈）；**时刻是数据不是时钟**——起止时刻取自事件时刻、随录制定格，重放即复读，没有 sleep 也没有 now()。`Record`/`Load` 是朴素 JSONL（同一事件流两次录制逐字节相同，可 diff）；`Verify` 判**录制适航**（头部字段往返保真 + 载荷往返幂等：整数落 float64 是 JSON 固有形变，一轮即稳即可录，两轮还在变就显式报出）；`Diff` 纯函数、按 (ID, Field) 确定排序，空切片 = 复现（验收线：回放能复现已录制轨迹，差异为零）；`Assess` 是**纯函数评估判据**（closure / pairing / no_duplicates / expected / forbidden 五判项；checkpoint 点行的孤儿形态是投影设计事实，不误报；零判项显式报错——「没有检查」与「检查通过」必须分得开）。不跑模型不看像不像：**「像不像」要再跑一次模型，那是抽签不是评估** |
 
@@ -154,49 +178,207 @@ retryplan 重试处置决策          幂等键的具体存储（内核只给路
 
 ## 特性
 
+本节只给判据形状与取舍理由；逐包接入顺序见 [docs/USAGE.md](docs/USAGE.md)。
+
 ### 边界不是文档，是门禁
 
-「内核不许长出领域知识」这句话写在散文里就会烂掉——本仓把它做成了 8 条正则规则 + 6 条 `go/ast` 结构性规则（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / 子进程出口 / 未受管逃逸），全部挂在 `make check` 上，CI 只执行这一条。
-分界线很清楚：**散文不是门禁**——真有人往门面包里塞一份实现，规则不响，结果是与上游并存的第二份实现。
-> 设计推导见 [ADR-0001](docs/adr/ADR-0001-领域知识红线.md)
+**问题**：边界只写在散文里，一年后就会长出第二份实现——两份真相并存时，没有任何一方会收到信号。
+**机制**：规则与结构判据全部挂在 `make check` 上，CI 只执行这一条；判定面在 `archcheck`（可导入包，宿主可直接复用），声明面在 `architecture-policy.yaml`。
+**什么时候用**：新增任何包之前先判「机制还是资产」，再在 policy 的 `modules` 段登记依赖方向——先改声明面，再写代码。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="326" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="380" y="36" font-size="13" text-anchor="middle" fill="#9aa7b8">依赖方向：上层依赖下层；本仓只加机制面，不重写上游已有的那份</text>
+<rect x="30" y="52" width="700" height="52" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="48" y="74" font-size="13" fill="#e6edf3">oekit（基础库）</text>
+<text x="48" y="94" font-size="11" fill="#9aa7b8">oekit/pkg · oekit/logx · oekit/concurrency</text>
+<rect x="30" y="128" width="700" height="52" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="48" y="150" font-size="13" fill="#e6edf3">oagentkit（Agent 原语矩阵）</text>
+<text x="48" y="170" font-size="11" fill="#9aa7b8">guardx（invoke / sandbox / toolfail）· toolgate（policy）· runtime</text>
+<rect x="30" y="204" width="700" height="52" rx="8" fill="#161b26" stroke="#58a6ff" stroke-width="2"/>
+<text x="48" y="226" font-size="13" fill="#58a6ff">goagent-kernel（本仓）</text>
+<text x="48" y="246" font-size="11" fill="#9aa7b8">判定环 · 续跑与终态闸 · 上下文三段 · 交接与权威 · 门禁执行体</text>
+<rect x="30" y="280" width="700" height="52" rx="8" fill="#161b26" stroke="#3fb950"/>
+<text x="48" y="302" font-size="13" fill="#3fb950">宿主（产品）</text>
+<text x="48" y="322" font-size="11" fill="#9aa7b8">拓扑内容 · 存储实现 · 展示文案 · 领域判据</text>
+<path d="M380,104 V120" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M380,128 l-4,-8 h8 z" fill="#9aa7b8"/>
+<path d="M380,180 V196" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M380,204 l-4,-8 h8 z" fill="#9aa7b8"/>
+<text x="400" y="196" font-size="10.5" fill="#9aa7b8">本仓依赖上游</text>
+<path d="M380,280 V264" stroke="#3fb950" stroke-width="1.5" fill="none"/>
+<path d="M380,256 l-4,8 h8 z" fill="#3fb950"/>
+<text x="400" y="276" font-size="10.5" fill="#9aa7b8">宿主依赖本仓（方向相反）</text>
+</svg>
+</div>
+<div align="center"><em>图 2 · 本仓在 oekit → oagentkit → goagent-kernel → 宿主这条链上的位置：判定面留上游，编排机制归本仓。</em></div>
+
+> 设计推导见 [ADR-0001](docs/adr/ADR-0001-领域知识红线.md)；与上游的分工见 [ADR-0003](docs/adr/ADR-0003-与上游矩阵的分层.md)
 
 ### 工具调用只有一条路
 
-渐进披露、披露门、多守卫合成、失败分类、程序内调用——**全部接成同一条判定环**，包括 `ptc` 里模型自己写的 `host.<tool>()`。
-少接一段，那个位置就成了整条链上唯一绕过所有门禁的路径。
+**问题**：判定环少接一段，那个位置就成了整条链上唯一绕过所有门禁的路径。
+**机制**：渐进披露、披露门、多守卫合成、失败分类、程序内调用全部接成同一条 `invoke.Stage` 链；`guardset` 把多条拒绝合成一条（不可重试优先的保守侧，并点出该先处理哪一条），`tooldisclose` 只放行已取回 schema 的工具。
+**什么时候用**：任何会触发工具执行的路径——包括 `ptc` 里模型自己写的 `host.<tool>()`。
 
-```
-普通工具调用 ─┐
-             ├─→ invoke.Stage 链 ─→ guardset(并求值·合成拒绝) ─→ tooldisclose(披露门)
-ptc 程序内   ─┘                            └─→ toolgate 审计门 ─→ agent 派发拓扑（上游直连）
-```
-
-`guardset` 补的是「链在第一个拒绝处就收口、模型一次只听得到一个理由」那一面：多条拒绝合成一条，取「全部可重试才算可重试」的保守侧，并点出该先处理哪一条。
+<div align="center">
+<svg width="760" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="306" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="380" y="36" font-size="13" text-anchor="middle" fill="#9aa7b8">普通工具调用与 ptc 程序内调用，走的是同一条判定环</text>
+<rect x="40" y="48" width="220" height="38" rx="8" fill="#161b26" stroke="#58a6ff"/>
+<text x="150" y="72" font-size="13" text-anchor="middle" fill="#e6edf3">普通工具调用</text>
+<rect x="500" y="48" width="220" height="38" rx="8" fill="#161b26" stroke="#58a6ff"/>
+<text x="610" y="72" font-size="13" text-anchor="middle" fill="#e6edf3">ptc 程序内 host.&lt;tool&gt;()</text>
+<path d="M150,86 V100" stroke="#58a6ff" stroke-width="1.5" fill="none"/>
+<path d="M610,86 V98 H150 V100" stroke="#58a6ff" stroke-width="1.5" fill="none"/>
+<path d="M150,106 l-4,-8 h8 z" fill="#58a6ff"/>
+<rect x="30" y="106" width="700" height="96" rx="10" fill="#161b26" stroke="#262e3d"/>
+<rect x="44" y="128" width="152" height="52" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="120" y="150" font-size="12.5" text-anchor="middle" fill="#e6edf3">invoke.Stage 链</text>
+<text x="120" y="168" font-size="10.5" text-anchor="middle" fill="#9aa7b8">装配顺序＝判定顺序</text>
+<rect x="210" y="128" width="152" height="52" rx="8" fill="#1c2330" stroke="#a371f7"/>
+<text x="286" y="150" font-size="12.5" text-anchor="middle" fill="#e6edf3">guardset</text>
+<text x="286" y="168" font-size="10.5" text-anchor="middle" fill="#9aa7b8">并求值·合成一条拒绝</text>
+<rect x="376" y="128" width="152" height="52" rx="8" fill="#1c2330" stroke="#a371f7"/>
+<text x="452" y="150" font-size="12.5" text-anchor="middle" fill="#e6edf3">tooldisclose</text>
+<text x="452" y="168" font-size="10.5" text-anchor="middle" fill="#9aa7b8">披露门·未取回即拒</text>
+<rect x="542" y="128" width="152" height="52" rx="8" fill="#1c2330" stroke="#a371f7"/>
+<text x="618" y="150" font-size="12.5" text-anchor="middle" fill="#e6edf3">toolgate 审计门</text>
+<text x="618" y="168" font-size="10.5" text-anchor="middle" fill="#9aa7b8">上游策略裁决</text>
+<path d="M196,154 H206" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M212,154 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M362,154 H372" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M378,154 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M528,154 H538" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M544,154 l-8,-4 v8 z" fill="#9aa7b8"/>
+<rect x="30" y="222" width="340" height="56" rx="8" fill="#161b26" stroke="#3fb950"/>
+<text x="200" y="246" font-size="12.5" text-anchor="middle" fill="#3fb950">放行 ⇒ 执行 ⇒ 结果回模型</text>
+<text x="200" y="266" font-size="11" text-anchor="middle" fill="#9aa7b8">要不要原样重发 ⇒ 上游 guardx/toolfail</text>
+<rect x="390" y="222" width="340" height="56" rx="8" fill="#161b26" stroke="#f85149"/>
+<text x="560" y="246" font-size="12.5" text-anchor="middle" fill="#f85149">拒绝 ⇒ 一条指引回模型</text>
+<text x="560" y="266" font-size="11" text-anchor="middle" fill="#9aa7b8">披露门被拒不激活：先取回 schema 再调用</text>
+<path d="M200,202 V218" stroke="#3fb950" stroke-width="1.5" fill="none"/>
+<path d="M200,222 l-4,-8 h8 z" fill="#3fb950"/>
+<path d="M560,202 V218" stroke="#f85149" stroke-width="1.5" fill="none"/>
+<path d="M560,222 l-4,-8 h8 z" fill="#f85149"/>
+</svg>
+</div>
+<div align="center"><em>图 3 · 工具调用只有一条判定环：拒绝也走同一条环，并回一条指引；披露门被拒不激活，重试不是恢复路径。</em></div>
 
 ### 崩了能接着跑，而且不会「两条分支都赢了」
 
-`checkpoint` 把恢复判定做成纯函数：可信边界按依赖判定、终态不自动重开、序号单调闸。
-`commitgate` 用独占提交闸保证终态只被提交一次（`statemachine` 是纯谓词、`SeqGate` 只排快照序号，都排不出「两条并发分支都以为自己赢了」）。
-为什么：临场决定必然选最坏的那个（要么盲目全量重跑、要么盲目跳过）；终态独占权必须单独一道闸，且 **Acquire / ReleaseLease 成对**（凭占用凭证精确释放——旧三元组认人的 Commit/Release 已删，同名并行分支下它会放掉别人的闸）。
+**问题**：崩溃后怎么恢复，临场决定必然选最坏的那个（盲目全量重跑或盲目跳过）；并发分支还会两条都以为自己赢了。
+**机制**：`checkpoint` 把恢复判定做成纯函数（空洞不采信 / 终态不自动重开 / 序号单调闸）；`commitgate` 用独占提交闸保证终态只被提交一次——`statemachine` 是纯谓词、`SeqGate` 只排快照序号，都排不出「两条分支都赢了」。
+**什么时候用**：任何会跨进程、跨崩溃恢复的长编排；续跑判定与终态独占必须成对出现，且 **Acquire / ReleaseLease 成对**（凭占用凭证精确释放，旧三元组认人的 Commit/Release 已删）。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 350" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="326" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<rect x="30" y="32" width="350" height="286" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="48" y="58" font-size="13.5" fill="#58a6ff">checkpoint：续跑，不是重放</text>
+<rect x="48" y="74" width="60" height="34" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="78" y="96" font-size="12" text-anchor="middle" fill="#3fb950">S1 完成</text>
+<rect x="126" y="74" width="60" height="34" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="156" y="96" font-size="12" text-anchor="middle" fill="#3fb950">S2 完成</text>
+<rect x="204" y="74" width="60" height="34" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="234" y="96" font-size="12" text-anchor="middle" fill="#f85149">S3 崩</text>
+<rect x="282" y="74" width="60" height="34" rx="8" fill="#1c2330" stroke="#9aa7b8"/>
+<text x="312" y="96" font-size="12" text-anchor="middle" fill="#9aa7b8">S4 ？</text>
+<path d="M110,91 H125" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M125,91 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M188,91 H203" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M203,91 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M266,91 H281" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M281,91 l-8,-4 v8 z" fill="#9aa7b8"/>
+<text x="48" y="140" font-size="12" fill="#e6edf3">空洞不采信：前驱没完成就不算过</text>
+<text x="48" y="164" font-size="12" fill="#e6edf3">终态不自动重开：终态就是终态</text>
+<text x="48" y="188" font-size="12" fill="#e6edf3">序号单调闸：旧快照覆盖不了新的</text>
+<rect x="48" y="206" width="314" height="44" rx="8" fill="#1c2330" stroke="#58a6ff"/>
+<text x="60" y="226" font-size="11" fill="#e6edf3">SaveIfNewer：序号为 0 的快照一律拒收</text>
+<text x="60" y="242" font-size="11" fill="#9aa7b8">（序号 0 不是一次真实提交）</text>
+<rect x="390" y="32" width="340" height="286" rx="10" fill="#161b26" stroke="#262e3d"/>
+<text x="408" y="58" font-size="13.5" fill="#a371f7">commitgate：终态只提交一次</text>
+<rect x="408" y="74" width="130" height="34" rx="8" fill="#1c2330" stroke="#9aa7b8"/>
+<text x="473" y="96" font-size="12" text-anchor="middle" fill="#e6edf3">分支 A</text>
+<rect x="582" y="74" width="130" height="34" rx="8" fill="#1c2330" stroke="#9aa7b8"/>
+<text x="647" y="96" font-size="12" text-anchor="middle" fill="#e6edf3">分支 B</text>
+<path d="M473,108 L516,130" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M520,134 l-4,-8 h8 z" fill="#9aa7b8"/>
+<path d="M647,108 L584,130" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M580,134 l-4,-8 h8 z" fill="#9aa7b8"/>
+<rect x="490" y="134" width="120" height="40" rx="8" fill="#1c2330" stroke="#a371f7"/>
+<text x="550" y="159" font-size="12.5" text-anchor="middle" fill="#e6edf3">独占提交闸</text>
+<path d="M520,174 L482,192" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M478,196 l-4,-8 h8 z" fill="#9aa7b8"/>
+<path d="M580,174 L646,192" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M650,196 l-4,-8 h8 z" fill="#9aa7b8"/>
+<rect x="408" y="196" width="140" height="40" rx="8" fill="#1c2330" stroke="#3fb950"/>
+<text x="478" y="221" font-size="12" text-anchor="middle" fill="#3fb950">A 提交成功</text>
+<rect x="582" y="196" width="140" height="40" rx="8" fill="#1c2330" stroke="#f85149"/>
+<text x="652" y="221" font-size="12" text-anchor="middle" fill="#f85149">B 被拒</text>
+<text x="408" y="262" font-size="11" fill="#9aa7b8">Acquire 铸造令牌 · ReleaseLease 凭令牌放闸</text>
+<text x="408" y="280" font-size="11" fill="#9aa7b8">旧三元组认不出两次同名同序的占用</text>
+<text x="408" y="298" font-size="11" fill="#f85149">迟到的释放会放掉别人的闸</text>
+</svg>
+</div>
+<div align="center"><em>图 4 · 左：checkpoint 的续跑判定（空洞不采信 / 终态不重开 / 序号单调）；右：commitgate 的终态独占闸。</em></div>
 
 ### 上下文是有限预算，不是无限历史
 
-三件套分工泾渭分明：**`budget`** 管输入侧分段计量与压实、**`offload`** 管二进制本体躺在消息里（两阶段：首次只标记不替换，否则模型会引用一个自己从没看过的东西）、**`spill`** 管输出侧截断与分页取回。
-为什么：只给总数无法区分「工具面膨胀」与「历史膨胀」，而两者处置完全不同。
+**问题**：只给一个总数字，分不出「工具面膨胀」与「历史膨胀」，而两者处置完全不同。
+**机制**：`budget` 管输入侧分段计量与压实，`spill` 管输出侧溢出与分页取回，`offload` 管内联大对象外置（两阶段：首次只标记不替换，否则模型会引用一个自己从没看过的东西）。
+**什么时候用**：长会话、多工具输出或要注入大对象的场景——三段各管一段，不要用一条截断兜住全部。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="286" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="380" y="38" font-size="13" text-anchor="middle" fill="#9aa7b8">同一份上下文装不下时，三段各管一段</text>
+<rect x="30" y="52" width="700" height="40" rx="8" fill="#161b26" stroke="#262e3d"/>
+<text x="380" y="77" font-size="12.5" text-anchor="middle" fill="#e6edf3">输入侧（历史 / 工具面）→ 输出侧（工具结果）→ 内联大对象（二进制 / 报告）</text>
+<rect x="30" y="108" width="226" height="140" rx="8" fill="#161b26" stroke="#58a6ff"/>
+<text x="46" y="134" font-size="13" fill="#58a6ff">budget（输入侧）</text>
+<text x="46" y="160" font-size="11.5" fill="#e6edf3">分段计量 + 窗口钳位</text>
+<text x="46" y="182" font-size="11.5" fill="#e6edf3">压实计划骨架</text>
+<text x="46" y="204" font-size="11.5" fill="#e6edf3">摘要与落盘留宿主接口</text>
+<text x="46" y="234" font-size="11" fill="#9aa7b8">治：历史膨胀</text>
+<rect x="267" y="108" width="226" height="140" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="283" y="134" font-size="13" fill="#a371f7">spill（输出侧）</text>
+<text x="283" y="160" font-size="11.5" fill="#e6edf3">溢出给提示，不静默截断</text>
+<text x="283" y="182" font-size="11.5" fill="#e6edf3">分页取回（rune 无损）</text>
+<text x="283" y="204" font-size="11.5" fill="#e6edf3">按龄清理</text>
+<text x="283" y="234" font-size="11" fill="#9aa7b8">治：工具输出撑爆窗口</text>
+<rect x="504" y="108" width="226" height="140" rx="8" fill="#161b26" stroke="#3fb950"/>
+<text x="520" y="134" font-size="13" fill="#3fb950">offload（大对象）</text>
+<text x="520" y="160" font-size="11.5" fill="#e6edf3">sha 去重</text>
+<text x="520" y="182" font-size="11.5" fill="#e6edf3">两阶段：先标记后替换</text>
+<text x="520" y="204" font-size="11.5" fill="#e6edf3">首次只标记，不换占位</text>
+<text x="520" y="234" font-size="11" fill="#9aa7b8">治：模型引用没看过的东西</text>
+<text x="380" y="278" font-size="11.5" text-anchor="middle" fill="#9aa7b8">只给一个总数，分不出「工具面膨胀」与「历史膨胀」，而两者处置完全不同</text>
+</svg>
+</div>
+<div align="center"><em>图 5 · 上下文装不下时按三段分流：输入侧 budget、输出侧 spill、内联大对象 offload。</em></div>
 
 ### 失败是数据表，不是散落的 if
 
-失败分类（上游 `guardx/toolfail` 直连）把「类别 → 可重试性 / 退避 / 需人工 / 重发安全 / 模型指引」做成数据表，不可归类一律不可重试（fail-closed）。
-为什么：**重发安全与重试价值是两个正交维度**——超时值得重试，但服务端可能已执行，原样重发就是重复施加副作用。
+**问题**：散落的 `if` 让「能不能重试」「要不要人工」「能不能原样重发」各判一套，跨宿主必然漂移到没人发现为止。
+**机制**：失败分类住在上游 `github.com/oagentkit/guardx/toolfail`（类别 → 可重试 / 退避 / 需人工 / 重发安全 / 模型指引，不可归类一律不可重试）；本仓 `dispatch` 是**失败面**包——三档 transient / fatal / other 加同域与跨域改派环，回答「失败后还能不能再派、派给谁」，不碰可达性（那是上游 `oagentkit/agent/dispatch` 的活）；`retryplan` 再把「该不该重试」与「重试会不会重复施加」合成一条可执行结论。
+**什么时候用**：工具调用失败后的处置决策——先查表拿档位，再决定是否原样重发：**重发安全与重试价值是两个正交维度**（超时值得重试，但服务端可能已执行，原样重发就是重复施加副作用）。
+
+分类结果落在同一条判定环上（见「工具调用只有一条路」的图）：它是环上的一环输入，不是散落在调用点的分支。
 
 ### N 轮 ReAct 往返塌缩成 1 轮
 
-`ptc` 让模型写程序、进程内 goja VM 执行、程序内经 bindings 调宿主工具，只把归并后的小结果带回上下文：**原始数据不过模型面**。
-为什么：三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘，纯 Go 零 CGO，无 Node 分发面。
+**问题**：N 轮「工具结果回模型 → 模型再决策」往返，原始数据每轮都过一遍模型面，预算与延迟随轮数线性放大。
+**机制**：`ptc` 让模型写程序、进程内 goja VM 执行、程序内经 bindings 调宿主工具，只把归并后的小结果带回上下文（**原始数据不过模型面**）；三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘，纯 Go 零 CGO、无 Node 分发面。
+**什么时候用**：数据量大、步骤确定的批处理（多文件解析、批量查询）——一次调用比多轮对话便宜一个量级；程序内调用与普通调用走同一条判定环（见「工具调用只有一条路」的图）。
 
 ### 执行可以出进程，但档位表必须诚实
 
-`backend` 给任务式执行（镜像 + 参数 + 挂载 + 预算）定契约：隔离轴、能力自报、要求对照、登记簿选择，与上游 `guardx/sandbox` 的档位语义同一条纪律（无满足者即拒绝，绝不降级）。
+**问题**：后端自报的能力与实际执行强度之间没有信号，「已兑现」可能只是一句声明。
+**机制**：`backend` 给任务式执行（镜像 + 参数 + 挂载 + 预算）定契约：隔离轴、能力自报、要求对照、登记簿选择，与上游 `github.com/oagentkit/guardx/sandbox` 同一条纪律（无满足者即拒绝，绝不降级）；出口与预算判据复用上游，本仓只做映射与选择，不私造第二套判据。
+**什么时候用**：要跑不可信代码或需要强隔离时——先登记后端能力，再按 Spec 解析；登记簿里没有满足者就让调用失败，不要降级到进程内。
+
 Docker Engine 与 Kubernetes Job 两份参考实现在 `examples/containerbackend`，接线三行：
 
 ```go
@@ -213,36 +395,74 @@ res, err := b.Exec(ctx, backend.Job{Image: "registry.example/app@sha256:...", Ar
 
 为什么隔离轴在本包重立而出口词表复用上游 `guardx/sandbox`：上游 `Level` 的枚举值即强弱序，往中间插容器档是跨仓破坏性变更；对应关系只写在注释里。
 为什么 K8s 后端以逐作业 NetworkPolicy（`policyTypes: [Egress]` + 空 `egress`）兑现禁网、策略建不出来就拒绝创建作业：兑现不了的禁网静默降级成「普通作业」，等于把「要求」与「实际」拆成两份真相。NetworkPolicy 的强制依赖实现它的 CNI——集群不支持时宿主必须显式关闭策略，后端随即把 `Egress()` 自报降为 unrestricted，要求禁网的 Spec 不会选中它。
-为什么 Job 声明的完整校验不写进本示例：`guardx` 的 `sandbox.ExecPolicy` / `Judge` / `Spec` 在 v0.27.0 才导出，本仓 go.mod 钉的是 v0.25.1——不为示例升级依赖、也不私造第二套判据；装配期由宿主先用 `sandbox.ExecPolicy` 校验 Job 声明，再把满足者登记进登记簿。`MountPolicy` 只兑现「挂载白名单」一条，不冒充完整 ExecPolicy。
+Job 声明的完整校验不写进本示例，但**不是缺判据**：上游 `sandbox.ExecPolicy` / `Judge` / `Spec` 是导出的，`backend.Job.ExecSpec()` 与 `JudgeExec(policy)` 已把 Job 声明映射成 `sandbox.Spec` 交给它判定（两层判据：`Validate` 管自洽，`JudgeExec` 管落在策略内）——装配期把 `JudgeExec` 挂上即可，示例为求短只写了登记与解析两行。
 
 ### 交接就是改写负责人，且只有一次
 
-`handoff` 把跨进程交接的四问（交接点 / 原子性 / 幂等键 / 回执寻址 / 超时）各收成一条契约条款；判据 `ConcurrentTake` / `Check` 是纯函数，宿主的存储实现被跑一遍就算验过契约。
-为什么回执地址必填：不假设「谁交的回给谁」——跨进程时源方可能崩溃重启，重启后的身份不再有保证。
-为什么无时限的交接被契约禁止：没有截止时刻的跨进程交接，只会留下一把谁都不敢动的锁。
+**问题**：跨进程交接若靠「推过一条管道」或「谁交的回给谁」，源方崩溃重启后就没有可寻址的对方——两种错在报告里读起来完全正常。
+**机制**：`handoff` 把交接的每一问各收成一条契约条款（交接点 / 原子性 / 幂等键 / 回执寻址 / 超时）；判据 `ConcurrentTake` / `Check` 是纯函数，宿主写完存储实现跑一遍就算验过契约。
+**什么时候用**：任务要跨进程转手时——交接是**负责人字段的原子改写**，不是消息投递：回执地址必填（不假设「谁交的回给谁」，跨进程时源方可能崩溃重启），无时限的交接被契约禁止（没有截止时刻的交接只会留下一把谁都不敢动的锁）。终态独占与负责人改写是同一族纪律：都要一道独占闸加一个可核对的凭证（见「崩了能接着跑」的图）。
 
 ### 跨区域只有一个权威
 
-`ownership` 把「任务域归哪个区域」从各宿主的配置约定收成可校验、可查的事实（`RegionMap` / `Owner` / `Mapping`），并用**代次 + 确认**把跨区域转移做成两阶段：提案只记录候选代次，确认成功才换代。
-为什么确认前候选代次不可提交：未经确认的候选代次只是「将要接管」，把它当授权就是双主。
-为什么旧代提交必须被拒（不是「尽量」）：分区期间旧区域的 owner 身份从未失效，唯一能挡住它的是提交路径上那条 `Fence`；任何错误（含权威不可达）都按拒绝处理。
-为什么不给所有权加 TTL：那会变成第二份租约——任务租约仍归 `taskboard` / `handoff`，所有权只回答「谁是权威」。
-单区域部署退化为 `NewLocal`：判据形状不变，将来接共享权威不用改调用方。
+**问题**：分区期间，「这个任务域归哪个区域」若只是各宿主的配置约定，就会出现双主——两边的提交都看起来合法。
+**机制**：`ownership` 把「任务域 → 权威区域」从配置约定收成可校验、可查的事实（`RegionMap` / `Owner` / `Mapping`），并用**代次 + 确认**把跨区域转移做成两阶段：提案只记录候选代次，确认成功才换代。
+**什么时候用**：跨区域部署时——候选代次未确认一律拒（未经确认的候选代次只是「将要接管」，把它当授权就是双主），旧代提交也一律拒（分区期间旧区域的 owner 身份从未失效，唯一能挡住它的是提交路径上那条 `Fence`；权威不可达同样按拒绝处理）；且不给所有权加 TTL（那会变成第二份租约，任务租约仍归 `taskboard` / `handoff`，所有权只回答「谁是权威」）。单区域部署退化为 `NewLocal`，判据形状不变，将来接共享权威不用改调用方。
 
 ### 轨迹可以复读，评估是纯函数
 
-`eval` 把「录制 → 重放 → 差异比对」收成机制面：锚点是 `trajectory` 的确定性行 ID，时刻随录制定格（时刻是数据不是时钟）；`Diff` 为空即复现，`Assess` 给出可判定的结构结论（收口 / 配对 / 重复 / 期望 / 禁止）。
-为什么评估判据不跑模型：「结果像不像」要再跑一次模型看运气，那不是评估；结构事实的判定才可测、可回归。
+**问题**：「结果像不像」要再跑一次模型看运气，那不是评估；而要复现一段历史，又不能靠时钟和 sleep。
+**机制**：`trajectory` 把事件流投成确定性行（行 ID 确定、时刻随录制定格——时刻是数据不是时钟）；`eval` 把「录制 → 重放 → 差异比对」收成机制面：`Diff` 为空即复现，`Assess` 给出可判定的结构结论（收口 / 配对 / 重复 / 期望 / 禁止），零判项显式报错。
+**什么时候用**：回归验收与线上问题复盘——能复读同一段轨迹，结论才可回归；不能复读的历史拿来做评估等于抽签。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 310" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<rect x="12" y="12" width="736" height="286" rx="10" fill="#1c2330" stroke="#262e3d"/>
+<text x="380" y="38" font-size="13" text-anchor="middle" fill="#9aa7b8">同一条事件流：投成轨迹行 → 录制 → 重放 → 比对 → 评估</text>
+<rect x="40" y="52" width="220" height="52" rx="8" fill="#161b26" stroke="#9aa7b8"/>
+<text x="150" y="74" font-size="12.5" text-anchor="middle" fill="#e6edf3">事件流</text>
+<text x="150" y="93" font-size="10.5" text-anchor="middle" fill="#9aa7b8">事件时刻随录制定格</text>
+<path d="M260,78 H326" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M334,78 l-8,-4 v8 z" fill="#9aa7b8"/>
+<rect x="340" y="52" width="300" height="52" rx="8" fill="#161b26" stroke="#58a6ff"/>
+<text x="490" y="74" font-size="12.5" text-anchor="middle" fill="#e6edf3">trajectory 行</text>
+<text x="490" y="93" font-size="10.5" text-anchor="middle" fill="#9aa7b8">行 ID 确定 · 时刻是数据不是时钟</text>
+<path d="M490,104 V120 H110 V132" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M110,140 l-4,-8 h8 z" fill="#9aa7b8"/>
+<rect x="30" y="140" width="160" height="54" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="110" y="162" font-size="12.5" text-anchor="middle" fill="#e6edf3">Record 录制</text>
+<text x="110" y="181" font-size="10.5" text-anchor="middle" fill="#9aa7b8">JSONL 可逐字节 diff</text>
+<rect x="210" y="140" width="160" height="54" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="290" y="162" font-size="12.5" text-anchor="middle" fill="#e6edf3">Replay 重放</text>
+<text x="290" y="181" font-size="10.5" text-anchor="middle" fill="#9aa7b8">不 sleep，不取 now()</text>
+<rect x="390" y="140" width="160" height="54" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="470" y="162" font-size="12.5" text-anchor="middle" fill="#e6edf3">Diff 比对</text>
+<text x="470" y="181" font-size="10.5" text-anchor="middle" fill="#9aa7b8">空切片 = 复现</text>
+<rect x="570" y="140" width="160" height="54" rx="8" fill="#161b26" stroke="#a371f7"/>
+<text x="650" y="162" font-size="12.5" text-anchor="middle" fill="#e6edf3">Assess 评估</text>
+<text x="650" y="181" font-size="10.5" text-anchor="middle" fill="#9aa7b8">五判项 · 纯函数</text>
+<path d="M190,167 H202" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M210,167 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M370,167 H382" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M390,167 l-8,-4 v8 z" fill="#9aa7b8"/>
+<path d="M550,167 H562" stroke="#9aa7b8" stroke-width="1.5" fill="none"/>
+<path d="M570,167 l-8,-4 v8 z" fill="#9aa7b8"/>
+<rect x="30" y="216" width="700" height="46" rx="8" fill="#161b26" stroke="#3fb950"/>
+<text x="380" y="236" font-size="12.5" text-anchor="middle" fill="#3fb950">Diff 为空 = 复现；Assess 只判结构事实</text>
+<text x="380" y="254" font-size="11" text-anchor="middle" fill="#9aa7b8">不跑模型看「像不像」——那要再抽一次签，不是评估</text>
+</svg>
+</div>
+<div align="center"><em>图 6 · 同一段历史可逐字节复读，评估判据是纯函数：结构事实可测可回归。</em></div>
 
 ### 工程底座
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 78,673 行 / 411 文件（不含 `_test.go`）|
+| 生产代码 | 78,678 行 / 411 文件（不含 `_test.go`）|
 | 测试 | 526 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
-| 门禁 | 10 条规则（`rules` 段）+ **20 条 `go/ast` 结构规则**（门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370** / **用例内 goroutine 收尾（#428：测试函数起了 goroutine 而测试侧无等待点即红）** / **判定词表登记七条：词表须有枚举出口 + 消费方不得手抄（判定词表 / 输入归一词表两类，判据精确到那一处字面量）+ 判定谓词须与表同源 + 输入归一词表须有导出的归一出口 + 词表须覆盖它那一族常量的全部取值（反向派生：常量加了、表没加当天即红）+ 同形撞车须显式声明关系（同概念 / 不同概念——决定手抄指路往哪引，错误指路比不指路更坏）+ 同形关系的锚点须仍指向真实常量（改名 / 被删 / 取值漂了 / 说谎了，当天即红）**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 61 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277；issue 证据只在单号仍开着时才算缺口）** + **存储选型判据（`storagecheck`：场景 storage 在允许集内 / storage 提供场景必需的能力 / 能力断言在代码里找得到落点 / 多写者场景不得选单写者档位 / 选型口径与已知不对称必须看得见，#424）** + **演进台账纪律（`ledgercheck`：同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态 / 无主单号）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** + **仓库卫生（`hygiene`：被跟踪的编译产物二进制不得入库，按文件头魔数判，#413）** |
+| 门禁 | 10 条规则（`rules` 段，以 `make architecture-check` 的输出为准）+ **`go/ast` 结构规则**（条数随 `archcheck/*.go` 增减而变，**不抄在这里**——抄进来就是给自己造一份会静默过期的真相；判据面清单：门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370** / **用例内 goroutine 收尾（#428：测试函数起了 goroutine 而测试侧无等待点即红）** / **判定词表登记七条：词表须有枚举出口 + 消费方不得手抄（判定词表 / 输入归一词表两类，判据精确到那一处字面量）+ 判定谓词须与表同源 + 输入归一词表须有导出的归一出口 + 词表须覆盖它那一族常量的全部取值（反向派生：常量加了、表没加当天即红）+ 同形撞车须显式声明关系（同概念 / 不同概念——决定手抄指路往哪引，错误指路比不指路更坏）+ 同形关系的锚点须仍指向真实常量（改名 / 被删 / 取值漂了 / 说谎了，当天即红）**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 61 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277；issue 证据只在单号仍开着时才算缺口）** + **存储选型判据（`storagecheck`：场景 storage 在允许集内 / storage 提供场景必需的能力 / 能力断言在代码里找得到落点 / 多写者场景不得选单写者档位 / 选型口径与已知不对称必须看得见，#424）** + **演进台账纪律（`ledgercheck`：同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态 / 无主单号）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** + **仓库卫生（`hygiene`：被跟踪的编译产物二进制不得入库，按文件头魔数判，#413）** |
 | 例外登记 | **0** |
 
 > **上表分两类：前两行有机器判定，其余仍是散文**（issue #31）。
@@ -482,6 +702,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
+| **v0.62.1**（本版） | **三条台账登记行一次清偿**（#431 用例收尾形态 / #432 断言的尺子 / #433 门禁命令的扫描成本）：① **9 处尾随收尾点改成 `defer` 形态**（#431）——原先是「用例末尾的普通语句」⇒ 用例中途 `t.Fatalf` 触发的 `runtime.Goexit` 会**跳过**它们 ⇒ 失败路径上 tailer 实际未被 join（7 处末尾改 `defer`；2 处**中途**改闭包内 `defer`——不能一刀切 defer ⇒ 会把 join 拖到用例结束、**语义改变**）；② **8 处「拿墙钟窗口当尺子」的断言改成「等可观测事实」**（#432）——固定 `sleep` + 计数断言在负载下会**假红**（`worker` 的续期用例实测红）或**白测**（负向断言 + 窗口 ⇒ 机制压根没跑起来也绿）；③ **`cmd/seamcheck` 的扫描成本与依赖规模脱钩**（#433）——去掉 `NeedDeps`（依赖走导出数据）+ 扫描器给可注入接缝（用例扫合成夹具，真仓扫描仍由 `make seamcheck` 门禁承担）⇒ 该包用例从 **5.384s** 降到 **0.394s**（⚠ 台账那条 489s 基线在本机复现不出来，如实登记）。**判定语义零变更** | **① 只用内核包的宿主不受影响**：内核包公开契约面**逐字未变**（导出面审计三问：零导出符号消失 / 零接口加方法 / 零签名变更）。<br>**② 无需 `go mod tidy`**：依赖地板**零变化**（`go.mod` / `go.sum` 未动）。<br>**③ `examples/*` 一律 Experimental**：本版**未改**它们任何既有导出签名。<br>**④ 若你复用 `cmd/seamcheck`**：它是命令（`package main`，不可被 import）⇒ 产出**逐字不变**（接缝声明 93 / 调用点 439 / 三条约束写齐 5）；但**首次在冷缓存机器上跑会多花几秒**（导出数据要先编译依赖）。 |
 | **v0.62.0**（已发版，tag `v0.62.0`） | **终审留后续的 5 条一次清偿**（roundguard 判据面 / 导出面口径 + 文档表述）：① **散文判据腿形态无关 + 覆盖全部 `### ` 小节**（F2）——原先只认**全角**冒号、且只覆盖「矩阵要钉的那 14 个判据面小节」⇒ 在 §9.x 这类小节里新加一条判据时门禁**一声不响**；登记面从 11 小节 / 27 条扩到 **13 小节 / 29 条**；② **导出面计数器把「导出别名暴露出去的那一面」计入**（M2）——`type Alias = inner` 时 inner 的字段与方法原先**完全不可见**（本包零别名 ⇒ 实测值不变）；③ **警告回灌移到被评判回合之后**（M1）——原先模型先看到警告、后看到触发警告的那一回合（**语义倒置**，且配对不破 ⇒ 没有编译错误、没有断言会红）；④ **policy 登记数的措辞改成 module id**（M3）——**61 个 module id ≠ 63 个 root 目录**，此前 USAGE 写「61 个包目录」是把错误的口径写死成契约；⑤ **AI-GUIDE §5.3 门包表述改成现状**（M4）——本仓**已无门包**（`facades: []`），且门禁表里不再写死规则条数。**依赖地板无变化** | **① 只用内核包的宿主不受影响**：内核包公开契约面**逐字未变**（导出面审计三问：零导出符号消失 / 零接口加方法 / 零签名变更）；`roundguard` 的导出面实测值仍是 **104** / 天花板 136。<br>**② 无需 `go mod tidy`**：依赖地板**零变化**（`go.mod` / `go.sum` 在 v0.61.0..v0.62.0 区间内**逐字未动**）。<br>**③ `examples/*` 一律 Experimental**：本版**未改**它们任何既有导出签名。<br>**④ 若你复用 `cmd/docsync`**：它是命令（`package main`，不可被 import），判据数的仍是同一个数（`modules` 段的 `- id:` 条目数）⇒ 实测值未变；但**用旧措辞「N 个包目录」写 USAGE 口径块**现在会被判红（那是本版故意收紧的措辞）。 |
 | **v0.61.0**（已发版，tag `v0.61.0`） | **「用例内 goroutine 必须在用例返回前退出」从纪律变成门禁（#428）+ 门面判据文件按关注点拆分（#427）**：① **新增规则 `harness-test-goroutine-joined`**（测试面，`severity: error`）——测试函数（`Test*`/`Benchmark*`/`Fuzz*`）里起了 goroutine，而**该函数或它调用的包内函数（深度 ≤2）里没有等待点**（接收表达式 `<-ch` 或 `X.Wait()`）⇒ 红；豁免必须**helper 感知**（等待点常常写在 `stopTailer` 这类助手里，只看测试函数体 ⇒ 大量误报 ⇒ 真阳性被淹没）；② **policy 新增 `check_kind` 字段**——结构化执行体的选择（当前取值域 `goroutine_join`），**取值域封闭**（未知取值当天即红；写错的类别名若被当成「不是已知类别」，这条登记就静默降级成「不判」，失败形态是门禁**变绿**）；③ **`archcheck.Rule` 新增字段 `CheckKind`**（源码级 additive）；④ **`cmd/storagecheck` 门面判据文件按关注点拆成三个**（`facade.go` / `facade_derive.go` / `facade_coverage.go`）——**零行为变更**（判定语义与报错文案逐字未变）；⑤ **门禁运行口径**：测试阶段显式给单包超时（`TEST_GO_TIMEOUT := 15m`）——`cmd/seamcheck` 的全仓类型检查单包实测 489.346s，Go 默认 10m 无余量 ⇒ 负载下 `cover-gate` 必红（**只改本仓门禁怎么跑，不改任何判定**）。**依赖地板无变化** | **① 只用内核包的宿主不受影响**：内核包公开契约面**逐字未变**（导出面审计三问：零导出符号消失 / 零接口加方法 / 零签名变更）。<br>**② 若你在自己仓里复用 `archcheck`**：想用新规则需要 `archcheck` ≥ v0.61.0，并在 policy 里写 `check_kind: goroutine_join`；**用旧版 archcheck 加载带这行的 policy 会因严格 YAML 解析失败（退出码 2）** ⇒ 升级 archcheck，或删掉那行（`check_kind` 不写时行为与旧版逐字相同）。<br>**③ 若你在 Go 代码里构造 `archcheck.Rule`**：新增了 `CheckKind` 字段 ⇒ **具名字段字面量逐字兼容**；**位置参数结构体字面量会编译不过**（需补一个零值字段）。<br>**④ 无需 `go mod tidy`**：依赖地板**零变化**（`go.mod` / `go.sum` 在 v0.60.0..v0.61.0 区间内**逐字未动**）。<br>**⑤ `examples/*` 一律 Experimental**：本版**未改**它们任何既有导出签名。<br>**⑥ 若你在本仓跑 `make check`**：单包超时改为显式 15m（此前吃 Go 默认 10m）⇒ **真挂死仍然红**，只是不再被机器负载放大出来的排队时间误判。 |
 | **v0.60.0**（已发版，tag `v0.60.0`） | **新增 `roundguard`（回合守卫）——模型侧循环的回合结局分类 / 次数预算 / 无进展检测 / 组合结论 `Decide`**：① **回合结局分类**（`Reason` 10 值 + `Classify`）——把「这一回合的事实」映射成一个结局取值，并区分**失败型收敛**与**温和叫停**（`Reason.IsFailure()`）：「被上限温和收停」与「真的坏了」在宿主侧必须可分；② **回合次数预算**（`Budget` / `Used` / `Meter` + 三个 `Check*`）——额度维度（事实）与处置口径（策略）分成两张词表，额度一律**调用前**判；③ **无进展检测**（`Detect`，五形态 × 三档处置）——首档 Warn（回灌给模型一次自我修正机会）/ 停止档 Stalled（温和叫停，产物仍可用）；④ **组合结论 `Decide`**——结局终局优先 → 额度按策略分流 → 无进展命中 ⇒ stalled ⇒ 否则继续。本包定级 **Experimental**（v0.60.0 定级），**零内部依赖**（只依赖 `github.com/oekit/pkg/errors`）。**依赖地板无变化**（`go.mod` / `go.sum` 在 v0.51.0..v0.60.0 区间内逐字未动）；**既有包公开契约面逐字未变**（导出面审计三问全清：零导出符号消失 / 零既有接口加方法 / 零既有导出函数签名变更） | **① 只用既有内核包的宿主什么都不用做**：既有包导出面逐字未变、依赖地板零变化 ⇒ **无需 `go mod tidy`**。<br>**② 若你管的是模型侧循环**：可**可选**接入 `roundguard`——`go get github.com/yi-nology/goagent-kernel@v0.60.0` 后 `import "github.com/yi-nology/goagent-kernel/roundguard"`。本仓此前**没有任何一维**管「模型这一轮说了什么、干了什么、还要不要再干」（`MaxTurns` / `maxSteps` / `MaxRounds` 全仓零命中），`roundguard` 补的就是这一维。<br>**③ 本包只给判据面，不调模型**：判定语义归内核、判定依据归宿主、展示文案归宿主——接线形态见 [docs/USAGE.md](docs/USAGE.md) §3.18。<br>**④ 本包定级 Experimental**：会改、删、拆，不承诺兼容；升级风险自负。 |
@@ -544,12 +765,12 @@ go get github.com/yi-nology/goagent-kernel@latest
 ```
 
 ```go
-require github.com/yi-nology/goagent-kernel v0.29.0   // 零 replace，直接版本化引入
+require github.com/yi-nology/goagent-kernel v0.62.1   // 零 replace，直接版本化引入
 ```
 
 > 升级前用 `git ls-remote --tags origin` 核候选版本真的存在——
 > `go list -m -versions` 报的是 proxy 的缓存目录，不是远端现实。
-> 当前已发布 tag 以远端为准（写稿时为 v0.29.0）。
+> 当前已发布 tag 以远端为准（写稿时为 v0.62.0）。
 >
 > ⚠️ **require 里写的是「最低版本」，不是「锁定版本」**：下游 `go mod tidy`
 > 只保证不低于这个版本，不会自动升到最新版。要用新版本必须显式
@@ -558,30 +779,48 @@ require github.com/yi-nology/goagent-kernel v0.29.0   // 零 replace，直接版
 ```go
 import "github.com/yi-nology/goagent-kernel/dispatch"
 
-// 派发守卫：宿主提供拓扑，harness 提供机制
-type myEdgeSource struct{ reg *myRegistry }
+// 失败面：先判档位，再决定要不要换人再派
+switch dispatch.Classify(err) {
+case dispatch.ClassTransient: // 瞬态：可跨域兜底改派
+case dispatch.ClassFatal:     // 终态类：换执行者也是白跑
+default:                       // 不确定：仅同域重试
+}
 
-func (s myEdgeSource) Slugs() []string                   { return s.reg.Slugs() }
-func (s myEdgeSource) DispatchAllow(slug string) []string { return s.reg.Allow(slug) }
-
-g := dispatch.NewGuard(myEdgeSource{reg: reg}, maxDepth) // 矩阵含环会在构造期 panic
-if err := g.Assert(caller, callee, depth); err != nil { /* 结构化 *dispatch.DenyError */ }
+// 改派环：候选枚举与执行步由宿主注入（与宿主注册表 / 能力画像无关）
+res := dispatch.StickyFailover(ctx, dispatch.Request{
+    Slug:       slug,
+    FirstErr:   err, // 判定面只读首次失败的原始错误
+    SameDomain: 1,
+    CrossDomain: true,
+    FailoverCandidates: func(slug string, tried map[string]bool, sameDomain bool) []string {
+        // ...宿主给出候选序...
+        return nil
+    },
+    Attempt: func(ctx context.Context, slug string) error {
+        // ...宿主按候选 slug 执行一次...
+        return nil
+    },
+})
 ```
+
+> 「这次派发**能不能**发生」不在本仓：allow 矩阵 / 深度上限 / 自派发拒绝由
+> 上游 `github.com/oagentkit/agent/dispatch` 判，本仓 `dispatch` 只管失败面
+> （分类 + 改派），不提供可达性判定。
 
 > ⚠️ 上面只是九组能力之一的片段。**完整接入路线图见 [docs/USAGE.md](docs/USAGE.md)**：
 > 契约面（`contract` + `statemachine`）、工具判定环（`tooldisclose` + `guardset` +
-> `toolfail`）、报告协议（`protocol`）、续跑契约（`checkpoint` + `commitgate`）、
-> 上下文三件套（`budget` + `spill` + `offload`）、实时事件、流式与退出、
-> 安全面（`netguard` + `pii`）、程序化编排（`ptc`）、门面三件。
+> 上游 `github.com/oagentkit/guardx/toolfail`）、报告协议（`protocol`）、续跑契约
+> （`checkpoint` + `commitgate`）、上下文三件套（`budget` + `spill` + `offload`）、
+> 实时事件、流式与退出、安全面（`netguard` + `pii`）、程序化编排（`ptc`）。
 
 宿主侧的安全不变量（如「全拓扑只有一条边能到达执行器」）的**断言测试应留在宿主仓**——
-那是产品级承诺，不是内核机制属性。`dispatch/guard_test.go` 用合成拓扑测机制，
-可复用于任何宿主。
+那是产品级承诺，不是内核机制属性。本仓的机制用例用合成的候选与执行步测改派环
+（`dispatch/failover_test.go`），可复用于任何宿主。
 
 ## 演进纪律
 
 - 新增能力前先问：**这是机制还是资产？** 资产进宿主/领域包，机制才进本仓。
-- 新依赖方向先改 policy 再写代码；例外带注释写明拆除条件。
+- 新依赖方向先改 policy 再写代码——声明面是门禁的判据源，先写代码再补声明只会被当场判红；例外带注释写明拆除条件，否则它会退化成永久豁免。
 - **改了包或门禁，同步本 README 的包表**：新增/删除包、改外部依赖、改生产行数跨过 25% 容差——三者任一发生就要改表，`make docsync` 会拦。
 - 内核包规模远小于宿主，`max_file_lines: 400` 直接阻断（宿主仓是报告口径）。
   2026-10-18 起 `thresholds.enforce` 由 false 切 true：此前 3 处超长文件

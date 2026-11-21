@@ -85,5 +85,5 @@ func TestTailCursorReadFailureStallsTailer(t *testing.T) {
 	if n := counted.maxIDCalls.Load(); n != 0 {
 		t.Fatalf("读失败时 Tailer 绝不得回退 MaxID（调了 %d 次 = 跳过停机窗口）", n)
 	}
-	stopTailer(t, cancel, done, "读失败停摆尾随")
+	defer stopTailer(t, cancel, done, "读失败停摆尾随")
 }

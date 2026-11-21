@@ -82,5 +82,5 @@ func TestEventTailerEndToEnd(t *testing.T) {
 		t.Fatalf("后续发布应照常补达, got %d(%s)", ev.ID, ev.Type)
 	}
 	assertNoGap(t, gaps, 100*time.Millisecond)
-	stopTailer(t, cancel, done, "端到端尾随")
+	defer stopTailer(t, cancel, done, "端到端尾随")
 }

@@ -77,43 +77,57 @@ title: 能力详解
 **解决**：工具调用的「披露、守卫、失败、审批、拓扑」五件事若各走各的路，必有绕过点。
 
 <div class="diagram">
-<svg viewBox="0 0 430 420" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+<svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="ar2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
-    </marker>
+    <marker id="chk1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="chk2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#3fb950"/></marker>
+    <marker id="chk3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#f85149"/></marker>
   </defs>
-  <g font-size="12.5" fill="#e6edf3">
-    <rect x="15" y="12" width="180" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
-    <text x="105" y="35" text-anchor="middle">普通工具调用</text>
-    <rect x="235" y="12" width="180" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
-    <text x="325" y="35" text-anchor="middle">ptc 程序内 host.&lt;tool&gt;()</text>
-    <rect x="120" y="92" width="190" height="36" rx="8" fill="#161b26" stroke="#58a6ff"/>
-    <text x="215" y="115" text-anchor="middle">invoke.Stage 判定环</text>
-    <rect x="120" y="168" width="190" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
-    <text x="215" y="191" text-anchor="middle">guardset 并求值 · 合成拒绝</text>
-    <rect x="15" y="248" width="180" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
-    <text x="105" y="271" text-anchor="middle">tooldisclose 披露门</text>
-    <rect x="235" y="248" width="180" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
-    <text x="325" y="271" text-anchor="middle">policy 审批门</text>
-    <rect x="235" y="322" width="180" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
-    <text x="325" y="345" text-anchor="middle">dispatch 派发拓扑</text>
+  <g font-size="11" fill="#e6edf3">
+    <rect x="14" y="76" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="89" y="99" text-anchor="middle">普通工具调用</text>
+    <rect x="14" y="124" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="89" y="147" text-anchor="middle">ptc 程序内调用</text>
+    <rect x="14" y="172" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="89" y="195" text-anchor="middle">子进程侧调用</text>
+    <rect x="200" y="40" width="256" height="200" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="328" y="64" text-anchor="middle" font-size="12">invoke.Chain（逐环短路 · 顺序即语义）</text>
+    <rect x="214" y="78" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="328" y="95" text-anchor="middle">policy.Stage · 审批门</text>
+    <text x="328" y="111" text-anchor="middle" font-size="9" fill="#9aa7b8">上游 toolgate/policy</text>
+    <rect x="214" y="124" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="328" y="141" text-anchor="middle">tooldisclose.Stage · 披露门</text>
+    <text x="328" y="157" text-anchor="middle" font-size="9" fill="#9aa7b8">目录内 + schema 已取回</text>
+    <rect x="214" y="170" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="328" y="187" text-anchor="middle">guardset.Stage · 一并求值</text>
+    <text x="328" y="203" text-anchor="middle" font-size="9" fill="#9aa7b8">多条拒绝合成一条</text>
+    <text x="328" y="230" text-anchor="middle" font-size="9" fill="#9aa7b8">每环都是链上的一环 · 先后由宿主管线决定</text>
+    <rect x="490" y="60" width="254" height="56" rx="10" fill="#161b26" stroke="#3fb950"/>
+    <text x="617" y="82" text-anchor="middle" fill="#3fb950">通过 → 宿主执行工具</text>
+    <text x="617" y="102" text-anchor="middle" font-size="9.5" fill="#9aa7b8">结果回灌模型；判定环不执行、不解释工具语义</text>
+    <rect x="490" y="140" width="254" height="88" rx="10" fill="#161b26" stroke="#f85149"/>
+    <text x="617" y="162" text-anchor="middle" fill="#f85149">拒绝 → 结构化 Verdict（不是 error）</text>
+    <text x="617" y="184" text-anchor="middle" font-size="9.5" fill="#9aa7b8">Reason：给模型看的是 Guidance（能照着做）</text>
+    <text x="617" y="202" text-anchor="middle" font-size="9.5" fill="#9aa7b8">留痕另取 Reason()（全且准，给人看）</text>
+    <text x="617" y="220" text-anchor="middle" font-size="9.5" fill="#9aa7b8">链上抛 error = 这一环自己坏了</text>
   </g>
-  <line x1="105" y1="48" x2="180" y2="88" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="325" y1="48" x2="250" y2="88" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="215" y1="128" x2="215" y2="164" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="165" y1="204" x2="115" y2="244" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="265" y1="204" x2="315" y2="244" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="325" y1="284" x2="325" y2="318" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="105" y1="284" x2="105" y2="378" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <line x1="325" y1="358" x2="325" y2="378" stroke="#3fb950" stroke-width="1.5" marker-end="url(#ar2)"/>
-  <text x="20" y="400" font-size="12" fill="#3fb950">通过 → 执行</text>
-  <text x="245" y="400" font-size="12" fill="#f85149">拒绝 → 结构化 *DenyError</text>
+  <line x1="164" y1="94" x2="196" y2="86" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="164" y1="142" x2="196" y2="134" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="164" y1="190" x2="196" y2="182" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="456" y1="110" x2="486" y2="88" stroke="#3fb950" stroke-width="1.5" marker-end="url(#chk2)"/>
+  <line x1="456" y1="170" x2="486" y2="180" stroke="#f85149" stroke-width="1.5" marker-end="url(#chk3)"/>
+  <g font-size="10.5" fill="#9aa7b8">
+    <text x="16" y="272">少接一段，那里就是整条链上唯一绕过所有门禁的路径——模型写的程序里的调用也不例外。</text>
+    <text x="16" y="294">guardset 把自己接成链上的**一环**：链照旧短路，但这一环内部已经把该说的都说了。</text>
+    <text x="16" y="316" fill="#f85149">披露门也可以直接作为 guardset 的一条 guard 一并求值——两种装配都成立，关键是三处入口走同一条链。</text>
+    <text x="16" y="342">拒绝是「这一环不通过」，不是「程序出错」——模型据此改参数或换工具，不该看到异常。</text>
+  </g>
 </svg>
 </div>
-<p class="diagram-cap">任何一次工具调用（包括模型写的程序里的调用）都走同一条判定环——少接一段，那里就是唯一绕过所有门禁的路径。</p>
+<p class="diagram-cap">三处入口汇入同一条 invoke 链：链上每一环都是独立判定，顺序即语义；拒绝是一个 Verdict，不是一个异常。</p>
 
-- `tooldisclose` **渐进式披露**：工具面按需展开，「拒绝即激活」是正常行为；
+- `tooldisclose` **渐进式披露**：工具面按需展开，真 schema 要用检索工具取回；
+  **被拒不激活**——「schema 未取回」可重试但原样重试无效，「不在目录」不可重试；
 - `guardset` **多守卫合成**：相互独立的判定**一并求值**，多条拒绝合成一条，
   可重试取「全部可重试才算」的保守侧——不要用逐个过、第一个拒绝就收口的链；
 - `toolfail` **失败是数据表**：类别 → 可重试性 / 退避 / 需人工 / **重发安全** /
@@ -275,6 +289,51 @@ title: 能力详解
 
 ## 7 · 安全面：`netguard` + `pii`
 
+<div class="diagram">
+<svg viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="ar7" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+  </defs>
+  <text x="16" y="24" font-size="12.5" fill="#e6edf3">netguard：出站请求的四道放行判据，逐层收紧</text>
+  <g font-size="11" fill="#e6edf3">
+    <rect x="16" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="98" y="62" text-anchor="middle">① 名字层</text>
+    <text x="98" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">指向内网 / 元数据的域名</text>
+    <rect x="206" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="288" y="62" text-anchor="middle">② 逐 IP 过出口策略</text>
+    <text x="288" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">解析出的每个 IP 都要判</text>
+    <rect x="396" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="478" y="62" text-anchor="middle">③ 重定向逐跳重验</text>
+    <text x="478" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">下一跳重新走一遍①②③</text>
+    <rect x="586" y="40" width="158" height="58" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="665" y="62" text-anchor="middle">④ 建连后核对</text>
+    <text x="665" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">核对真实 RemoteAddr</text>
+  </g>
+  <line x1="180" y1="69" x2="202" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="370" y1="69" x2="392" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="560" y1="69" x2="582" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <text x="16" y="120" font-size="10.5" fill="#9aa7b8">④ 闭合的是 rebinding 窗口：名字判过之后，域名解析结果可能在建连前被换掉。</text>
+  <line x1="16" y1="140" x2="744" y2="140" stroke="#262e3d"/>
+  <text x="16" y="164" font-size="12.5" fill="#e6edf3">pii：内核只回报信号，阻断动作由宿主执行</text>
+  <g font-size="11" fill="#e6edf3">
+    <rect x="16" y="180" width="196" height="48" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="114" y="200" text-anchor="middle">待检文本</text>
+    <text x="114" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">上下文 / 报告 / 日志</text>
+    <rect x="248" y="180" width="196" height="48" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="346" y="200" text-anchor="middle">pii.Apply 检出</text>
+    <text x="346" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">手机号 / 身份证四重校验</text>
+    <rect x="480" y="180" width="264" height="48" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="612" y="200" text-anchor="middle">返回 (文本, true)</text>
+    <text x="612" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">true = 宿主应当阻断，动作由你执行</text>
+  </g>
+  <line x1="212" y1="204" x2="244" y2="204" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="444" y1="204" x2="476" y2="204" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <text x="16" y="258" font-size="10.5" fill="#f85149">放行面具名且零值即严：不配置 = 全拒绝（静默放行是最贵的失效形态）。</text>
+  <text x="16" y="276" font-size="10.5" fill="#9aa7b8">内核不抛错、不中断控制流——它只说「该阻断」，怎么处置是你的事。</text>
+</svg>
+</div>
+<p class="diagram-cap">出站四道判据逐层收紧，最后一道在建连之后核对真实地址；脱敏只回报信号，处置在宿主。</p>
+
 - `netguard`：出站 SSRF 守卫——名字层 + 逐 IP 过 egress + 重定向逐跳重验 +
   `DialFunc` 建连后核对真实 RemoteAddr（闭合 rebinding 窗口）；
 - `pii`：个人信息脱敏（手机号/身份证四重校验），内核只回报信号，阻断由宿主执行。
@@ -282,6 +341,48 @@ title: 能力详解
 **什么时候用**：模型/工具能碰外网，或报告/上下文里可能进个人信息。
 
 ## 8 · 副作用只做一次：`retryplan` + `sideeffect` + `sidetest`
+
+<div class="diagram">
+<svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="ar8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+  </defs>
+  <text x="16" y="24" font-size="12.5" fill="#e6edf3">retryplan：两个正交维度决定处置，四个格子四种处置</text>
+  <text x="16" y="46" font-size="10.5" fill="#9aa7b8">纵轴＝可重发安全（重发会不会重复施加副作用）　横轴＝值得重试</text>
+  <g font-size="11" fill="#e6edf3">
+    <rect x="16" y="58" width="186" height="62" rx="10" fill="#161b26" stroke="#3fb950"/>
+    <text x="109" y="80" text-anchor="middle">可重试 + 可重发</text>
+    <text x="109" y="100" text-anchor="middle" font-size="10" fill="#9aa7b8">放心重试</text>
+    <rect x="212" y="58" width="186" height="62" rx="10" fill="#161b26" stroke="#f85149"/>
+    <text x="305" y="80" text-anchor="middle">可重试 + 不可重发</text>
+    <text x="305" y="100" text-anchor="middle" font-size="10" fill="#9aa7b8">先确认上次是否已生效</text>
+    <rect x="16" y="130" width="186" height="62" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="109" y="152" text-anchor="middle">不可重试 + 可重发</text>
+    <text x="109" y="172" text-anchor="middle" font-size="10" fill="#9aa7b8">重发也解决不了，别重试</text>
+    <rect x="212" y="130" width="186" height="62" rx="10" fill="#161b26" stroke="#f85149"/>
+    <text x="305" y="152" text-anchor="middle">不可重试 + 不可重发</text>
+    <text x="305" y="172" text-anchor="middle" font-size="10" fill="#9aa7b8">终止，交人工</text>
+  </g>
+  <text x="16" y="212" font-size="10.5" fill="#f85149">只看「可重试」不看「可重发」——超时类最典型：值得重试，但服务端可能已执行。</text>
+  <line x1="424" y1="40" x2="424" y2="200" stroke="#262e3d"/>
+  <text x="444" y="60" font-size="12.5" fill="#e6edf3">sideeffect：一次原子操作顶三件事</text>
+  <g font-size="11" fill="#e6edf3">
+    <rect x="444" y="72" width="300" height="40" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <text x="594" y="97" text-anchor="middle">幂等键 · 同一逻辑动作重试不重复施加</text>
+    <rect x="444" y="120" width="300" height="40" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <text x="594" y="145" text-anchor="middle">租约 · 同一资源独占，带 TTL</text>
+    <rect x="444" y="168" width="300" height="40" rx="8" fill="#161b26" stroke="#58a6ff"/>
+    <text x="594" y="193" text-anchor="middle">栅栏令牌 · 过期持有者的迟到写入被拒</text>
+  </g>
+  <line x1="16" y1="226" x2="744" y2="226" stroke="#262e3d"/>
+  <g font-size="10.5" fill="#9aa7b8">
+    <text x="16" y="250">拆成三份存储就会出现「租约过了但幂等没过」的夹缝，允许同一动作被施加两次。</text>
+    <text x="16" y="270">承诺的是**至多一次**而非 exactly-once——后者要求下游也接受幂等键。</text>
+    <text x="16" y="290" fill="#f85149">施加失败且无法判定远端是否已生效 ⇒ 结果未知：该键禁止重试，必须先对账。</text>
+  </g>
+</svg>
+</div>
+<p class="diagram-cap">左：先分「值不值得重试」与「能不能原样重发」；右：三件事共用一次原子操作，别拆成三份存储。</p>
 
 **接线范式**：`retryplan` 判策（`Retryable` × `SafeToResubmit` 两个正交维度）→
 `sideeffect` 执行（幂等键 + 租约 + 栅栏）。`sidetest` 给你的存储实现一份**验收标准**。
@@ -291,8 +392,12 @@ title: 能力详解
 `taskboard`（多 agent 认领与依赖）· `skilldisclose`（技能渐进披露）·
 `hookengine`（钩子装配）· `memorypipe`（记忆管道）· `ticket` / `trajectory`（工单与轨迹）·
 `toolname`（工具名净化）· `gatecheck`（审批 × 档位联合判据）· `sessionref` / `worktree` /
-`delegate`（会话引用 / 工作树 / 委派）；门面三件 `dispatch` / `policy` / `reminder`
-调用面稳定、核心归上游。
+`delegate`（会话引用 / 工作树 / 委派）。
+跨宿主必须一致的判定语义**只在上游有一份**：失败分类 `guardx/toolfail`、
+隔离档位 `guardx/sandbox`、审批门 `toolgate/policy`、
+派发可达性 `oagentkit/agent/dispatch`——本仓不保留转发门面（`facades` 段为空）。
+本仓的 `dispatch` 是**派发失败面**（transient / fatal / other 三档 + 兜底改派环），
+不是可达性门面。
 
 ## 怎么选：三个判断
 

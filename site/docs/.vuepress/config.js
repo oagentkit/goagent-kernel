@@ -45,6 +45,7 @@ export default defineUserConfig({
       { text: '设计初衷', link: '/guide/philosophy.html' },
       { text: '怎么用', link: '/guide/getting-started.html' },
       { text: '能力', link: '/guide/capabilities.html' },
+      { text: '模型接入', link: '/guide/llm-guide.html' },
       { text: '坑速查', link: '/reference/pitfalls.html' },
       {
         text: 'AI 直读',
@@ -74,6 +75,7 @@ export default defineUserConfig({
             '/guide/philosophy.md',
             '/guide/getting-started.md',
             '/guide/capabilities.md',
+            '/guide/llm-guide.md',
           ],
         },
       ],

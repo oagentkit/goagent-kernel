@@ -33,11 +33,16 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 `(文本, true)`——`true` 表示「宿主应当阻断」，但**阻断动作由你执行**，
 内核不抛错、不中断你的控制流。`toolfail` 同理：分类完了，怎么恢复是你的事。
 
-**② 门面的门永远朝外。**
-`dispatch` / `policy` / `reminder` 是**门面**，只允许类型别名、常量别名、
-单条上游转发函数。核心分别落在 `oagentkit/agent/dispatch`、
-`oagentkit/toolgate/policy`、`oagentkit/guardx/injectband`。
-往这三个包里加一行真逻辑会被 `harness-facade-stays-facade` 门禁拦下（error 级）。
+**② 判定语义只有一份实现。**
+跨宿主必须一致的判定语义——失败分类（`oagentkit/guardx/toolfail`）、
+隔离档位（`guardx/sandbox`）、审批门（`toolgate/policy`）、
+派发可达性（`oagentkit/agent/dispatch`）——**只在上游有一份**，本仓直接依赖它。
+本仓曾用转发门面承接这四类能力，v0.35.0 起**整包删除**
+（`architecture-policy.yaml` 的 `facades` 段现在是空的）：
+门面一旦自己长出实现，就成了与上游并存的第二份真相。
+「门面只许转发、不许长胖」这条纪律仍在门禁里（`harness-facade-stays-facade`），
+登记集合为空时它不判任何包——**再引入门面必须同步登记**。
+（推导见 [ADR-0005](../adr/ADR-0005-门面包不可变.html)）
 
 **③ 本仓不 import 你，你 import 本仓。**
 方向是单向的硬约束（`harness-no-host-dependency` 门禁）。harness 需要宿主能力时
@@ -196,8 +201,11 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 
 少接一段，那个位置就成了整条链上唯一绕过所有门禁的路径。要点：
 
-- `tooldisclose` **渐进式披露**：工具面按需展开，「拒绝即激活」是正常行为——
-  模型第一次调被拒、第二次同参重试就过，看 `Retryable(err)`；
+- `tooldisclose` **渐进式披露**：工具面按需展开——第一轮只给名称与描述，
+  真 schema 要模型用检索工具取回。**被拒不会顺手激活工具**
+  （那会让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为最短路径），
+  所以「schema 没取回」的可重试是假的：原样重试必然再被拒。
+  看 `Retryable(err)` 区分两种拒绝——「不在目录」不可重试；
 - `guardset` **多守卫合成**：一组相互独立的判定**一并求值**，多条拒绝合成一条，
   可重试取「全部可重试才算」的保守侧，并点出该先处理哪一条——不要用逐个过、
   第一个拒绝就收口的链（症状：同一个工具反复被拒、每次理由都不同）；
@@ -247,20 +255,59 @@ ptc 程序内   ─┘                            └─→ policy(审计门) �
 如果只想先验证「接得进来」，从这三个零门槛的点开始：
 
 ```go
-// ① 派发守卫：宿主提供拓扑，harness 提供机制
-type myEdgeSource struct{ reg *myRegistry }
+// ① 失败分档 + 兜底改派：宿主给拓扑与执行，内核只判定档位
+res := dispatch.StickyFailover(ctx, dispatch.Request{
+	Slug:               firstSlug, // 首次失败的执行者
+	FirstErr:           firstErr,  // 只放首次失败的原始错误（判定面只读它）
+	SameDomain:         3,         // 同域最多改派 3 次
+	CrossDomain:        true,      // 瞬态允许跨域兜底一次
+	FailoverCandidates: candidates, // 候选枚举接缝（宿主给拓扑）
+	Attempt:            attempt,    // 执行步接缝（宿主去执行）
+	OnEvent:            func(e dispatch.Event) { logEvent(e) },
+})
 
-func (s myEdgeSource) Slugs() []string                    { return s.reg.Slugs() }
-func (s myEdgeSource) DispatchAllow(slug string) []string { return s.reg.Allow(slug) }
-
-g := dispatch.NewGuard(myEdgeSource{reg: reg}, 5) // 5 = 最深派发链上限
-if err := g.Assert("caller", "callee", 0); err != nil {
-	// 结构化 *dispatch.DenyError，按 DenyError.Reason 常量判定，不转述
+switch res.Class {
+case dispatch.ClassTransient: // 瞬态：可跨域兜底改派
+case dispatch.ClassFatal:     // 终态：换谁白跑，直接终态
+case dispatch.ClassOther:     // 不确定：仅同域重试
 }
 
 // ② 报告解析 + 渲染（见上文 §2 三步）
 // ③ 状态机纯谓词（见上文 §1 ③）
 ```
+
+<div class="diagram">
+<svg viewBox="0 0 760 240" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="gs9" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+  </defs>
+  <g font-size="11.5" fill="#e6edf3">
+    <rect x="16" y="72" width="150" height="52" rx="10" fill="#1c2330" stroke="#a371f7"/>
+    <text x="91" y="94" text-anchor="middle">模型产出</text>
+    <text x="91" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">一段 JSON</text>
+    <rect x="204" y="72" width="150" height="52" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="279" y="94" text-anchor="middle">解析 + 校验</text>
+    <text x="279" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">protocol（信任级）</text>
+    <rect x="392" y="72" width="150" height="52" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="467" y="94" text-anchor="middle">状态机纯谓词</text>
+    <text x="467" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">statemachine（合不合法）</text>
+    <rect x="580" y="72" width="164" height="52" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="662" y="94" text-anchor="middle">落库（宿主）</text>
+    <text x="662" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">StepSink 开环节 / 收口</text>
+  </g>
+  <line x1="166" y1="98" x2="200" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <line x1="354" y1="98" x2="388" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <line x1="542" y1="98" x2="576" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <path d="M662,124 C662,158 140,158 91,128" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs9)"/>
+  <text x="300" y="152" font-size="10" fill="#9aa7b8">下一环节继续（不是重放）</text>
+  <g font-size="10.5" fill="#9aa7b8">
+    <text x="16" y="188">宿主要提供的三样：RunContext（编排语义定死 / 领域字段开放）· StepSink（落库）· Clock（时间）。</text>
+    <text x="16" y="208">内核给的是判据与纯函数：解析校验、状态迁移合法性、失败分档——动作都在宿主侧。</text>
+    <text x="16" y="228" fill="#f85149">编排引擎不碰存储、不碰数据库：所有环节状态的读写都经 StepSink 出口。</text>
+  </g>
+</svg>
+</div>
+<p class="diagram-cap">最小闭环：模型产出经信任级解析进内核判定，状态由宿主落库，环节推进不靠重放。</p>
 
 ## 升级须知
 

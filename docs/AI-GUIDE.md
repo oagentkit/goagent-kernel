@@ -19,9 +19,10 @@
 | 你的任务 | 直接跳到 |
 |---|---|
 | 第一次进这个仓，不了解结构 | [§1 心智模型](#1-一分钟建立心智模型) → [§2 上手路径](#2-十分钟上手路径) |
+| **准备动手改任何一个文件** | [§2.3 改动前的自检清单](#23-改动前的自检清单)（10 条，走一遍再动） |
 | 要加一个新能力（新包） | [§3.1 加一个新能力包](#31-任务-a加一个新能力包) |
 | 要改某个已有包的判定逻辑 | [§3.2 改已有包的判据](#32-任务-b改一个已有包的判据) |
-| 要新增跨进程/分布式能力 | [§3.2.1 补故障矩阵](#321-任务-b2新增分布式能力必须补故障矩阵issue-193) |
+| 要新增跨进程/分布式能力 | [§3.2.1 补故障矩阵](#321-任务-b2新增分布式能力必须补故障矩阵issue-193--274) |
 | 要加或改一条门禁规则 | [§3.3 改门禁规则](#33-任务-c加或改一条门禁规则) |
 | 要引入/升级上游矩阵依赖 | [§3.4 动上游依赖](#34-任务-d动上游依赖地板) |
 | 门禁报超长文件，要拆 | [§3.5 拆文件](#35-任务-e拆文件) |
@@ -56,6 +57,43 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
+<div align="center">
+<svg width="760" viewBox="0 0 760 330" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect x="0" y="0" width="760" height="330" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <rect x="150" y="16" width="460" height="48" rx="8" fill="#161b26" stroke="#58a6ff"/>
+  <text x="380" y="37" font-size="14" fill="#e6edf3" text-anchor="middle">改任何代码前先问这一句</text>
+  <text x="380" y="56" font-size="13" fill="#9aa7b8" text-anchor="middle">这个包需要知道自己在给谁干活吗？</text>
+  <line x1="300" y1="64" x2="198" y2="98" stroke="#f85149" stroke-width="1.5"/>
+  <line x1="460" y1="64" x2="562" y2="98" stroke="#3fb950" stroke-width="1.5"/>
+  <text x="224" y="88" font-size="12" fill="#f85149" text-anchor="middle">需要</text>
+  <text x="536" y="88" font-size="12" fill="#3fb950" text-anchor="middle">不需要</text>
+  <rect x="30" y="98" width="330" height="72" rx="8" fill="#161b26" stroke="#f85149"/>
+  <text x="48" y="122" font-size="14" fill="#f85149">属于宿主 —— 不进本仓</text>
+  <text x="48" y="142" font-size="12" fill="#9aa7b8">判定语义归内核，判定依据归宿主</text>
+  <text x="48" y="159" font-size="12" fill="#9aa7b8">展示文案归宿主（走 RenderOptions 注入）</text>
+  <rect x="400" y="98" width="330" height="72" rx="8" fill="#161b26" stroke="#3fb950"/>
+  <text x="418" y="122" font-size="14" fill="#3fb950">是机制 —— 进本仓</text>
+  <text x="418" y="142" font-size="12" fill="#9aa7b8">换个宿主还要改吗？要改就不进</text>
+  <text x="418" y="159" font-size="12" fill="#9aa7b8">本仓只提供机制面，零领域词</text>
+  <rect x="30" y="188" width="330" height="98" rx="8" fill="#161b26" stroke="#262e3d"/>
+  <text x="48" y="210" font-size="12.5" fill="#e6edf3">怎么落地</text>
+  <text x="48" y="230" font-size="12" fill="#9aa7b8">① 收成接口，由宿主实现</text>
+  <text x="48" y="248" font-size="12" fill="#9aa7b8">② 本仓不 import 宿主仓</text>
+  <text x="48" y="268" font-size="11.5" fill="#f85149">门禁 harness-no-host-dependency</text>
+  <text x="48" y="282" font-size="11.5" fill="#f85149">门禁 harness-no-domain-vocabulary</text>
+  <rect x="400" y="188" width="330" height="98" rx="8" fill="#161b26" stroke="#262e3d"/>
+  <text x="418" y="210" font-size="12.5" fill="#e6edf3">怎么落地（顺序不能反）</text>
+  <text x="418" y="230" font-size="12" fill="#9aa7b8">① 先改 architecture-policy.yaml</text>
+  <text x="418" y="248" font-size="12" fill="#9aa7b8">② 再写生产代码 + 用例</text>
+  <text x="418" y="266" font-size="12" fill="#9aa7b8">③ 同步 README 包表 + 生命周期登记</text>
+  <text x="418" y="282" font-size="11.5" fill="#3fb950">门禁 architecture-check / docsync</text>
+  <rect x="30" y="296" width="700" height="24" rx="8" fill="#161b26" stroke="#262e3d"/>
+  <text x="380" y="312" font-size="12" fill="#9aa7b8" text-anchor="middle">判错的后果：把宿主资产写进内核，宿主就再也换不掉自己的领域</text>
+</svg>
+</div>
+
+*图 1：判定口诀的决策路径——「需要」与「不需要」各有一条确定的落地序列。*
+
 ### 1.3 53 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
 > 口径：与 README 包表（**53** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
@@ -70,7 +108,7 @@
 > `pgrefstore` 各有两个 root；`taskboard` 的第二个 root 是 `taskboard/boardtest`，
 > 它计在 `taskboard` 行内，**不是独立的 module id**。
 > 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
-> `toolfail` / `sandbox` 四个门面包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
+> `toolfail` / `sandbox` 四个门包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
 > 宿主直连上游矩阵 `oagentkit/toolgate/policy` 与 `oagentkit/guardx/*`），
 > 而 `scheduling` / `eval` / `coord` / `handoff` / `ownership` / `worker` /
 > `backend` / `metrics` / `cost` / `tenant` / `controlplane` / `roundguard`
@@ -80,7 +118,6 @@
 | 组 | 包 | 特征 |
 |---|---|---|
 | **机制面**（48 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `pii` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `toolname` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
-
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
@@ -90,6 +127,13 @@
 > 原本只是散文，散文不是门禁——所以才有了 `harness-facade-stays-facade` 这条
 > AST 规则：门包只允许四种声明（类型别名 / 常量别名 / 单条上游转发函数 /
 > 允许集合内的 import），加真逻辑三者必居其一 ⇒ 当天即红。
+> ⚠️ **本仓现在一个门包都没有**：`facades: []` 是空清单 ⇒ 这条规则**今天没有对象
+> 可判**（恒绿），规则与执行体留着是为了将来有人在本仓造门面时当场拦住。
+> 五个旧门包（`dispatch` / `policy` / `reminder` / `toolfail` / `sandbox`）
+> 在 v0.35.0 整包删除、消费方直连上游 `oagentkit/*`。
+> ⚠️ **`dispatch` 这个名字现在被另一个机制包占用**（派发域的**失败面**：改派错误
+> 三档分类与兜底改派环，见 `dispatch/dispatch.go` 包头「四问」里的第四问）——
+> 它**不是**门包，别把它当门包看待。
 
 ### 1.4 三条贯穿全仓的纪律（改代码时会撞上）
 
@@ -99,6 +143,62 @@
    （单行/块/别名/空白/点导入/括号同行），逐行正则必然漏且漏得毫无声响。
 3. **派生状态只能有一个真相。** 「代次/版本/序号」这类计数不许开第二个计数器；
    需要全局视图时让它是真相的投影。
+
+### 1.5 五个反直觉点（凭直觉写会写反的那几条）
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 372" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect x="0" y="0" width="760" height="372" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <text x="40" y="30" font-size="13" fill="#9aa7b8">凭直觉会写反的说法</text>
+  <text x="412" y="30" font-size="13" fill="#58a6ff">现行事实（已逐条核实）</text>
+  <line x1="392" y1="14" x2="392" y2="356" stroke="#262e3d" stroke-width="1"/>
+  <circle cx="398" cy="62" r="4" fill="#a371f7"/>
+  <text x="40" y="66" font-size="12.5" fill="#e6edf3">「门包的门永远朝外」</text>
+  <text x="412" y="58" font-size="12" fill="#e6edf3">本仓现在一个门包都没有</text>
+  <text x="412" y="76" font-size="12" fill="#9aa7b8">policy facades: [] 是空清单；规则留着等人踩</text>
+  <line x1="24" y1="92" x2="736" y2="92" stroke="#262e3d" stroke-width="1"/>
+  <circle cx="398" cy="124" r="4" fill="#f85149"/>
+  <text x="40" y="128" font-size="12.5" fill="#e6edf3">「被拒就激活，重试不绕路」</text>
+  <text x="412" y="120" font-size="12" fill="#e6edf3">被拒不激活：schema 未取回，原样重试不会成功</text>
+  <text x="412" y="138" font-size="12" fill="#9aa7b8">Gate.Check 从不调 Catalog.Load</text>
+  <line x1="24" y1="154" x2="736" y2="154" stroke="#262e3d" stroke-width="1"/>
+  <circle cx="398" cy="186" r="4" fill="#58a6ff"/>
+  <text x="40" y="190" font-size="12.5" fill="#e6edf3">「额度判定调用后查也一样」</text>
+  <text x="412" y="182" font-size="12" fill="#e6edf3">一律在调用前：调用后查 = 最后一次昂贵调用已发生</text>
+  <text x="412" y="200" font-size="12" fill="#9aa7b8">roundguard.CheckRounds / CheckTool</text>
+  <line x1="24" y1="216" x2="736" y2="216" stroke="#262e3d" stroke-width="1"/>
+  <circle cx="398" cy="248" r="4" fill="#58a6ff"/>
+  <text x="40" y="252" font-size="12.5" fill="#e6edf3">「文档里的数字差一点不红」</text>
+  <text x="412" y="244" font-size="12" fill="#e6edf3">生产行数 / 文件数 / 测试文件数判相等，不留容差</text>
+  <text x="412" y="262" font-size="12" fill="#9aa7b8">覆盖率那一格仍然没人判</text>
+  <line x1="24" y1="278" x2="736" y2="278" stroke="#262e3d" stroke-width="1"/>
+  <circle cx="398" cy="310" r="4" fill="#a371f7"/>
+  <text x="40" y="314" font-size="12.5" fill="#e6edf3">「零值就是未设」</text>
+  <text x="412" y="306" font-size="12" fill="#e6edf3">Reason 零值 = 空串、不在词表内</text>
+  <text x="412" y="324" font-size="12" fill="#9aa7b8">Limit / Shape 显式取合法缺省 LimitNone / ShapeNone</text>
+  <line x1="24" y1="340" x2="736" y2="340" stroke="#262e3d" stroke-width="1"/>
+  <text x="380" y="360" font-size="12" fill="#9aa7b8" text-anchor="middle">这五条都是「门禁红过一次」换来的：直觉对，代码就反了</text>
+</svg>
+</div>
+
+*图 2：五条与直觉相反的现行事实——每条后面的证据都能在仓里逐字查到。*
+
+### 1.6 `roundguard` 的几条反直觉语义（接它之前必须知道）
+
+`roundguard` 是本仓**最晚下沉**的机制包（`api-lifecycle.yaml` 定级 **Experimental，
+自 v0.60.0**），**本仓没有生产调用方**，集成参考只有 `docs/USAGE.md` 里的伪码——
+若你被要求「接上 roundguard」，先知道它**还没被第二个宿主验证过**。
+
+| 事实 | 出处 |
+|---|---|
+| 四个词表（`Reason` 10 值 / `Limit` 5 值 / `StopPolicy` 2 值 / `Shape` 6 值）**取值决定结论**，别处出现必须引用本包常量，**不得手抄** | `roundguard/roundguard.go:48-51`、`architecture-policy.yaml` 的 `word_tables` 段 |
+| `Reason` 零值是**空串、不在词表内**（`Valid` 判假）；`Decision` 里的 `Limit` / `Shape` 被**显式初始化**为 `LimitNone` / `ShapeNone`（合法取值，不是「未设」） | `roundguard/roundguard.go:54-58`、`roundguard/decide.go:85` |
+| `StopPolicy.Valid()` **不要**用来校验 `Budget.Policy`——`Budget.Policy` 的零值是**合法缺省**（= 强制收尾），校验预算声明用 `Budget.Validate`，取生效口径用 `Budget.EffectivePolicy` | `roundguard/budget.go:26-35` |
+| `Budget` **必须先经 `Validate()`**：未校验的负值上限是 **fail-open**（上限 ≤ 0 一律判成「不限」）；`Validate` 自身对非法值报错，**不静默降级为不限** | `roundguard/budget.go:74-80, 149-151` |
+| `CheckTool` 对**未知**工具 ID 返回 `Allowed=true`（未登记的工具不消耗单工具额度） | `roundguard/budget.go:180-183` |
+| 额度判定**一律在模型调用前**：调用后判意味着**最后一次昂贵调用已经发生** | `roundguard/budget.go:145-151` |
+| `Decision.Used` 与 `Snapshot.Used` **共享同一份 `Tools` 映射**（不是副本）——判定不受影响，但**别拿它当审计凭据** | `roundguard/decide.go:50-54` |
+| `Meter` 是**进程内**的：跨进程续跑时回合数**不随之累计**（跨进程累计要宿主自己落库） | `roundguard/meter.go:5-10` |
 
 ---
 
@@ -120,27 +220,78 @@
 
 ### 2.2 先跑一遍，确认环境是绿的
 
+**上手第一步就跑一次**，这样后面每次红都知道是自己造成的，不是本来就红的。
+
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # 全量单测（当前 518 个测试文件）
-make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令输出；本仓当前全绿）
+make test                 # ① 全量单测（当前 526 个测试文件）
+make architecture-check   # ② 架构门禁（规则 / 门包 / 包数见输出）
+make docsync              # ③ README 包表与「工程底座」三项确定性量
+make ledgercheck          # ④ 演进台账纪律
 ```
 
-**上手第一步就跑一次**，这样后面每次红都知道是自己造成的，不是本来就红的。
+**绿长什么样**（实测输出，数字随代码变，以当场输出为准）：
+
+```
+# ① make test —— 每行一个包，结尾无 FAIL，退出码 0
+ok  	github.com/yi-nology/goagent-kernel/protocol	0.482s
+ok  	github.com/yi-nology/goagent-kernel/ptc	2.913s
+ok  	github.com/yi-nology/goagent-kernel/worker	3.859s
+ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
+
+# ② make architecture-check
+架构门禁通过（10 条规则 + 0 个门面包 + 61 个包的依赖方向，policy version 1；无阻断级违反）
+
+# ③ make docsync
+README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 526 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
+
+# ④ make ledgercheck
+台账校验通过：132 个单号 / 421 处出现点 ✓
+```
+
+**四条都绿再动手。** 任一条红 ⇒ 先查它是不是本来就红的（见 §4.2），别把自己的改动
+混进一个先天红的仓。
 
 > macOS：一切 `go build` / `go test` 必须带 `CGO_ENABLED=0`（新 SDK 27.0 与
 > CLT linker 不兼容 + 许可未接受）。Makefile 已内置，**直接用 make 目标**，
 > 别手敲 `go test`。
+> ⚠️ 例外：`make race` **不能**跟着这个开关——Linux 上 `-race` 强制要求 cgo
+> （`CGO_ENABLED=0 go test -race -c` 直接报 `-race requires cgo`）。Makefile 的
+> `race` 目标已单独用 `CGO_ENABLED=1`，别手改它。
 
-### 2.3 认地图：包 → 典型改动
+### 2.3 改动前的自检清单
+
+**10 条，走一遍再动文件。** 每条都能落到本仓的真实门禁上，不是新发明的规矩。
+
+1. **这个包需要知道自己在给谁干活吗？** 需要 → 属于宿主，别加进本仓（§1.2）。
+2. **要改的包在 policy 的 `modules` 段登记了吗？** 新包必须先登记 `{id, roots,
+   requires, owner}`；`requires` 填**真实**依赖，不是「打算用」的。
+3. **要改的包在 `thresholds.scan_roots` 里吗？** 漏一个 ⇒ 该包对「超长文件」
+   「god object」两条阈值**完全隐形**（policy 自校验强制两者一致）。
+4. **新包的生产包名出现在 README 包表里吗？** `docsync` 判包名 / 行数 / 依赖列 /
+   职责列；「工程底座」表另判生产行数 / 文件数 / 测试文件数三项，**判相等不留容差**。
+5. **新包在 `api-lifecycle.yaml` 登记了吗？** 还要在包注释里写
+   `// 生命周期: <级别>（vX.Y.Z 定级）`——两处不一致即红。
+6. **判据是结构性的吗？** import 声明、函数体形态、字段出现这类判定走 `go/ast`，
+   不要塞进正则表（正则表判不了「函数体是不是只有一条转发」）。
+7. **新增/修改的判据有「坏实现会红」的用例吗？** 只测「好实现能过」的用例，
+   一个把数字比较写成字符串比较的错实现照样全过（§6）。
+8. **失败形态是变红还是变绿？** 变绿 = 没生效——**最贵的形态**。
+   改判据后必须做一次「注入违规 → 必红 → 撤销 → 绿」。
+9. **计数 / 代次 / 序号只有一个真相吗？** 需要全局视图时让它是真相的**投影**，
+   不开第二个计数器。
+10. **改完之后 `make check` 绿了吗？** `check` 的**全链目标**按顺序执行、**红即停**
+    （见 §4.0）；新增门禁还要接进 CI 跑的那个分层目标，否则 CI 一次都不会跑。
+
+### 2.4 认地图：包 → 典型改动
 
 | 你要改的东西 | 去哪个包 | 注意 |
 |---|---|---|
-| 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
+| 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 367 行（单文件上限 400，以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
 | 环节状态流转 | `statemachine` | 纯函数件，305 行，依赖 oekit/pkg |
 | 工具失败分类（可重试/退避/需人工/重发安全） | 上游 `guardx/toolfail`（**本仓不再提供该包**）| 分类是**数据表**，不要散落 if |
-| 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
+| 渐进披露、披露门禁 | `tooldisclose` | **被拒不激活**：schema 未取回时原样重试不会成功（`ErrNotLoaded` 的模型指引原文）。恢复路径是「先取回 schema，再构造参数调用」 |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
 | 工具名 → JS 标识符 | `toolname` | **单一真相**，`tooldisclose` 与 `ptc` 共用 |
 | 沙箱内程序化编排 | `ptc` | 程序内 `host.<tool>()` 也要过判定环 |
@@ -152,6 +303,7 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 | 大对象外置 | `offload` | **两阶段**：首次只标记不替换 |
 | 出站 SSRF | `netguard` | 拨号层闭窗 + 放行面具名 |
 | 个人信息脱敏 | `pii` | 只回报信号，**阻断动作归宿主** |
+| 回合守卫（结局分类 / 额度 / 无进展 / 组合结论） | `roundguard` | Experimental、无生产调用方；额度判定**一律在调用前**；`Budget` 必须先 `Validate()`（§1.6）|
 | 依赖方向 / 门禁规则 | `archcheck` + `architecture-policy.yaml` | 先改 policy 再写代码 |
 
 ---
@@ -160,6 +312,55 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 
 > 通用顺序：**先改声明（policy / 表），再改实现，最后跑门禁。**
 > 反过来做会得到「代码写完门禁红，再回头补声明」的双份工作。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 400" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect x="0" y="0" width="760" height="400" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <text x="34" y="28" font-size="13" fill="#9aa7b8">任务类型</text>
+  <text x="190" y="28" font-size="13" fill="#9aa7b8">改哪些文件（按这个顺序）</text>
+  <text x="530" y="28" font-size="13" fill="#9aa7b8">会被哪条门禁拦</text>
+  <line x1="24" y1="38" x2="736" y2="38" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="62" font-size="13" fill="#e6edf3">加能力包</text>
+  <text x="190" y="62" font-size="11.5" fill="#9aa7b8">policy modules → scan_roots → 代码 + 用例</text>
+  <text x="190" y="79" font-size="11.5" fill="#9aa7b8">→ README 包表 → api-lifecycle.yaml</text>
+  <text x="530" y="62" font-size="11.5" fill="#58a6ff">architecture-check · docsync</text>
+  <text x="530" y="79" font-size="11.5" fill="#58a6ff">apilifecheck · cover-gate</text>
+  <line x1="24" y1="94" x2="736" y2="94" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="118" font-size="13" fill="#e6edf3">改判据</text>
+  <text x="190" y="118" font-size="11.5" fill="#9aa7b8">包源码 → 反向验证用例（坏实现会红）</text>
+  <text x="190" y="135" font-size="11.5" fill="#9aa7b8">→ 跨包契约的端到端用例</text>
+  <text x="530" y="118" font-size="11.5" fill="#58a6ff">test · cover-gate</text>
+  <text x="530" y="135" font-size="11.5" fill="#58a6ff">architecture-check（结构阈值）</text>
+  <line x1="24" y1="150" x2="736" y2="150" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="174" font-size="13" fill="#e6edf3">加门禁规则</text>
+  <text x="190" y="174" font-size="11.5" fill="#9aa7b8">policy rules 段 + examples → 执行体</text>
+  <text x="190" y="191" font-size="11.5" fill="#9aa7b8">结构性判据走 go/ast，不进 rules 段</text>
+  <text x="530" y="174" font-size="11.5" fill="#a371f7">architecture-check</text>
+  <text x="530" y="191" font-size="11.5" fill="#a371f7">缺样例即红（require_rule_examples）</text>
+  <line x1="24" y1="206" x2="736" y2="206" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="230" font-size="13" fill="#e6edf3">动上游依赖</text>
+  <text x="190" y="230" font-size="11.5" fill="#9aa7b8">go.mod 版本 → requires 的 ext: 声明</text>
+  <text x="190" y="247" font-size="11.5" fill="#9aa7b8">→ README 下游升级须知</text>
+  <text x="530" y="230" font-size="11.5" fill="#58a6ff">modreplace · architecture-check</text>
+  <text x="530" y="247" font-size="11.5" fill="#58a6ff">releasecheck</text>
+  <line x1="24" y1="262" x2="736" y2="262" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="286" font-size="13" fill="#e6edf3">拆文件</text>
+  <text x="190" y="286" font-size="11.5" fill="#9aa7b8">拆实现文件（按职责分类型，不按行数）</text>
+  <text x="190" y="303" font-size="11.5" fill="#9aa7b8">→ 同步 README 包表行数</text>
+  <text x="530" y="286" font-size="11.5" fill="#58a6ff">architecture-check</text>
+  <text x="530" y="303" font-size="11.5" fill="#58a6ff">（400 行 / 25 方法两条阈值）</text>
+  <line x1="24" y1="318" x2="736" y2="318" stroke="#262e3d" stroke-width="1"/>
+  <text x="34" y="342" font-size="13" fill="#e6edf3">发版</text>
+  <text x="190" y="342" font-size="11.5" fill="#9aa7b8">CHANGELOG → 回执提交 → annotated tag</text>
+  <text x="190" y="359" font-size="11.5" fill="#9aa7b8">→ 推 tag → GitHub Release</text>
+  <text x="530" y="342" font-size="11.5" fill="#3fb950">releasecheck · ledgercheck</text>
+  <text x="530" y="359" font-size="11.5" fill="#3fb950">docsync</text>
+  <line x1="24" y1="374" x2="736" y2="374" stroke="#262e3d" stroke-width="1"/>
+  <text x="380" y="390" font-size="12" fill="#9aa7b8" text-anchor="middle">顺序反了不会更早红，只会让你做两遍</text>
+</svg>
+</div>
+
+*图 3：六类改造任务各自的文件顺序与对应门禁——先改声明、再改实现、最后跑门禁。*
 
 ### 3.1 任务 A：加一个新能力包
 
@@ -182,6 +383,7 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
      第一方矩阵写 `ext:github.com/oagentkit/xxx` 这种**矩阵模块级**前缀。
    - `ext:` 前缀必须落在 `dependency_direction.ext_prefixes` 内
      （当前是 `github.com/oagentkit` + `github.com/oekit` 整体）。
+   - **同时把新包加进 `thresholds.scan_roots`**（见第 2 步）。
 
 2. **`thresholds.scan_roots`**：把新包加进去。
    `scan_roots` 必须**覆盖 `modules` 段的全部 roots**——漏一个，该包对
@@ -278,6 +480,7 @@ Cluster）和执行函数；`TestFaultDeploymentMatrix` 先自检「**每个已�
 | 配额悬挂 | Cluster | 预占不能凭「心跳消失」就归还：须先确认预占过期**且**任务租约已失效；迟到的 Release 不得二次归还 |
 | 控制面并发介入 | Cluster | 强制释放与 Worker 完成并发时恰好一方生效，输家得可观测 `ErrLeaseLost`，任务只有一次有效状态转换 |
 | 真实 NetworkPolicy 验证 | Cluster（+真集群） | 声明面：策略开启 + CNI 能力事实 + 出站探测三者齐备才自报 `EgressDenied`，缺一降级 |
+
 **怎么跑**：
 
 ```bash
@@ -300,8 +503,8 @@ go test ./worker/faultmatrix -run TestFaultDeploymentMatrix -v    # 只跑矩阵
 ### 3.3 任务 C：加或改一条门禁规则
 
 **规则源**：`architecture-policy.yaml` 的 `rules` 段（正则类）、`facades` 段（AST 类，
-门面包专用），或**「有执行体的声明表」那类段落**——`sandbox_providers` / `execution_paths` /
-`egress_paths` / `word_tables`。三类要分清，塞错地方不会报错、只会让规则变成空转：
+门包专用），或**「有执行体的声明表」那类段落**——`sandbox_providers` / `execution_paths` /
+`egress_paths` / `seams` / `word_tables`。三类要分清，塞错地方不会报错、只会让规则变成空转：
 
 - `rules` 段是**正则表**，只判文本形态（领域词、import 路径、裸 goroutine 的调用形态）；
 - `facades` 段与上面几张声明表要**判结构或跨表一致**，执行体在 `archcheck/*.go` 里走 `go/ast`；
@@ -493,6 +696,7 @@ H1，把版本段的标题层级压平。改成粗体即可（与「编码损坏
 只覆盖第 3 类地板问题，导出面改动与它无关。v0.43.0 实录：区间内 go.mod/go.sum 零改动
 （⇒ 下游无需 `go mod tidy`），但 `scheduling.QuotaStore` 扩了三个方法——那是编译期即红
 的 breaking，两者互不相关。
+
 ---
 
 ## 4. 门禁速查：红了就查这里
@@ -503,14 +707,94 @@ H1，把版本段的标题层级压平。改成粗体即可（与「编码损坏
 make check
 ```
 
-> **CI 执行面（2026-11-18 实测补记，别按旧文理解）**：CI 的七个作业执行的是
-> `unit` / `race` / `contract` / `fault-injection` / `gates` / `integration`
-> 这些**分层目标**，**没有任何一个执行 `make check` 本身**
+### 4.0 `make check` 的全链：按顺序，红即停
+
+`make check` 不带 `-j` 时**按依赖链顺序逐个执行，第一个失败即停** ⇒
+「红了先查哪条」= **第一条红的**。加了 `-j` 就是并行，顺序不再保证。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 452" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect x="0" y="0" width="760" height="452" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <text x="30" y="26" font-size="12.5" fill="#9aa7b8">make check 的依赖链（自上而下执行）</text>
+  <rect x="30" y="36" width="700" height="54" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="68" font-size="12.5" fill="#e6edf3">口径层</text>
+  <rect x="150" y="54" width="110" height="22" rx="8" fill="#0d1117" stroke="#58a6ff"/>
+  <text x="205" y="69" font-size="12" fill="#e6edf3" text-anchor="middle">versioncheck</text>
+  <rect x="268" y="54" width="108" height="22" rx="8" fill="#0d1117" stroke="#58a6ff"/>
+  <text x="322" y="69" font-size="12" fill="#e6edf3" text-anchor="middle">cijobname</text>
+  <text x="630" y="69" font-size="11" fill="#9aa7b8">工具版本 / job 名</text>
+  <rect x="30" y="100" width="700" height="54" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="132" font-size="12.5" fill="#e6edf3">静态层</text>
+  <rect x="150" y="118" width="92" height="22" rx="8" fill="#0d1117" stroke="#58a6ff"/>
+  <text x="196" y="133" font-size="12" fill="#e6edf3" text-anchor="middle">fmt-check</text>
+  <rect x="250" y="118" width="46" height="22" rx="8" fill="#0d1117" stroke="#58a6ff"/>
+  <text x="273" y="133" font-size="12" fill="#e6edf3" text-anchor="middle">vet</text>
+  <rect x="304" y="118" width="46" height="22" rx="8" fill="#0d1117" stroke="#58a6ff"/>
+  <text x="327" y="133" font-size="12" fill="#e6edf3" text-anchor="middle">lint</text>
+  <text x="630" y="133" font-size="11" fill="#9aa7b8">格式 / vet / 静态检查</text>
+  <rect x="30" y="164" width="700" height="54" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="196" font-size="12.5" fill="#e6edf3">测试层</text>
+  <rect x="150" y="182" width="56" height="22" rx="8" fill="#0d1117" stroke="#3fb950"/>
+  <text x="178" y="197" font-size="12" fill="#e6edf3" text-anchor="middle">test</text>
+  <rect x="214" y="182" width="56" height="22" rx="8" fill="#0d1117" stroke="#3fb950"/>
+  <text x="242" y="197" font-size="12" fill="#e6edf3" text-anchor="middle">race</text>
+  <text x="630" y="197" font-size="11" fill="#9aa7b8">单测 / 竞态（开 cgo）</text>
+  <rect x="30" y="228" width="700" height="54" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="260" font-size="12.5" fill="#e6edf3">阈值扫描</text>
+  <rect x="150" y="246" width="96" height="22" rx="8" fill="#0d1117" stroke="#a371f7"/>
+  <text x="198" y="261" font-size="12" fill="#e6edf3" text-anchor="middle">cover-gate</text>
+  <rect x="254" y="246" width="54" height="22" rx="8" fill="#0d1117" stroke="#a371f7"/>
+  <text x="281" y="261" font-size="12" fill="#e6edf3" text-anchor="middle">vuln</text>
+  <rect x="316" y="246" width="102" height="22" rx="8" fill="#0d1117" stroke="#a371f7"/>
+  <text x="367" y="261" font-size="12" fill="#e6edf3" text-anchor="middle">crossbuild</text>
+  <text x="630" y="261" font-size="11" fill="#9aa7b8">覆盖 / 漏洞 / 平台</text>
+  <rect x="30" y="292" width="700" height="76" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="330" font-size="12.5" fill="#e6edf3">声明一致性</text>
+  <rect x="150" y="304" width="152" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="226" y="319" font-size="12" fill="#e6edf3" text-anchor="middle">architecture-check</text>
+  <rect x="310" y="304" width="84" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="352" y="319" font-size="12" fill="#e6edf3" text-anchor="middle">docsync</text>
+  <rect x="402" y="304" width="92" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="448" y="319" font-size="12" fill="#e6edf3" text-anchor="middle">seamcheck</text>
+  <rect x="502" y="304" width="108" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="556" y="319" font-size="12" fill="#e6edf3" text-anchor="middle">apilifecheck</text>
+  <rect x="150" y="334" width="100" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="200" y="349" font-size="12" fill="#e6edf3" text-anchor="middle">deploycheck</text>
+  <rect x="258" y="334" width="112" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="314" y="349" font-size="12" fill="#e6edf3" text-anchor="middle">storagecheck</text>
+  <rect x="378" y="334" width="108" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="432" y="349" font-size="12" fill="#e6edf3" text-anchor="middle">ledgercheck</text>
+  <rect x="494" y="334" width="108" height="22" rx="8" fill="#0d1117" stroke="#f85149"/>
+  <text x="548" y="349" font-size="12" fill="#e6edf3" text-anchor="middle">releasecheck</text>
+  <text x="630" y="330" font-size="11" fill="#9aa7b8">声明面漂移</text>
+  <rect x="30" y="378" width="700" height="54" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="44" y="410" font-size="12.5" fill="#e6edf3">仓库卫生</text>
+  <rect x="150" y="396" width="102" height="22" rx="8" fill="#0d1117" stroke="#9aa7b8"/>
+  <text x="201" y="411" font-size="12" fill="#e6edf3" text-anchor="middle">modreplace</text>
+  <rect x="260" y="396" width="92" height="22" rx="8" fill="#0d1117" stroke="#9aa7b8"/>
+  <text x="306" y="411" font-size="12" fill="#e6edf3" text-anchor="middle">modwork</text>
+  <rect x="360" y="396" width="80" height="22" rx="8" fill="#0d1117" stroke="#9aa7b8"/>
+  <text x="400" y="411" font-size="12" fill="#e6edf3" text-anchor="middle">hygiene</text>
+  <text x="630" y="410" font-size="11" fill="#9aa7b8">入库卫生</text>
+</svg>
+</div>
+
+*图 4：`make check` 的全链目标分层——自上而下逐条执行，第一条红的就先查它。*
+
+> **CI 执行面（2026-11-18 实测补记，别按旧文理解）**：CI 的**七个作业**
+> （`unit` / `race` / `contract` / `fault-injection` / `gates` /
+> `windows-test` / `integration`）执行的是**分层目标**，
+> **没有任何一个执行 `make check` 本身**
 > ⇒ **只挂在 `check` 上、没进任何分层目标的门禁，CI 上一次都不会跑**
 > （实测被漏掉的是 `deploycheck` 与 `releasecheck`——本轮已接进 `unit` 层）。
 > ⇒ **新增门禁时两处都要接**：接进 `check`（本地一条命令跑全）**还要**接进
 > CI 跑的那个分层目标（否则 CI 不判）。改 job 名要同步分支保护的 required
 > contexts（逐字相同），所以优先**不动 job 名**、只动分层目标里的门禁清单。
+> **当前状态**：`check` 的**全链目标全部**落在 CI 的分层目标里
+> （`unit` 覆盖 fmt/vet/lint/单测 + architecture-check/docsync/seamcheck/
+> apilifecheck/deploycheck/storagecheck/ledgercheck/releasecheck/modreplace/
+> modwork/hygiene/cijobname，`gates` 覆盖 versioncheck/cover-gate/vuln/
+> crossbuild，`race` 单列一层）。
 
 | 目标 | 拦什么 | 红了怎么修 |
 |---|---|---|
@@ -524,11 +808,12 @@ make check
 | `architecture-check` | 规则 + 门包 + 各包依赖方向（**条数 / 门包数 / 包数一律以该命令输出为准**，本表不抄——抄进来就是给自己造一份会静默过期的真相）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
-| `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
+| `crossbuild` | 声明支持的平台（`CROSS_TARGETS` = linux/amd64、linux/arm64、darwin/arm64、**windows/amd64**）编不过 | 看是否引入了平台专属符号；windows 侧是**语义降级**（无进程组信号语义，TERM 优雅退出降级为整树硬终止），不是不支持 |
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
-| `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |
+| `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐（issue #400）| 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |
 | `apilifecheck` | API 生命周期四方一致性：`api-lifecycle.yaml` ↔ 包注释标记 ↔ 生产包覆盖（漏登记/幽灵登记）↔ Deprecated 替代指向存在性；外加错误哨兵登记表 ↔ 代码双向判等（issue #113/#104）| 新包补登记 + 包注释 `// 生命周期:` 标记；改级别两处同步；Deprecated 补真实存在的 replacement；新增哨兵登记进 `docs/error-semantics.md`；口径见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符 / USAGE 逐行不一致（issue #277）| 见 `docs/DEPLOY-MATRIX.yaml`；**issue 证据只有在对应单号仍开着时才算缺口**（单号状态由台账派生） |
+| `storagecheck` | 存储选型判据：场景声明的 storage 必须在选型声明面的允许集内 + 该 storage 必须实际提供场景必需的全部能力 + 「该 storage 提供该能力」的断言必须能在代码里找到落点（issue #424）| 见 `docs/STORAGE-SELECTION.yaml`；**第三条是它与「写份文档让人读」的分界**——没有它，「SQLite 提供租户隔离」就成了一句没人验证的话 |
 | `ledgercheck` | 演进台账自身的纪律：同一单号各处状态矛盾 / 已合入却没给关闭 PR 号 / 关闭 PR 号形态不对 / 正文引用的单号没进登记面（单号漂浮 = 无主）| 台账 `docs/DISTRIBUTED-EVOLUTION-20261117.md`；单号 → 状态的派生器是 `internal/ledgerstatus`（登记列 / 状态列 / 散文标记三处约定）；PR 号要写成 `PR #N` 才不进单号视图 |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
@@ -538,15 +823,20 @@ make check
 ### 4.1 架构门禁的规则表
 
 > **条数口径**：`make architecture-check` 打印的是「N 条规则 + 0 个门面包 + M 个包的
-> 依赖方向」——「N 条」指 policy `rules` 段的条目数，**不含**用 `go/ast` 判的 17 条结构规则
-> （门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** /
-> **租户隔离证据三条** / **接缝契约三形态三条** / **判定词表登记五条**）+ 1 条 policy 自校验。
-> 包数与规则数都**以命令输出为准**，本表不抄（抄进来就是给自己造一份会静默过期的真相）。
-> 下表把两类都列出来，故行数比「N 条」多。**门禁表里不写死条数**：此前写死「9 条规则」
-> 既是拿混了量纲（那句话对着 `rules` 段），又会随规则增减**静默过期** ⇒ 一律以命令输出为准。
+> 依赖方向」——「N 条」指 policy `rules` 段的条目数（**当前 10 条**），
+> **不含**用 `go/ast` 判的结构规则（条数随 `archcheck/*.go` 增减而变，
+> 以 `make architecture-check` 的输出为准）——后者含门包不变 / 依赖方向 /
+> 沙箱档位登记 / 执行路径 / 子进程出口 / 未受管逃逸 / 接缝契约三形态 /
+> 租户隔离六条 / 判定词表七条 / policy 自校验。
+> 包数与规则数都**以命令输出为准**，本表不抄条数（抄进来就是给自己造一份会静默
+> 过期的真相）。下表把两类都列出来，故行数比「N 条」多。
+> **门禁表里不写死条数**：此前写死「9 条规则」既是拿混了量纲（那句话对着 `rules` 段），
+> 又会随规则增减**静默过期** ⇒ 一律以命令输出为准。
 >
 > 另记：`require_rule_examples: true` 让每条 `rules` 条目**必须自带能过的样例**——
 > 缺样例即红。这使 `rules` 段的条数有了下限保证：不会因为某人删了样例而变成空转。
+
+**第一组：policy `rules` 段（正则类，当前 10 条）**
 
 | 规则 | 拦什么 | 典型修法 |
 |---|---|---|
@@ -555,17 +845,32 @@ make check
 | `harness-no-host-dependency` | 任何对宿主仓的 import | 定义接口由宿主实现 |
 | `harness-no-domain-runtime-deps` | 对宿主仓 / 旧门面仓 / 已退役 `agentkit` 门面的 import | 改走 `github.com/oagentkit/*` |
 | `harness-no-bare-goroutine` | 生产代码裸 `go func` / `go someFunc()` | 走 `concurrency/async.GoSafe` |
+| `harness-test-goroutine-joined` | **用例内**起的 goroutine 在用例返回前没被等待（测试侧无等待点即违规）| 在用例内等它（`<-done` / `wg.Wait()` / 收尾助手）；「长得像等待、其实不是」（`<-ch` 写在**被启动的那个 goroutine 体内**）仍判红 |
 | `harness-no-printf-log-callback` | 公开 API 里的 `logf func(string, ...any)` | 留痕走 `logx.Delegating` 懒解析 |
 | `harness-single-errors-package` | stdlib `"errors"` 与 `github.com/pkg/errors` | 只用 `oekit/pkg/errors` 一套 |
 | `harness-sandbox-execution-single-entry` | 生产代码在 `ptc` 执行后端外直接 `import "os/exec"` | 外部程序执行只允许经 **`ptc` 执行后端**（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
-| `harness-sandbox-provider-declared` | 执行沙箱后端的档位没登记在 `sandbox_providers` 段，或登记与代码事实不一致 | 补登记 / 同步登记的档位常量名（LevelNone/LevelProcess/LevelOS/LevelMachine）|
-| `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**）| 逻辑放上游 `oagentkit/*`，本仓只留转发 |
+| `tool-pairing-key-single-source` | 工具配对键（`call_id`）被直接读 `Payload["call_id"]`（两处各写一份 ⇒ 同一事件流两个相反结论）| 改读 `eventbus.ToolCallID(ev)` |
+
+**第二组：`go/ast` 结构类（不在 `rules` 段，执行体在 `archcheck/`）**
+
+| 规则 | 拦什么 | 典型修法 |
+|---|---|---|
+| `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**，故这条今天没有对象可判）| 逻辑放上游 `oagentkit/*`，本仓只留转发 |
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录**、租户门缺形状、**词表登记面自相矛盾**（包名 / 类别写错、归一出口挂错表、重复登记、豁免缺理由）| 补执行体 / 改声明 / 删陈旧包根 |
+| `harness-sandbox-provider-declared` | 执行沙箱后端的档位没登记在 `sandbox_providers` 段，或登记与代码事实不一致 | 补登记 / 同步登记的档位常量名（LevelNone/LevelProcess/LevelOS/LevelMachine）|
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
 | `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询 `SatisfiedBy`）；登记 `denied`（本层无法兑现）；登记已陈旧；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`——按**文件**判，不按启动函数判）| 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env **并**在 spawn 前问一次后端能力（`Spec.SatisfiedBy`）/ 改档位。**`denied` 在本层是造假，不是配置**；子进程环境必须由 `procx.ChildEnv` 白名单生成 |
+| `harness-ptc-unmanaged-escape` | 生产代码显式选择「无判定环执行」（`AllowUnmanaged` 字段**出现**即违规，不看值——配置驱动的逃逸口也必须显式登记豁免）| 去掉逃逸口；确实要留就先在 policy 的 `exceptions` 登记 |
+| `harness-seam-contract` | 接缝契约**形态 B**：契约标记不完备（缺 `no-reentry` / `no-blocking` 等约束词）| 按 `docs/SEAM-CONTRACT.md` 补标记 |
+| `harness-seam-lock-held` | 接缝契约**形态 A**：接缝内持锁调用了时钟访问器（只读扫描，**warn 不阻断**）| 把时钟取值移出锁区 |
+| `harness-seam-panic-escape` | 接缝契约**形态 C**：宿主调用未包在 panic 隔离包装器里（panic 外溢，**阻断**）| 用登记的包装器包住（`subhub.Do` / `async.GoSafe` 等）|
 | `tenant-surface-missing-evidence` | 带授权上下文形参 + 返回租户域类型的服务层函数，既没调登记的共享判定面、查询条件也没含过滤列、也没 `// tenant:iso <理由>` 声明 | 补隔离判定（共享判定面 / 过滤列）或在函数注释里写明隔离点 |
 | `viewer-dropped` | 带授权上下文形参却完全不用（授权上下文被丢弃） | 用它做隔离判定，或删掉这个形参 |
 | `shared-surface-missing` | 登记在册的共享隔离判定面在代码里不存在（清单漂移 = 登记失效） | 同步 `tenant_gate.shared_surfaces` 与代码（改名/迁走即改，删面即撤登记） |
+| `tenant-policy-missing` | 含租户字段的模型映射出的物理表**不在** `tenant_gate` 清单里 | 补登记该表 |
+| `tenant-policy-drift` | 清单登记的表在模型面**已不存在**（登记漂移） | 删掉陈旧登记项 |
+| `tenant-table-name-missing` | 含租户字段的模型**没有可从 AST 识别的表名** | 给该模型补可解析的表名方法 |
 | `harness-word-table-enum-missing` | `word_tables` 段登记的词表**没有导出枚举出口**，或出口读的是另一张表（第二个真相源），或登记与事实已偏离（包改名 / 表改名 / 形状与 `kind` 不符）| 补 `All*()` 枚举出口并让它读**登记的那张表**；登记漂移就改 `word_tables` 段；分组形状的表写 `kind: input` |
 | `harness-word-table-handcopy` | 别的包在生产代码里**手抄**了登记**判定词表**的取值（那处字面量没有名字：既不在主人表定义处、也不在常量声明处）| 引用主人常量（`contract.StatusFailed`），或在本包把该取值**声明成自己的常量**（同一个拼写、不同概念时用后者）|
 | `harness-word-table-predicate-drift` | 登记的**判定谓词**不存在，或它不读登记的那张表（判定与词表分叉）| 补谓词（包级函数或 `Type.Method` 形态）并让它读**登记的那张表**；判定面改名了就同步 `word_tables` 段 |
@@ -573,9 +878,8 @@ make check
 | `harness-word-table-family-uncovered` | 登记的词表**没有覆盖它那一族常量的全部取值**（主人包新增了同族常量却忘了加进表 ⇒ 那个新取值的消费侧从此没人管）；或表的键不属于族前缀；或族豁免已失效 | 把族常量加进那张表；或改族前缀；或让**归属别处**的那张表（哪怕未登记）声明自己拥有的前缀（第十四阶段起族归属按**最长匹配前缀**派生，`family_exclude` 已废弃）|
 | `harness-word-table-value-collision` | 两张**判定词表**有同形取值却**没声明关系**（撞车没登记 ⇒ 没人说得清「这处字面量想说的是哪张表」，手抄指路只能瞎猜）；或**声明了关系却没撞车**（声明失真：今天没关系，将来一旦同形就会无声生效）| 在 `word_tables` 段的 `relations` 清单里声明这对表的关系（`same` = 同一概念 / `distinct` = 不同概念）；或删掉失真的声明 |
 | `harness-word-table-relation-anchor-drift` | 同形关系的**锚点**指向的东西不再对：锚点常量**改名或被删**（= 登记漂移）；锚点常量的取值**不再属于它那张表**；两端锚定的取值**不成对**（关系的前提「同形」不成立）；`distinct` 却锚到**同一处声明**（同一处声明不可能是两个概念 ⇒ 「不同概念」是说谎的）；**all 形态**下：共有取值在本端没有对应常量，或 `distinct` 的**每一个**共有取值都解析到同一处声明 | 改锚点指向现存的常量；或让两端锚点按取值成对；或改用 `{all: true}` 锚住两端共有取值的全集；或把 `distinct` 改成 `same` |
-| `harness-policy-self-check` | policy 自相矛盾：规则无执行体、id 重复、`scan_roots` 与 `modules` 不一致、例外无 `until`、**包根指向空目录**、租户门缺形状、**词表登记面自相矛盾**（包名 / 类别写错、归一出口挂错表、重复登记、豁免缺理由）| 补执行体 / 改声明 / 删陈旧包根 |
 
-> 最后一条的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——
+> `harness-module-dependency-direction` 的第三种形态最隐蔽：**未登记的包对本门禁完全隐形**——
 > 任何模块都能 import 它而不判违规。判定粒度是**包目录**，不是顶层目录。
 
 ### 4.2 门禁红了先自查的三件事
@@ -593,253 +897,90 @@ make check
 
 > 这一节是本仓的**经验沉淀**。每一条都对应一次真实事故，
 > 触发条件都是「AI 按最直觉的写法写代码」。
-
-### 5.1 先写代码，后补声明
-
-**症状**：门禁红，报「越界依赖」或「未登记包」。
-
-**为什么直觉会错**：AI 倾向于「先把功能写完，配置最后补」。但本仓的门禁是
-**声明先行**——policy 是声明面，代码是实现面，声明不写，实现对门禁隐形。
-
-**做法**：见 [§3.1](#31-任务-a加一个新能力包) 的四步顺序。
-
-### 5.2 测试夹具里写真实领域词
-
-**症状**：`harness-test-fixture-domain-vocabulary` 报红。
-
-**为什么直觉会错**：AI 写测试时**会为了让场景真实而引入领域词**
-（真实主机名、真实告警文本）。但夹具是**契约的示例**——示例带领域味，
-等于把契约钉死在某个领域上，宿主就再也套不进自己的场景。
-
-**做法**：一律用**合成数据**（`host-a` / `node-1` / 中性描述）。
-
-### 5.3 在门面包里「顺手加两行」
-
-**症状**：`harness-facade-stays-facade` 报红。
-
-**为什么直觉会错**：「这个 helper 放这儿更顺手」——但门包只允许**四种声明**
-（类型别名 / 常量别名 / 单条上游转发函数 / 允许集合内的 import）。
-加真逻辑三者必居其一：要新类型、要多条语句、要有新依赖。**没有「就两行」的例外。**
-
-⚠ **本仓当前一个门包都没有**（policy 的 `facades: []`，清单为空）⇒ 这条规则**今天
-没有对象可判**（恒绿）。规则与执行体仍在，是为了**将来有人在本仓造门面时当场拦住**。
-五个旧门包（`dispatch` / `policy` / `reminder` / `toolfail` / `sandbox`）在 v0.35.0
-整包删除、消费方直连上游 `oagentkit/*`。
-⚠ **`dispatch` 这个名字现在被另一个机制包占用**（派发域的**失败面**：改派错误三档分类
-与兜底改派环）——它**不是**门包，别把它当门包看待。
-
-**做法**：逻辑写进 `oagentkit/*` 上游，本仓**不提供门包** ⇒ 宿主直连上游。
-本仓要加的是**机制包**（判据归本仓、装配归宿主），不是门面。
-
-### 5.4 双 import errors 包
-
-**症状**：`harness-single-errors-package` 报红；或混用后 `errors.Is/As` 判定失效
-（Not Found 变 500）。
-
-**做法**：哨兵用 `oekit/pkg/errors.New`，包装用 `errors.Wrap(err, msg, kv...)`
-（**变参 kv，不是 `Wrapf`**），判定用同包 `Is`/`As`，解包到根用 `Cause`。
-链路保持**单 import**，不再双 import stdlib。
-
-### 5.5 裸 `go func()`
-
-**症状**：`harness-no-bare-goroutine` 报红。
-
-**为什么直觉会错**：AI 觉得 `go func` 是最直接的并发写法。但**裸 goroutine 里的
-panic 无法被外层 recover**（panic 发生在 goroutine 内部），会直接杀进程。
-
-**做法**：走 `concurrency/async.GoSafe`。
-
-### 5.6 公开 API 里塞日志回调
-
-**症状**：`harness-no-printf-log-callback` 报红。
-
-**为什么直觉会错**：AI 会觉得「给调用方一个 logf 回调最灵活」。但 printf 回调
-一旦焊进公开签名就是**不可逆 API 债**。
-
-**做法**：留痕走 `logx.Delegating` 懒解析，宿主用 `logx.SetDefault` 换后端。
-
-### 5.7 给「派生计数」开第二个计数器
-
-**症状**：并发下代次不唯一 / 回退，轮询方看到「6 → 6」以为没换过。
-
-**为什么直觉会错**：AI 为了「方便查询」会加一个全局计数器。但两次交换拿到
-同一代次的形态是**静默**的——不崩溃，只是偶尔给错答案，比崩溃难查得多。
-
-**做法**：只允许一个真相；需要全局视图时让它是真相的**投影**。
-
-### 5.8 判定环断链
-
-**症状**：某个位置成了整条链上**唯一绕过所有门禁**的路径。
-
-**为什么直觉会错**：AI 会把「程序化调用」当成特例（普通工具调用过判定环，
-程序内 `host.<tool>()` 走另一条路）。但那正是最危险的缝。
-
-**做法**：`ptc` 程序内调用与普通工具调用**走同一套 Stage 判定环**。
-
-### 5.9 契约规则各写一份
-
-**症状**：「生产侧派得出、消费侧认不出」。
-
-**做法**：跨包契约的规则收成**单一真相**（如 `toolname`），
-两侧共用；并用**端到端用例**钉「派生 → 装配 → 执行」整条链。
-
-### 5.10 枚举位逐个字段补
-
-**症状**：模型写 `"OUT"` 而非 `"out"`，语义被**反转**（scope 被翻成 in），
-且不归一时条目**被静默丢弃**——连 warn 都没有。
-
-**做法**：枚举位归一**收成一处共享口径**（`protocol/report_normalize.go`），
-并用**枚举式**用例把「漏一个就红」变成机械判定。逐个字段补不算数。
-
-### 5.11 文档里的数字没人维护
-
-**症状**：README「工程底座」表里的行数 / 测试文件数 / 覆盖率与实际差得很远，
-但**没有任何门禁报红**。
-
-**为什么直觉会错**：AI 以为「改了代码，文档自然会跟着更新」，
-或以为「README 是文档，文档不会被测」。
-
-**现状（别再按旧版理解）**：这张表**已经漂过八轮**，2026-11-06 起 `docsync`
-判其中三项确定性量——生产代码行数 / 文件数、测试文件数，**判相等、不留容差**
-（历史漂移量恰好落在容差里，给容差等于让静默过期继续成立）。
-改代码后这三项**不用手算**：门禁会告诉你实测值。
-
-**仍然没人判的**：覆盖率一格（它随「跑的是哪个用例集合」变，同一批用例量出过
-85.5 / 85.0 / 87.0 三个值，故只写门槛、实测看 `make cover-gate`），以及
-结构阈值 / 门禁条数 / 例外数那几行描述。
-
-**做法**：写文档里的数字时，先问一句「**这个数字谁在维护？**」——
-没人维护就写明「不受机器管，改前请手算」；
-**派生计数（包数、规则数）不要抄进多处散文**：抄三处就必然有三份不一致，
-让散文引用门禁输出而不是复述它。
-
-### 5.12 变更纪律类操作
-
-| 纪律 | 为什么 |
-|---|---|
-| 提交用 `git add <具体路径>`，**禁止 `git add -A`** | 历史教训：卷入 scratch 目录 |
-| 提交身份用本仓 local config 的 `MurphyYi <zy84338719@hotmail.com>`，**不动 global** | global 是别的项目在用的工作身份 |
-| 中文文档批量编辑后 `grep U+FFFD` 自检 | 编码损坏 |
-| macOS bash 3.2 多字节炸弹 | `$VAR` 后紧跟中文/全角字符时 bash 会吞掉多字节首字节，**一律写 `${VAR}`** |
-
-### 5.13 把「已经拆干净的类型」判成 god object
-
-**症状**：某类型的方法数超了 `max_methods_per_type`，但它明明是**已经拆干净的
-façade**——实现全在子包里，自己只做转发。撞线时只有两个选择：把子簇合回去
-（**撤销一次正确的重构**），或调高阈值（**等于放弃判据**）。
-
-**为什么直觉会错**：直觉认为「方法多 = 复杂」。但方法数这个量在两种类型上
-含义完全不同——真 god object 上它是**复杂度集中度**，façade 上它是
-**公共 API 表面规模**。判据量纲与自己的前提不对齐时，报错就会把正确的工作判成错的。
-
-**做法**：阈值现在比的是**实质方法数**（方法总数 − 转发壳数）。若你新增了一个
-纯转发的访问器方法，它**不计入**阈值——这是设计如此，别为了「让数好看」去改
-policy 的 `forwarding_shell_max_chars`（那是给宿主留的逃生口，不是给你调的旋钮）。
-反过来，若你新增的方法**有实质逻辑**（多语句 / 带校验 / 构造复合值），
-它照旧计入——这正是这条阈值要抓的东西。
-
-### 5.14 接外部协议时只对拍「官方文档样例」
-
-**症状**：协议对拍的单测全绿，真实端点一打就红——形状不同（文档写数组、真机返回
-对象）或语义口径不同（同一字段在两端给法不一致）。
-
-**为什么直觉会错**：直觉认为「文档样例 = 协议」。但文档样例只是**一种可能的实现**
-：字段的**形状**（数组 vs 对象）与**语义口径**（置信度怎么算、枚举怎么取）都可能
-在真实实现里不同，而且**两端各自自洽、都不报错**——失败形态是「静默失真」而不是崩溃。
-
-**做法**：凡接外部协议的组件，
-① 单测对拍官方文档样例（保协议形状）；
-② **必须**留**可复跑的真机用例**（build tag + 环境变量开关，形如
-`BQ_XXX_LIVE=1` + 端点地址），不是一次性 curl；
-③ **mock 模式**（`BQ_XXX_MOCK=1`）用来验**接线**（装配上了吗、快路径真会接管吗、
-出参形态对吗）——**mock 验接线不验质量**，质量由真机用例背书；
-④ 端点若**首启要加载资源**（模型/证书/索引），加**预热**并在装配时**异步**做
-（不阻塞启动）：否则首个真实请求必然撞超时上限 ⇒ 表现为「配了却一点没变」的
-静默假生效。
-
-**顺带**：两个实现给法不一致的字段（如「置信度」）不要直接用端点值当判定依据——
-**口径单源在我方**（按公开公式本地算），并拿端点自带的参考字段做**交叉验证**
-（本地算的值应与它一致 ⇒ 公式不是纸上推导）。
-
-### 5.15 把「有序链」的判据套到并行图上
-
-**症状**：并行阶段（fan-out）明明逐个完成了一部分，续跑时**整批重来**；宿主于是
-绕开内核的续跑契约、自建一套存取，下游各写一套、必然漂移。
-
-**为什么直觉会错**：「一步的完成要等它的前驱完成才可信」对**有序步骤链**完全正确，
-但并行组里各步骤**彼此独立**——「第 1 个还没完成、第 3 个完成」是**合法完成集**，
-不是失序。判据若只认「图内连续已完成的前缀」，就会把合法完成集当成失序作废。
-
-**做法**：判据的量纲要跟图的形状对齐——
-
-- 图是**有序链**（没人声明依赖）⇒ 只信连续前缀，空洞之后的完成不采信（宁多跑，
-  不重复副作用）；
-- 图是**并行组**⇒ 显式声明依赖（`StepDef.DependsOn` / `Isolated`），
-  按各自前驱判定：前置都满足的那一步自己完成即可信。
-
-**顺带两条**（本仓 `checkpoint` 的现成教训）：
-
-- **零值必须逐字兼容旧口径**。新增判据能力时，默认（零值）路径要与旧行为
-  **一字不差**（含异常条数与文案），否则每个下游都得重新验一遍既有行为。
-- **声明是「取代」不是「叠加」**。若显式声明只能**加**约束，并行组第二步仍会
-  依赖第一步，组退化成链——病没治好。故显式声明**取代**隐含约束，
-  代价是作者要列全直接前驱（漏列 = 少一条约束），这个取舍要写进文档。
-
-### 5.16 「修复已发版」当成「问题已解决」
-
-**症状**：库里有修复函数、CHANGELOG 有回执、issue 已 CLOSED、tag 已含该 commit——
-但下游**调用点**仍是旧写法，缺陷在下游照旧生效，而所有信号都说「好了」。
-
-**为什么直觉会错**：判断「修了没」时，人（和 AI）看的是**库里有什么**——
-`grep` 到新 API 就收工。但缺陷消失与否取决于**调用点怎么写**，
-两者之间隔着一步「接线」，而接线只存在于文档的范式代码块里。
-
-**做法三条**：
-
-1. **判据取调用点，不取 issue 状态**。`git tag --contains <sha>` 只能证明「发版了」，
-   不能证明「有人按新 API 接线」。要证明修好，得看下游那一行现在长什么样。
-2. **新增「归一/兜底」类 API 时，同步改接线手册里的范式代码块**。
-   只加函数不改范例，下游照旧抄旧范例，等于没发。
-3. **「有意保留的原语」要在契约层面钉死**。负值有语义的入口必须有用例
-   （如本仓 `TestBudget` 钉 `Budget(-1) == -1`），否则后来者「顺手归一」，
-   把「少做」静默翻成「多做」——方向变了，比不修更坏。
-4. **能让编译器拒的，别只靠文档和用例**。用例钉的是「函数返回什么」，
-   钉不住「返回值被喂到哪」。给这类入口换**命名类型**（如 `drain.DrainBudget`）
-   后，误用就从「运行期静默出错」变成「构建失败」——这是唯一不需要记性的防线。
-
-**本仓实录**：`drain.ShutdownBudget`（`<=0` 取缺省）已在 v0.16.0 发版，
-但 `docs/USAGE.md` §3.8.2 的范式只写 `Budget(0)`，下游宿主于是手写
-`if d < 0 { d = 0 }`——issue 关了、缺陷还在，还被误判成「裸关（关了没修）」。
-**反过来**：听到「关了没修」这类判断，先核三件事（修复在哪个 tag、CHANGELOG 有无回执、
-调用点现在写的是什么），再决定是「真没修」还是「修了没接上」。
-
-### 5.17 把平台专属的失败语义写死在一个平台里
-
-**症状**：本机（macOS / Linux）全绿，目标平台的 CI 偶发红，**同一提交**在两个
-平台结论不同；红的那条只给一句 errno（如「Access is denied」），本机无法复现。
-
-**为什么直觉会错**：直觉是「错误码就那么一个」——但同一个语义（「锁正被占用」）
-在不同平台有多种错误表达：Windows 上独占创建锁文件失败可能是
-`ERROR_FILE_EXISTS` / `ERROR_SHARING_VIOLATION` / `ERROR_ACCESS_DENIED`
-（释放窗口或扫描程序短暂占用）。只认一种 ⇒ 另两种被当硬故障 ⇒ **正常并发被判失败**。
-
-**做法四条**：
-
-1. **判定结构放平台无关的文件，取值由平台注入**（本仓实例：
-   `examples/sqlitestore/lock.go` 的 `classifyLockBusy(err, busyErrnos)`）⇒
-   判据在任何机器上被真跑，本地就能验、修完也能证。
-2. **平台专属分支配专属用例**（`//go:build windows`）：只有交叉编译过而没有专属
-   用例的分支，是「编得过但没人跑」。
-3. **判据按语义集合写**，不按单个错误码写；只认一种就是**错指路**——排查的人会被
-   引到错的方向（以为是自己没权限，真因是别人在用锁）。
-4. **获取与释放两条路径一起看**：它们共享同一类瞬时故障，释放不做退避重试 ⇒ 一次
-   瞬时占用就把锁留住，后续写者空转到超时。
-
-> **2026-11-19 现状注**：第 1 条举的本仓实例 `examples/sqlitestore/lock.go` 已随该包
-> 删除（它是 flock + JSONL 的文件后端，**不是 SQLite**）——现存的真 SQLite 落库在
-> `examples/sqliteadapter`，写事务用 `BEGIN IMMEDIATE` + `busy_timeout=5000`，
-> **没有平台专属 errno 判定面**。上面的做法四条本身仍然成立（那是方法论），
-> 只是「本仓实例」那一处已陈旧。
+> **用法**：门禁红 ⇒ 拿报出的那行去「症状」列对号 ⇒ 照「怎么改」列走 ⇒
+> 确认「会被哪条门禁拦」那一列就是它。**没有一列写着门禁名的，说明它靠人记**
+> ⇒ 改完顺手补一条用例或一条声明。
+
+<div align="center">
+<svg width="760" viewBox="0 0 760 246" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
+  <rect x="0" y="0" width="760" height="246" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <rect x="20" y="28" width="160" height="84" rx="8" fill="#161b26" stroke="#f85149"/>
+  <text x="100" y="52" font-size="14" fill="#f85149" text-anchor="middle">症状</text>
+  <text x="100" y="74" font-size="11.5" fill="#e6edf3" text-anchor="middle">门禁报出的那一行</text>
+  <text x="100" y="92" font-size="11.5" fill="#9aa7b8" text-anchor="middle">逐字抄下来</text>
+  <line x1="180" y1="70" x2="200" y2="70" stroke="#9aa7b8" stroke-width="1.5"/>
+  <polygon points="200,70 193,66 193,74" fill="#9aa7b8"/>
+  <rect x="206" y="28" width="160" height="84" rx="8" fill="#161b26" stroke="#58a6ff"/>
+  <text x="286" y="52" font-size="14" fill="#58a6ff" text-anchor="middle">真因</text>
+  <text x="286" y="74" font-size="11.5" fill="#e6edf3" text-anchor="middle">为什么直觉会错</text>
+  <text x="286" y="92" font-size="11.5" fill="#9aa7b8" text-anchor="middle">找判据的前提</text>
+  <line x1="366" y1="70" x2="386" y2="70" stroke="#9aa7b8" stroke-width="1.5"/>
+  <polygon points="386,70 379,66 379,74" fill="#9aa7b8"/>
+  <rect x="392" y="28" width="160" height="84" rx="8" fill="#161b26" stroke="#a371f7"/>
+  <text x="472" y="52" font-size="14" fill="#a371f7" text-anchor="middle">改哪</text>
+  <text x="472" y="74" font-size="11.5" fill="#e6edf3" text-anchor="middle">改哪个文件</text>
+  <text x="472" y="92" font-size="11.5" fill="#9aa7b8" text-anchor="middle">先改声明，再改实现</text>
+  <line x1="552" y1="70" x2="572" y2="70" stroke="#9aa7b8" stroke-width="1.5"/>
+  <polygon points="572,70 565,66 565,74" fill="#9aa7b8"/>
+  <rect x="578" y="28" width="162" height="84" rx="8" fill="#161b26" stroke="#3fb950"/>
+  <text x="659" y="52" font-size="14" fill="#3fb950" text-anchor="middle">验收</text>
+  <text x="659" y="74" font-size="11.5" fill="#e6edf3" text-anchor="middle">反向验证</text>
+  <text x="659" y="92" font-size="11.5" fill="#9aa7b8" text-anchor="middle">注入违规 ⇒ 必红</text>
+  <text x="100" y="140" font-size="11" fill="#9aa7b8" text-anchor="middle">「越界依赖」</text>
+  <text x="286" y="140" font-size="11" fill="#9aa7b8" text-anchor="middle">声明先行，声明没写</text>
+  <text x="286" y="156" font-size="11" fill="#9aa7b8" text-anchor="middle">实现对门禁隐形</text>
+  <text x="472" y="140" font-size="11" fill="#9aa7b8" text-anchor="middle">policy modules 段</text>
+  <text x="472" y="156" font-size="11" fill="#9aa7b8" text-anchor="middle">→ 再写代码</text>
+  <text x="659" y="140" font-size="11" fill="#9aa7b8" text-anchor="middle">make check 全绿</text>
+  <text x="659" y="156" font-size="11" fill="#9aa7b8" text-anchor="middle">+ 坏实现会红</text>
+  <rect x="20" y="176" width="720" height="50" rx="8" fill="#161b26" stroke="#262e3d"/>
+  <text x="380" y="197" font-size="12" fill="#e6edf3" text-anchor="middle">四步缺一不可：缺「改哪」= 写完再补声明（双份工作）；缺「验收」= 判据可能恒绿</text>
+  <text x="380" y="215" font-size="11.5" fill="#9aa7b8" text-anchor="middle">恒绿是本仓最贵的失效形态——它比红更难发现，因为没有任何信号会响</text>
+</svg>
+</div>
+
+*图 5：一条失败模式的四段解剖——「怎么改」必须落到具体文件，「验收」必须是可复跑的注入。*
+
+### 5.1 速查表
+
+| # | 症状 | 真因（为什么直觉会错） | 怎么改 | 会被哪条门禁拦 |
+|---|---|---|---|---|
+| 1 | 门禁报「越界依赖」或「未登记包」 | AI 倾向「先把功能写完，配置最后补」；本仓门禁**声明先行**，声明不写，实现对门禁隐形 | 照 §3.1 的顺序：**先改 policy `modules` → `scan_roots`**，再写代码，最后同步 README 包表 | `architecture-check`（`harness-module-dependency-direction`）|
+| 2 | `harness-test-fixture-domain-vocabulary` 报红 | 写测试时**为让场景真实**引入领域词（真实主机名、真实告警文本）；但夹具是**契约的示例**，示例带领域味 = 把契约钉死在某领域 | 一律用**合成数据**（`host-a` / `node-1` / 中性描述）| `architecture-check`（`harness-test-fixture-domain-vocabulary`）|
+| 3 | 在门包位置「顺手加两行」 | 门包只允许**四种声明**（类型别名 / 常量别名 / 单条上游转发函数 / 允许集合内的 import）；加真逻辑三者必居其一，**没有「就两行」的例外** | 逻辑写进上游 `oagentkit/*`。⚠️ **本仓现在一个门包都没有**（`facades: []`）⇒ 这条规则今天恒绿；**`dispatch` 不是门包**，它是派发域的失败面 | `architecture-check`（`harness-facade-stays-facade`，当前无对象可判）|
+| 4 | `harness-single-errors-package` 报红；或 `errors.Is/As` 判定失效（Not Found 变 500）| 双 import 两套 errors 包会**打断类型同一性** | 哨兵用 `oekit/pkg/errors.New`，包装用 `errors.Wrap(err, msg, kv...)`（**变参 kv，不是 `Wrapf`**），判定用同包 `Is`/`As`，解包到根用 `Cause`；链路**单 import** | `architecture-check`（`harness-single-errors-package`）|
+| 5 | `harness-no-bare-goroutine` 报红 | 裸 goroutine 里的 **panic 无法被外层 recover**（panic 发生在 goroutine 内部），会直接杀进程 | 走 `concurrency/async.GoSafe` | `architecture-check`（`harness-no-bare-goroutine`）|
+| 6 | `harness-test-goroutine-joined` 报红 | 用例里起了 goroutine 却在**测试侧**没有等待点 ⇒ 用例返回时 goroutine 还在跑（泄漏）| 在用例内等它（`<-done` / `wg.Wait()` / 同包收尾助手）；**注意**：`<-ch` 写在**被启动的那个 goroutine 体内**不算等待点 | `architecture-check`（`harness-test-goroutine-joined`）|
+| 7 | `harness-no-printf-log-callback` 报红 | printf 回调一旦焊进公开签名就是**不可逆 API 债** | 留痕走 `logx.Delegating` 懒解析，宿主用 `logx.SetDefault` 换后端 | `architecture-check`（`harness-no-printf-log-callback`）|
+| 8 | 并发下代次不唯一 / 回退；轮询方看到「6 → 6」以为没换过 | 为「方便查询」加第二个计数器 ⇒ 两次交换拿到同一代次是**静默**的：不崩溃，只是偶尔给错答案 | 只允许**一个真相**；需要全局视图时让它是真相的**投影** | 无门禁 ⇒ **靠用例钉**（这类失效靠人记）|
+| 9 | 某个位置成了整条链上**唯一绕过所有门禁**的路径 | 把「程序化调用」当特例（普通工具调用过判定环，程序内 `host.<tool>()` 走另一条路）| `ptc` 程序内调用与普通工具调用**走同一套 Stage 判定环**；逃逸口 `AllowUnmanaged` 在生产代码里出现即违规 | `architecture-check`（`harness-ptc-unmanaged-escape`）|
+| 10 | 「生产侧派得出、消费侧认不出」 | 跨包契约各写一份 ⇒ 两边慢慢漂移 | 规则收成**单一真相**（如 `toolname`），两侧共用；用**端到端用例**钉「派生 → 装配 → 执行」整条链 | `architecture-check`（`tool-pairing-key-single-source`）+ `test` |
+| 11 | 模型写 `"OUT"` 而非 `"out"`，scope 被**反转**，且不归一的条目**被静默丢弃**（连 warn 都没有）| 逐个字段补枚举位 ⇒ 漏一个就静默丢一条 | 归一**收成一处共享口径**（`protocol/report_normalize.go`），并用**枚举式**用例把「漏一个就红」变成机械判定 | `test`（枚举式用例）+ `architecture-check`（域词）|
+| 12 | README「工程底座」表里的数字与实际差很远，但**没有任何门禁报红** | 以为「改了代码文档自然会更新」，或以为「README 是文档，文档不会被测」| 生产行数 / 文件数 / 测试文件数**已判相等不留容差** ⇒ 不用手算，门禁会告诉你实测值。**覆盖率那一格仍没人判** ⇒ 改前手算 | `docsync`（三项确定性量）|
+| 13 | 某类型的方法数超 `max_methods_per_type`，但它明明是**已经拆干净的 façade** | 「方法多 = 复杂」在两种类型上含义不同：真 god object 上是**复杂度集中度**，façade 上是**公共 API 表面规模** | 阈值比的是**实质方法数**（总数 − 转发壳数）；新增纯转发访问器**不计入**。别为「让数好看」去调 `forwarding_shell_max_chars` | `architecture-check`（`max_methods_per_type`）|
+| 14 | 协议对拍单测全绿，真实端点一打就红（形状不同 / 语义口径不同），**两端各自自洽、都不报错** | 以为「文档样例 = 协议」，但样例只是**一种可能的实现**（字段形状与语义口径都可能不同）| ① 单测对拍官方文档样例（保形状）；② 留**可复跑**的真机用例（build tag + 环境变量开关）；③ mock 模式只验**接线**不验质量；④ 首启要加载资源的端点加**预热**并**异步**装配 | 无门禁 ⇒ 靠真机用例背书 |
+| 15 | 并行阶段明明逐个完成了一部分，续跑时**整批重来**；宿主于是绕开内核自建存取 | 把「有序步骤链」的判据套到并行图上：「等前驱完成才可信」对**有序链**正确，对**并行组**是错的 | 判据的量纲要跟图的形状对齐：有序链 ⇒ 只信连续前缀；并行组 ⇒ 显式声明依赖（`StepDef.DependsOn` / `Isolated`），按各自前驱判定 | `test` + `fault-injection`（矩阵）|
+| 16 | 库里有修复函数、CHANGELOG 有回执、issue 已 CLOSED，但**下游调用点仍是旧写法**，缺陷照旧生效 | 判断「修了没」时看的是「库里有什么」（grep 到新 API 就收工），而缺陷消失与否取决于**调用点怎么写** | 判据取**调用点**，不取 issue 状态；新增「归一/兜底」类 API 时**同步改接线手册里的范式代码块**；「有意保留的原语」用用例钉死；能给编译器拒的就换**命名类型** | 无门禁 ⇒ 靠用例钉 |
+| 17 | 本机全绿，目标平台 CI 偶发红，**同一提交**两个平台结论不同；红的那条只给一句 errno | 以为「错误码就那么一个」——同一个语义在不同平台有多种错误表达 | 判定结构放平台无关的文件、取值由平台注入；平台专属分支配专属用例（`//go:build windows`）；判据按**语义集合**写不按单个错误码；获取与释放两条路径一起看 | `crossbuild`（只证编得过）+ CI 的 `windows-test` 作业（真跑）|
+| 18 | 「被拒的工具重试一次就放行」 | 以为「拒绝即激活」——**这条已被移除**（提交 `2ac10a4` / issue #286）：保留它会让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为最短路径，模型从未取回 schema，渐进披露省上下文的前提被自身恢复路径绕开 | **schema 未取回 ⇒ 原样重试不会成功**（`ErrNotLoaded` 的模型指引原文）。恢复路径是「先取回 schema，再构造参数调用」；`Catalog.Load` 是披露的**唯一写入口**，检索只排序不激活 | `test`（`tooldisclose/gate_recovery_test.go` 钉住）|
+| 19 | 提交用 `git add -A` 卷进 scratch 目录 / 中文文档批量编辑后出现 U+FFFD / macOS 下 `$VAR` 后紧跟中文被吞掉多字节首字节 | 习惯，不是判据 | 提交用 `git add <具体路径>`；编辑后 `grep U+FFFD` 自检；一律写 `${VAR}` | 无门禁 ⇒ 靠纪律 |
+| 20 | 接缝契约三形态没写齐（声明 / 调用点 / 三条约束）| 以为「接缝是注释」 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 | `seamcheck` |
+
+### 5.2 六条判据通则（跨模式复用）
+
+1. **判据的量纲要跟判据的前提对齐。** 量纲与前提错位 ⇒ 报错把正确的工作判成错的
+   （模式 13、17）。
+2. **口径单源。** 同一件事只允许一处定义；需要多处用时，让它们都是那一处的**投影**
+   （模式 8、10）。
+3. **零值必须逐字兼容旧口径。** 新增判据能力时，默认（零值）路径要与旧行为
+   **一字不差**（含异常条数与文案），否则每个下游都得重新验一遍既有行为。
+4. **声明是「取代」不是「叠加」。** 显式声明只能**加**约束 ⇒ 并行组第二步仍会依赖
+   第一步，组退化成链——病没治好。显式声明**取代**隐含约束，代价是作者要列全
+   直接前驱（漏列 = 少一条约束），这个取舍要写进文档。
+5. **判据取调用点，不取状态。** 「修了没」要看调用点现在写的是什么，不是 issue
+   状态、也不是库里有没有那个函数（模式 16）。
+6. **平台专属的失败语义要抽成平台无关的判据。** 取值由平台注入 ⇒ 判据在任何机器上
+   被真跑，本地就能验、修完也能证（模式 17）。
 
 ---
 
@@ -848,8 +989,8 @@ policy 的 `forwarding_shell_max_chars`（那是给宿主留的逃生口，不�
 **纪律原文**：
 
 > 门禁的失败形态是**变绿**，不是变红。改任何门禁判定逻辑，必须同时给
-> 「坏实现会红」的用例——只测「好实现能过」的用例，一个把数字比较写成
-> 字符串比较的错实现照样全过。
+> 「坏实现会红」的用例——只测「好实现能过」的用例，一个把数字比较写成字符串比较的
+> 错实现照样全过。
 
 ### 6.1 怎么做
 
@@ -899,14 +1040,24 @@ for _, tc := range cases {
 
 ```bash
 # ── 门禁 ──────────────────────────────────
-make check                          # 全套（CI 只执行它）
+make check                          # 全套（按顺序，红即停）
 make architecture-check             # 架构门禁
 make architecture-check --report    # 看全量违规清单（默认每条截断到 10 条）
+make architecture-check-types       # 严格档（go/types 类型感知，慢，opt-in，不进 check）
 make test                           # 全量单测
 make cover                          # 覆盖率报告
+make cover-gate                     # 覆盖率阈值门禁（全局 + 逐包）
 make fmt-check                      # 只查格式
 make vet                            # 只查 vet
 make lint                           # 只跑 golangci-lint
+
+# ── CI 的分层目标（本地复跑同一批判据）──
+make unit                           # 静态门禁 + 全量单测 + 一串一致性门禁
+make race                           # 竞态检测（开 cgo）
+make contract                       # 契约套件自测（sidetest + boardtest）
+make fault-injection                # 全仓 TestFault*（注入矩阵）
+make gates                          # versioncheck + cover-gate + vuln + crossbuild
+make integration                    # PG 契约套件 + SIGKILL e2e（要 docker，起不来明确报错）
 
 # ── 单包迭代 ──────────────────────────────
 go test ./protocol/ -run TestXxx -count=1
@@ -918,6 +1069,7 @@ go run ./cmd/archcheck                      # 默认读仓库根的 architecture
 go run ./cmd/archcheck -policy <path>       # 判另一份 policy（宿主复用）
 go run ./cmd/archcheck --report
 go run ./cmd/docsync                        # README 包表一致性
+go run ./cmd/seamcheck -update              # 接缝基线落盘（改完接缝后）
 
 # ── 依赖与本地并行 ─────────────────────────
 go mod tidy                           # 先确认没有 go.work（workspace 期间别跑）
@@ -926,7 +1078,7 @@ make devunlink                        # 断开
 
 # ── 宿主侧复用本仓门禁（示例）─────────────
 # import "github.com/yi-nology/goagent-kernel/archcheck"
-# root, err := archcheck.FindRoot(".")                                  // 向上找 policy
+# root, err := archcheck.FindRoot(".")                                  # 向上找 policy
 # pol, err := archcheck.Load(filepath.Join(root, "architecture-policy.yaml"))
 # res, err := archcheck.Run(root, pol)
 # archcheck.WriteReport(os.Stderr, res, archcheck.ReportOptions{Full: false})
@@ -970,10 +1122,17 @@ make devunlink                        # 断开
 | [AGENTS.md](../AGENTS.md) | 在本仓干活的工作纪律（含每条纪律的事故来源） | 活文档 |
 | [docs/USAGE.md](USAGE.md) | **宿主开发者**：怎么把 harness 接进自己产品 | 活文档 |
 | [docs/OAGENTKIT-OVERLAP.md](OAGENTKIT-OVERLAP.md) | 本仓与上游 `oagentkit` 的能力边界 | 活文档 |
+| [docs/SEAM-CONTRACT.md](SEAM-CONTRACT.md) | 接缝契约三形态与写法 | 活文档 |
+| [docs/api-compat.md](api-compat.md) | 什么算 breaking、五步破坏性变更流程 | 活文档 |
+| [docs/error-semantics.md](error-semantics.md) | 错误哨兵登记表 | 活文档 |
+| [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml) | 存储选型声明面（`storagecheck` 判）| 活文档（机器判定）|
+| [docs/DEPLOY-MATRIX.yaml](DEPLOY-MATRIX.yaml) | 部署配方能力清单（`deploycheck` 判）| 活文档（机器判定）|
 | [docs/SANDBOX-DESIGN-20261021.md](SANDBOX-DESIGN-20261021.md) | 执行沙箱的下一层：跨域执行与资源兜底（设计推导 + 与上游 guardx 的分工） | 活文档 |
 | [docs/CHECKPOINT.md](CHECKPOINT.md) | 续跑契约的细节（设计推导 + 跨进程闸） | 活文档 |
-| [architecture-policy.yaml](../architecture-policy.yaml) | 门禁声明面（模块拓扑 / 规则 / 阈值） | 活文档（机器判定）|
+| [architecture-policy.yaml](../architecture-policy.yaml) | 门禁声明面（模块拓扑 / 规则 / 阈值 / 词表） | 活文档（机器判定）|
+| [api-lifecycle.yaml](../api-lifecycle.yaml) | API 生命周期定级（`apilifecheck` 判）| 活文档（机器判定）|
 | [CHANGELOG.md](../CHANGELOG.md) | 版本历史与破坏性变更 | 活文档（按 tag 切段生成）|
+| [docs/DISTRIBUTED-EVOLUTION-20261117.md](DISTRIBUTED-EVOLUTION-20261117.md) | 演进台账（`ledgercheck` 判）| 活文档（机器判定）|
 | [docs/SPLIT_PLAN.md](SPLIT_PLAN.md) | 从宿主仓拆分的分层依据 | **历史快照**（2026-10-17 写于 10 个包时）|
 | [docs/MIGRATION_OAGENTKIT_20261018.md](MIGRATION_OAGENTKIT_20261018.md) | 门面迁移与 errors 链路改写的执行记录 | **历史快照**（2026-10-18 已执行完毕）|
 | [docs/SELF-AUDIT-20261018.md](SELF-AUDIT-20261018.md) | 独立复核发现并修复的缺陷 | **历史快照**（2026-10-18 收尾）|

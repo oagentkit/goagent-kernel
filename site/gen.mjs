@@ -55,12 +55,25 @@ function loadVersions(src) {
 
 function loadRules(src) {
   if (!src.includes('\nrules:')) fail('architecture-policy.yaml 找不到 rules 段——结构变了？')
-  const sec = src.split('\nrules:', 2)[1]
+  // 只取 rules 段本体：到下一个**顶层键**为止（顶层键 = 行首无缩进的 key:）。
+  // 不圈边界的话，后面 sandbox_providers 段的 `- id:` 条目会被算进规则清单。
+  const sec = src.split('\nrules:', 2)[1].split(/\n(?=[A-Za-z_][\w]*:)/)[0]
   const rules = []
-  for (const m of sec.matchAll(/- id: (harness-[\w-]+)\n\s+desc: (.+)/g)) {
+  // id 前缀**不许写死**：rules 段里的规则不一定都叫 harness-*（例如
+  // tool-pairing-key-single-source）。写死前缀会让清单**静默少一条**——
+  // 失败形态是「页面上少了一条规则，但没有任何东西会红」。
+  for (const m of sec.matchAll(/- id: ([\w-]+)\n\s+desc: (.+)/g)) {
     rules.push({ id: m[1], desc: m[2].trim() })
   }
   if (!rules.length) fail('rules 段解析出 0 条规则——解析失效，拒绝生成空清单')
+  // 交叉校验：段内 `- id:` 的条数必须与解析出 desc 的条数一致。
+  // 不一致 = 有规则没被解析到（缺 desc / 字段改名 / 缩进变了）⇒ 当场红，
+  // 而不是生成一份少几条规则的清单（少一条的清单读起来完全正常）。
+  const ids = [...sec.matchAll(/^\s*- id: ([\w-]+)/gm)].map((m) => m[1])
+  if (ids.length !== rules.length) {
+    fail('rules 段解析条数对不上：段内 - id: 有 ' + ids.length + ' 条，解析出 desc 的只有 ' + rules.length +
+      ' 条（缺 desc / 字段改名 / 缩进变了？）——拒绝生成少几条规则的清单')
+  }
   return rules
 }
 
@@ -333,7 +346,7 @@ const llms = [
   '',
   '## 三个必须先知道的约束',
   '1. **内核只判定，不处置**：内核回报「该阻断/该重试/不可归类」，动作由宿主执行。',
-  '2. **门面的门朝外**：dispatch / policy / reminder 只做调用面转发，核心在上游 oagentkit。',
+  '2. **判定语义只有一份**：失败分类 / 隔离档位 / 审批门 / 派发可达性都在上游 oagentkit，本仓不保留转发门面（facades 段为空）。',
   '3. **单向依赖**：本仓不 import 宿主，宿主 import 本仓（门禁强制）。',
   '',
   '## AI 直读入口（同族）',
@@ -345,12 +358,25 @@ const llms = [
   '- 设计初衷（为什么长这样）: ' + site + '/guide/philosophy.html',
   '- 怎么用（安装/三约束/接入路线图）: ' + site + '/guide/getting-started.html',
   '- 能力详解（九组图解）: ' + site + '/guide/capabilities.html',
+  '- 给大模型的接入指南（模型侧怎么接：分工/输出契约/判定环/回合/预算）: ' + site + '/guide/llm-guide.html',
   '- 坑速查（症状→真因）: ' + site + '/reference/pitfalls.html',
   '- 包清单与机器事实: ' + site + '/reference/packages.html',
   '- 门禁体系: ' + site + '/reference/gates.html',
   '- 决策记录（ADR，设计推导与取舍）: ' + site + '/reference/adr.html',
   '- 完整接入指南（逐包：职责→片段→符号→坑）: ' + gh + '/blob/main/docs/USAGE.md',
   '- README（边界纪律/下游升级须知）: ' + gh + '#readme',
+  '',
+  '## 模型侧口径（把模型接进来时的分工）',
+  '1. **模型只做单环节**：环节内怎么想由模型决定；环节之间怎么流转是确定性代码，不是提示词。',
+  '2. **模型产出不可信**：解析走 ParseLLMReport（不是 ParseReport），校验分 warn（留痕）与 critical（整份拦）。',
+  '3. **恢复出来的报告置信度被钳为 low**：下游 needs_review 语义据此承接，别当正常产出用。',
+  '4. **工具面按需披露**：第一轮只给名称与描述，真 schema 要用检索工具取回；被拒**不会**顺手激活工具（那会让「猜参数 ⇒ 被拒 ⇒ 原样重试 ⇒ 放行」成为最短路径），所以 schema 没取回时原样重试必然再被拒。',
+  '5. **工具调用只有一条路**：普通调用 / 程序内调用 / 子进程侧调用都过同一条 invoke.Stage 判定环。',
+  '6. **失败是数据表**：类别 → 可重试性 / 退避 / 需人工 / 重发安全 / 模型指引；重发安全与可重试是两个正交维度。',
+  '7. **判定与处置分离**：内核只回报「该阻断/该重试/不可归类」，动作（阻断、重试、落库、审批）由宿主执行。',
+  '8. **上下文是有限预算**：budget 计量、spill 溢出、offload 外置；offload 首次只标记不替换。',
+  '9. **续跑而非重放**：恢复判定是纯函数（快照 → 续跑计划）；终态只允许提交一次，放闸凭令牌。',
+  '10. **模型不该改的东西**：流程顺序、失败分类口径、隔离档位——这些是代码与门禁，不是提示词。',
   '',
   '## 事实快照',
   '- 模块: ' + bt + 'github.com/yi-nology/goagent-kernel' + bt + ' · Go · MIT · 零 replace（go.mod 含 replace 即门禁红）',

@@ -158,12 +158,25 @@ func TestThreeIndependentAtomicsDoTear(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(400 * time.Millisecond)
+	// 等「读到过撕裂组合」这个**事实**（有界），且必须在并发读写**还在跑**的时候等到：
+	// 墙钟窗口当尺子有两个失效形态——窗口落空（一次撕裂都没读到 ⇒ 假红），
+	// 与窗口够长也证明不了「读法制造出了窗口」。
+	// 轮询间隔（1ms）不是尺子，尺子是 torn > 0 这个可观测事实。
+	tornDeadline := time.Now().Add(5 * time.Second)
+	for torn.Load() == 0 {
+		if time.Now().After(tornDeadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("对照组失效：5s 内一次撕裂都没读到（已读 %d 次），说明读法没制造出窗口——"+
+				"本用例失去了证据价值（要么并发度不足，要么写侧顺序变了）", reads.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(stop)
 	wg.Wait()
 
 	if torn.Load() == 0 {
-		t.Fatal("对照组失效：跑满 400ms 一次撕裂都没读到，说明读法没制造出窗口——" +
+		t.Fatal("对照组失效：一次撕裂都没读到，说明读法没制造出窗口——" +
 			"本用例失去了证据价值（要么并发度不足，要么写侧顺序变了）")
 	}
 	t.Logf("对照成立：%d 次读取中 %d 次读到非法组合", reads.Load(), torn.Load())

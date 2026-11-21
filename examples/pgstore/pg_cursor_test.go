@@ -87,6 +87,11 @@ func mustInsert(t *testing.T, evs *EventStore, typ string) uint64 {
 //
 // 与 TestTailCursorStoreConcurrentTailers 同款范式（done 通道 + 显式等待），
 // 只是收尾点放在用例体内而不是 t.Cleanup 里 ⇒ 「返回前交还」这件事是显式的。
+//
+// ⚠ **收尾点必须写成 `defer stopTailer(...)`**（issue #431）：写成「用例末尾的
+// 普通语句」时，用例中途 t.Fatalf 触发的 runtime.Goexit 会**跳过**它——Goexit
+// 执行所有 defer，但不执行它之后的普通语句 ⇒ tailer 未被 join，而用例已判失败
+// ⇒ 残留 goroutine 在 schema 已删、连接池已关之后仍去读库。
 func stopTailer(t *testing.T, cancel context.CancelFunc, done <-chan struct{}, what string) {
 	t.Helper()
 	cancel()
@@ -122,31 +127,40 @@ func TestTailCursorStoreRestartResumesFromSavedCursor(t *testing.T) {
 	hub1 := eventbus.NewHub()
 	ch1, stop1 := hub1.Subscribe("s")
 	defer stop1()
-	run1, cancel1 := context.WithCancel(context.Background())
-	done1 := make(chan struct{})
-	go func() {
-		eventbus.NewTailer(evs, hub1,
-			eventbus.WithTailInterval(10*time.Millisecond),
-			eventbus.WithTailCursorStore(cs),
-		).Run(run1)
-		close(done1)
+	// 第一程：跑到游标落盘 3 为止，然后**在本程结束时**收尾尾随。
+	//
+	// 收尾点为什么写在闭包的 defer 里（而不是用例体末尾的 defer）：第一程的
+	// tailer 必须在「停机窗口」开始**之前**退出——否则它会吃掉停机窗口里发布
+	// 的事件，第二程就补不到 4..5（用例断言的正是这个）⇒ 用例体末尾的 defer
+	// 会把 join 拖到整个用例结束，**语义改变**。
+	// 闭包返回即触发它的 defer ⇒ 既保住「本程结束就收尾」的语义，又在失败
+	// 路径（t.Fatalf → Goexit）上**仍然 join**（Goexit 执行所有 defer）。
+	func() {
+		run1, cancel1 := context.WithCancel(context.Background())
+		done1 := make(chan struct{})
+		go func() {
+			eventbus.NewTailer(evs, hub1,
+				eventbus.WithTailInterval(10*time.Millisecond),
+				eventbus.WithTailCursorStore(cs),
+			).Run(run1)
+			close(done1)
+		}()
+		defer stopTailer(t, cancel1, done1, "第一程尾随")
+		waitTailCursor(t, cs, 0) // 初始化完成并落盘，才能确定停机窗口起点
+
+		for i, typ := range []string{"e1", "e2", "e3"} {
+			if id := mustInsert(t, evs, typ); id != uint64(i+1) {
+				t.Fatalf("%s 应铸 %d, got %d", typ, i+1, id)
+			}
+		}
+		for i, typ := range []string{"e1", "e2", "e3"} {
+			ev := waitTailEvent(t, ch1, typ)
+			if ev.ID != uint64(i+1) || ev.Type != typ {
+				t.Fatalf("第一程应按序收到 %d(%s), got %d(%s)", i+1, typ, ev.ID, ev.Type)
+			}
+		}
+		waitTailCursor(t, cs, 3)
 	}()
-	waitTailCursor(t, cs, 0) // 初始化完成并落盘，才能确定停机窗口起点
-
-	for i, typ := range []string{"e1", "e2", "e3"} {
-		if id := mustInsert(t, evs, typ); id != uint64(i+1) {
-			t.Fatalf("%s 应铸 %d, got %d", typ, i+1, id)
-		}
-	}
-	for i, typ := range []string{"e1", "e2", "e3"} {
-		ev := waitTailEvent(t, ch1, typ)
-		if ev.ID != uint64(i+1) || ev.Type != typ {
-			t.Fatalf("第一程应按序收到 %d(%s), got %d(%s)", i+1, typ, ev.ID, ev.Type)
-		}
-	}
-	waitTailCursor(t, cs, 3)
-
-	stopTailer(t, cancel1, done1, "第一程尾随")
 
 	// 停机窗口：他副本继续发布。
 	mustInsert(t, evs, "during-downtime-4")
@@ -180,7 +194,7 @@ func TestTailCursorStoreRestartResumesFromSavedCursor(t *testing.T) {
 	}
 	assertNoGap(t, gaps, 80*time.Millisecond)
 	waitTailCursor(t, cs, 5)
-	stopTailer(t, cancel2, done2, "第二程尾随")
+	defer stopTailer(t, cancel2, done2, "第二程尾随")
 }
 
 // TestTailCursorStoreCrashBeforeSaveRereadsNoSkip 崩溃点在「投递后、保存前」：
@@ -223,7 +237,7 @@ func TestTailCursorStoreCrashBeforeSaveRereadsNoSkip(t *testing.T) {
 	}
 	assertNoGap(t, gaps, 80*time.Millisecond)
 	waitTailCursor(t, cs, 4)
-	stopTailer(t, cancel, done, "重读续随尾随")
+	defer stopTailer(t, cancel, done, "重读续随尾随")
 }
 
 // TestTailCursorStoreConcurrentTailers 并发尾随：两个副本各持独立游标并发
