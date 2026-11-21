@@ -905,6 +905,18 @@ var ErrInvalidBudget = errors.New("回合预算声明非法")
 
 ## 11. 宿主接线示例（伪代码，宿主实现）
 
+⚠️ **额度判定只留 `Decide` 一处**：宿主侧**不要**另开一套「回合数额度 / 工具调用
+总额度」的判定分支——`Decide` 内部调的就是 `CheckRounds` / `CheckToolCalls`
+（§6.3），宿主再判一遍会出三个问题：
+
+1. **重复判定**：两套口径各判各的，漂了没人知道；
+2. **死代码**：`Decide` 给出终局结论之后，宿主那套分支**永远执行不到**；
+3. **处置口径分叉**：本地布尔（`forceFinal` 之类）绕过 `Budget.EffectivePolicy()`，
+   把「零值缺省 = 强制收尾」误判成「没设」。
+
+⇒ 处置口径一律取 `Budget.EffectivePolicy()`（**别直接读 `Budget.Policy`**——零值
+是合法缺省，不是第三种口径）；停法一律按 `d.Reason` 分流。
+
 ```go
 // —— 宿主侧（模型面）：内核不调模型，这段在宿主仓 ——
 b := roundguard.Budget{
@@ -918,22 +930,13 @@ meter := roundguard.NewMeter()
 var obs []roundguard.Observation
 
 for {
-    // ① 模型调用前：回合上限用尽？⇒ 按 Policy 处置
-    if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {
-        if b.EffectivePolicy() == roundguard.PolicyForceFinal { // 零值缺省也要算强制收尾：直接比 Policy 会把「没设」误判
-            // 软：不再给工具，让模型用已有证据作答（还需再走一次模型调用）
-            return forceFinal(meter.Used(), v)
-        }
-        // 硬：失败即止
-        return finish(roundguard.Decision{Reason: roundguard.ReasonBudgetExhausted, Limit: v.Limit})
-    }
-
-    // ② 模型调用前：工具调用上限用尽？⇒ 同样按 Policy 处置（转强制收尾）
-    forceFinal := !roundguard.CheckToolCalls(b, meter.Used()).Allowed
-    resp := model.Call(ctx, msgs, tools, optNoTools(forceFinal)) // 宿主调模型
+    // ① 模型调用：这一回合**能不能开始**由上一回合末的 Decide 说了算（见 ③）
+    //    —— 额度判定只做一次、就在 Decide 里，宿主侧不再另开一套额度分支
+    resp := model.Call(ctx, msgs, tools)
     meter.Round()
 
-    // ③ 工具执行前：单工具上限 ⇒ 否决这一次，但**配对不破**
+    // ② 工具执行前：单工具上限 ⇒ 否决这一次，但**配对不破**
+    //    （单工具额度没有内部对应面，只能宿主在工具执行前自己判）
     var results []toolResult
     for _, tc := range resp.ToolCalls {
         if v := roundguard.CheckTool(b, meter.Used(), tc.Name); !v.Allowed {
@@ -943,12 +946,12 @@ for {
         res := execTool(ctx, tc)
         meter.Tool(tc.Name)
         results = append(results, res)
-        obs = append(obs, hostObservation(tc, res)) // 宿主算指纹/归一指纹/失败/进展事实
     }
 
-    // ④ 回合末：一条结论
+    // ③ 回合末：**每回合一条** Observation（工具调用折叠进本回合的计数与指纹）
+    obs = append(obs, hostRoundObservation(resp, results))
     d := roundguard.Decide(roundguard.Snapshot{
-        Outcome: hostOutcome(resp, results, forceFinal), // 宿主把模型回复映射成 Outcome
+        Outcome: hostOutcome(resp, results), // 宿主把本回合的模型回复映射成 Outcome
         Used:    meter.Used(),
         Obs:     obs,
     }, b, cfg)
@@ -958,7 +961,21 @@ for {
         msgs = append(msgs, hostWarnMessage(d.Shape))
     }
     if !d.Continue {
-        // Reason 决定动作：failed/aborted ⇒ 失败；forced_final ⇒ 强制收尾；stalled ⇒ 温和叫停
+        if d.Reason == roundguard.ReasonForcedFinal {
+            // 软：额度用尽但按「强制收尾」口径处置 ⇒ 再给模型一次**不带工具**的
+            // 收尾机会，让它用已收集的证据给出终答（产物仍可用，不是失败）
+            final := model.Call(ctx, msgs, noTools())
+            meter.Round()
+            out := hostOutcome(final, nil)
+            out.ForcedFinal = true // 标记这是「额度耗尽后的强制收尾步」
+            return finish(roundguard.Decide(roundguard.Snapshot{
+                Outcome: out,
+                Used:    meter.Used(),
+                Obs:     obs,
+            }, b, cfg))
+        }
+        // 其余停法按 Reason 处置：budget_exhausted / failed / aborted / no_outcome
+        // 是失败型（IsFailure()==true）；stalled 是温和叫停（产物仍可用）
         return finish(d)
     }
     msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
