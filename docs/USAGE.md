@@ -25,7 +25,7 @@
 ⑦ 流式与退出    delta + drain + pending    ← 流式输出与优雅停机（可选）
 ⑧ 安全面        netguard + pii             ← 出站与个人信息（按需）
 ⑨ 程序化编排    ptc                        ← 多工具聚合场景（进阶）
-⑩ 上游判定面    toolfail / policy / sandbox / injectband（核心在 oagentkit，宿主直连上游）
+⑩ 判定与改派    dispatch + roundguard + 上游 toolfail / policy / sandbox / injectband ← 失败与循环怎么判（上游四件的核心在 oagentkit，宿主直连上游）
 ```
 
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
@@ -37,14 +37,16 @@
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **53** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **61** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | policy 登记 | **61** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
 > | 生命周期登记 | **62** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **53** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个包目录。
+> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个包目录（判据的正式口径是
+> **module id**：61 数的是 `modules` 段的 `- id:` 条目，这些 id 覆盖的 root 目录
+> 共 63 个；「包目录」是判据正则要求的字面量，改它会让 `make docsync` 判红）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -519,15 +521,17 @@ func callTool(...) error {
 
 // 模型侧：Guidance() 是唯一消费方
 func advise(err error) string {
-	f, ok := toolfail.As(err)
-	if !ok {
-		return toolfail.Guidance(err) // 不可归类 → 不可重试，fail-closed
+	if f, ok := toolfail.As(err); ok {
+		// 正交决策：
+		//   f.Retryable()      —— 重试有没有收益
+		//   f.SafeToResubmit() —— 原样重发安不安全
+		//   toolfail.PolicyOf(f.Class).NeedsOperator —— 要不要叫人
+		return f.Guidance()
 	}
-	// 正交决策：
-	//   f.Retryable()      —— 重试有没有收益
-	//   f.SafeToResubmit() —— 原样重发安不安全
-	//   f.NeedsOperator    —— 要不要叫人
-	return f.Guidance()
+	// 链上没有 *Failure：按 Classify 的结论兜底（哨兵 / 自报仍可能判出类别；
+	// 都判不出 ⇒ ClassUnknown ⇒ 不可重试，fail-closed）。
+	// 注意：Guidance 是 *Failure 的**方法**，上游没有包级 toolfail.Guidance(err)。
+	return toolfail.ClassifyAs(toolfail.Classify(err), err).Guidance()
 }
 ```
 
@@ -567,9 +571,11 @@ import (
 )
 
 // 审批门：策略来自宿主的外置 yaml（阈值只降不升）。
-p, err := policy.LoadOverrides(fsys)
+// fsys 与路径都由宿主给出（如 _shared/operation_policy.yaml）；
+// 文件不存在 ⇒ 回内置基座，不报错。
+p, err := policy.LoadOverrides(fsys, "_shared/operation_policy.yaml")
 if err != nil {
-	return err // 解析失败即拒，不带错跑
+	return err // 读取 / 解析失败即拒，不带错跑
 }
 gate := policy.NewGate(p, nil)
 
@@ -2115,7 +2121,7 @@ package myapp
 import "github.com/oagentkit/toolgate/policy"
 
 // 缺文件回内置基座，阈值只降不升
-p, err := policy.LoadOverrides(policyFS) // 路径固定为 _shared/operation_policy.yaml
+p, err := policy.LoadOverrides(policyFS, "_shared/operation_policy.yaml") // 路径由宿主传入
 g := policy.NewGate(p, nil)              // p 为 nil 用内置基座；arbiter 为 nil 则灰区直接升人审
 
 d := g.Decide(ctx, policy.Op{
@@ -2133,7 +2139,7 @@ d := g.Decide(ctx, policy.Op{
 - **`DefaultPolicy` 在上游**：要内置基座就传 `NewGate(nil, nil)`。
 - **`Normalize` 对空/非法一律回落 `confirm`**——审计门不允许因模式脏值放大权限。
 - **`Mutating` 是三态 `*bool`（v0.28.0 随 toolgate v0.17.0）**：字面量直接写
-  bool 编译不过，用门面的 `policy.Mutating(true/false)` 内联构造；不填（nil）
+  bool 编译不过，用上游的 `policy.Mutating(true/false)` 内联构造；不填（nil）
   不是「非变更」，是「未知」——审计门 fail-safe 升人审，不替调用方猜。
 - **`Decide` 只读 policy，并发安全，可放工具调用热路径。**
 
