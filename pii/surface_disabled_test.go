@@ -9,24 +9,14 @@ import (
 	"testing"
 )
 
-// restoreLocal 独立于其他测试文件的清理助手（本文件自洽，不依赖别处的 helper）。
-func restoreLocal(t *testing.T) {
-	t.Helper()
-	t.Cleanup(func() {
-		SetEnabled(true)
-		SetSurfaces(SurfaceAll)
-		_ = SetStrategy(StrategyMask)
-	})
-}
-
 // TestApplyValueRegisteredButDisabledPassthrough 已登记的面被宿主显式关闭时，
 // 载荷必须**原样透传**（含结构），且不得报阻断。
 //
 // 关键在于把策略设成 block：若实现错误地走了处置路径，这里会拿到 blocked=true；
 // 正确实现下「面关闭」先于「策略」生效，所以 blocked 必须是 false。
 func TestApplyValueRegisteredButDisabledPassthrough(t *testing.T) {
-	restoreLocal(t)
-	if err := SetStrategy(StrategyBlock); err != nil {
+	restore(t)
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	// 只留 input 与 output：tool_results 被显式关掉。
@@ -34,7 +24,7 @@ func TestApplyValueRegisteredButDisabledPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	SetSurfaces(ss)
+	setSurfacesForTest(t, ss)
 
 	in := map[string]any{
 		"id":    synMobile,
@@ -81,8 +71,8 @@ func TestApplyValueRegisteredButDisabledPassthrough(t *testing.T) {
 // TestApplyValueRegisteredAndEnabledStillDisposes 与上一条互为对照：
 // 面开着就照样处置。否则「显式关闭」可能被实现成「永远透传」。
 func TestApplyValueRegisteredAndEnabledStillDisposes(t *testing.T) {
-	restoreLocal(t)
-	SetSurfaces(SurfaceAll)
+	restore(t)
+	setSurfacesForTest(t, SurfaceAll)
 
 	out, blocked := ApplyValue(SurfaceToolResults, map[string]string{"k": synMobile})
 	if blocked {
@@ -97,8 +87,8 @@ func TestApplyValueRegisteredAndEnabledStillDisposes(t *testing.T) {
 // TestApplyValueUnknownSurfaceStillBlocks 未登记面名（拼错）仍须 fail-closed，
 // 哪怕其他面都开着——这条是 19:46 修复的核心，不能被「显式关闭」这条路径吃掉。
 func TestApplyValueUnknownSurfaceStillBlocks(t *testing.T) {
-	restoreLocal(t)
-	SetSurfaces(SurfaceAll)
+	restore(t)
+	setSurfacesForTest(t, SurfaceAll)
 
 	in := map[string]any{"id": synMobile, "n": 1}
 	out, blocked := ApplyValue(Surface("tool_result"), in)

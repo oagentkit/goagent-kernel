@@ -27,7 +27,7 @@ func TestApplyHonorsStrategy(t *testing.T) {
 	}
 
 	// redact：整段换占位
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 	if out, _ := Apply(SurfaceInput, synMobile); !strings.Contains(out, redactedPlaceholder) {
@@ -38,10 +38,10 @@ func TestApplyHonorsStrategy(t *testing.T) {
 	}
 
 	// hash：密钥化摘要（可关联；缺密钥 fail-closed，不出摘要）
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	if out, _ := Apply(SurfaceInput, synMobile); out == synMobile || strings.Contains(out, "138") {
@@ -53,7 +53,7 @@ func TestApplyHonorsStrategy(t *testing.T) {
 // 否则「关掉某个敏感面」会被处置路径绕过。
 func TestApplyRespectsDisabledSurfaces(t *testing.T) {
 	restore(t)
-	SetSurfaces(0)
+	setSurfacesForTest(t, 0)
 	raw := "tel " + synMobile
 	if out, blocked := Apply(SurfaceInput, raw); out != raw || blocked {
 		t.Fatalf("全部面关闭时应透传且不阻断，实得 %q blocked=%v", out, blocked)

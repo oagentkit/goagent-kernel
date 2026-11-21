@@ -23,19 +23,18 @@ import (
 // TestPolicySnapshotExposesReadOnlyState 回调参数必须能读出整份策略。
 func TestPolicySnapshotExposesReadOnlyState(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey("0123456789abcdef"); err != nil {
+	if err := setDigestKeyForTest(t, "0123456789abcdef"); err != nil {
 		t.Fatal(err)
 	}
 	surfaces, err := ParseSurfaces("input", "output")
 	if err != nil {
 		t.Fatal(err)
 	}
-	SetSurfaces(surfaces)
-	if err := SetStrategy(StrategyHash); err != nil {
+	setSurfacesForTest(t, surfaces)
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
-	SetEnabled(false)
-	defer SetEnabled(true)
+	setEnabledForTest(t, false)
 
 	got := CurrentPolicy()
 	if got.Gen() != Gen() {
@@ -62,7 +61,7 @@ func TestPolicySnapshotExposesReadOnlyState(t *testing.T) {
 // 而不是一个读不出东西的哑值；写入方后续换策略不得改写它手里的快照。
 func TestSubscribeCallbackSnapshotIsReadable(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyMask); err != nil {
+	if err := setStrategyForTest(t, StrategyMask); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +88,7 @@ func TestSubscribeCallbackSnapshotIsReadable(t *testing.T) {
 	}
 
 	// 换策略：回调参数必须跟着换，且代次前进。
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 	second := <-ch
@@ -103,7 +102,7 @@ func TestSubscribeCallbackSnapshotIsReadable(t *testing.T) {
 	// 同一份快照在写侧继续换策略后仍逐字不变（值语义，不可被就地改）。
 	snapshot := CurrentPolicy()
 	snapshotGen, snapshotStrategy := snapshot.Gen(), snapshot.Strategy()
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	if snapshot.Gen() != snapshotGen || snapshot.Strategy() != snapshotStrategy {
@@ -151,11 +150,11 @@ func TestSubscriberObservesMonotonicGenerations(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < perWriter; j++ {
 				if i%2 == 0 {
-					_ = SetStrategy(StrategyMask)
+					_ = setStrategyForTest(t, StrategyMask)
 				} else {
-					_ = SetStrategy(StrategyRedact)
+					_ = setStrategyForTest(t, StrategyRedact)
 				}
-				SetSurfaces(SurfaceSet(j%3) + 1)
+				setSurfacesForTest(t, SurfaceSet(j%3)+1)
 			}
 		}(i)
 	}
@@ -213,7 +212,7 @@ func TestSubscribeInsideCallbackDoesNotSelfLock(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("回调内 Subscribe 自锁")
 	}
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 }

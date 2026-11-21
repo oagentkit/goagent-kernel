@@ -15,12 +15,12 @@ import (
 //
 // 本测试断言两件事：原文没有出去，且调用方拿到了可履行的阻断信号。
 func TestUnknownSurfaceFailsClosed(t *testing.T) {
-	SetEnabled(true)
-	t.Cleanup(func() { SetEnabled(false) })
-	if err := SetStrategy(StrategyRedact); err != nil {
+	restore(t)
+	setEnabledForTest(t, true)
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatalf("SetStrategy: %v", err)
 	}
-	SetSurfaces(SurfaceAll)
+	setSurfacesForTest(t, SurfaceAll)
 
 	const secret = "联系 13800138000"
 	// 故意用未登记的面名——正是拼错时的现场。
@@ -66,9 +66,9 @@ func TestValidateSurfaceCatchesTypos(t *testing.T) {
 // 宿主**显式**关闭某个面时，仍然是原文返回、不阻断。fail-closed 只针对「未登记」，
 // 不能把「显式关闭」也一并改掉——那会让宿主无法关掉某个面。
 func TestExplicitlyDisabledSurfaceStillPassesThrough(t *testing.T) {
-	SetEnabled(true)
-	t.Cleanup(func() { SetEnabled(false) })
-	if err := SetStrategy(StrategyRedact); err != nil {
+	restore(t)
+	setEnabledForTest(t, true)
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatalf("SetStrategy: %v", err)
 	}
 
@@ -79,8 +79,7 @@ func TestExplicitlyDisabledSurfaceStillPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseSurfaces 应接受已登记面名: %v", err)
 	}
-	SetSurfaces(ss)
-	t.Cleanup(func() { SetSurfaces(SurfaceAll) })
+	setSurfacesForTest(t, ss)
 
 	out, blocked := Apply(SurfaceToolResults, text)
 	if out != text {
@@ -94,12 +93,12 @@ func TestExplicitlyDisabledSurfaceStillPassesThrough(t *testing.T) {
 // TestUnknownSurfaceStillRedactsWhenStrategyIsMask 确认 fail-closed 分支不依赖策略：
 // 即使策略是 mask（而非 redact），未登记面也不该放行原文。
 func TestUnknownSurfaceStillRedactsWhenStrategyIsMask(t *testing.T) {
-	SetEnabled(true)
-	t.Cleanup(func() { SetEnabled(false) })
-	if err := SetStrategy(StrategyMask); err != nil {
+	restore(t)
+	setEnabledForTest(t, true)
+	if err := setStrategyForTest(t, StrategyMask); err != nil {
 		t.Fatalf("SetStrategy: %v", err)
 	}
-	SetSurfaces(SurfaceAll)
+	setSurfacesForTest(t, SurfaceAll)
 
 	const secret = "联系 13800138000"
 	out, blocked := Apply(Surface("nonexistent"), secret)
