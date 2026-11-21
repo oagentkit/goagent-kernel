@@ -290,8 +290,21 @@ func TestTailerRunReturnsCleanlyOnCancel(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ctx 取消后 2s 内 Run 未返回（循环退出不干净）")
 	}
+	// Run 返回即断言：不用墙钟窗口当尺子（下面写明这条断言当前恒真）。
+	//
+	// # 这条断言当前**恒真**——它的价值是拦住将来某个实现
+	//
+	// Tailer.Run 是**同步循环、无内部 goroutine**（tail.go：for { select {
+	// ctx.Done → return } }），Run 一返回，循环就结束了 ⇒ Run 返回后不可能
+	// 再有读存储的动作。故原来的 50ms 窗口对这条断言零信息量：它测的不是
+	// 「Run 返回后没再读存储」，而是「时间过去了」——窗口里 tailer 一拍都没
+	// 转也一样绿。
+	//
+	// 保留它的意义在**将来**：若有人给 Run 加停机扫尾/异步收尾（Run 先返回、
+	// 另起 goroutine 继续收尾），两次读之间就会不等，这条断言当场转红。
+	//
+	// Run 返回**之前**的可观测证据在上面那一段（等 maxIDs() != 0 ⇒ 循环真转过）。
 	before := len(store.cursors())
-	time.Sleep(50 * time.Millisecond)
 	if after := len(store.cursors()); after != before {
 		t.Fatalf("Run 返回后仍在读存储（泄漏）: %d → %d", before, after)
 	}

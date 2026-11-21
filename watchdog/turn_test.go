@@ -142,8 +142,18 @@ func TestTurnBracketShutdownLeavesOpenSilently(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	w.Run(ctx, eventbus.New())
-	time.Sleep(2 * time.Millisecond)
 
+	// Run 返回即断言：不用墙钟窗口当尺子（下面写明这条断言当前恒真）。
+	//
+	// # 这条断言当前**恒真**——它的价值是拦住将来某个实现
+	//
+	// 清扫只发生在**事件处理路径内联**（watchdog.go：observe → maybeSweep），
+	// 而 Run 在 ctx 已取消时直接返回 ⇒ Run 返回后不可能再有清扫。
+	// 故原来的 2ms 窗口对这条断言零信息量：它测的不是「停机不误报泄漏」，
+	// 而是「时间过去了」——清扫压根没机会跑，窗口长短都一样绿。
+	//
+	// 保留它的意义在**将来**：若有人给 Run 加停机扫尾（停机时把未闭合轮
+	// 当泄漏报出来），这条断言会当场转红。
 	if n := r.count(); n != 0 {
 		t.Fatalf("停机退出不应把未闭合轮当泄漏: %v", reasons(r, eventbus.EventTurnBracketViolation))
 	}
