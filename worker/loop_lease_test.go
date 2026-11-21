@@ -39,10 +39,12 @@ func (r *flakyRegistry) Heartbeat(ctx context.Context, id, token string, ttl tim
 // flakyBoard 续期可注入持续故障的任务板替身（其余方法走 BoardAdapter）。
 type flakyBoard struct {
 	*coord.BoardAdapter
-	failRenew atomic.Bool
+	failRenew  atomic.Bool
+	renewCalls atomic.Int64 // Renew 被调计数（可观测事实：等拍数的尺子）
 }
 
 func (b *flakyBoard) Renew(ctx context.Context, id taskboard.TaskID, token string, req taskboard.ClaimRequest) (taskboard.Task, error) {
+	b.renewCalls.Add(1)
 	if b.failRenew.Load() {
 		return taskboard.Task{}, errors.New("worker: 任务板续期存储抖动（替身）")
 	}

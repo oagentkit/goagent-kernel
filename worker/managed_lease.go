@@ -103,6 +103,10 @@ type LeaseSessionConfig struct {
 	// Now 本地单调时钟注入点（持续故障失格判定的唯一时钟源）。
 	// 零值 = time.Now；测试注入假时钟，否则「超过 TTL 未确认」场景
 	// 恒不触发、判据退化成空断言。
+	//
+	// @seam: no-reentry no-blocking panic-caller
+	// 约束同 ClockedStore.UseClock（issue #369）：注入回调不得在持有本包
+	// 互斥锁时被调用（重入即死锁）、不得阻塞；panic 由调用方兜。
 	Now func() time.Time
 }
 
@@ -194,8 +198,10 @@ func (s *leaseSession) renewLoop() {
 		_, err := s.board.Renew(s.ctx, s.id, s.token, taskboard.ClaimRequest{TTL: s.ttl})
 		switch {
 		case err == nil:
+			// 锁外取时钟（#369：注入回调可能重入本包，持锁调用即死锁）。
+			confirmedAt := s.now()
 			s.mu.Lock()
-			s.confirmedAt = s.now()
+			s.confirmedAt = confirmedAt
 			s.mu.Unlock()
 			continue
 		case errors.Is(err, taskboard.ErrLeaseLost):

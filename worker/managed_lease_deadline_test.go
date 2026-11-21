@@ -37,6 +37,19 @@ func startFlakySession(t *testing.T, clock *testClock, board *flakyBoard) LeaseS
 	return session
 }
 
+// waitRenewCalls 等 Renew 被调够 want 拍——尺子是**可观测事实**（计数），
+// 不是 sleep 窗口；sleep 只是轮询退避（wallclock-ruler 规则豁免的形态）。
+func waitRenewCalls(t *testing.T, b *flakyBoard, want int64) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for b.renewCalls.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("等待续期 %d 拍超时（当前 %d 拍）", want, b.renewCalls.Load())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestLeaseSessionLosesWhenStoreUnreachablePastDeadline(t *testing.T) {
 	clock := newTestClock()
 	board := &flakyBoard{BoardAdapter: newTestBoard(clock)}
@@ -44,7 +57,7 @@ func TestLeaseSessionLosesWhenStoreUnreachablePastDeadline(t *testing.T) {
 	defer func() { _ = session.Close(context.Background()) }()
 
 	// 持续故障若干拍（时钟未动：仍在资格窗口内，不得失格）。
-	time.Sleep(200 * time.Millisecond)
+	waitRenewCalls(t, board, 3)
 	select {
 	case <-session.Context().Done():
 		t.Fatal("资格窗口内的一拍失败不得失格（自愈语义）")
@@ -72,10 +85,10 @@ func TestLeaseSessionSurvivesTransientFailuresWithinDeadline(t *testing.T) {
 	session := startFlakySession(t, clock, board)
 	defer func() { _ = session.Close(context.Background()) }()
 
-	// 故障 200ms（时钟不动），随后时钟推进 30s（< TTL−margin），再故障。
-	time.Sleep(200 * time.Millisecond)
+	// 故障 ≥3 拍（时钟不动），随后时钟推进 30s（< TTL−margin），继续故障。
+	waitRenewCalls(t, board, 3)
 	clock.Advance(30 * time.Second)
-	time.Sleep(200 * time.Millisecond)
+	waitRenewCalls(t, board, 6)
 
 	select {
 	case <-session.Context().Done():
