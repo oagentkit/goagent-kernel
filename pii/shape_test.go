@@ -63,7 +63,7 @@ func TestUnknownShapesFailClosed(t *testing.T) {
 	}
 
 	// block 档同样阻断——实证里「换成 StrategyBlock 后仍 blocked=false」正是缺陷。
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	if _, blocked := ApplyValue(SurfaceToolResults, unknownShapePayload()); !blocked {

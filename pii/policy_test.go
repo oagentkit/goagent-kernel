@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/oekit/pkg/errors"
 )
@@ -18,28 +17,6 @@ const (
 	synMobile = "13800001234"
 	synID     = "110105199001011232"
 )
-
-// restore 在每个策略用例后还原全局，避免用例间串扰。
-func restore(t *testing.T) {
-	t.Helper()
-	// 清理跑在测试 goroutine 上，而清理要写策略 → 要走通知路径；通知若真在锁内
-	// （TestSubscriberMaySetStrategyRecursively 要抓的正是这个），清理自己也会撞锁
-	// 并卡死，死锁就从「那个用例红」变成「整个二进制挂到总超时」。故清理限时等待。
-	t.Cleanup(func() {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			SetSurfaces(SurfaceAll)
-			_ = SetStrategy(StrategyMask)
-			_ = SetDigestKey("") // hash 档用例注入的密钥一并清掉，防用例间串扰
-			SetEnabled(true)
-		}()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-		}
-	})
-}
 
 func TestSurfaceDefaultsAllOn(t *testing.T) {
 	restore(t)
@@ -89,7 +66,7 @@ func TestStrategyDefaultsMask(t *testing.T) {
 
 func TestStrategyUnknownRejected(t *testing.T) {
 	restore(t)
-	if err := SetStrategy("nonsense"); !errors.Is(err, ErrUnknownStrategy) {
+	if err := setStrategyForTest(t, "nonsense"); !errors.Is(err, ErrUnknownStrategy) {
 		t.Fatalf("未知策略应报错，实得 %v", err)
 	}
 	if Strategy() != StrategyMask {
@@ -115,7 +92,7 @@ func TestApplyMaskKeepsLength(t *testing.T) {
 // TestApplyRedactAndHash 三种非阻断策略各按其形态。
 func TestApplyRedactAndHash(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 	out, blocked := Apply(SurfaceOutput, synID)
@@ -126,11 +103,11 @@ func TestApplyRedactAndHash(t *testing.T) {
 		t.Fatalf("redact 应整段替换为占位，实得 %q", out)
 	}
 
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 	// hash 档需要密钥（缺密钥 fail-closed，见 digest_keyed_test.go）。
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
 	h1, _ := Apply(SurfaceOutput, synID)
@@ -150,7 +127,7 @@ func TestApplyRedactAndHash(t *testing.T) {
 // TestApplyBlockReportsBlocked block 策略下检出即回报，且**本包不代抛**。
 func TestApplyBlockReportsBlocked(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	_, blocked := Apply(SurfaceInput, "tel "+synMobile)
@@ -166,10 +143,10 @@ func TestApplyBlockReportsBlocked(t *testing.T) {
 // TestApplyDisabledSurfacePassthrough 面未启用 → 原样透传且不阻断。
 func TestApplyDisabledSurfacePassthrough(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
-	SetSurfaces(surfaceInputBit)
+	setSurfacesForTest(t, surfaceInputBit)
 	raw := "tel " + synMobile
 	out, blocked := Apply(SurfaceToolResults, raw)
 	if out != raw || blocked {
@@ -180,7 +157,7 @@ func TestApplyDisabledSurfacePassthrough(t *testing.T) {
 // TestApplyGlobalOffPassthrough 全局关闭 → 透传（宿主显式关闭的既定语义）。
 func TestApplyGlobalOffPassthrough(t *testing.T) {
 	restore(t)
-	SetEnabled(false)
+	setEnabledForTest(t, false)
 	raw := "tel " + synMobile
 	out, blocked := Apply(SurfaceInput, raw)
 	if out != raw || blocked {
@@ -229,7 +206,7 @@ func TestApplyValueMapStringString(t *testing.T) {
 // 只看顶层会漏掉深层载荷里的敏感值。
 func TestApplyValueBlockPropagatesFromNested(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	deep := map[string]any{"a": []any{map[string]any{"b": synMobile}}}
@@ -287,7 +264,7 @@ func TestApplySpansOneStrategyPerCall(t *testing.T) {
 	}
 	// hash 档缺密钥会 fail-closed，给两条路径注入同一密钥，保持「一次处置 =
 	// 一个策略」的可比性。
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cases {
@@ -299,7 +276,7 @@ func TestApplySpansOneStrategyPerCall(t *testing.T) {
 		c.shape(t, out)
 
 		// 全局入口：宿主设好策略后调用，两条路径必须给出同一结果。
-		if err := SetStrategy(c.s); err != nil {
+		if err := setStrategyForTest(t, c.s); err != nil {
 			t.Fatal(err)
 		}
 		got, gblocked := Apply(SurfaceOutput, txt)

@@ -41,10 +41,10 @@ func unsaltedPrefix(v string, kind Kind) string {
 // 反向验证：把缺密钥分支改回「照常出无盐摘要」⇒ 本用例转红。
 func TestHashWithoutKeyFailsClosed(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey(""); err != nil {
+	if err := setDigestKeyForTest(t, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -76,10 +76,10 @@ func TestHashWithoutKeyFailsClosed(t *testing.T) {
 // 「不等于无盐前缀」两条断言当场转红。
 func TestHashKeyedCorrelatable(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +98,7 @@ func TestHashKeyedCorrelatable(t *testing.T) {
 	}
 
 	// 换密钥 ⇒ 摘要变化（密钥确实参与了摘要，不是摆设）。
-	if err := SetDigestKey(testDigestKey2); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey2); err != nil {
 		t.Fatal(err)
 	}
 	h3, _ := Apply(SurfaceOutput, synMobile)
@@ -118,10 +118,10 @@ func TestHashKeyedCorrelatable(t *testing.T) {
 // 必然命中；密钥化后整个枚举一次都不该命中。
 func TestHashResistsDomainEnumeration(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetStrategy(StrategyHash); err != nil {
+	if err := setStrategyForTest(t, StrategyHash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,19 +142,19 @@ func TestHashResistsDomainEnumeration(t *testing.T) {
 func TestSetDigestKeyGuards(t *testing.T) {
 	restore(t)
 
-	if err := SetDigestKey("short"); !errors.Is(err, ErrDigestKeyTooShort) {
+	if err := setDigestKeyForTest(t, "short"); !errors.Is(err, ErrDigestKeyTooShort) {
 		t.Fatalf("过短密钥应报 ErrDigestKeyTooShort，实得 %v", err)
 	}
 	if DigestKeyed() {
 		t.Fatal("被拒绝的密钥不得生效")
 	}
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
 	if !DigestKeyed() {
 		t.Fatal("注入后 DigestKeyed 应为真")
 	}
-	if err := SetDigestKey(""); err != nil {
+	if err := setDigestKeyForTest(t, ""); err != nil {
 		t.Fatal(err)
 	}
 	if DigestKeyed() {

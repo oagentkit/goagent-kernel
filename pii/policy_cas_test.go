@@ -91,7 +91,7 @@ func TestPolicySnapshotIsObservable(t *testing.T) {
 		t.Fatal("代次缺省应为 1")
 	}
 
-	SetEnabled(false)
+	setEnabledForTest(t, false)
 	if Enabled() {
 		t.Fatal("SetEnabled(false) 后 Enabled 仍为 true")
 	}
@@ -99,7 +99,7 @@ func TestPolicySnapshotIsObservable(t *testing.T) {
 		t.Fatalf("代次应随替换递增：before=%d after=%d", before, Gen())
 	}
 
-	SetEnabled(true)
+	setEnabledForTest(t, true)
 	if !Enabled() {
 		t.Fatal("SetEnabled(true) 后 Enabled 仍为 false")
 	}

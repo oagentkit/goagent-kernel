@@ -68,7 +68,7 @@ func TestMapKeysDisposedSameAsValues(t *testing.T) {
 // 否则 block 档下宿主对「键位明文」依旧毫无感知（缺陷形态的第二重危害）。
 func TestMapKeyBlockSignal(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyBlock); err != nil {
+	if err := setStrategyForTest(t, StrategyBlock); err != nil {
 		t.Fatal(err)
 	}
 	in := map[string]any{"13812345678": "profile", "order_id": "ORD-1"}
@@ -89,7 +89,7 @@ func TestMapKeyBlockSignal(t *testing.T) {
 // map 迭代无序，可关联性不得依赖迭代顺序：同一载荷连跑 50 次，结果必须逐字一致。
 func TestMapKeyCorrelatableAcrossCalls(t *testing.T) {
 	restore(t)
-	if err := SetDigestKey(testDigestKey); err != nil {
+	if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,10 +113,10 @@ func TestMapKeyCorrelatableAcrossCalls(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			restore(t)
-			if err := SetDigestKey(testDigestKey); err != nil {
+			if err := setDigestKeyForTest(t, testDigestKey); err != nil {
 				t.Fatal(err)
 			}
-			if err := SetStrategy(c.s); err != nil {
+			if err := setStrategyForTest(t, c.s); err != nil {
 				t.Fatal(err)
 			}
 			first, _ := ApplyValue(SurfaceToolResults, in)
@@ -135,7 +135,7 @@ func TestMapKeyCorrelatableAcrossCalls(t *testing.T) {
 // **不得丢条目**，且编号只依赖键集合（按原键字典序），与迭代顺序无关。
 func TestMapKeyCollisionKeepsEntries(t *testing.T) {
 	restore(t)
-	if err := SetStrategy(StrategyRedact); err != nil {
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
 
@@ -159,7 +159,7 @@ func TestMapKeyCollisionKeepsEntries(t *testing.T) {
 	}
 
 	// mask 的中段碰撞同规则。
-	if err := SetStrategy(StrategyMask); err != nil {
+	if err := setStrategyForTest(t, StrategyMask); err != nil {
 		t.Fatal(err)
 	}
 	out2, _ := ApplyValue(SurfaceToolResults, map[string]string{
@@ -178,12 +178,11 @@ func TestMapKeyCollisionKeepsEntries(t *testing.T) {
 // 但 PII 键不得借道原文放行——span 级判定照走；普通键逐字保留。
 func TestMapKeysUnderUnknownSurfaceKeepNavigability(t *testing.T) {
 	restore(t)
-	SetEnabled(true)
-	t.Cleanup(func() { SetEnabled(false) })
-	if err := SetStrategy(StrategyRedact); err != nil {
+	setEnabledForTest(t, true)
+	if err := setStrategyForTest(t, StrategyRedact); err != nil {
 		t.Fatal(err)
 	}
-	SetSurfaces(SurfaceAll)
+	setSurfacesForTest(t, SurfaceAll)
 
 	const secret = "联系 13800138000"
 	bad := Surface("tool_result")
