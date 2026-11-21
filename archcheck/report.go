@@ -83,6 +83,21 @@ func WriteReport(w io.Writer, res *Result, opts ReportOptions) error {
 		rw.println()
 	}
 
+	// 已标记失效待删的例外（issue #447 的后半句）：它们不参与僵尸判定，但必须被
+	// 逐条点名——否则 `status: stale` 会变成一个写了没人看的字段，「已失效待删」
+	// 与「在用」在报告里长得一模一样。
+	var staleShown int
+	for _, ex := range res.Exceptions {
+		if ex.Status == exceptionStatusStale {
+			staleShown++
+			rw.printf("\n  ⚠ 已标记失效待删（status: %s）：%s:%d [%s] —— %s",
+				exceptionStatusStale, ex.Path, ex.Line, ex.Rule, firstLine(ex.Reason))
+		}
+	}
+	if staleShown > 0 {
+		rw.println()
+	}
+
 	if len(res.ThresholdFindings) > 0 {
 		verb := "报告口径，不阻断"
 		if res.ThresholdEnforced {
