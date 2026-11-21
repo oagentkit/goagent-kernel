@@ -641,7 +641,7 @@ func Detect(obs []Observation, cfg Config) Finding
 |---|---|---|---|---|
 | 1 | 尾部连续 `Failed` 全为 true，L ≥ k | `ShapeErrorSpiral` | k | **不参与**（失败事实与「结果变了」无关：结果变了的失败**仍是失败** ⇒ 连续性不被打断） |
 | 2 | 尾部连续 `Fingerprint` 全等，L ≥ k | `ShapeRepeat` | k | **打断**（末轮 RC ⇒ 长度重起算，只算它自己；中间的 RC ⇒ 该段从它之后重新起算） |
-| 3 | 尾部呈周期 2 交替：相邻不等且 `f[i]==f[i+2]`，L ≥ 2k（`A A A` 是周期 1，故不与「重复」混淆） | `ShapeOscillation` | 2k | **打断**（**任一位置**，含非末轮 ⇒ 该处连续性重新起算） |
+| 3 | 尾部呈周期 2 交替：相邻不等且 `f[i]==f[i+2]`，L ≥ 2k（`A A A` 是周期 1，故不与「重复」混淆） | `ShapeOscillation` | 2k | **打断**：**末位 / 次末位**带 RC ⇒ 整段不算震荡（长度归零）；更早的位置带 RC ⇒ 该处连续性从它之后**重新起算** |
 | 4 | 尾部连续 `Normalized` 全等 **且** 原 `Fingerprint` 不全等，L ≥ k | `ShapeDrift` | k | **打断**（与第 2 行**同口径**：末轮 RC ⇒ 长度重起算） |
 | 5 | 尾部连续 `Tools == 0` 且 `Settled` 全为 false，L ≥ k | `ShapeIdle` | k | **不参与**（空转看的是「有没有动手 / 收没收敛」：出了新结果但仍零工具、仍未收敛 ⇒ **仍是空转**） |
 
