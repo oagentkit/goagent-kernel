@@ -1033,7 +1033,7 @@ modules:
     owner: harness
     managed: true
     notes: |
-      回合守卫：模型侧循环的回合结局分类 + 次数预算 + 无进展检测。
+      回合守卫：模型侧循环的回合结局分类 + 次数预算 + 无进展检测 + 组合结论 Decide。
       零内部依赖是刻意的——budget/cost/deadline/watchdog 是**平级的不同量纲**，
       互相不引（引了就成环，且两处口径会漂）。回合结局是**第三根轴**，
       不复用 contract 会话状态 / statemachine 环节状态。

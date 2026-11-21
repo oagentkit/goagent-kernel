@@ -58,10 +58,20 @@
 
 ### 1.3 53 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（53 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **61 个**
-> 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
+> 口径：与 README 包表（**53** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
+> **61 个 module id**（`make architecture-check` 打印的「61 个包的依赖方向」就是它）。
+> **61 与 53 差的 8 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
+> `reference-runtime` / `pgrefstore` / `sqliteadapter` / `containerbackend` /
+> `worker-runtime-ref`（根在 `examples/*`）、`ptcchild`（根在 `cmd/ptcchild`）、
+> `subhub` / `ledgerstatus`（根在 `internal/*`）——README 包表只收一级目录，故它们
+> 不进表，但**照样在依赖方向门禁下**。
+> ⚠️ **两个数不是同一种量**：61 数的是 **module id**（`archcheck` 打印
+> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 63 个**——`taskboard` 与
+> `pgrefstore` 各有两个 root；`taskboard` 的第二个 root 是 `taskboard/boardtest`，
+> 它计在 `taskboard` 行内，**不是独立的 module id**。
 > 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
-> `toolfail` / `sandbox` 四个门面包在 v0.35.0 已整包删除（消费方直连上游），
+> `toolfail` / `sandbox` 四个门面包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
+> 宿主直连上游矩阵 `oagentkit/toolgate/policy` 与 `oagentkit/guardx/*`），
 > 而 `scheduling` / `eval` / `coord` / `handoff` / `ownership` / `worker` /
 > `backend` / `metrics` / `cost` / `tenant` / `controlplane` / `roundguard`
 > 十二个包此前漏登记。
@@ -129,12 +139,12 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 |---|---|---|
 | 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
 | 环节状态流转 | `statemachine` | 纯函数件，305 行，依赖 oekit/pkg |
-| 工具失败分类（可重试/退避/需人工/重发安全） | `toolfail` | 分类是**数据表**，不要散落 if |
+| 工具失败分类（可重试/退避/需人工/重发安全） | 上游 `guardx/toolfail`（**本仓不再提供该包**）| 分类是**数据表**，不要散落 if |
 | 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
 | 工具名 → JS 标识符 | `toolname` | **单一真相**，`tooldisclose` 与 `ptc` 共用 |
 | 沙箱内程序化编排 | `ptc` | 程序内 `host.<tool>()` 也要过判定环 |
-| 执行沙箱的档位语义与后端协议 | `sandbox` | 档位是后端**自报**的，内核不校验其真实性；要求档位**无满足者即拒绝**，不降级 |
+| 执行沙箱的档位语义与后端协议 | 上游 `guardx/sandbox`（**本仓不再提供该包**）| 档位是后端**自报**的，内核不校验其真实性；要求档位**无满足者即拒绝**，不降级 |
 | 续跑快照、序号闸 | `checkpoint` | 「续跑而非重放」三条硬规则 + 依赖声明（并行组乱序采信）|
 | 终态独占提交闸 | `commitgate` | 放闸靠**令牌**，不靠内容比对认人 |
 | 输入侧上下文预算 | `budget` | 分段计量（区分工具面膨胀 vs 历史膨胀） |
@@ -539,9 +549,9 @@ make check
 | `harness-no-bare-goroutine` | 生产代码裸 `go func` / `go someFunc()` | 走 `concurrency/async.GoSafe` |
 | `harness-no-printf-log-callback` | 公开 API 里的 `logf func(string, ...any)` | 留痕走 `logx.Delegating` 懒解析 |
 | `harness-single-errors-package` | stdlib `"errors"` 与 `github.com/pkg/errors` | 只用 `oekit/pkg/errors` 一套 |
-| `harness-sandbox-execution-single-entry` | 生产代码在 `sandbox` 包外直接 `import "os/exec"` | 外部程序执行只允许经 `sandbox` 包登记的后端 |
+| `harness-sandbox-execution-single-entry` | 生产代码在 `ptc` 执行后端外直接 `import "os/exec"` | 外部程序执行只允许经 **`ptc` 执行后端**（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
 | `harness-sandbox-provider-declared` | 执行沙箱后端的档位没登记在 `sandbox_providers` 段，或登记与代码事实不一致 | 补登记 / 同步登记的档位常量名（LevelNone/LevelProcess/LevelOS/LevelMachine）|
-| `harness-facade-stays-facade` | 三个门面包长出实现 | 逻辑放上游 `oagentkit/*`，本仓只留转发 |
+| `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**）| 逻辑放上游 `oagentkit/*`，本仓只留转发 |
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
 | `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询 `SatisfiedBy`）；登记 `denied`（本层无法兑现）；登记已陈旧；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`——按**文件**判，不按启动函数判）| 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env **并**在 spawn 前问一次后端能力（`Spec.SatisfiedBy`）/ 改档位。**`denied` 在本层是造假，不是配置**；子进程环境必须由 `procx.ChildEnv` 白名单生成 |

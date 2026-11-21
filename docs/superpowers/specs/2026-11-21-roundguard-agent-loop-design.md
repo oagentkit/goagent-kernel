@@ -918,7 +918,7 @@ var obs []roundguard.Observation
 for {
     // ① 模型调用前：回合上限用尽？⇒ 按 Policy 处置
     if v := roundguard.CheckRounds(b, meter.Used()); !v.Allowed {
-        if b.Policy == roundguard.PolicyForceFinal {
+        if b.EffectivePolicy() == roundguard.PolicyForceFinal { // 零值缺省也要算强制收尾：直接比 Policy 会把「没设」误判
             // 软：不再给工具，让模型用已有证据作答（还需再走一次模型调用）
             return forceFinal(meter.Used(), v)
         }
