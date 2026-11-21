@@ -23,7 +23,7 @@ import (
 // # 反向验证（坏实现会红）
 //
 // 删掉 Detect 里的「if k < 2 { k = 2 }」⇒ k=1 时单回合又判成重复首档、漂移
-// 又不可达 ⇒ 本文件的三条用例同时红 ⇒ 钳位的承重夹具在这里。
+// 又不可达 ⇒ 本文件的四条用例同时红 ⇒ 钳位的承重夹具在这里。
 //
 // 合成数据：指纹用字母串（a / b / c），工具标识用 read / write。
 
@@ -82,22 +82,39 @@ func TestDetectRepeatOneEqualsRepeatTwo(t *testing.T) {
 	}
 }
 
-// TestDetectRepeatBelowOneClampedToTwo 钉住更小的 k（负数 / 0 / 1）都落到 2。
+// TestDetectRepeatOutOfRangeClampAndDefault 钉住越界 k 的**两条不同口径**：
 //
-// 为什么单独一条：0 与负数的口径是「按缺省处理」（k=DefaultRepeat），而 1 的
-// 口径是「钳到 2」——两条口径**不同**，别让实现把 1 也当成缺省（那会静默把
-// 阈值抬到 3，与「至少取 2」的契约不符）。
-func TestDetectRepeatBelowOneClampedToTwo(t *testing.T) {
+//	k = 1        → **向上钳位到 2**（漂移形态要可达 ⇒ 阈值不得退化成 1）；
+//	k = 0 / 负数 → **按缺省处理**（k = DefaultRepeat），**不是**钳到 2。
+//
+// 为什么单独一条：两条口径**不同**，别让实现把 1 也当成缺省（那会静默把阈值
+// 抬到 3，与「至少取 2」的契约不符），也别把 0/负数当成钳到 2（那会把「没配
+// 阈值」误读成「只要 2 回合就重复」）。
+//
+// 终审复审 F4 指出：原用例的 k=0/-1 分支只有 `if k == 1 &&` 守卫 ⇒ 那个分支
+// **只被计算、从未被断言**（死代码）⇒「0/负数走缺省」这条口径没有任何断言
+// 钉住，将来被改成别的值也不会红；用例名「BelowOneClampedToTwo」还与它自己
+// 的注释相矛盾。本条把两条口径都补成**真断言**，名字也随之改成实话。
+func TestDetectRepeatOutOfRangeClampAndDefault(t *testing.T) {
 	seq := []roundguard.Observation{
 		{Fingerprint: "a", Normalized: "n", Tools: 1},
 		{Fingerprint: "b", Normalized: "n", Tools: 1},
 	}
 
-	want := roundguard.Detect(seq, roundguard.Config{Repeat: 2})
-	for _, k := range []int{1, 0, -1} {
+	wantClamp := roundguard.Detect(seq, roundguard.Config{Repeat: 2})
+	wantDefault := roundguard.Detect(seq, roundguard.Config{Repeat: roundguard.DefaultRepeat})
+
+	// k=1：向上钳位到 2（钳位被删 ⇒ 这里立刻红）
+	if got := roundguard.Detect(seq, roundguard.Config{Repeat: 1}); got != wantClamp {
+		t.Fatalf("k=1 应钳到 2：判 %+v，k=2 判 %+v", got, wantClamp)
+	}
+
+	// k=0 / 负数：按缺省处理（= DefaultRepeat），**不是**钳到 2
+	for _, k := range []int{0, -1, -7} {
 		got := roundguard.Detect(seq, roundguard.Config{Repeat: k})
-		if k == 1 && got != want {
-			t.Fatalf("k=1 应钳到 2：判 %+v，k=2 判 %+v", got, want)
+		if got != wantDefault {
+			t.Fatalf("k=%d 应按缺省（DefaultRepeat=%d）处理：判 %+v，缺省判 %+v",
+				k, roundguard.DefaultRepeat, got, wantDefault)
 		}
 	}
 }
