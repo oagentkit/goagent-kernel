@@ -280,3 +280,83 @@ type Outer struct {
 			"Go 里那个名字是歧义选择器、不可调用，不属交付面", ambN)
 	}
 }
+
+// TestCountingRulesCountAliasExposedMembers：**导出别名指向本包未导出类型**时，
+// 被别名暴露出去的那一面必须计入。
+//
+// 为什么必须钉这条（终审 Minor M2）：`type Alias = inner`（inner 未导出）时，
+// `Alias` 与 `inner` 是**同一个类型** ⇒ 宿主 import 得到 `Alias` 就拿到了 inner 的
+// 字段与方法 ⇒ 它们属交付面。而计数器原先只按「接收者类型名导出」判方法、只按
+// 「类型名导出」判成员面 ⇒ inner 的成员面对这道门禁**完全不可见** ⇒ 给 inner 加一个
+// 导出方法或导出字段，门禁**一声不响**（规则在、报告照常、就是判不到）。
+//
+// 判据写法：同一段源码，**加别名 / 不加别名**各数一次 ⇒ 差值必须恰好是
+// 「别名名字 1 + 目标的导出字段 1 + 目标自己的导出方法 1」。
+func TestCountingRulesCountAliasExposedMembers(t *testing.T) {
+	withAlias := `package sample
+
+type inner struct {
+	Field int
+}
+
+func (i inner) Method() {}
+
+type Alias = inner
+`
+	withoutAlias := `package sample
+
+type inner struct {
+	Field int
+}
+
+func (i inner) Method() {}
+`
+	got := countSource(t, withAlias) - countSource(t, withoutAlias)
+	if got != 3 {
+		t.Fatalf("导出别名暴露出的成员面必须计入：差值 = %d，实期 3"+
+			"（别名名字 1 + 目标的导出字段 1 + 目标自己的导出方法 1）", got)
+	}
+}
+
+// TestCountingRulesDoesNotDoubleCountAliasToExportedType：别名指向**导出**类型时，
+// 目标的成员面**不得**再计一次（`Alias` 与 `Inner` 是同一个类型 ⇒ 同一批成员）。
+//
+// 为什么必须钉这条：修「别名暴露未导出类型」的那条规则时，很容易顺手把别名目标
+// 的成员面**无条件**再计一遍 ⇒ 同一个方法被数两次 ⇒ 计数虚高 ⇒ 天花板被提前撞线
+// （假红方向）。
+func TestCountingRulesDoesNotDoubleCountAliasToExportedType(t *testing.T) {
+	src := `package sample
+
+type Inner struct {
+	Field int
+}
+
+func (i Inner) Method() {}
+
+type Alias = Inner
+`
+	if got := countSource(t, src); got != 4 {
+		t.Fatalf("别名指向导出类型时不得重复计：实得 %d，实期 4"+
+			"（Inner 名字 1 + 导出字段 1 + 导出方法 1 + 别名名字 1）", got)
+	}
+}
+
+// TestCountingRulesIgnoresUnexportedAlias：**未导出**的别名不暴露任何东西。
+//
+// 为什么必须钉这条：别名自己未导出 ⇒ 宿主 import 不到它 ⇒ 它的目标对宿主
+// **不可见** ⇒ 目标的成员面不该计入。反过来（把它也当成暴露）⇒ 计数虚高。
+func TestCountingRulesIgnoresUnexportedAlias(t *testing.T) {
+	src := `package sample
+
+type inner struct {
+	Field int
+}
+
+func (i inner) Method() {}
+
+type alias = inner
+`
+	if got := countSource(t, src); got != 0 {
+		t.Fatalf("未导出的别名不暴露任何东西：实得 %d，实期 0", got)
+	}
+}

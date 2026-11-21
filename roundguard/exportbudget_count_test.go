@@ -18,6 +18,15 @@ import (
 // 包级模型（类型、方法声明、接口方法集的跨文件汇总）与 AST 辅助在
 // exportbudget_model_test.go。
 
+// deliveryExposed 该类型名是否在**交付面**上：名字导出，或被某个导出别名指向。
+//
+// 为什么要有这个「或」：`type Alias = inner`（inner 未导出）时，宿主 import 得到
+// `Alias` 就拿到了 inner 的字段与方法 ⇒ inner 的**成员面**在交付面上。
+// 而「名字」仍不在（宿主拿不到 `inner`）⇒ 两件事要分开判。
+func (m *packageModel) deliveryExposed(typeName string) bool {
+	return ast.IsExported(typeName) || m.aliasExposed[typeName]
+}
+
 // countExportedSymbols 数一个文件里的导出符号数（口径见门禁文件头注）。
 func countExportedSymbols(f *ast.File, m *packageModel) int {
 	n := 0
@@ -31,10 +40,12 @@ func countExportedSymbols(f *ast.File, m *packageModel) int {
 				}
 				continue
 			}
-			// 导出方法：方法名导出 **且** 接收者类型名导出
-			//（未导出类型上的方法宿主 import 不到——除非它被**提升**进某个导出
-			// 类型，那一路在类型声明处按「提升方法」计，见 methodView）。
-			if d.Name.IsExported() && ast.IsExported(receiverTypeName(d.Recv)) {
+			// 导出方法：方法名导出 **且** 接收者类型**在交付面上**
+			//（名字导出，或被某个导出别名指向——`type Alias = inner` 时宿主
+			// import 得到 Alias 就拿到了 inner 的方法；未导出类型上的方法宿主
+			// import 不到——除非它被**提升**进某个导出类型，那一路在类型声明处
+			// 按「提升方法」计，见 methodView）。
+			if d.Name.IsExported() && m.deliveryExposed(receiverTypeName(d.Recv)) {
 				n++
 			}
 		case *ast.GenDecl:
@@ -43,6 +54,13 @@ func countExportedSymbols(f *ast.File, m *packageModel) int {
 				case *ast.TypeSpec:
 					if s.Name.IsExported() {
 						n++
+						n += m.countTypeMembers(s)
+						continue
+					}
+					// 未导出，但**被某个导出别名指向**（`type Alias = inner`）⇒
+					// 它的成员面对宿主可见 ⇒ 计入；**名字**不计入（宿主拿不到
+					// 这个名字）。
+					if m.aliasExposed[s.Name.Name] {
 						n += m.countTypeMembers(s)
 					}
 				case *ast.ValueSpec:
@@ -182,14 +200,14 @@ func (m *packageModel) methodViewPath(typeName string, path map[string]bool) map
 	if len(own) > 0 {
 		lvl := map[string][]bool{}
 		for name := range own {
-			lvl[name] = []bool{ast.IsExported(typeName)}
+			lvl[name] = []bool{m.deliveryExposed(typeName)}
 		}
 		levels[0] = lvl
 	}
 
 	// 深度 ≥1：T 的各个**直接嵌入类型**各自贡献（方法集按 Go 的提升规则解析）。
 	for _, inner := range m.embeddedTypes(typeName) {
-		innerExported := ast.IsExported(inner)
+		innerExported := m.deliveryExposed(inner)
 		for name, e := range m.methodViewPath(inner, path) {
 			lvl := levels[e.depth+1]
 			if lvl == nil {

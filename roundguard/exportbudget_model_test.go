@@ -37,6 +37,19 @@ type packageModel struct {
 	types   map[string]*ast.TypeSpec
 	methods map[string]map[string]bool // 接收者类型名 → 导出方法名（FuncDecl）
 	ifaces  map[string]map[string]bool // 接口类型名 → 其方法集里的导出方法名
+
+	// aliasExposed 本包里被**导出别名**指向的类型名（别名链追到底的最终类型）。
+	//
+	// 为什么需要这张表：`type Alias = inner`（inner **未导出**）时，宿主 import
+	// 得到的是 `Alias`，而 `Alias` 与 `inner` 是**同一个类型** ⇒ inner 的导出字段
+	// 与导出方法**对宿主可见** ⇒ 属交付面 ⇒ 必须计入。而 `inner` 这个**名字**
+	// 宿主拿不到 ⇒「未导出 ⇒ 不计入」那条规则对它的**成员面**不成立、对它的
+	// **名字**仍成立。
+	//
+	// ⚠️ 这张表只登记**本包内**的目标：跨包别名（`type Alias = pkg.T`）的目标
+	// 方法集不在本包 AST 里 ⇒ 不计入本包测量面（与「跨包嵌入类型的提升方法」
+	// 同款边界）。
+	aliasExposed map[string]bool
 }
 
 // newPackageModel 收一张包级表（类型声明 + 方法声明 + 接口方法集）。
@@ -46,6 +59,7 @@ func newPackageModel(files []*ast.File) *packageModel {
 		methods: make(map[string]map[string]bool),
 		ifaces:  make(map[string]map[string]bool),
 	}
+
 	for _, f := range files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
@@ -78,7 +92,59 @@ func newPackageModel(files []*ast.File) *packageModel {
 			}
 		}
 	}
+	// 别名必须**先收齐全部类型声明**才能解析（别名链可以指向后面才声明的类型）
+	// ⇒ 这张表在收类型的循环**之后**才算。
+	m.aliasExposed = collectAliasExposed(m.types)
 	return m
+}
+
+// collectAliasExposed 找出「被**导出别名**指向」的本包类型名。
+//
+// 口径三条：
+//
+//	① 别名的**名字**必须导出（宿主 import 得到的是它）⇒ 别名自己未导出 ⇒ 它的
+//	   目标对宿主**不可见** ⇒ 不算；
+//	② 目标链要**追到底**（`type A = b` + `type b = c` ⇒ 最终目标是 c）；
+//	③ 目标必须**在本包内**（跨包别名 ⇒ 目标方法集不在本包 AST 里 ⇒ 不计入本包
+//	   测量面，与「跨包嵌入类型的提升方法」同款边界）。
+func collectAliasExposed(types map[string]*ast.TypeSpec) map[string]bool {
+	out := map[string]bool{}
+	for name, ts := range types {
+		if ts.Assign == 0 || !ast.IsExported(name) {
+			continue
+		}
+		if target := resolveAliasTarget(types, ts); target != "" {
+			out[target] = true
+		}
+	}
+	return out
+}
+
+// resolveAliasTarget 追别名链到底，返回**本包内**的最终目标类型名。
+//
+// 空串 = 不是本包类型（跨包 / 泛型别名 / 链断了 / 自环）。
+func resolveAliasTarget(types map[string]*ast.TypeSpec, ts *ast.TypeSpec) string {
+	seen := map[string]bool{}
+	cur := ts
+	for cur != nil && cur.Assign != 0 {
+		id, ok := cur.Type.(*ast.Ident)
+		if !ok {
+			return "" // 跨包（pkg.T）或泛型实例 ⇒ 不在本包测量面内
+		}
+		if seen[id.Name] {
+			return "" // 自环（非法代码，防御）
+		}
+		seen[id.Name] = true
+		next, ok := types[id.Name]
+		if !ok {
+			return "" // 本包里没有这个类型
+		}
+		cur = next
+	}
+	if cur == nil {
+		return ""
+	}
+	return cur.Name.Name
 }
 
 // interfaceMethodNames 取一个接口**直接声明**的导出方法名。
