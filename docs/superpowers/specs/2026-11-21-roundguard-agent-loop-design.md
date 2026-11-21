@@ -820,11 +820,11 @@ func Detect(obs []Observation, cfg Config) Finding
 ```yaml
   - pkg: roundguard
     level: Experimental
-    since: v0.52.0        # 以实际发版版本为准（本文写作时上一版为 v0.51.0）
+    since: v0.60.0        # 以实际发版版本为准（本文写作时上一版为 v0.51.0）
     reason: 回合守卫三件套刚下沉：结局分类的取值集合与「不得续跑」的判据边界仍待第二个宿主验证（比照 steer 的定级理由）。
 ```
 
-包注释必须同步打标记：`生命周期: Experimental（v0.52.0 定级）——本包仍会改、删、拆，
+包注释必须同步打标记：`生命周期: Experimental（v0.60.0 定级）——本包仍会改、删、拆，
 不承诺任何兼容；升级风险自负；定级理由见 api-lifecycle.yaml，分级规则见
 docs/api-compat.md。`
 

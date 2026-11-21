@@ -2,12 +2,7 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
-## [vX.Y.Z] — 2026-11-21
-
-<!-- TODO(控制者)：本段版本号待定稿（发布时统一改为 v0.60.0）。
-     本段只留 roundguard 自己的小节——此前混入的 6 个小节属于兄弟分支
-     feature/structure-and-test-gate，其改动不在本树，声称它们是本版发布说明
-     等于对下游说谎。 -->
+## [v0.60.0] — 2026-11-21
 
 ### 新增(roundguard)：模型侧循环的「回合守卫」—— 结局分类 / 次数预算 / 无进展检测
 
@@ -17,7 +12,7 @@
 delegate / handoff / gatecheck 各自管一段，**唯独「次数」这一维是空的** ——
 而这一维恰恰是模型侧循环最先触顶的那一维。
 
-新增机制包 **`roundguard`**（`Experimental`，since v0.52.0），零内部依赖
+新增机制包 **`roundguard`**（`Experimental`，since v0.60.0），零内部依赖
 （只依赖 `github.com/oekit/pkg/errors`），四条判据：
 
 - **回合结局分类**（`Reason` 10 值 + `Classify`）：把「模型这一回合的事实」映射成
