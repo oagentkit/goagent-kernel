@@ -1358,6 +1358,158 @@ rules:
           }
         want: miss
 
+  # 规则：用例内起的 goroutine 的**收尾等待点**必须写在 defer 里（issue #440）。
+  #
+  # 兄弟规则 harness-test-goroutine-joined 判的是**静态形状**（「测试侧有没有
+  # 等待点」），判不出「那个等待点会不会被 Goexit 跳过」：runtime.Goexit 会
+  # 执行所有 defer，但**不执行**它之后的普通语句 ⇒ 用例体末尾的普通语句形式
+  # 的等待点，在失败路径上根本不执行 ⇒ goroutine 实际未被 join，而兄弟规则
+  # 判它合规。这条边界写在 archcheck/testgoroutine.go 头注的「已知边界第 4 条」，
+  # 并注明已开单 #440——本规则把那第 4 条边界关掉。
+  #
+  # 判据走 **go/ast**（check_kind: defer_cleanup），不走正则：它判的是
+  # 「go 语句」「等待点」「defer」「能终止用例的调用」四者的**位置关系**，
+  # 逐行正则认不出「这个等待点落在 defer 里吗」。
+  - id: harness-test-defer-cleanup
+    desc: 用例内起的 goroutine 的收尾等待点必须写在 defer 里（等待点写在普通语句里、且它之前有可终止用例的调用 ⇒ 违规）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    only_test: true
+    check_kind: defer_cleanup
+    examples:
+      # ① 违规形态：等待点写在普通语句里，而它前面有 t.Fatalf ⇒ Goexit 会跳过它。
+      - text: |-
+          package sample
+
+          func TestTailWait(t *testing.T) {
+              done := make(chan struct{})
+              go worker()
+              if !ready() {
+                  t.Fatalf("没准备好")
+              }
+              <-done
+          }
+        want: hit
+      # ② 同步等待：等待点之前没有可终止用例的调用 ⇒ goroutine 一定先结束。
+      - text: |-
+          package sample
+
+          func TestSyncWait(t *testing.T) {
+              done := make(chan struct{})
+              go worker()
+              <-done
+          }
+        want: miss
+      # ③ defer 形态 ⇒ 收尾等待，合规。
+      - text: |-
+          package sample
+
+          func TestDeferWait(t *testing.T) {
+              done := make(chan struct{})
+              go worker()
+              defer func() { <-done }()
+          }
+        want: miss
+      # ④ defer 调用的包内助手里有等待点 ⇒ 收尾等待，合规。
+      - text: |-
+          package sample
+
+          func TestDeferHelper(t *testing.T) {
+              done := make(chan struct{})
+              go worker()
+              defer stopIt(done)
+          }
+
+          func stopIt(done <-chan struct{}) {
+              <-done
+          }
+        want: miss
+      # ⑤ 完全没有等待点：这条规则不判（那是兄弟规则 harness-test-goroutine-joined 的面）。
+      - text: |-
+          package sample
+
+          func TestNoWait(t *testing.T) {
+              go worker()
+          }
+        want: miss
+
+  # 规则：断言的尺子必须是可观测事实，不是墙钟窗口（issue #441）。
+  #
+  # 固定睡一段再断言 ⇒ 这段窗口与被测机制的真实节奏无关：机器一忙，窗口里
+  # 可能什么都没发生（假红）；被测机制抢跑，断言又可能落在窗口之外（白测）。
+  # 两种失效形态的共同点是**结论由窗口长度单独决定**，而不是由可观测事实决定。
+  #
+  # **显式登记的边界**（写在这里，也写进执行体的文件头与报告）：
+  # ① 轮询退避不算尺子——sleep 落在 for/range 循环体内 ⇒ 不判（它的退出条件
+  #    是循环条件本身，不是窗口长度）；
+  # ② goroutine 体里的 sleep 不判——那是**被测机制自己的节奏**，不是测试侧的尺子。
+  #
+  # 判据走 **go/ast**（check_kind: wallclock_ruler），不走正则：import 别名、
+  # 调用形态、循环形态都要按语法树认。
+  - id: harness-test-wallclock-ruler
+    desc: 测试面不许拿裸 time.Sleep 当尺子（窗口长度单独决定结论即违规；轮询退避与 goroutine 体里的 sleep 除外）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    only_test: true
+    check_kind: wallclock_ruler
+    # 受管的辅助：这些助手函数体内部的 sleep 不判（已单独复核「不是尺子」）。
+    # 声明在 policy 侧而不是硬编码在 archcheck 里：archcheck 是跨宿主复用的库，
+    # 硬编码辅助名单等于把宿主的事写进内核。
+    #
+    # 典型形态是「等可观测事实」的助手（如 eventbus.waitTail：它等的是一帧
+    # 事件这个事实，不是窗口）。本仓当前登记的两项是**子进程剧本**助手：
+    # 它们的 sleep 是「挂住等外部动作」（等父进程 SIGKILL、等屏障绝对时刻），
+    # 结论（OUTCOME=…）由外部动作决定，不由窗口长度决定 ⇒ 不是尺子。
+    managed_helpers:
+      - pgstore.runChildE2E
+      - pgstore.runChildSnapshotSave
+    examples:
+      # ① 违规形态：用例体里的裸 sleep——窗口长度单独决定结论。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestRuler(t *testing.T) {
+              time.Sleep(50 * time.Millisecond)
+              if !ready() {
+                  t.Fatalf("没准备好")
+              }
+          }
+        want: hit
+      # ② 轮询退避：sleep 在 for/range 循环体内 ⇒ 退出条件是循环条件，不是窗口。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestPoll(t *testing.T) {
+              for i := 0; i < 10; i++ {
+                  time.Sleep(10 * time.Millisecond)
+                  if ready() {
+                      return
+                  }
+              }
+          }
+        want: miss
+      # ③ goroutine 体里的 sleep 是被测机制自己的节奏，不是测试侧的尺子。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestWorker(t *testing.T) {
+              go func() {
+                  time.Sleep(30 * time.Millisecond)
+                  close(done)
+              }()
+          }
+        want: miss
+
 
   # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
   # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
@@ -2314,8 +2466,106 @@ thresholds:
   #      而 make check 就是 CI 唯一执行物。
   # god object 判据（max_methods_per_type）当前零违规，随本条一并转为阻断。
 
-exceptions: []
-# 当前无例外。
+exceptions:
+  # ── issue #440（harness-test-defer-cleanup）────────────────────────────
+  # 命中形态是真的：失败路径上（t.Fatalf → runtime.Goexit）那一步等待点
+  # 根本不执行 ⇒ tailer goroutine 活过用例结束。本轮不碰 eventbus 包
+  # （并行工作线正在改它），故登记例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_cursorstore_test.go
+    line: 81
+    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-done1"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 88 行的 t.Fatal 会让 Goexit 跳过第 94 行的 <-done1。
+    until: "2026-12-21"
+    removal: |
+      该等待点改成 defer 形态（defer func(){ <-done1 }()），或由并行工作线
+      在 eventbus 改造中一并清偿；改完后删掉本行例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_cursorstore_test.go
+    line: 154
+    violation: "普通语句里调用 waitTail（助手里的 <-ch）"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 170 行的 t.Fatalf 会让 Goexit 跳过第 187 行的 waitTail。
+    until: "2026-12-21"
+    removal: |
+      该收尾等待改成 defer 形态（defer 调用的收尾助手），或由并行工作线在
+      eventbus 改造中一并清偿；改完后删掉本行例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_cursorstore_test.go
+    line: 240
+    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 245 行的 t.Fatal 会让 Goexit 跳过第 250 行的 <-ch。
+    until: "2026-12-21"
+    removal: |
+      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
+      改完后删掉本行例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_test.go
+    line: 156
+    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 162 行的 t.Fatal 会让 Goexit 跳过第 167 行的 <-ch。
+    until: "2026-12-21"
+    removal: |
+      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
+      改完后删掉本行例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_test.go
+    line: 225
+    violation: "go NewTailer(...).Run(ctx) + 普通语句里的 <-ch"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 239 行的 t.Fatalf 会让 Goexit 跳过第 242 行的 <-ch。
+    until: "2026-12-21"
+    removal: |
+      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
+      改完后删掉本行例外。
+  - rule: harness-test-defer-cleanup
+    path: eventbus/tail_test.go
+    line: 274
+    violation: "go func(){ NewTailer(...).Run(ctx) }() + 普通语句里的 <-done"
+    reason: |
+      eventbus 包正由并行工作线改造（issue #443 线），本轮不碰该包。
+      命中形态为真：第 283 行的 t.Fatal 会让 Goexit 跳过第 289 行的 <-done。
+    until: "2026-12-21"
+    removal: |
+      该等待点改成 defer 形态，或由并行工作线在 eventbus 改造中一并清偿；
+      改完后删掉本行例外。
+
+  # ── issue #441（harness-test-wallclock-ruler）──────────────────────────
+  - rule: harness-test-wallclock-ruler
+    path: examples/pgstore/pg_clock_test.go
+    line: 121
+    violation: "time.Sleep(2500 * time.Millisecond)"
+    reason: |
+      这处 sleep 的意图是「让子进程的 Acquire 卡进行锁等待」——窗口长度单独
+      决定结论，正是本规则要治的形态。正确的替代是**可观测事实**（子进程在
+      pg_stat_activity 里的锁等待 / pg_locks 的等待锁），但那需要 PG 环境的
+      可验证改造；本机没有 PostgreSQL，改了也验证不了 ⇒ 本轮登记例外。
+    until: "2026-12-21"
+    removal: |
+      把该 sleep 换成「等子进程真的卡进行锁等待」的可观测事实判据
+      （pg_stat_activity / pg_locks 轮询），在有 PG 的环境里跑通后删掉本行例外。
+  - rule: harness-test-wallclock-ruler
+    path: pii/policy_cas_test.go
+    line: 43
+    violation: "time.Sleep(2 * time.Millisecond)"
+    reason: |
+      pii 包正由并行工作线改造（issue #442 线），本轮不碰该包。
+      该 sleep 在一个「放慢 mutate、把窗口插在 Load 与 Store 之间」的闭包里，
+      是**制造竞争窗口的机制**而不是断言的尺子；判据按形状报它，处置留给
+      该工作线（把闭包挪进包内助手并登记为受管辅助，或改用其它造窗口手段）。
+    until: "2026-12-21"
+    removal: |
+      由并行工作线在该闭包被挪进受管辅助（或换成不靠墙钟窗口的造窗口手段）
+      后删掉本行例外。
+# 当前无其它例外。
 #
 # 历史（已清偿，保留记录以免将来重复犯）：
 #   protocol/report_render.go:14 `const AgentGuidance = "运维任务调度Agent"`
