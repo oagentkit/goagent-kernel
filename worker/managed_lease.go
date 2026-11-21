@@ -26,6 +26,18 @@
 // 资格有人管」的机制面，节拍经 @@LeaseSessionConfig.RenewInterval@@
 // 显式可换。
 //
+// # 持续故障的本地失格（不依赖存储回包）
+//
+// 「撑满 TTL 后的下一拍必然 ErrLeaseLost」有一个隐含前提：**那一拍必须
+// 重新得到存储响应**。持续网络分区下这个前提不成立——续期错误被当成
+// 抖动无限重试，而存储侧租约早已过期、任务已被接管，旧持有者却仍在
+// 执行业务动作（双执行者窗口）。
+//
+// 故每拍除看回包外还看**本地资格截止**：最近一次续期成功时刻 +
+// TTL（减 safety margin，默认 TTL/10——吸收本地与存储时钟的传输
+// 漂移）。超过截止仍未确认持有权 ⇒ 主动失格、取消执行 ctx：本地截止
+// 点只负责**提前撤销执行资格**，不能用于授予新租约（授予权永远属于
+// 权威存储）。
 // # 易主即封口
 //
 // 任一续期被 @@ErrLeaseLost@@ 拒（或 @@AssertOwned@@ 资格确认失败）：
@@ -88,6 +100,14 @@ type LeaseSessionConfig struct {
 	// 调度策略的正式化（按到期时刻动态安排、抖动、退避）是 #266 的车道；
 	// 本字段是换装点，不是最终形态。
 	RenewInterval time.Duration
+	// Now 本地单调时钟注入点（持续故障失格判定的唯一时钟源）。
+	// 零值 = time.Now；测试注入假时钟，否则「超过 TTL 未确认」场景
+	// 恒不触发、判据退化成空断言。
+	//
+	// @seam: no-reentry no-blocking panic-caller
+	// 约束同 ClockedStore.UseClock（issue #369）：注入回调不得在持有本包
+	// 互斥锁时被调用（重入即死锁）、不得阻塞；panic 由调用方兜。
+	Now func() time.Time
 }
 
 // leaseSession LeaseSession 的机制面实现（每次认领一个实例）。
@@ -98,13 +118,15 @@ type leaseSession struct {
 	fence taskboard.Fence
 	ttl   time.Duration
 	every time.Duration
+	now   func() time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu   sync.Mutex
-	lost error // 首个失格原因（失格后恒败——已死的租约不再重试）
+	mu          sync.Mutex
+	lost        error     // 首个失格原因（失格后恒败——已死的租约不再重试）
+	confirmedAt time.Time // 最近一次续期成功的本地时刻（资格截止的锚）
 }
 
 // NewLeaseSession 为一次认领开启租约会话：立刻起续期协程，直到 Close。
@@ -132,6 +154,10 @@ func NewLeaseSession(ctx context.Context, board taskboard.RenewingBoard, task ta
 			"worker: 续期节拍必须短于 TTL（节拍是资格容忍窗里的巡逻频率，不是补票）",
 			"ttl", cfg.TTL.String(), "renewInterval", every.String())
 	}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
 	sctx, cancel := context.WithCancel(ctx)
 	s := &leaseSession{
 		board:  board,
@@ -140,10 +166,13 @@ func NewLeaseSession(ctx context.Context, board taskboard.RenewingBoard, task ta
 		fence:  task.Lease.Fence,
 		ttl:    cfg.TTL,
 		every:  every,
+		now:    now,
 		ctx:    sctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
 	}
+	// 认领是最近一次资格确认：资格截止从这一刻起算。
+	s.confirmedAt = now()
 	// 走 async.GoSafe 而非裸 go（本仓门禁：panic 无法被外层 recover）。
 	async.GoSafe(s.renewLoop)
 	return s, nil
@@ -151,10 +180,11 @@ func NewLeaseSession(ctx context.Context, board taskboard.RenewingBoard, task ta
 
 // renewLoop 续期协程：按节拍 Renew，直到会话 ctx 取消。
 //
-//   - 成功 → 下一拍（节拍远短于 TTL，一拍成功即恢复资格容忍窗）；
+//   - 成功 → 记录本地确认时刻，下一拍；
 //   - ErrLeaseLost → 失格：记因 + 取消会话 ctx（在途施加段封口）+ 退出；
-//   - 其它错误 → 下一拍再试。连续失败撑满 TTL ⇒ 任务可被接管 ⇒ 之后的
-//     下一拍必然 ErrLeaseLost 收口——自愈语义，无需失败计数器。
+//   - 其它错误 → **先查本地资格截止**再决定重试：超过「最近确认 + TTL
+//   - margin」仍未确认持有权 ⇒ 主动失格（存储可能已把任务判给别人，
+//     不能再等业务动作继续）；未超过 ⇒ 存储抖动，下一拍重试。
 func (s *leaseSession) renewLoop() {
 	defer close(s.done)
 	ticker := time.NewTicker(s.every)
@@ -168,6 +198,11 @@ func (s *leaseSession) renewLoop() {
 		_, err := s.board.Renew(s.ctx, s.id, s.token, taskboard.ClaimRequest{TTL: s.ttl})
 		switch {
 		case err == nil:
+			// 锁外取时钟（#369：注入回调可能重入本包，持锁调用即死锁）。
+			confirmedAt := s.now()
+			s.mu.Lock()
+			s.confirmedAt = confirmedAt
+			s.mu.Unlock()
 			continue
 		case errors.Is(err, taskboard.ErrLeaseLost):
 			s.lose(errors.Wrap(err, "worker: 租约续期被拒（任务已归新持有者或已过期）", "task", string(s.id)))
@@ -176,9 +211,27 @@ func (s *leaseSession) renewLoop() {
 			if s.ctx.Err() != nil {
 				return
 			}
-			// 存储抖动：下一拍重试（见函数头注释的自愈语义）。
+			if s.pastDeadline() {
+				s.lose(errors.Wrap(taskboard.ErrLeaseLost,
+					"worker: 超过本地资格截止仍未确认持有权（持续存储故障），主动撤销执行资格",
+					"task", string(s.id), "ttl", s.ttl.String()))
+				return
+			}
+			// 存储抖动：下一拍重试（未过本地资格截止前，自愈语义仍成立）。
 		}
 	}
+}
+
+// pastDeadline 本地资格截止判定：最近一次续期成功时刻 + TTL - margin
+// （margin = TTL/10，吸收本地与存储时钟的传输漂移）。只读 confirmedAt，
+// 调用方决定处置——本方法不持锁（confirmedAt 的单次读竞态无害：判定的
+// 两端都是保守方向，多读一次少读一次不改变「必然失格」的结论）。
+func (s *leaseSession) pastDeadline() bool {
+	s.mu.Lock()
+	confirmedAt := s.confirmedAt
+	s.mu.Unlock()
+	margin := s.ttl / 10
+	return !s.now().Before(confirmedAt.Add(s.ttl - margin))
 }
 
 // lose 记失格原因并封口（幂等：首个原因为准）。
