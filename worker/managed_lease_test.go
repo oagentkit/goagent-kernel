@@ -277,9 +277,20 @@ func TestLeaseSessionRenewsUntilClosed(t *testing.T) {
 	_ = session.Close(ctx)
 
 	// Close 后不再续期：租约最迟在最后一次续期 + TTL 后到期。
-	time.Sleep(700 * time.Millisecond)
-	if _, err := board.Claim(ctx, "t1", "w-b", taskboard.ClaimRequest{TTL: time.Minute}); err != nil {
-		t.Fatalf("Close 后租约应随 TTL 到期、任务可被接管：%v", err)
+	//
+	// 尺子必须是**可观测事实**：轮询到「任务真的可被接管」为止（退出条件是
+	// 接管成功这个事实），而不是睡一个固定窗口——窗口长度单独决定结论
+	// （机器一忙，租约还没到期 ⇒ 假红）。
+	claimDeadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err := board.Claim(ctx, "t1", "w-b", taskboard.ClaimRequest{TTL: time.Minute})
+		if err == nil {
+			break
+		}
+		if time.Now().After(claimDeadline) {
+			t.Fatalf("Close 后租约应随 TTL 到期、任务可被接管：%v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

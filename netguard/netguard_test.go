@@ -203,9 +203,17 @@ func TestCheckChainBlockedNameEveryHop(t *testing.T) {
 // Ctx 形态在取消后立即返回。
 func TestCheckURLWithCtxPropagatesCancel(t *testing.T) {
 	// 挂住解析器：只响应 ctx.Done，否则永不返回。
+	//
+	// dialed 是**可观测事实**：解析面真的被拨过号了（而不是「睡了 100ms
+	// 大概进去了」）——尺子必须是事实，不是墙钟窗口。
+	dialed := make(chan struct{}, 1)
 	blocking := &net.Resolver{
 		PreferGo: true,
 		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			select {
+			case dialed <- struct{}{}:
+			default:
+			}
 			<-ctx.Done()
 			return nil, ctx.Err()
 		},
@@ -219,8 +227,12 @@ func TestCheckURLWithCtxPropagatesCancel(t *testing.T) {
 	go func() {
 		done <- CheckURLWithCtx(ctx, "https://blackhole.example.com", Allow{})
 	}()
-	// 给校验面一点时间进解析，然后取消。
-	time.Sleep(100 * time.Millisecond)
+	// 等解析面真的进解析（可观测事实：假解析器被拨过号），然后取消。
+	select {
+	case <-dialed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("校验面未在时限内进入解析")
+	}
 	cancel()
 	select {
 	case err := <-done:

@@ -215,9 +215,18 @@ func TestLoopRenewalUsesBoundedConcurrency(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- loop.Run(ctx) }()
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		done <- loop.Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：失败路径上（t.Fatalf → Goexit）
+	// 只执行 defer ⇒ 驱动 goroutine 必须由 defer join。
+	// defer 是 LIFO ⇒ cancel 注册在 wg.Wait 之后 ⇒ 先 cancel 再 join，互不等待。
+	defer wg.Wait()
+	defer cancel()
 
 	// 有界等待：等「每条都被续过一次」，不是等一个固定墙钟窗口。
 	waitRenewed(t, board, n, 60*time.Second)
@@ -294,10 +303,18 @@ func TestLoopRenewalBeforeExpiry(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	done := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		done <- loop.Run(ctx)
+	}()
+	// 收尾等待必须写成 defer 形态（issue #440）：见上面同款说明。
+	// defer 是 LIFO ⇒ cancel 注册在 wg.Wait 之后 ⇒ 先 cancel 再 join。
+	defer wg.Wait()
+	defer cancel()
 	claimedAt := time.Now()
-	go func() { done <- loop.Run(ctx) }()
 
 	waitRenewed(t, board, n, 10*time.Second)
 
