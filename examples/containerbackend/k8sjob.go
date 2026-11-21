@@ -316,13 +316,20 @@ func (k *K8sJob) Exec(ctx context.Context, j backend.Job) (backend.Result, error
 	return stamp(res), nil
 }
 
+// probeResultNone 探测事实的兜底值「未装探测」。
+//
+// **本包自起名字**（不是引用别家的常量）：这一串拼写与 roundguard 的额度类别
+// "none"（未因额度叫停）只是同形，概念不同——本包说的是**探测结果**，
+// 不是额度判定；字面量只允许出现在常量定义处。
+const probeResultNone = "none"
+
 // verifiedOrNone 实测面的兜底值：await 未能从 Pod 状态读出探测事实时（Job 消失、
 // Pod 被强删等 unknown 路径），按探测是否装配记 unseen / none，不猜。
 func (k *K8sJob) verifiedOrNone() string {
 	if k.k8sEgressProbeRequired() {
 		return "unseen"
 	}
-	return "none"
+	return probeResultNone
 }
 
 // checkMounts 挂载判据闸：任何一条不满足即在创建阶段拒绝（先于 apiserver 调用）。

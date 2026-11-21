@@ -28,13 +28,20 @@ const (
 	RetryBudgetExhausted
 )
 
+// retryBudgetExhaustedText 预算尽裁决的机器可读短码。
+//
+// 本包**自己命名**这个取值，不引用 roundguard.ReasonBudgetExhausted：两者**同形
+// 异义**——本条说的是「排队重试预算用尽」（会话编排轴），roundguard 说的是
+// 「回合额度用尽」（模型回合轴）。引用任一家都可能语义损坏。
+const retryBudgetExhaustedText = "budget_exhausted"
+
 // String 裁决的人类可读形态（留痕与测试失败信息用）。
 func (d RetryDecision) String() string {
 	switch d {
 	case RetryRequeue:
 		return "requeue"
 	case RetryBudgetExhausted:
-		return "budget_exhausted"
+		return retryBudgetExhaustedText
 	default:
 		return "abandon"
 	}

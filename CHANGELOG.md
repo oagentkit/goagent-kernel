@@ -2,6 +2,77 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.60.0] — 2026-11-21
+
+### 新增(roundguard)：模型侧循环的「回合守卫」—— 结局分类 / 次数预算 / 无进展检测
+
+本仓此前**没有任何一维**管「模型这一轮说了什么、干了什么、还要不要再干」：
+`grep -rE 'MaxTurns|maxSteps|MaxRounds|轮次上限|步数上限' --include='*.go'` 零命中。
+已有的 budget(token) / cost(记账) / deadline(墙钟) / watchdog(配对) / steer(接管) /
+delegate / handoff / gatecheck 各自管一段，**唯独「次数」这一维是空的** ——
+而这一维恰恰是模型侧循环最先触顶的那一维。
+
+新增机制包 **`roundguard`**（`Experimental`，since v0.60.0），零内部依赖
+（只依赖 `github.com/oekit/pkg/errors`），四条判据：
+
+- **回合结局分类**（`Reason` 10 值 + `Classify`）：把「模型这一回合的事实」映射成
+  一个结局取值，并区分**失败型收敛**与**温和叫停**（`Reason.IsFailure()`）——
+  「被上限温和收停」与「真的坏了」在宿主侧必须可分，否则宿主会把温和收停当故障上报。
+- **回合次数预算**（`Budget` / `Used` / `Meter` / 三个 `Check*`）：进程内回合账 +
+  三条额度（回合数 / 工具调用总数 / 单工具）。**额度一律在调用前判**。
+- **无进展（循环）检测**（`Detect`，五形态）：精确重复 / 震荡 / 缓慢漂移 /
+  错误重试螺旋 / 只规划不动手；处置分**三档**（首档警告回灌给模型，给一次自我修正
+  机会 → 再犯才温和叫停，不是失败）；带**通用豁免面**（轮询类动作、刻意的规划步）。
+- **组合结论**（`Decide`）：「结局 → 额度按处置口径分流 → 无进展」的优先级链，
+  一条可执行结论交给宿主。
+
+**内核不调模型**：宿主把「模型这一回合说了什么」映射成 `Outcome`、
+把「这一回合干了什么」映射成 `Observation[]`，本包只做判定。判据归内核、
+模型侧归宿主。
+
+### 新增(roundguard)：额度维度（事实）与处置口径（策略）分开 —— 五家主流实现三种口径，没有共识
+
+触顶之后怎么办，五家没有共识：OpenAI Agents SDK 抛 `MaxTurnsExceeded`
+（除非装了 handler）、pydantic-ai 与 Claude Agent SDK 直接失败、smolagents
+触顶后**再调一次模型产出终答**并标 `AgentMaxStepsError`、smhanov/agentloop
+禁工具 + 通知模型收尾。**三家三种口径** ⇒ 若把处置口径写死在判据里，
+「同一上限在不同宿主不同处置」的风险就回来了。
+
+故拆成两层：**额度维度是事实**（`MaxRounds` / `MaxToolCalls` / `MaxPerTool`），
+**处置口径是策略**（`Budget.Policy`：`PolicyForceFinal` 缺省 / `PolicyFailFast`），
+一个 policy 管全部额度（**不按额度维度分别配置**）。`Decide` 按 policy 分流出
+`ReasonForcedFinal`（温和）与 `ReasonBudgetExhausted`（失败型）。
+
+⚠ **额度维度的缺省值不设**：全 0 = 不限，交给宿主显式声明 —— agentloop 的缺省是
+`MaxToolCalls=5`、`MaxSteps=2×5+2=12`，把它当缺省就等于把别人的口径焊进内核。
+
+### 新增(roundguard)：无进展检测 —— 全行业空白
+
+五家实现 grep `oscillat|stagnat|no_progress|drift` **零命中** ⇒ 没有可抄的
+对照实现 ⇒ 本仓这条判据的**唯一正确性来源是「坏实现会红」**。故本包落了两个
+专门的防退化闸门：
+
+- **导出 API 面上限门禁**（抄 smhanov/agentloop 的 `apibudget_test.go`）：
+  天花板 136 = 实测 104 + 余量 32，且**同时钉住「当前导出面的精确计数」**
+  ——只断言「当前数 ≤ 天花板」的测试分不清「导出面没变大」与「计数逻辑被放松了」。
+- **反向验证矩阵**：spec 的每条判据都登记了「哪个用例钉住它、哪个变异体能证明
+  钉得住」，并有**机器判定**（spec 判据新增 ⇒ 矩阵当天即红）。
+
+### 修复(roundguard)：默认窗口 6 时震荡形态的停止档永不可达
+
+`Config.Window` 原定 6，而震荡形态的停止档需要 `2×Repeat+2 = 8` 个回合才有结论
+⇒ 窗口 6 时该分支**永不可达**（判据不可达 = 判据不存在）⇒ 改为默认 8 +
+向上钳位（窗口不得小于 `2×Repeat+2`）。**分档阈值定缺省值时必须逐档反查可达性** ——
+一档不可达时，缺省配置下用户只会看到最严的行为，而设计者以为有缓冲。
+
+### 文档(roundguard)：宿主接线示例按实现回放校准
+
+`docs/USAGE.md` 的接线章节由「逐字翻译成可执行代码、直接调真 `roundguard`」回放校准：
+观测粒度是**回合级**（不是每次工具调用一条 `Observation` —— 否则「只规划不动手」
+形态永不可达、且重复形态会跳过首档），额度判定**只留 `Decide` 一处**（宿主侧另开
+一套 `Check*` 分支是死代码），处置口径取 `Budget.EffectivePolicy()` 而非直接比
+`Policy`（零值是合法缺省）。
+
 ## [v0.51.0] — 2026-11-20
 
 ### 修复(examples)：尾随游标 / 事件面用例未等 goroutine 退出 ⇒ 门禁 cover-gate 段偶发红

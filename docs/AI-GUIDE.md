@@ -42,7 +42,8 @@
 > **编排是代码，LLM 只做单环节。**
 
 本仓只提供**确定性编排的机制面**（报告协议、环节状态机、事件总线、派发守卫、
-审计策略、溢出存档、PII 脱敏、出站守卫等 29 个包），**不认识任何领域概念**。
+审计策略、溢出存档、PII 脱敏、出站守卫等 **48** 个机制面包；另有契约套件 /
+组合机制 / 门禁执行体三类，见 §1.3），**不认识任何领域概念**。
 
 ### 1.2 判定口诀（改任何代码前先问这一句）
 
@@ -55,25 +56,40 @@
 2. **展示文案归宿主。** 标题、兜底、品牌词一律走 `RenderOptions` 注入。
 3. **测试夹具用合成数据。** 夹具是契约的示例，示例带领域味等于把契约钉死在某个领域上。
 
-### 1.3 51 个包分五组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 53 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（51 行，`make docsync` 判）逐行对齐；policy `modules` 段登记 **57 个**
-> 包目录（多出来的那个是 `taskboard/boardtest`，它计在 `taskboard` 行内）。
-> 上一版此表写「29 个包 / 门面 3 个」，与实际差在两处：`toolfail` / `sandbox` 早已转入
-> 门面（门面共 5 个），而 `trajectory` / `ticket` 漏登记。
+> 口径：与 README 包表（**53** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
+> **61 个 module id**（`make architecture-check` 打印的「61 个包的依赖方向」就是它）。
+> **61 与 53 差的 8 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
+> `reference-runtime` / `pgrefstore` / `sqliteadapter` / `containerbackend` /
+> `worker-runtime-ref`（根在 `examples/*`）、`ptcchild`（根在 `cmd/ptcchild`）、
+> `subhub` / `ledgerstatus`（根在 `internal/*`）——README 包表只收一级目录，故它们
+> 不进表，但**照样在依赖方向门禁下**。
+> ⚠️ **两个数不是同一种量**：61 数的是 **module id**（`archcheck` 打印
+> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 63 个**——`taskboard` 与
+> `pgrefstore` 各有两个 root；`taskboard` 的第二个 root 是 `taskboard/boardtest`，
+> 它计在 `taskboard` 行内，**不是独立的 module id**。
+> 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
+> `toolfail` / `sandbox` 四个门面包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
+> 宿主直连上游矩阵 `oagentkit/toolgate/policy` 与 `oagentkit/guardx/*`），
+> 而 `scheduling` / `eval` / `coord` / `handoff` / `ownership` / `worker` /
+> `backend` / `metrics` / `cost` / `tenant` / `controlplane` / `roundguard`
+> 十二个包此前漏登记。
+> **包名顺序与 README 包表一致**——两处表若各自排序，读者要自己对齐。
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（36 个） | `protocol` `statemachine` `contract` `eventbus` `spill` `budget` `offload` `tooldisclose` `toolname` `guardset` `ptc` `watchdog` `checkpoint` `commitgate` `delta` `pending` `drain` `reconcile` `dispatch` `deadline` `pii` `netguard` `sideeffect` `trajectory` `ticket` `cmdpolicy` `egress` `sessionref` `taskboard` `skilldisclose` `hookengine` `memorypipe` `delegate` `worktree` `finalize` `steer` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
+| **机制面**（48 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `pii` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `toolname` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
 
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
-| **门面**（4 个） | `policy` `reminder` `toolfail` `sandbox` | **只能有四种声明**：类型别名、常量别名、单条上游转发函数、允许集合内的 import。加真逻辑三者必居其一 → 门禁红。核心在 `oagentkit/*`（`guardx/toolfail`、`guardx/sandbox`）。 |
 | **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
 
-> 门面包不可变是**硬约束**，不是建议。`docs/OAGENTKIT-OVERLAP.md` 里那句
-> 「保持门面，别再在本仓加逻辑」原本只是散文，散文不是门禁——所以才有了
-> `harness-facade-stays-facade` 这条 AST 规则。
+> **门包不可变是硬约束，不是建议**（当前 policy `facades: []`，清单为空；规则与
+> 执行体仍在）。`docs/OAGENTKIT-OVERLAP.md` 里那句「保持门面，别再在本仓加逻辑」
+> 原本只是散文，散文不是门禁——所以才有了 `harness-facade-stays-facade` 这条
+> AST 规则：门包只允许四种声明（类型别名 / 常量别名 / 单条上游转发函数 /
+> 允许集合内的 import），加真逻辑三者必居其一 ⇒ 当天即红。
 
 ### 1.4 三条贯穿全仓的纪律（改代码时会撞上）
 
@@ -94,7 +110,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（57 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（61 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -107,7 +123,7 @@
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # 全量单测（当前 156 个测试文件）
+make test                 # 全量单测（当前 518 个测试文件）
 make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令输出；本仓当前全绿）
 ```
 
@@ -122,13 +138,13 @@ make architecture-check   # 架构门禁（规则 / 门包 / 包数见该命令�
 | 你要改的东西 | 去哪个包 | 注意 |
 |---|---|---|
 | 报告结构、解析容错、Markdown 渲染 | `protocol` | `report_types.go` 逼近单文件 400 行上限（实测以 `make architecture-check` 为准）；枚举位归一在 `report_normalize.go` |
-| 环节状态流转 | `statemachine` | 纯函数件，79 行，零依赖 |
-| 工具失败分类（可重试/退避/需人工/重发安全） | `toolfail` | 分类是**数据表**，不要散落 if |
+| 环节状态流转 | `statemachine` | 纯函数件，305 行，依赖 oekit/pkg |
+| 工具失败分类（可重试/退避/需人工/重发安全） | 上游 `guardx/toolfail`（**本仓不再提供该包**）| 分类是**数据表**，不要散落 if |
 | 渐进披露、披露门禁 | `tooldisclose` | 拒绝即激活，重试不绕路 |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
 | 工具名 → JS 标识符 | `toolname` | **单一真相**，`tooldisclose` 与 `ptc` 共用 |
 | 沙箱内程序化编排 | `ptc` | 程序内 `host.<tool>()` 也要过判定环 |
-| 执行沙箱的档位语义与后端协议 | `sandbox` | 档位是后端**自报**的，内核不校验其真实性；要求档位**无满足者即拒绝**，不降级 |
+| 执行沙箱的档位语义与后端协议 | 上游 `guardx/sandbox`（**本仓不再提供该包**）| 档位是后端**自报**的，内核不校验其真实性；要求档位**无满足者即拒绝**，不降级 |
 | 续跑快照、序号闸 | `checkpoint` | 「续跑而非重放」三条硬规则 + 依赖声明（并行组乱序采信）|
 | 终态独占提交闸 | `commitgate` | 放闸靠**令牌**，不靠内容比对认人 |
 | 输入侧上下文预算 | `budget` | 分段计量（区分工具面膨胀 vs 历史膨胀） |
@@ -497,7 +513,7 @@ make check
 | `lint` | golangci-lint（未安装时**明确报错退出**，不静默跳过） | `brew install golangci-lint`；CI 钉 v2.14.0 |
 | `test` | 全量单测 | 看失败断言 |
 | `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70%（判据执行体 `cmd/pkgcov`；实测值以该目标输出为准） | 补**该包**的用例，别降阈值；豁免登记在 Makefile 的两张表：`PKG_COV_EXEMPT`（普通，当前为空）与 `PKG_COV_STRUCTURAL_EXEMPT`（结构性：包的性质决定通用判据不适用，自己达标不判红，但没命中任何包仍判红），两张表都失效即红|
-| `architecture-check` | 8 条规则 + 5 门包 + 各包依赖方向（包数以该命令输出为准）| 见下表 |
+| `architecture-check` | 9 条规则 + 0 个门包 + 各包依赖方向（**包数以该命令输出为准**）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
 | `crossbuild` | 声明支持的平台（linux/amd64、linux/arm64、darwin/arm64）编不过 | 看是否引入了平台专属符号；windows **不在**矩阵内（上游 `procx` 用 unix syscall）|
@@ -533,9 +549,9 @@ make check
 | `harness-no-bare-goroutine` | 生产代码裸 `go func` / `go someFunc()` | 走 `concurrency/async.GoSafe` |
 | `harness-no-printf-log-callback` | 公开 API 里的 `logf func(string, ...any)` | 留痕走 `logx.Delegating` 懒解析 |
 | `harness-single-errors-package` | stdlib `"errors"` 与 `github.com/pkg/errors` | 只用 `oekit/pkg/errors` 一套 |
-| `harness-sandbox-execution-single-entry` | 生产代码在 `sandbox` 包外直接 `import "os/exec"` | 外部程序执行只允许经 `sandbox` 包登记的后端 |
+| `harness-sandbox-execution-single-entry` | 生产代码在 `ptc` 执行后端外直接 `import "os/exec"` | 外部程序执行只允许经 **`ptc` 执行后端**（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
 | `harness-sandbox-provider-declared` | 执行沙箱后端的档位没登记在 `sandbox_providers` 段，或登记与代码事实不一致 | 补登记 / 同步登记的档位常量名（LevelNone/LevelProcess/LevelOS/LevelMachine）|
-| `harness-facade-stays-facade` | 三个门面包长出实现 | 逻辑放上游 `oagentkit/*`，本仓只留转发 |
+| `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**）| 逻辑放上游 `oagentkit/*`，本仓只留转发 |
 | `harness-module-dependency-direction` | 越界内部依赖 / 越界跨仓依赖 / **未登记包目录** | 改 `modules` 段登记 `requires` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离（构造器改名 / 档位没人造）| 同步 `execution_paths` 段与代码 |
 | `harness-subprocess-egress` | 子进程启动点没在 `egress_paths` 登记（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询 `SatisfiedBy`）；登记 `denied`（本层无法兑现）；登记已陈旧；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`——按**文件**判，不按启动函数判）| 补登记 / 在启动函数里真的用 `egress.Spec.Env` 生成 env **并**在 spawn 前问一次后端能力（`Spec.SatisfiedBy`）/ 改档位。**`denied` 在本层是造假，不是配置**；子进程环境必须由 `procx.ChildEnv` 白名单生成 |

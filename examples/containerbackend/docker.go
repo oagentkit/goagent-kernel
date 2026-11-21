@@ -266,7 +266,7 @@ func (d *Docker) create(ctx context.Context, j backend.Job) (string, error) {
 		body.HostConfig.Binds = append(body.HostConfig.Binds, bind)
 	}
 	body.HostConfig.Memory = j.Budget.MaxMemory
-	body.HostConfig.NetworkMode = "none" // Egress()=denied 的兑现点：每个作业都断网
+	body.HostConfig.NetworkMode = dockerNetworkModeNone // Egress()=denied 的兑现点：每个作业都断网
 
 	q := url.Values{"name": {"gak-" + strconv.FormatInt(time.Now().UnixNano(), 36)}}
 	resp, err := d.engineRequest(ctx, http.MethodPost, "/containers/create", body, q)

@@ -18,6 +18,14 @@ import (
 	"github.com/oekit/pkg/errors"
 )
 
+// dockerNetworkModeNone 引擎侧「断网」网络模式（引擎 API 的**线上契约取值**）。
+//
+// 本包自起名字（不引用别家的常量）：这一串拼写与 roundguard 的额度类别 "none"
+// （未因额度叫停）只是同形，概念不同——本包说的是引擎网络模式，不是额度判定；
+// 字面量只允许出现在常量定义处。放在本文件（传输/线上契约面）而非 docker.go
+// （语义面）：它属于请求体里的契约取值。
+const dockerNetworkModeNone = "none"
+
 // engineClient 按端点形态构造 HTTP 客户端（socket 走 DialContext）。
 func engineClient(endpoint string) *http.Client {
 	if rest, ok := strings.CutPrefix(endpoint, "unix://"); ok {

@@ -13,11 +13,11 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 本文覆盖 24 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 本文覆盖 25 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
-② 工具判定环    tooldisclose + guardset + toolfail  ← 工具怎么被管住（必接）
+② 工具判定环    tooldisclose + guardset + 上游 toolfail ← 工具怎么被管住（必接）
 ③ 报告协议      protocol                   ← 环节产出怎么变成结构化报告（必接）
 ④ 续跑契约      checkpoint + commitgate    ← 崩了怎么接着跑（强烈建议）
 ⑤ 上下文三件套  budget + spill + offload   ← 上下文怎么不被撑爆（建议）
@@ -25,7 +25,7 @@
 ⑦ 流式与退出    delta + drain + pending    ← 流式输出与优雅停机（可选）
 ⑧ 安全面        netguard + pii             ← 出站与个人信息（按需）
 ⑨ 程序化编排    ptc                        ← 多工具聚合场景（进阶）
-⑩ 门面三件      dispatch + policy + reminder（薄转发，核心在 oagentkit）
+⑩ 判定与改派    dispatch + roundguard + 上游 toolfail / policy / sandbox / injectband ← 失败与循环怎么判（上游四件的核心在 oagentkit，宿主直连上游）
 ```
 
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑**。
@@ -35,16 +35,18 @@
 >
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
-> | 本文覆盖 | 24 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **60** 个包目录 | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **61** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 仓里有什么 | **53** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **61** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **62** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **60** 个包目录。
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **53** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个包目录（判据的正式口径是
+> **module id**：61 数的是 `modules` 段的 `- id:` 条目，这些 id 覆盖的 root 目录
+> 共 63 个；「包目录」是判据正则要求的字面量，改它会让 `make docsync` 判红）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
@@ -71,29 +73,33 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 |---|---|---|
 | 会话/环节状态存哪、怎么流转 | `contract` + `statemachine` | `RunContext` / `StepSink` 两个接口的实现 |
 | 模型输出怎么变成可信结构 | `protocol` | agent 名注册（可选）、报告标题（可选） |
-| 工具怎么被限制 | `tooldisclose` + `guardset` + `policy` | 工具目录、宿主守卫、拓扑 `EdgeSource` |
+| 工具怎么被限制 | `tooldisclose` + `guardset` + 上游 `toolgate/policy` | 工具目录、宿主守卫 |
 | 崩了怎么接着跑 | `checkpoint` + `commitgate` | `StoreCAS` 实现、终态词表注入 |
 | 上下文怎么不被撑爆 | `budget` + `spill` + `offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
 | 进度怎么推给前端 | `eventbus` + `watchdog` | 落库 + 广播、告警发布出口 |
 | 出站请求怎么防 SSRF | `netguard` | 挂在自己的 `DialContext` 上 |
 | 个人信息怎么脱敏 | `pii` | 阻断决策（内核只回报信号） |
 | 多工具聚合怎么省往返 | `ptc` | 工具绑定、判定环切片 |
-| 执行的隔离强度怎么声明与保证 | `sandbox` | 执行后端（可选）、每次执行的档位要求 |
+| 失败后还能不能派、派给谁 | `dispatch` | 候选枚举接缝、执行步接缝（改派面在宿主侧）|
+| 执行的隔离强度怎么声明与保证 | 上游 `guardx/sandbox` | 执行后端（可选）、每次执行的档位要求 |
 | 副作用怎么保证只做一次 | `sideeffect` + `retryplan` | `Store` 实现（跨进程原子）、幂等键、下游拒收契约 |
 | 我的存储实现守没守住契约 | `sidetest` | 让实现支持注入时钟，然后跑一次套件 |
+| 模型侧循环还能不能转 / 是不是在空转 | `roundguard` | 回合事实（结局 / 用量 / 指纹）——模型与工具仍归宿主 |
 
 ### 0.3 三个必须先知道的约束
 
 **① 内核只判定，不处置。**
 判定语义归内核，判定依据与处置归宿主。典型表现：`pii.Apply` 检出敏感信息时返回
 `(文本, true)`——`true` 表示「宿主应当阻断」，但**阻断动作由你执行**，内核不抛错、
-不中断你的控制流。`toolfail` 同理：分类完了，怎么恢复是你的事。
+不中断你的控制流。上游 `toolfail` 同理：分类完了，怎么恢复是你的事。
 
-**② 门面的门永远朝外。**
-`dispatch` / `policy` / `reminder` 是**门面**，只允许类型别名、常量别名、
-单条上游转发函数。核心分别落在 `oagentkit/agent/dispatch`、
-`oagentkit/toolgate/policy`、`oagentkit/guardx/injectband`。
-在这三个包里加一行真逻辑会被 `harness-facade-stays-facade` 门禁拦下（error 级）。
+**② 本仓的门包已清零，判定面在上游。**
+v0.35.0 起本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox` 四个门面包
+（`architecture-policy.yaml` 的 `facades` 段是**空清单**），宿主**直连上游**：
+`github.com/oagentkit/toolgate/policy`、`github.com/oagentkit/guardx/toolfail`、
+`github.com/oagentkit/guardx/sandbox`、`github.com/oagentkit/guardx/injectband`。
+门包纪律仍在（`harness-facade-stays-facade`，error 级）：本仓若再设门包，只允许四种
+声明（类型别名 / 常量别名 / 单条上游转发函数 / 允许集合内的 import），加真逻辑当天即红。
 
 **③ 本仓不 import 你，你 import 本仓。**
 方向是单向的硬约束（`harness-no-host-dependency` 门禁）。harness 需要宿主能力时
@@ -164,7 +170,7 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 
 同一件事的多个维度分列而非合并，因为合并会丢信息：
 
-- `toolfail`：**重发安全**与**重试价值**是两个正交维度——超时值得重试，但服务端可能
+- 上游 `toolfail`：**重发安全**与**重试价值**是两个正交维度——超时值得重试，但服务端可能
   已执行，原样重发就是重复施加副作用。
 - `budget`：**毛移除量**（扣摘要之前的量）与**净移除量**（扣掉摘要回填后的量）分开。
 - `guardset`：**多条拒绝合成一条**时，可重试取「全部可重试才算」，不是「任一」。
@@ -358,7 +364,7 @@ func toReport(raw string) (*protocol.Report, error) {
 
 ---
 
-### 3.3 工具判定环：`tooldisclose` + `guardset` + `toolfail`
+### 3.3 工具判定环：`tooldisclose` + `guardset` + 上游 `toolfail`
 
 这是 harness 里最核心的一组：**任何一次工具调用，都必须过同一套判定环。**
 
@@ -488,7 +494,7 @@ func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
 - **拒绝走 `(Verdict, nil)`，不返回 error**——拒绝是正常判定结论，
   error 在链上会被归口成「这一环自己坏了」。
 
-#### 3.3.3 失败分类：`toolfail`
+#### 3.3.3 失败分类：上游 `toolfail`（`github.com/oagentkit/guardx/toolfail`）
 
 「这个失败值不值得重试」的**机械判据**。类别 → 可重试性/退避/需人工/重发安全/模型指引
 是**数据表**而非散落的 if。
@@ -498,7 +504,7 @@ package myapp
 
 import (
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/goagent-kernel/toolfail"
+	"github.com/oagentkit/guardx/toolfail"
 )
 
 // 工具侧在知道类别的那一刻调 ClassifyAs，不要指望 Classify 猜出来
@@ -515,15 +521,17 @@ func callTool(...) error {
 
 // 模型侧：Guidance() 是唯一消费方
 func advise(err error) string {
-	f, ok := toolfail.As(err)
-	if !ok {
-		return toolfail.Guidance(err) // 不可归类 → 不可重试，fail-closed
+	if f, ok := toolfail.As(err); ok {
+		// 正交决策：
+		//   f.Retryable()      —— 重试有没有收益
+		//   f.SafeToResubmit() —— 原样重发安不安全
+		//   toolfail.PolicyOf(f.Class).NeedsOperator —— 要不要叫人
+		return f.Guidance()
 	}
-	// 正交决策：
-	//   f.Retryable()      —— 重试有没有收益
-	//   f.SafeToResubmit() —— 原样重发安不安全
-	//   f.NeedsOperator    —— 要不要叫人
-	return f.Guidance()
+	// 链上没有 *Failure：按 Classify 的结论兜底（哨兵 / 自报仍可能判出类别；
+	// 都判不出 ⇒ ClassUnknown ⇒ 不可重试，fail-closed）。
+	// 注意：Guidance 是 *Failure 的**方法**，上游没有包级 toolfail.Guidance(err)。
+	return toolfail.ClassifyAs(toolfail.Classify(err), err).Guidance()
 }
 ```
 
@@ -545,11 +553,11 @@ func advise(err error) string {
 
 #### 3.3.4 审批门接进判定环：`policy.Stage`
 
-审计门（`policy`）有两个接入口：
+审计门（上游 `toolgate/policy`）有两个接入口：
 
 | 入口 | 形态 | 用在哪 |
 |---|---|---|
-| `policy.WithAuditGate` | 包住**单个工具**（eino 的 `InvokableTool`） | 一个工具单独加审 |
+| `policy.AuditGate` | 包住**单个工具**（eino 的 `InvokableTool`） | 一个工具单独加审 |
 | `policy.Stage` | 接成**判定环的一环**（`invoke.Stage`） | **一处装配、处处生效** |
 
 `Stage` 才是「装配一次、处处生效」的形态：工具调用、程序内调用
@@ -559,13 +567,15 @@ func advise(err error) string {
 ```go
 import (
 	"github.com/yi-nology/goagent-kernel/guardset"
-	"github.com/yi-nology/goagent-kernel/policy"
+	"github.com/oagentkit/toolgate/policy"
 )
 
 // 审批门：策略来自宿主的外置 yaml（阈值只降不升）。
-p, err := policy.LoadOverrides(fsys)
+// fsys 与路径都由宿主给出（如 _shared/operation_policy.yaml）；
+// 文件不存在 ⇒ 回内置基座，不报错。
+p, err := policy.LoadOverrides(fsys, "_shared/operation_policy.yaml")
 if err != nil {
-	return err // 解析失败即拒，不带错跑
+	return err // 读取 / 解析失败即拒，不带错跑
 }
 gate := policy.NewGate(p, nil)
 
@@ -587,7 +597,7 @@ stages := []invoke.Stage{
   `c.Name` 会覆盖 `Op.Tool`（工具名由调用现场给出）。
 - **没装审批门（`gate == nil`）⇒ 不放行这道门，但不是静默**：留痕里仍有这一环，
   名称可查（`audit_gate`）。
-- **审批与执行后端是两层**：审批判「该不该做」，`sandbox` 的档位判「在哪跑」。
+- **审批与执行后端是两层**：审批判「该不该做」，上游 `sandbox` 的档位判「在哪跑」。
   两者要**一起同意**才放行——那正是 `gatecheck` 包做的事（见 §3.11）。
 
 #### 3.3.5 撤销的归属：`guardset.Assembly`
@@ -792,7 +802,7 @@ return out;
 
 ---
 
-#### 3.4.1 执行沙箱的档位与后端协议：`sandbox`
+#### 3.4.1 执行沙箱的档位与后端协议：上游 `guardx/sandbox`
 
 `ptc` 是**一个**执行后端（进程内 goja 解释器，档位 `LevelProcess`）。
 `sandbox` 是**后端协议**：档位语义 + 登记簿 + 按要求档位选后端。
@@ -1972,7 +1982,7 @@ case retryplan.PathReplayed:
 
 ### 3.11 审批 × 档位的联合判据：`gatecheck`
 
-审批层（`policy`）与沙箱层（`sandbox`）各自分属两个上游模块，**互不知情**
+审批层（上游 `toolgate/policy`）与沙箱层（上游 `guardx/sandbox`）各自分属两个上游模块，**互不知情**
 （`toolgate/policy` 不 import `guardx/sandbox`，反之亦然）。于是
 「两层是否都同意」这个判定**没有单点**——它落在每个宿主手里，必然漂移：
 同一个调用在 A 宿主被判「需人审」、在 B 宿主被判「自动放行」。
@@ -1982,8 +1992,8 @@ case retryplan.PathReplayed:
 ```go
 import (
 	"github.com/yi-nology/goagent-kernel/gatecheck"
-	"github.com/yi-nology/goagent-kernel/policy"
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/toolgate/policy"
+	"github.com/oagentkit/guardx/sandbox"
 )
 
 // 装配一次，之后每次执行走同一套判据（次序固定在一处）。
@@ -2035,70 +2045,83 @@ _ = sandboxRegistry.Register(managed)
 **承诺边界**：本包只判「两层是否都同意」，**不判「实际隔离强度是否兑现声明」**
 ——档位是后端自报的，内核不校验其真实性（那要审后端实现，不是判据能做的事）。
 
-### 3.12 门面三件：`dispatch` + `policy` + `reminder`
+### 3.12 门包清零之后：这几个包去哪找
 
-这三个包是**门面**，核心都在 `oagentkit`。**不要在本仓加实现**——
-`harness-facade-stays-facade` 门禁（error 级，走 `go/ast`）会拦下新类型、
-多语句方法或非上游调用。
+v0.35.0 起，本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox` 四个门面包
+（`architecture-policy.yaml` 的 `facades` 段是**空清单**）——它们整包迁到了上游矩阵，
+宿主**直连上游**：
 
-#### `dispatch`：权限即拓扑
+| 本仓旧名 | 现居上游 | import 路径 |
+|---|---|---|
+| `policy` | 审批 / 审计门 | `github.com/oagentkit/toolgate/policy` |
+| `toolfail` | 工具失败分类 | `github.com/oagentkit/guardx/toolfail` |
+| `sandbox` | 执行沙箱的档位与后端协议 | `github.com/oagentkit/guardx/sandbox` |
+| `reminder` | 系统注入提示的防伪包裹 | `github.com/oagentkit/guardx/injectband` |
 
-agent 间可达性由 allow 矩阵物理决定，矩阵在构建期物化、运行期只读。
+⚠️ **本仓的 `dispatch` 不是旧门包**：v0.38.0 起它是**改派失败面**（三档分类 + 兜底
+改派环），与「权限即拓扑」无关——旧的门包语义随 v0.35.0 一起删掉了。
+
+**门包纪律仍在**（`harness-facade-stays-facade`，error 级，走 `go/ast`）：本仓若再设
+门包，只允许四种声明——类型别名 / 常量别名 / 单条上游转发函数 / 允许集合内的 import；
+加真逻辑（要新类型、要多条语句、或要新依赖）三者必居其一 ⇒ 当天即红。
+
+#### `dispatch`：失败后还能不能派、派给谁
+
+改派面（issue #169）：把「失败怎么分类」与「改派环怎么走」收成一条可执行结论——
+**只回答第四问**，不碰可达性（上游 allow 矩阵 / 深度 / 自派发）、不做队列、也不答
+「要不要原样重发」（那是 `toolfail` 的活）。
 
 ```go
 package myapp
 
 import (
-	"github.com/oekit/pkg/errors"
+	"context"
+
 	"github.com/yi-nology/goagent-kernel/dispatch"
 )
 
-// 宿主把自己的注册表投影成拓扑
-type myRegistry struct{ edges map[string][]string }
-
-func (m myRegistry) Slugs() []string {
-	out := make([]string, 0, len(m.edges))
-	for s := range m.edges {
-		out = append(out, s)
-	}
-	return out
+// 候选枚举接缝：候选怎么来是宿主的事（注册表 / 能力画像 / 启用开关全在宿主侧）
+func candidates(slug string, tried map[string]bool, sameDomain bool) []string {
+	return hostRegistry.Candidates(slug, tried, sameDomain)
 }
 
-func (m myRegistry) DispatchAllow(slug string) []string { return m.edges[slug] }
-
-func main() {
-	g := dispatch.NewGuard(myRegistry{edges: myEdges}, 3) // ★ 矩阵含环会 panic
-
-	if err := g.Assert("triage", "restart", 0); err != nil {
-		var de *dispatch.DenyError
-		if errors.As(err, &de) {
-			// 不得转述、不得降级，按失败兜底如实上报
-			switch de.Reason {
-			case dispatch.ReasonNotAllowed:
-			case dispatch.ReasonDepthExceeded:
-			case dispatch.ReasonSelfDispatch:
-			}
-		}
-	}
+// 执行步接缝：把候选 slug 当执行者跑一次（nil = 该候选失败）
+func attempt(ctx context.Context, slug string) error {
+	return hostRunner.Run(ctx, slug)
 }
+
+res := dispatch.StickyFailover(ctx, dispatch.Request{
+	Slug:               firstFailedAgent,
+	FirstErr:           firstErr, // 判定面只读**首次失败的原始错误**
+	SameDomain:         3,       // 同域改派次数上限（0 = 禁用）
+	CrossDomain:        true,    // 瞬态跨域兜底一次
+	FailoverCandidates: candidates,
+	Attempt:            attempt,
+	OnEvent:            func(e dispatch.Event) { audit(e) },
+})
+if res.Slug == "" {
+	return res.Err // 全部候选仍失败（Err 含改派说明，给人看）
+}
+return use(res.Slug, res.Err)
 ```
 
 **坑**
 
-- **`NewGuard` 在 allow 矩阵含环时 panic**（自环同样拒绝）——
-  宿主必须在装配前保证拓扑无环，或自行在调用点外围 recover。
-- **拒绝原因请按常量比对而非裸字符串**，常量在此原样透出，跨仓比对不会因字面量漂移而失效。
-- 本包不认识任何具体 agent：拓扑由宿主的 `EdgeSource` 实现提供。
+- **判定面只读首次失败的原始错误**。累计错误里混进了改派说明
+  （`%w（已同域改派 X 仍失败）`），二次判档读到的已不是真因——`FirstErr` 只放原始错误。
+- **fatal 档不进任何改派**：换执行者也是白跑（同域兄弟与跨域候选共享同一套凭证与
+  权限面）⇒ 直接终态。
+- **候选枚举与执行都是接缝**：本包不排序候选、不发事件、不落库——那些是宿主资产。
 
-#### `policy`：操作审计门
+#### `policy`：操作审计门（上游 `toolgate/policy`）
 
 ```go
 package myapp
 
-import "github.com/yi-nology/goagent-kernel/policy"
+import "github.com/oagentkit/toolgate/policy"
 
 // 缺文件回内置基座，阈值只降不升
-p, err := policy.LoadOverrides(policyFS) // 路径固定为 _shared/operation_policy.yaml
+p, err := policy.LoadOverrides(policyFS, "_shared/operation_policy.yaml") // 路径由宿主传入
 g := policy.NewGate(p, nil)              // p 为 nil 用内置基座；arbiter 为 nil 则灰区直接升人审
 
 d := g.Decide(ctx, policy.Op{
@@ -2111,25 +2134,25 @@ d := g.Decide(ctx, policy.Op{
 
 **坑**
 
-- **门面上没有 `Stage` 转发**（上游 `policykit.Stage` 未被透出）。
-  要接成 invoke 链一环，宿主需自包一层 `guardset.Guard`，`Check` 里调 `Gate.Decide`。
-- **`DefaultPolicy` 未被门面转发**：要内置基座就传 `NewGate(nil, nil)`。
+- **要接成 invoke 链一环就用上游的 `policy.Stage`**（上游有这个转发；旧门包形态下
+  它没被透出，所以旧文档写「需自包一层 `guardset.Guard`」——那段已随门包删除作废）。
+- **`DefaultPolicy` 在上游**：要内置基座就传 `NewGate(nil, nil)`。
 - **`Normalize` 对空/非法一律回落 `confirm`**——审计门不允许因模式脏值放大权限。
 - **`Mutating` 是三态 `*bool`（v0.28.0 随 toolgate v0.17.0）**：字面量直接写
-  bool 编译不过，用门面的 `policy.Mutating(true/false)` 内联构造；不填（nil）
+  bool 编译不过，用上游的 `policy.Mutating(true/false)` 内联构造；不填（nil）
   不是「非变更」，是「未知」——审计门 fail-safe 升人审，不替调用方猜。
 - **`Decide` 只读 policy，并发安全，可放工具调用热路径。**
 
-#### `reminder`：系统注入提示的防伪包裹
+#### `reminder`：系统注入提示的防伪包裹（上游 `guardx/injectband`）
 
 ```go
 package myapp
 
-import "github.com/yi-nology/goagent-kernel/reminder"
+import "github.com/oagentkit/guardx/injectband"
 
 // 纪律：body 来自用户输入 / 工具产出 / 历史结论等不可信内容时，
 // 必须先 SanitizeBody 再进 prompt
-msg := reminder.Wrap("alert", reminder.SanitizeBody(webhookText))
+msg := injectband.Wrap("alert", injectband.SanitizeBody(webhookText))
 ```
 
 **坑**
@@ -2230,9 +2253,9 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 import (
 	"github.com/yi-nology/goagent-kernel/egress"
 	"github.com/yi-nology/goagent-kernel/gatecheck"
-	"github.com/yi-nology/goagent-kernel/policy"
 	"github.com/yi-nology/goagent-kernel/preset"
-	"github.com/yi-nology/goagent-kernel/sandbox"
+	"github.com/oagentkit/guardx/sandbox"
+	"github.com/oagentkit/toolgate/policy"
 )
 
 set, err := preset.New([]preset.Preset{
@@ -2264,7 +2287,7 @@ req, err := set.GateRequest(baseReq, cfg.Preset)   // 三面一次性展开进�
 
 #### `cmdpolicy`：一次审批通过之后，那条命令怎么判
 
-`policy` / `gatecheck` 的判定面停在**工具名**上：一次 `exec` 审批通过后，它内部跑的是
+上游 `policy` / `gatecheck` 的判定面停在**工具名**上：一次 `exec` 审批通过后，它内部跑的是
 `git status` 还是 `rm -rf /`，此前没有任何机制面看得见。
 
 ```go
@@ -2643,6 +2666,158 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 - **拿 SQLite 当「不用起 PG」的免维护方案**。它省掉的是**服务进程**，不是
   **运维**：WAL 文件、备份、跨机共享都得自己安排。
 
+### 3.18 回合守卫：模型侧循环还能不能转：`roundguard`
+
+#### 什么时候需要它
+
+你在宿主里写**模型侧循环**（模型请求工具 → 执行 → 回灌 → 继续；模型给终答 → 停）。
+循环本体早已收敛成同一段代码，各宿主真正不一致的是**循环周边**的三问：
+
+1. **这次还能不能转**（回合数 / 工具调用总数 / 单工具额度还剩多少）？
+2. **这一回合以什么结束**（终答 / 要工具 / 交接 / 报错 / 中止）？
+3. **这一圈是不是白转**（精确重复 / 震荡 / 缓慢漂移 / 错误螺旋 / 只规划不动手）？
+
+放在宿主侧的后果是**每个宿主各判一套**：同一段循环在 A 宿主算「第 12 圈超了」、
+在 B 宿主算「第 8 圈还能转」，且没有任何机器能发现。
+
+`roundguard` 是**判据层**：它**不调模型、不执行工具**，只回答这三问，并把三张判据
+合成**一条可执行结论**。**判据归内核，模型侧归宿主**——本包只给结论，不写产物、
+不解释工具语义。
+
+#### 最小集成片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/roundguard"
+
+// —— 装配期：声明额度与处置口径（负值 / 空工具标识 / 未知口径 ⇒ Validate 报错）——
+b := roundguard.Budget{
+    MaxRounds:    40,                              // 回合数上限
+    MaxToolCalls: 20,                              // 工具调用总数上限
+    MaxPerTool:   map[string]int{"send_email": 2}, // 单工具上限
+    Policy:       roundguard.PolicyForceFinal,     // 缺省即此；改 FailFast 即失败即止
+}
+if err := b.Validate(); err != nil {
+    return err // 非法声明在装配期红，不静默降级成「不限」
+}
+cfg := roundguard.Config{} // 零值 = 缺省：窗口 8 / 重复阈值 3
+meter := roundguard.NewMeter()
+var obs []roundguard.Observation
+
+for {
+    // ① 模型调用：这一回合**能不能开始**由上一回合末的 Decide 说了算（见 ③）
+    //    —— 额度判定只做一次、就在 Decide 里，宿主侧不再另开一套 Check* 分支
+    resp := model.Call(ctx, msgs, tools)
+    meter.Round()
+
+    // ② 工具执行前：单工具额度 ⇒ 否决这一次，但**配对不破**
+    //    （单工具额度没有内部对应面，只能宿主在工具执行前自己判）
+    var results []toolResult
+    for _, tc := range resp.ToolCalls {
+        if v := roundguard.CheckTool(b, meter.Used(), tc.Name); !v.Allowed {
+            results = append(results, toolResult{ID: tc.ID, Err: errors.New(v.Detail)}) // 回灌失败结果
+            continue
+        }
+        res := execTool(ctx, tc)
+        meter.Tool(tc.Name)
+        results = append(results, res)
+    }
+
+    // ③ 回合末：**每回合一条** Observation（工具调用折叠进本回合的计数与指纹）
+    obs = append(obs, hostRoundObservation(resp, results))
+    d := roundguard.Decide(roundguard.Snapshot{
+        Outcome: hostOutcome(resp, results), // 宿主把本回合的模型回复映射成 Outcome
+        Used:    meter.Used(),
+        Obs:     obs,
+    }, b, cfg)
+
+    if d.Warn {
+        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会
+        msgs = append(msgs, hostWarnMessage(d.Shape))
+    }
+    if !d.Continue {
+        if d.Reason == roundguard.ReasonForcedFinal {
+            // 软：额度用尽但按「强制收尾」口径处置 ⇒ 再给模型一次**不带工具**的
+            // 收尾机会，让它用已收集的证据给出终答（产物仍可用，不是失败）
+            final := model.Call(ctx, msgs, noTools())
+            meter.Round()
+            out := hostOutcome(final, nil)
+            out.ForcedFinal = true // 标记这是「额度耗尽后的强制收尾步」
+            return finish(roundguard.Decide(roundguard.Snapshot{
+                Outcome: out,
+                Used:    meter.Used(),
+                Obs:     obs,
+            }, b, cfg))
+        }
+        // 其余停法按 Reason 处置：budget_exhausted / failed / aborted / no_outcome
+        // 是失败型（IsFailure()==true）；stalled 是温和叫停（产物仍可用）
+        return finish(d)
+    }
+    msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
+}
+```
+
+#### 关键符号
+
+| 符号 | 作用 |
+|---|---|
+| `Classify(Outcome) Route` | 回合结局分类。判定次序「先具体后笼统，取证据最硬的那条」：中止 > 报错 > 交接 > 要工具 > 强制收尾 > 终答 > 原样再问 > 零值形态（保守收敛，不让空循环空转到超时）|
+| `Outcome` | 宿主注入的**回合级**事实：`ToolCalls`（本回合工具调用数）/ `Completed`（给出了终答）/ `Handoff` / `Paused`（服务端要求原样再问 ⇒ `Continue=true`）/ `Failed` / `Aborted` / `ForcedFinal`。**一条 Outcome = 一个回合**（不是一次工具调用）。⚠️ 零工具 + 未收敛 + 非 `Paused` ⇒ `ReasonNoOutcome` ⇒ **当场收敛**（保守侧，不让空循环空转到超时）|
+| `Reason`（10 值）| 结局判定词表：`Reason.Valid()` 与 `AllRoundReasons()` 读**同一张表**（别处不得手抄取值）。`Reason.IsFailure()` 把**失败型收敛**与**温和叫停**分开 |
+| `Budget` / `Used` / `Meter` | 额度声明 / 当前用量 / 进程内回合账（带锁，**只数不判**；跨进程累计归宿主）|
+| `CheckRounds` / `CheckToolCalls` | 回合数额度 / 工具调用总额度的判据。**`Decide` 内部调用的就是这两条**（判「下一回合能不能开始」，发生在下一次模型调用之前）⇒ **宿主侧不要再另开一套额度分支**——那套分支在 `Decide` 给出终局结论之后就永远执行不到（死代码）|
+| `CheckTool` | 单工具额度。**没有内部对应面**，须宿主在**工具执行前**自己判；被拒时**仍要回灌一条失败结果**给模型（配对不破）|
+| `StopPolicy`（2 值）| 额度用尽后的处置口径（**策略**）：`PolicyForceFinal` / `PolicyFailFast`。**额度维度（事实）与处置口径（策略）分开**，且一个口径管全部额度 |
+| `Budget.EffectivePolicy()` | 取生效口径（零值缺省 = 强制收尾）。**别直接读 `Budget.Policy` 判口径**——零值是合法缺省，不是第三种口径 |
+| `Detect([]Observation, Config) Finding` | 无进展检测：**五形态 + 三档处置**（不判 / 首档 `Warn` 警告回灌 / 停止档 `Stalled` 温和叫停）。窗口是**回合**窗口，向上钳位到 `2×Repeat+2`（否则震荡形态的停止档**永不可达**——判据不可达等于判据不存在）|
+| `Observation` | **一条 Observation = 一个回合**（不是一次工具调用）：`Tools` 是本回合的工具调用数、`Fingerprint` / `Normalized` 是本回合动作的**聚合指纹**、`Settled` 是本回合是否已收敛。**指纹与归一指纹都由宿主算**（内核不猜「什么是易变部分」）；`ResultChanged` = 本轮有进展；`Exempt` = 本回合不参与判定（轮询 / 查状态类动作、刻意的规划步）|
+| `Decide(Snapshot, Budget, Config) Decision` | **额度判定只此一处**：结局终局优先 → 额度按处置口径分流 → 无进展兜底。`Decision.Continue=false` 有**三种含义**（失败型 / 强制收尾 / 温和叫停），靠 `Reason` 区分 |
+
+#### 三条接线纪律
+
+1. **失败要回灌、也要记账**：工具失败既作为 `tool_result` 回灌给模型（模型自行修正），
+   又作为 `Observation.Failed` 记一条——只回灌不记账 ⇒ 无进展检测永远看不到错误螺旋。
+2. **指纹要稳定，且要带上「结果变了」**：同一逻辑动作必须给同一指纹；归一指纹要抹掉
+   易变部分（页码 / 时间戳 / 行号），否则漂移检测永远不命中。「相同调用但输出变了」
+   必须显式记为 `ResultChanged: true`——那是**进展**，不记就会把有意义的重试误判成
+   循环。轮询 / 查状态类动作、以及刻意的规划步，要记 `Exempt: true`。
+3. **「停止」与「失败」分开处置**：`Decision.Reason` 区分失败型收敛
+   （`IsFailure()==true`）与温和叫停 / 强制收尾——把「被上限温和收停」当故障上报
+   就是假红。
+
+#### 坑
+
+- **每个工具调用记一条 Observation**（观测粒度比实现细）。`Detect` 的窗口是**回合**
+  窗口、空转形态按「连续回合 `Tools==0 && !Settled`」判 ⇒ 调用级观测下**空转形态
+  永不可达**，且重复形态的连续长度按**调用数**算、直接越过阈值 ⇒ **首档（自我修正
+  机会）被跳过**。**一条 Observation = 一个回合**：工具调用折叠进该回合的 `Tools`
+  计数与聚合指纹。
+- **宿主侧再判一遍额度**。额度判定只在 `Decide` 一处（它内部用的就是 `CheckRounds` /
+  `CheckToolCalls` 同一份判据），分流按 `Budget.Policy`；宿主自己那套 `Check*` 分支
+  在 `Decide` 给出终局结论之后**永远执行不到**（死代码），连带地 `forceFinal` 恒为
+  false、「软：不再给工具」那条路径根本走不到 ⇒ **强制收尾永远收不起来**。
+- **额度判定挪到模型调用之后**。最后一次昂贵调用已经发生，判定就晚了——`Decide` 在
+  **上一回合末**给结论，正好赶在下一次模型调用之前。
+- **不跑 `Budget.Validate` 就上线**。未校验的负值上限在 `Check*` 里是 **fail-open**
+  （上限 ≤ 0 一律判成「不限」）⇒ 非法声明必须在**装配期**被拒。
+- **用 `Budget.Policy` 直接判口径**。零值是**合法缺省**（= 强制收尾），拿它跟
+  `PolicyForceFinal` 比会把「没设」判成「不是强制收尾」⇒ 要生效口径用
+  `EffectivePolicy()`，要校验声明用 `Validate()`。
+- **`Decision.Continue == false` 一律当失败**。`ReasonForcedFinal`（强制收尾，产物
+  仍可用）与 `ReasonStalled`（温和叫停）都不是失败——一律当故障上报就是假红。
+- **无进展一命中就停**。首档（`Warn`）只该**警告回灌**，给模型一次自我修正的机会；
+  停止档才温和叫停——一命中就停 = 模型永远没有自我修正的机会。
+- **零工具回合也要给指纹**。多个零工具回合若指纹全等（例如都留空），会先被「精确重复」
+  判走（重复的判定次序在空转之前）⇒ **空转形态永远轮不到**。指纹取本回合的产出
+  （如规划文本）即可。
+- **零工具回合默认被「无产出」收敛掉**。`Outcome` 零值形态 ⇒ `ReasonNoOutcome` ⇒ `Decide`
+  当场收口 ⇒ 空转 streak 攒不起来。要让这类回合继续跑（刻意的规划步）：① 标
+  `Exempt: true`（豁免，不计任何形态）；② 或把 `Outcome` 映射成 `Paused`（`Continue=true`）。
+- **把指纹当内核的事**。指纹 / 归一指纹**由宿主算**：内核若自己决定「什么是易变部分」，
+  就成了领域解释者（形状判定归宿主、集合判定归本包）。**聚合指纹的聚合规则也是宿主的
+  事**（本回合多次调用怎么合成一个指纹）。
+- **拿 `Meter` 当跨进程回合账**。它是**进程内**的（带锁、只数不判）；跨进程续跑时回合数
+  不随之累计，要跨进程累计的宿主须自行落库并把 `Used` 灌回本包。
+
 ---
 ## 4. 门禁与提交前检查
 
@@ -2696,14 +2871,14 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-no-bare-goroutine` | **error** | 生产代码裸 `go func`（panic 无法被外层 recover） |
 | `harness-no-printf-log-callback` | **error** | 公开 API 里的 `logf func(string, ...any)`（printf 回调焊进签名即不可逆 API 债） |
 | `harness-single-errors-package` | **error** | stdlib `"errors"` 与 `github.com/pkg/errors`（全仓只允许 `oekit/pkg/errors` 一套） |
-| `harness-sandbox-execution-single-entry` | **error** | 执行沙箱的后端不得多入口（执行路径与声明路径必须一致） |
+| `harness-sandbox-execution-single-entry` | **error** | 外部程序执行只允许经 **`ptc` 执行后端**；其余生产代码不得直接 import os/exec（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
 | `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
 另有**五条不走正则表、由 `go/ast` 判定的结构性规则 + 租户隔离证据门（六条规则号，issue #177 补齐）+ 一条 policy 自校验**（判据是语法结构，逐行看文本判不出）：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
-| `harness-facade-stays-facade` | `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 长出实现 | `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
+| `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**；`dispatch` 已是本仓真实实现，不在门包之列）| `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
