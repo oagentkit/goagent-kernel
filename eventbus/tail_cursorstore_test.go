@@ -21,13 +21,34 @@ type memCursorStore struct {
 	saved    bool
 	failLoad int
 	failSave int
+	// loadCalls / loadFails Load 被尝试 / 失败的次数：证明「停摆语义真的持续过」。
+	// 没有它，「Load 失败期间没回退 MaxID、没读存量」这条**负向**断言
+	// 在尾随一拍都没转时也照样绿——什么都没验到却绿。
+	loadCalls int
+	loadFails int
+}
+
+// loadAttempts 返回 Load 被尝试过的次数（线程安全）。
+func (c *memCursorStore) loadAttempts() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loadCalls
+}
+
+// loadFailures 返回 Load 失败过的次数（线程安全）。
+func (c *memCursorStore) loadFailures() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.loadFails
 }
 
 func (c *memCursorStore) LoadCursor(context.Context) (uint64, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.loadCalls++
 	if c.failLoad > 0 {
 		c.failLoad--
+		c.loadFails++
 		return 0, false, errFakeRead
 	}
 	return c.cur, c.saved, nil
@@ -132,8 +153,27 @@ func TestTailerCursorLoadFailureStallsNeverSkips(t *testing.T) {
 	defer cancel()
 	go NewTailer(tail, hub, WithTailInterval(10*time.Millisecond), WithTailCursorStore(cursor)).Run(ctx)
 
-	// 多拍之后：MaxID 不得被调（回退即跳读），事件不得送达（停摆中）。
-	time.Sleep(80 * time.Millisecond)
+	// 等「停摆语义真的持续过 N 拍」这个**事实**：Load 被尝试 N 次，且 N 次都失败。
+	// 不用墙钟窗口当尺子——尾随一拍都没转时，下面两条**负向**断言
+	// （没回退 MaxID、没读存量）什么都没验到却绿（证据落空）。
+	// 轮询间隔（5ms）不是尺子，尺子是「停摆持续了 N 拍」这个可观测事实。
+	//
+	// 为什么是 N 拍而不是 1 拍：负向断言的覆盖力来自「被测机制有多次机会做坏事」。
+	// 只等 1 次 Load ⇒ 只覆盖第 1 拍（后续拍里回退 MaxID / 读存量都抓不到）。
+	// N 次 Load ⇒ 覆盖 N 拍，每拍都是一次机会——原来的 80ms 窗口约等于 8 拍
+	// （尾随节拍 10ms），这里用「停摆持续了 8 拍」把同一块地面按**事实**盖住，
+	// 且负载越重拍数越多（覆盖力只增不减）。
+	const wantLoadAttempts = 8
+	deadline := time.Now().Add(2 * time.Second)
+	for cursor.loadAttempts() < wantLoadAttempts || cursor.loadFailures() < wantLoadAttempts {
+		if time.Now().After(deadline) {
+			t.Fatalf("2s 内停摆语义未持续 %d 拍（Load 尝试 %d 次、失败 %d 次）——"+
+				"停摆根本没发生或中途停了，本用例失去证据价值",
+				wantLoadAttempts, cursor.loadAttempts(), cursor.loadFailures())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	// 停摆中：MaxID 不得被调（回退即跳读），事件不得送达（停摆中）。
 	if got := tail.maxIDs(); got != 0 {
 		t.Fatalf("Load 失败不得回退 MaxID 初始化（调了 %d 次 = 跳读停机窗口）", got)
 	}
