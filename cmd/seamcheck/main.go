@@ -33,12 +33,13 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // 约束键（基线里的稳定拼写；顺序即输出顺序）。
@@ -99,7 +100,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			reportf(stderr, "seamcheck: 读基线失败: %v\n", err)
 			return 1
 		}
-		report, err := collect(*root)
+		report, err := collect(*root, loadPackages)
 		if err != nil {
 			reportf(stderr, "seamcheck: 扫描失败: %v\n", err)
 			return 1
@@ -112,7 +113,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 
-	report, err := collect(*root)
+	report, err := collect(*root, loadPackages)
 	if err != nil {
 		reportf(stderr, "seamcheck: 扫描失败: %v\n", err)
 		return 1
