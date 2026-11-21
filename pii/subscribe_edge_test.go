@@ -172,6 +172,10 @@ func TestConcurrentSubscribeUnsubscribeAndNotify(t *testing.T) {
 		t.Fatal(err)
 	}
 	drain(t, h)
+	// 丢掉注册时的初始回调：那是「现在生效的是什么」，不是变更通知。
+	// 留着它，下面「等到 N 次通知」就成了恒真（注册即有一次）——判据必须
+	// 只数**变更**通知，否则这条断言测不到通知路径。
+	resident.reset()
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
@@ -215,7 +219,24 @@ func TestConcurrentSubscribeUnsubscribeAndNotify(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(300 * time.Millisecond)
+	// 等「长驻订阅者真的收到过变更通知」这个**事实**（有界），不用墙钟窗口当尺子：
+	// 写侧是无节流自旋，通知投递排在它后面——窗口落空时「一次通知都没收到」
+	// 说的其实只是「窗口里没轮到」，是假红。
+	// 轮询间隔（1ms）不是尺子，尺子是「变更通知到了 N 次」这个可观测事实。
+	//
+	// 为什么等 N 次而不是 1 次：本用例要验的是「名单在剧烈增删下仍能被稳定遍历」，
+	// 增删侧必须与通知**重叠**才有意义——只等 1 次通知时增删侧可能还没跑起来。
+	const wantNotifications = 50
+	notifyDeadline := time.Now().Add(5 * time.Second)
+	for resident.count() < wantNotifications {
+		if time.Now().After(notifyDeadline) {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("长驻订阅者 5s 内收到的变更通知不足 %d 次（实得 %d）——并发增删把通知路径打断了",
+				wantNotifications, resident.count())
+		}
+		time.Sleep(time.Millisecond)
+	}
 	close(stop)
 	wg.Wait()
 
