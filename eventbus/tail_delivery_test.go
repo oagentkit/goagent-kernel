@@ -57,6 +57,20 @@ func TestTailerDeliversNewEventsToHub(t *testing.T) {
 
 // TestTailerInitializesCursorFromMaxID 初始化取 MaxID：首拍只读游标、不回放
 // 存量（本面是补灌不是回放），此后才按 id>游标 读新事件。
+//
+// # 缺席断言的尺子：可观测的读拍数，不是墙钟窗口（#432 / #443）
+//
+// 原写法是「等初始化落地 → 睡 50ms → 断言窗口内无事件」：窗口落空时
+// 什么都没验却绿（假红），坏实现慢一点才回灌时守卫也抓不住（白测）。
+// 现在改成三步，每步都落在**可观测事实**上：
+//
+//  1. 等初始化拍落地（MaxID 被调过——事实）；
+//  2. 等尾随**跑满 20 读拍**（夹具数出来的读拍数——事实，与负载无关）；
+//  3. 此刻判「通道里仍无事件」（非阻塞 drain）⇒ 有就是「跑够拍还吐存量」。
+//
+// 第 2 步的 20 拍不是随手写的：旧的 50ms 窗口在 10ms 节拍下约等于 5 拍，
+// 只给前 5 拍做坏事的机会；20 拍把「慢十几拍才回灌」的坏实现也盖住
+// （坏实现只要在自己的某一拍里回灌，就跑不掉）。
 func TestTailerInitializesCursorFromMaxID(t *testing.T) {
 	store := &fakeTailStore{
 		maxID: 5,
@@ -81,11 +95,9 @@ func TestTailerInitializesCursorFromMaxID(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	select {
-	case ev := <-ch:
-		t.Fatalf("存量事件不得被回灌（本面是补灌不是回放）: %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-	}
+	// 等机制确实跑过 N 读拍 ⇒ 再判缺席（尺子见 waitTailReadBeats）。
+	waitTailReadBeats(t, store, tailAbsenceReadBeats)
+	assertNoTailFrame(t, ch, tailAbsenceReadBeats)
 
 	store.append(Event{ID: 6, SessionID: "s", Type: "new"})
 	ev := waitTail(t, ch)
