@@ -192,9 +192,9 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: eventbus/tail.go#TailStore
+        ref: eventbus/tailstore.go#TailStore
       - kind: contract
-        ref: eventbus/tail.go#WatermarkTailStore
+        ref: eventbus/tailstore.go#WatermarkTailStore
       - kind: contract
         ref: examples/pgstore/event.go#EventStore
     delivered_by: "#264"

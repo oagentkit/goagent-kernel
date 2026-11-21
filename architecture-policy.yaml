@@ -1511,6 +1511,85 @@ rules:
         want: miss
 
 
+  # 规则 4.5：包级全局态 setter 不得被测试**直调**（issue #449）。
+  #
+  # 背景：#442 的缺陷是同一个包里长出**两套相反的还原约定**（一个 cleanup 还原成
+  # false、另一个还原成 true），`-count=20` 实测红 19 次。修法是把还原收进**一个**
+  # 包级 helper（setup 同步重置 + cleanup 同步还原 + 还原超时必须让用例失败），
+  # 包内 105 处直调全部改走 helper。
+  #
+  # 但那条纪律此前**只是纪律**：下一个用例作者仍可以直接写 SetEnabled(false) +
+  # 自己的 cleanup ⇒ 两套约定可以原样再生，且没有任何判据会红。本规则把它变成机判。
+  #
+  # 判的是**调用点**（go/ast，check_kind: test_no_direct_call）：函数定义、注释、
+  # 字符串（t.Fatal("SetEnabled(false) 后…")）、测试名（TestSetDigestKeyGuards）都
+  # 不算调用——逐行正则会把它们一起命中，规则误报到没人信它就等于没有规则。
+  #
+  # 被禁符号与受管辅助都**声明在 policy 侧**：哪些是全局态 setter、哪些 helper
+  # 本来就必须调真 setter，是宿主的知识；archcheck 只提供判定面（跨宿主复用）。
+  - id: harness-test-no-direct-global-setter
+    desc: 测试面不得直调包级全局态 setter（还原口径只应有一份：改走包级 helper）
+    severity: error
+    scope: [pii]
+    include: ["*.go"]
+    ignore_test: false
+    only_test: true
+    check_kind: test_no_direct_call
+    forbid_calls: [SetEnabled, SetSurfaces, SetStrategy, SetDigestKey]
+    # 受管辅助：这些 helper 体内**必须**调真 setter（否则它成不了唯一的还原入口）。
+    # 未登记的包内助手体内的直调照判——助手是绕开 helper 的第二条路。
+    managed_helpers:
+      - resetPolicyGlobals
+      - resetPolicyGlobalsWithin
+      - setEnabledForTest
+      - setSurfacesForTest
+      - setStrategyForTest
+      - setDigestKeyForTest
+    examples:
+      # ① 违规形态：用例体里直调 setter——每个作者各写一遍 cleanup，
+      #    两套相反的还原约定会长在同一个包里且没有任何判据会红。
+      - text: |
+          package sample
+
+          func TestDirectSet(t *testing.T) {
+              SetEnabled(false)
+              if Enabled() {
+                  t.Fatal("关不掉")
+              }
+          }
+        want: hit
+      # ② 正确形态：走包级 helper（不在 forbid_calls 清单里）。
+      - text: |
+          package sample
+
+          func TestViaHelper(t *testing.T) {
+              setEnabledForTest(t, false)
+              if Enabled() {
+                  t.Fatal("关不掉")
+              }
+          }
+        want: miss
+      # ③ 不是调用点：字符串与测试名里出现同名文本——AST 判调用，不判文本。
+      - text: |
+          package sample
+
+          func TestSetEnabledGuards(t *testing.T) {
+              t.Fatal("SetEnabled(false) 后仍为 true")
+          }
+        want: miss
+      # ④ 违规形态：**未登记**的包内助手直调——助手是绕开 helper 的第二条路。
+      - text: |
+          package sample
+
+          func sneakySet() {
+              SetEnabled(false)
+          }
+
+          func TestViaSneakyHelper(t *testing.T) {
+              sneakySet()
+          }
+        want: hit
+
   # 规则五：SDK 包不得把 printf 风格日志回调焊进公开 API。
   # 留痕一律走 logx.Delegating 懒解析——宿主用 logx.SetDefault 换后端，
   # 内核不必把日志函数收回参数（那会让每次调用都要包一层 adapter）。

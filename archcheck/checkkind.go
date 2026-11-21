@@ -39,13 +39,22 @@ const checkKindDeferCleanup = "defer_cleanup"
 // time.Sleep 当尺子」（issue #441）。
 const checkKindWallclockRuler = "wallclock_ruler"
 
+// checkKindTestNoDirectCall 是 check_kind 的取值域：判定「测试面有没有直接
+// 调用 policy 声明的包级全局态 setter」（issue #449）。
+//
+// 它守的是「还原口径只应有一份」：用例直调 setter ⇒ 每个作者各写一遍 cleanup，
+// 两套相反的还原约定能长在同一个包里而没有任何判据会红（#442 实测 -count=20
+// 红 19 次）。被禁符号由 policy 的 forbid_calls 声明——哪些是全局态 setter
+// 是宿主的知识，硬编码等于把宿主的事写进内核。
+const checkKindTestNoDirectCall = "test_no_direct_call"
+
 // knownCheckKind 判 check_kind 的取值是否已知。
 //
 // 取值域必须封闭的理由见文件头：写错的类别名若被当成「不是已知类别」，这条
 // 登记就静默降级成「不判」——登记了一张表却没生效，且没有任何机器能发现。
 func knownCheckKind(kind string) bool {
 	switch kind {
-	case checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler:
+	case checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler, checkKindTestNoDirectCall:
 		return true
 	}
 	return false
@@ -53,7 +62,7 @@ func knownCheckKind(kind string) bool {
 
 // knownCheckKindList 列出已知取值域（报错文案用）。
 func knownCheckKindList() []string {
-	return []string{checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler}
+	return []string{checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler, checkKindTestNoDirectCall}
 }
 
 // checkKindViolations 按 check_kind 分派到结构化执行体。
@@ -68,6 +77,8 @@ func checkKindViolations(root string, r Rule) ([]Violation, error) {
 		return deferCleanupViolations(root, r)
 	case checkKindWallclockRuler:
 		return wallclockRulerViolations(root, r)
+	case checkKindTestNoDirectCall:
+		return testNoDirectCallViolations(root, r)
 	default:
 		return nil, fmt.Errorf("规则 %s 的 check_kind %q 未知（没有对应执行体）", r.ID, r.CheckKind)
 	}
@@ -83,6 +94,8 @@ func checkKindSampleViolations(r Rule, text string) ([]Violation, error) {
 		return dcSampleViolations(r, text)
 	case checkKindWallclockRuler:
 		return wcSampleViolations(r, text)
+	case checkKindTestNoDirectCall:
+		return tncSampleViolations(r, text)
 	default:
 		return gjSampleViolations(r, text)
 	}
