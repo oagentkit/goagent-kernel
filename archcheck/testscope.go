@@ -153,7 +153,8 @@ func (b *tsBuilder) build() *tsScope {
 			b.collectCall(v)
 			return true
 		case *ast.UnaryExpr:
-			if v.Op == token.ARROW {
+			// 非阻塞 drain（select 带 default）不等任何东西 ⇒ 不是等待点。
+			if v.Op == token.ARROW && !tsNonBlockingRecv(b.parents, v) {
 				s := b.scopeOf(v)
 				s.waits = append(s.waits, tsWait{
 					node:    v,

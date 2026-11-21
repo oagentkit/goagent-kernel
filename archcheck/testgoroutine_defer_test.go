@@ -282,3 +282,80 @@ func TestDeferCleanupRuleRegisteredInPolicy(t *testing.T) {
 	}
 	t.Fatal("harness-test-defer-cleanup 没有出现在报告的规则清单里")
 }
+
+// TestDeferCleanupRuleMissesNonBlockingDrain 非阻塞 drain（select 带 default）
+// **不是等待点** ⇒ 不该判违规。
+//
+// # 为什么要有这条用例
+//
+// 非阻塞 drain 是**断言**（看此刻通道里有没有东西），不是 join。它被当成等待点
+// 时，规则会给出「把这个 drain 塞进 defer」的处方——而 drain 本来就不等东西，
+// 塞进 defer 什么也等不到 ⇒ **判据会指错路**。正确处方是给那个 goroutine
+// 补一个真正的收尾 join。
+//
+// 断言必须**双向**：只测「drain 不判红」不够——判据整个瘫掉（什么都不判）
+// 也会让这条用例绿。⇒ 紧跟一条「阻塞接收仍然判红」的用例（见下）。
+func TestDeferCleanupRuleMissesNonBlockingDrain(t *testing.T) {
+	root := gjFixture(t, "sample_test.go", `package sample
+
+func TestNonBlockingDrain(t *testing.T) {
+	done := make(chan struct{})
+	ch := make(chan struct{})
+	go worker()
+	if !ready() {
+		t.Fatalf("没准备好")
+	}
+	select {
+	case <-ch:
+	default:
+	}
+	_ = done
+}
+
+func worker() {}
+func ready() bool { return true }
+`)
+	vs, err := deferCleanupViolations(root, dcFixtureRule())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 0 {
+		t.Fatalf("非阻塞 drain 不是等待点，不该判违规: %v", textsOf(vs))
+	}
+}
+
+// TestDeferCleanupRuleHitsBlockingReceiveInSelect select **没有** default ⇒
+// 仍会挂起 ⇒ 仍是阻塞接收 ⇒ 仍是等待点 ⇒ 必须判红。
+//
+// 这条与上一条成对：它们把「阻塞 / 非阻塞」这条分界双向钉住——
+// 少一条，另一条就成了「判据瘫掉也绿」的假绿。
+func TestDeferCleanupRuleHitsBlockingReceiveInSelect(t *testing.T) {
+	root := gjFixture(t, "sample_test.go", `package sample
+
+func TestBlockingReceive(t *testing.T) {
+	done := make(chan struct{})
+	go worker()
+	if !ready() {
+		t.Fatalf("没准备好")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("没等到")
+	}
+}
+
+func worker() {}
+func ready() bool { return true }
+`)
+	vs, err := deferCleanupViolations(root, dcFixtureRule())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vs) != 1 {
+		t.Fatalf("阻塞接收必须判 1 条，实得 %d 条: %v", len(vs), textsOf(vs))
+	}
+	if !strings.Contains(vs[0].Text, "TestBlockingReceive") {
+		t.Fatalf("违规必须点名用例名，实得 %q", vs[0].Text)
+	}
+}

@@ -215,3 +215,64 @@ func tsImportLocal(file *ast.File, path string) string {
 	}
 	return local
 }
+
+// tsNonBlockingRecv 判一处接收表达式是否**非阻塞**。
+//
+// 非阻塞 = 它落在某个 select 的 CommClause 里，且那个 select **带 default 分支**
+// ⇒ 这个 select 永不挂起（要么某分支就绪、要么直接走 default）⇒ 这处接收
+// **不等任何东西**。
+//
+// # 为什么必须把它与阻塞接收分开
+//
+// 本仓两条测试面纪律都把「等待点」读成「用例在这等那个 goroutine」。而
+// 非阻塞 drain（`select { case ev := <-ch: ...; default: }`）是**断言**
+// （看此刻通道里有没有东西），不是 join ⇒
+//
+//  1. 把它当等待点 ⇒ 「收尾等待必须在 defer 里」这条规则会判错：正确的
+//     处方**不是**把 drain 塞进 defer（drain 本来就不等东西，塞进 defer
+//     什么也等不到），而是给那个 goroutine **补一个真正的收尾 join**。
+//  2. 把它当等待点 ⇒ 「用例内起的 goroutine 必须被等待」那条规则**假阴性**
+//     （它以为用例等过了，其实从头到尾没等）。
+//
+// ⇒ 本包的新规则（defer_cleanup）用**窄口径**：非阻塞接收不算等待点。
+// 兄弟规则（goroutine_join）仍用宽口径（任意接收表达式都算）——那是它的
+// **已登记边界 1**，本轮不动（改它会把一批现存用例判红，属另一条登记行）。
+//
+// # 与 select 的另一半形态要分清
+//
+// `select { case v := <-ch: ...; case <-time.After(d): }` **没有 default**
+// ⇒ 仍会挂起 ⇒ 仍是阻塞接收 ⇒ 算等待点。
+// tsSelectHasDefault 判一个 select 是否带 default 分支。
+//
+// go/ast 里 default 分支不单独占字段：它落在 SelectStmt.Body 里，是一个
+// Comm 为 nil 的 *ast.CommClause（Case 列表只装真正的 case 分支）。
+func tsSelectHasDefault(sel *ast.SelectStmt) bool {
+	for _, st := range sel.Body.List {
+		if cc, ok := st.(*ast.CommClause); ok && cc.Comm == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func tsNonBlockingRecv(parents map[ast.Node]ast.Node, n ast.Node) bool {
+	for p := parents[n]; p != nil; p = parents[p] {
+		switch v := p.(type) {
+		case *ast.CommClause:
+			// CommClause 的父节点不一定是 SelectStmt：go/ast 的 SelectStmt.Body
+			// 是 *ast.BlockStmt，clauses 装在它里面 ⇒ 最多往上跳两跳。
+			for q := parents[v]; q != nil; q = parents[q] {
+				if sel, ok := q.(*ast.SelectStmt); ok {
+					return tsSelectHasDefault(sel)
+				}
+				if _, ok := q.(*ast.BlockStmt); !ok {
+					break
+				}
+			}
+			return false
+		case *ast.FuncLit, *ast.FuncDecl:
+			return false
+		}
+	}
+	return false
+}
