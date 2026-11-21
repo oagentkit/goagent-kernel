@@ -44,9 +44,10 @@
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **53** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个包目录（判据的正式口径是
-> **module id**：61 数的是 `modules` 段的 `- id:` 条目，这些 id 覆盖的 root 目录
-> 共 63 个；「包目录」是判据正则要求的字面量，改它会让 `make docsync` 判红）。
+> `architecture-policy.yaml` 的 `modules` 段登记 **61** 个 module id（61 数的是
+> `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **63** 个——`taskboard`
+> 与 `pgrefstore` 各有两个 root。**两个数不是同一种量**：61 数 module id，63 数
+> root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
