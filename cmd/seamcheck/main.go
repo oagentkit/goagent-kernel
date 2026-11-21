@@ -33,12 +33,13 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // 约束键（基线里的稳定拼写；顺序即输出顺序）。

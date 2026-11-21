@@ -146,12 +146,10 @@ func typeDocs(p *packages.Package) map[*types.TypeName]string {
 					continue
 				}
 				var b strings.Builder
-				doc := ts.Doc
-				if doc == nil {
-					doc = gd.Doc
-				}
-				if doc != nil {
+				if doc := ts.Doc; doc != nil {
 					b.WriteString(doc.Text())
+				} else if gd.Doc != nil {
+					b.WriteString(gd.Doc.Text())
 				}
 				if it, ok := ts.Type.(*ast.InterfaceType); ok {
 					for _, m := range it.Methods.List {

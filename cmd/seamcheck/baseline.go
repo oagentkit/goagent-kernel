@@ -3,13 +3,14 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/oekit/pkg/errors"
 )
 
 // compare 当前结果 vs 基线：集合逐条相等 + 每接缝约束只增 + 总数只升。
