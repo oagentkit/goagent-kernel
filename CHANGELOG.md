@@ -2,6 +2,35 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.64.1] — 2026-11-21
+
+### fix(worker)：持续存储故障下租约会话的本地资格截止（P0-B，PR #458）
+
+深度评审确认的 P0：`LeaseSession.renewLoop` 此前只在**明确收到**
+`taskboard.ErrLeaseLost` 时才失格；续期持续返回存储不可达/网络超时时无限
+重试，而权威存储侧租约早已过期、任务可能已被新 worker 接管——旧持有者
+的会话 ctx 不被取消，仍在执行业务动作（双执行者窗口）。注释里「连续失败
+撑满 TTL 后下一拍必然 `ErrLeaseLost` 收口」的隐含前提——**那一拍必须重新
+得到存储响应**——在持续网络分区下不成立。
+
+修法：每次续期成功记录本地单调时钟的确认时刻，建立保守资格截止
+`T_deadline = T_last_confirmed + TTL − TTL/10`（margin 吸收本地与存储
+时钟的传输漂移）。超过截止仍未确认持有权 ⇒ 主动失格、取消执行 ctx，
+**不等存储回包**。本地截止点只负责提前撤销执行资格，不用于授予新租约
+（授予权永远属于权威存储）。
+
+- `LeaseSessionConfig` 新增 `Now` 时钟注入点（零值 = `time.Now`；
+  `@seam: no-reentry no-blocking panic-caller`，同 `ClockedStore.UseClock` 口径）；
+- 正对照用例：续期持续报错 + 假时钟推过 TTL ⇒ 会话主动失格；
+- 负对照用例：持续故障未过截止 ⇒ 不失格（自愈语义仍在窗口内）；
+- 测试面等待一律用可观测事实作尺（`flakyBoard.renewCalls` 计数），
+  不用裸 sleep 窗口（`harness-test-wallclock-ruler` 口径）。
+
+**下游要做什么**：使用 `worker.NewLeaseSession` 的宿主若注入过自定义
+`RenewInterval`，无需改动；默认形态自动获得持续故障失格保护。多副本
+部署建议在故障注入矩阵里补「worker↔DB 持续分区 > TTL」场景，断言旧
+worker 在截止后不再发出新的业务动作。
+
 ## [v0.64.0] — 2026-11-21
 
 ### 本版清偿 §34 登记的三条残余边界（#447 / #448 / #449）
