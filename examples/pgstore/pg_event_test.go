@@ -355,5 +355,5 @@ func TestEventStoreTailerEndToEnd(t *testing.T) {
 		t.Fatalf("回滚空洞不得触发永久丢失判据（哨兵静默）: [%d,%d]", g[0], g[1])
 	case <-time.After(100 * time.Millisecond):
 	}
-	stopTailer(t, cancel, done, "端到端尾随")
+	defer stopTailer(t, cancel, done, "端到端尾随")
 }

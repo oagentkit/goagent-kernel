@@ -16,8 +16,10 @@ package sqliteadapter
 
 import (
 	"context"
+	"runtime"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestStopTailerWaitsForGoroutineExit 收尾助手必须等 goroutine 真退出。
@@ -37,6 +39,49 @@ func TestStopTailerWaitsForGoroutineExit(t *testing.T) {
 
 	if !exited.Load() {
 		t.Fatal("stopTailer 返回时 goroutine 尚未退出：" +
+			"收尾助手只取消了上下文、没有等它退出")
+	}
+}
+
+// TestDeferredTailerCleanupJoinsOnGoexitPath 失败路径上 deferred 收尾**仍然 join**。
+//
+// 「失败路径」= 用例体里 t.Fatalf 触发的 runtime.Goexit：Goexit 会执行**所有**
+// defer，但**不执行**它之后的普通语句 ⇒ 收尾点若写成「用例末尾的普通语句」，
+// 失败路径上那一跳根本不执行 ⇒ tailer 未被 join，而用例已经判失败
+// （issue #431 的失效面，也是 archcheck 那条规则的四条已知边界之第 ④ 条）。
+//
+// 这里**不**真的让用例失败（那会污染套件），而是直接复现 Goexit 的语义：
+// 在一个 goroutine 里注册 defer 之后调用 runtime.Goexit() ⇒ 该 defer 必须被
+// 执行 ⇒ 它必须真的等到 goroutine 退出。
+func TestDeferredTailerCleanupJoinsOnGoexitPath(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var exited atomic.Bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-ctx.Done()
+		// 退出标志必须**在** close(done) 之前置位（与上面那条用例同款）。
+		exited.Store(true)
+	}()
+
+	joined := make(chan bool, 1)
+	go func() {
+		defer func() {
+			joined <- joinTailer(cancel, done, 2*time.Second)
+		}()
+		runtime.Goexit() // 模拟用例体中途 t.Fatalf
+	}()
+
+	select {
+	case ok := <-joined:
+		if !ok {
+			t.Fatal("deferred 收尾在 Goexit 之后仍未等到 goroutine 退出")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Goexit 之后 deferred 收尾未执行（Goexit 必须执行所有 defer）")
+	}
+	if !exited.Load() {
+		t.Fatal("deferred 收尾返回时 goroutine 尚未退出：" +
 			"收尾助手只取消了上下文、没有等它退出")
 	}
 }
