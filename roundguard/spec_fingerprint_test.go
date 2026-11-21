@@ -2,6 +2,7 @@ package roundguard_test
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,81 +24,43 @@ import (
 //
 //	(a) spec 全文 `### ` 小节的**集合** = 登记面；
 //	(b) 每张「判据」表的**数据行数** = 登记值；
-//	(c) 判据小节里的**散文判据**（粗体 + 全角冒号起头的段落）逐条登记，
+//	(c) 判据小节里的**散文判据**（粗体 + 冒号起头的段落）逐条登记，
 //	    多一条 / 少一条 / 改一条 ⇒ 红。
 //
 // 三条都是**纯函数派生 + 登记面比对**：spec 改了 ⇒ 派生值变 ⇒ 与登记面不等 ⇒
 // 当天即红。判据写成纯函数 ⇒ 可被「注入 ⇒ 变红」自证。
-
-// specFingerprintSections 登记面 (a)：spec 全文的 `### ` 小节**集合**。
 //
-// 为什么登记全部小节、而不只登记「矩阵要钉的那 14 个」：小节是判据的**容器**，
-// 容器变了（新增 / 改名 / 删除）就是判据面变了 ⇒ 必须显式登记。
-var specFingerprintSections = []string{
-	"1.1", "1.2", "1.3", "1.4",
-	"2.1", "2.2", "2.3",
-	"4.1", "4.2",
-	"5.1", "5.2", "5.3",
-	"6.1", "6.1.1", "6.2", "6.3", "6.4",
-	"7.1", "7.2", "7.3", "7.4", "7.5",
-	"9.1", "9.2", "9.3", "9.4", "9.5",
-	"10.1", "10.2",
-}
-
-// specFingerprintTables 登记面 (b)：「判据」表（表头首列 = 判据）的**数据行数**，
-// 按所在小节索引。
-var specFingerprintTables = map[string]int{
-	"10.1": 17,
-}
-
-// specFingerprintProse 登记面 (c)：判据小节里的**散文判据**标记串（粗体部分）。
+// ── 终审复审 F2：散文判据腿的两处形态收紧 ──
 //
-// 为什么单列一张表：编号列表项与编号表行已被上一道判定覆盖，散文判据**两种
-// 形态都抓不到**——它既没有编号，也没有表结构 ⇒ 它就是上一道判定的漏网面。
-var specFingerprintProse = map[string][]string{
-	"4.2": {"判定优先级（顺序即语义）"},
-	"5.1": {
-		"为什么把「强制收尾」「额度用尽」「无进展」也放进结局词表",
-		"为什么「没产出」与「报错」分开",
-		"零值语义",
-	},
-	"5.3": {
-		"为什么「要工具」排在「给终答」前面",
-		"为什么「强制收尾」排在「给终答」前面",
-		"为什么「暂停」排在最后",
-		"零值形态的处理",
-	},
-	"6.1": {"`Validate` 与「零值 = 不限」的关系"},
-	"6.1.1": {
-		"先分清两件事",
-		"证据（2026-11-21 逐仓实读）",
-		"为什么不能把「软 / 硬」写死成两个字段的语义",
-		"缺省 = `PolicyForceFinal`",
-		"强制收尾那一步不可否决",
-	},
-	"6.2": {"回合数 ≠ 模型请求数"},
-	"6.3": {"为什么必须调用前检查", "为什么按工具也要有上限"},
-	"6.4": {"处置口径决定这条表的适用范围"},
-	"7.1": {"归一化由宿主算，内核不猜"},
-	"7.3": {
-		"「原指纹全等」那一子情形归谁判（重复优先于漂移）",
-		"为什么改成「尾部连续成立长度 L」",
-		"窗口下限为什么是 2×Repeat+2",
-		"定档规则（命中 ≠ 立刻停）",
-		"为什么错误螺旋排在重复前面",
-		"为什么「空转」排在最后",
-	},
-	"7.5": {"证据（agentloop 的重复调用处置）", "为什么照抄这个分档"},
-}
+// (c) 那条腿原先只认**全角冒号**、且只覆盖「矩阵要逐条钉的那 14 个判据面小节」⇒
+// 两处都让这条腿**静默失明**：
+//
+//	① 形态敏感：spec 里把同一句判据改写成**半角**冒号（Markdown 里两种都常见）
+//	   ⇒ 腿认不出来 ⇒ 判据不响；
+//	② 覆盖不全：往**别的** `### ` 小节（§9.x 之类）里新加一条判据
+//	   ⇒ 腿不扫那个小节 ⇒ 判据不响。
+//
+// 收紧后的口径（两条都在本文件落地）：
+//
+//	① **形态无关**：粗体 + 冒号，**全角半角都认**（见 proseCriterionRe）；
+//	② **覆盖全部 `### ` 小节**：散文判据腿不再只看 14 个判据面小节。
+//
+// ⚠️ **已声明的边界**：`## ` 级小节下的粗体起首段落（命名决策 / 接线纪律 /
+// **变更历史**）**不在判定面内**——它们不是判据面小节，且「变更历史」里的粗体起首
+// 是历史条目，把它登记成「判据」会让每次改历史都要同步登记面 ⇒ 那是噪声不是判据。
+// 本指纹的判定面统一是 `### ` 小节（(a)(b) 两条腿同款）。
 
-// proseCriterionRe 散文判据的形态：行首（可带 ⚠️ 标记）粗体 + 全角冒号。
-var proseCriterionRe = regexp.MustCompile(`^\s*(?:⚠️\s*)?\*\*([^*]+)\*\*：`)
+// proseCriterionRe 散文判据的形态：行首（可带 ⚠️ 标记）粗体 + **冒号**。
+//
+// 冒号**全角半角都认**（终审复审 F2）：Markdown 里两种写法都常见，只认全角
+// ⇒ spec 改用半角时这条腿**静默失明**（规则在、报告照常、就是判不到）。
+var proseCriterionRe = regexp.MustCompile(`^\s*(?:⚠️\s*)?\*\*([^*]+)\*\*[：:]`)
 
 // specFingerprint spec 的结构指纹（三件套的派生结果）。
 type specFingerprint struct {
 	sections map[string]bool     // (a) 全部 `### ` 小节
 	tables   map[string]int      // (b) 「判据」表：所在小节 → 数据行数
-	prose    map[string][]string // (c) 判据小节的散文判据标记串（按出现顺序）
+	prose    map[string][]string // (c) 散文判据标记串（按出现顺序）
 }
 
 // splitTableRow 拆表格行（首尾竖线去掉，逐列 trim）。
@@ -166,23 +129,15 @@ func deriveSpecFingerprint(specText string) specFingerprint {
 			}
 			continue
 		}
-		if m := proseCriterionRe.FindStringSubmatch(ln); m != nil {
-			if _, ok := fp.prose[curSec]; ok || isCriterionSection(curSec) {
-				fp.prose[curSec] = append(fp.prose[curSec], m[1])
-			}
+		// 散文判据：**每个** `### ` 小节都扫（终审复审 F2：原先只扫 14 个判据面
+		// 小节 ⇒ 在别的小节里新加一条判据时腿不响）。
+		// curSec == "" 表示该段落在 `## ` 级小节下 ⇒ **不在判定面内**
+		// （已声明的边界，见文件头）。
+		if m := proseCriterionRe.FindStringSubmatch(ln); m != nil && curSec != "" {
+			fp.prose[curSec] = append(fp.prose[curSec], m[1])
 		}
 	}
 	return fp
-}
-
-// isCriterionSection 该小节是不是「判据面小节」（矩阵要逐条钉的那批）。
-func isCriterionSection(sec string) bool {
-	for _, s := range specCriterionSections {
-		if s == sec {
-			return true
-		}
-	}
-	return false
 }
 
 // sameStringSlice 两个字符串切片是否逐字相同（顺序也要求一致）。
@@ -359,17 +314,21 @@ func TestSpecFingerprintRejectsInjectedCriterionTableRow(t *testing.T) {
 func TestSpecFingerprintRejectsInjectedProseCriterion(t *testing.T) {
 	injected := "\n**注入的散文判据**：这是一条没有编号、没有表格结构的散文判据。\n"
 	inj := injectIntoCriterionSection(readSpecText(t), "7.3", injected)
-	v := deriveSpecFingerprint(inj).violations()
-	if len(v) == 0 {
-		t.Fatal("注入无编号散文判据后判据仍判绿 ⇒ 结构指纹 (c) 是空转的")
+	fp := deriveSpecFingerprint(inj)
+	// ① **派生面必须看见**注入的那一条（只判「有没有违规」会在坏实现下假绿——
+	// 登记面与派生面不一致时**本来就有**违规，那样的用例挡不住任何退化）。
+	if !slices.Contains(fp.prose["7.3"], "注入的散文判据") {
+		t.Fatalf("注入的散文判据没被派生出来（§7.3 实得 %v）⇒ 结构指纹 (c) 是空转的", fp.prose["7.3"])
 	}
+	// ② 判定面必须因此变红（与登记面不一致）。
+	v := fp.violations()
 	found := false
 	for _, s := range v {
-		if strings.Contains(s, "散文判据") {
+		if strings.Contains(s, "§7.3") && strings.Contains(s, "散文判据") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("未报出「散文判据」变化，实际报出：%v", v)
+		t.Errorf("未报出「§7.3 的散文判据与登记面不一致」，实际报出：%v", v)
 	}
 }

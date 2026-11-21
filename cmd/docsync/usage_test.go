@@ -49,7 +49,7 @@ func usageDocFixture(pkgCount, modulesCount int, version string) string {
 		"本仓共 **" + strconv.Itoa(pkgCount) + "** 个包（README 包表口径）。",
 		// 反引号包住 modules 是真实 USAGE 的写法（判据正则按这个形态匹配）。
 		"policy 的 " + bt + "modules" + bt + " 段登记 **" +
-			strconv.Itoa(modulesCount) + "** 个包目录。",
+			strconv.Itoa(modulesCount) + "** 个 module id。",
 		"",
 	}
 	return strings.Join(lines, "\n")
@@ -129,6 +129,35 @@ func TestUsageCatchesModulesCountDrift(t *testing.T) {
 	}
 	if !strings.Contains(problems[0], "policy 登记数写") {
 		t.Fatalf("应报「policy 登记数写」，实得 %q", problems[0])
+	}
+}
+
+// TestUsageRejectsStalePackageDirWording 反向验证：USAGE 把 policy 登记数写成
+// 「**N** 个包目录」（旧措辞）⇒ 判据必须报红。
+//
+// 为什么必须钉这条（2026-11-21 终审 M3）：判据的正式口径是 **module id**
+// （`modules` 段的 `- id:` 条目数），旧措辞却把它叫「包目录」——两者**不是同一个量**
+// （本仓：61 个 module id 覆盖 **63** 个 root 目录）⇒ 措辞与事实口径不一致 ⇒
+// 读者会以为「包目录数 = module id 数」。
+// 判据认「module id」之后，旧措辞**不再被接受** ⇒ 措辞回退当场即红。
+//
+// 只写「好实现能过」的用例，一个把正则改回「个包目录」的错实现照样全过 ⇒
+// 这条是「坏实现会红」的证据位。
+func TestUsageRejectsStalePackageDirWording(t *testing.T) {
+	stale := strings.Replace(usageDocFixture(1, 2, "latest"), "个 module id", "个包目录", 1)
+	usageFixtureRepo(t,
+		[]string{usageRow("alpha")},
+		usagePolicyFixture,
+		stale)
+	problems, checked, err := checkUsage(1)
+	if err != nil {
+		t.Fatalf("不该报错: %v", err)
+	}
+	if !checked || len(problems) == 0 {
+		t.Fatalf("旧措辞「个包目录」必须报出: %v", problems)
+	}
+	if !strings.Contains(problems[0], "找不到 policy 登记数声明") {
+		t.Fatalf("应报「找不到 policy 登记数声明」，实得 %q", problems[0])
 	}
 }
 

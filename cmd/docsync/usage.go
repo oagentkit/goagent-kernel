@@ -20,7 +20,7 @@ import (
 // 故给 USAGE 的三处关键数字装上判据：
 //
 //  1. 本仓包数（README 包表口径）——判相等；
-//  2. policy modules 段登记的包目录数——判相等；
+//  2. policy modules 段登记的 module id 数——判相等；
 //  3. 安装行的版本——必须写 @latest（钉死的版本号会随发版过期，而它不在
 //     任何门禁的判据面里）。
 //
@@ -41,7 +41,7 @@ var (
 	// usagePkgCountRe 抓 USAGE 里的包数声明。
 	usagePkgCountRe = regexp.MustCompile(`本仓共\s*\*\*(\d+)\*\*\s*个包`)
 	// usageModulesCountRe 抓 USAGE 里的 policy 登记数声明。
-	usageModulesCountRe = regexp.MustCompile(`modules\x60 段登记\s*\*\*(\d+)\*\*\s*个包目录`)
+	usageModulesCountRe = regexp.MustCompile(`modules\x60 段登记\s*\*\*(\d+)\*\*\s*个\s*module\s*id`)
 	// usageInstallRe 抓安装行及其版本。
 	usageInstallRe = regexp.MustCompile(`go get github\.com/yi-nology/goagent-kernel@(\S+)`)
 )
@@ -112,7 +112,7 @@ func checkUsage(pkgCount int) (problems []string, checked bool, err error) {
 	m = usageModulesCountRe.FindStringSubmatch(text)
 	if m == nil {
 		problems = append(problems, fmt.Sprintf(
-			"%s: 找不到 policy 登记数声明——请写成「modules 段登记 **N** 个包目录」",
+			"%s: 找不到 policy 登记数声明——请写成「modules 段登记 **N** 个 module id」",
 			usagePath))
 	} else {
 		got, convErr := strconv.Atoi(m[1])
@@ -153,7 +153,7 @@ func fileExists(path string) bool {
 	return err == nil && st.Mode().IsRegular()
 }
 
-// countPolicyModules 数 policy 的 modules 段登记了多少个包目录。
+// countPolicyModules 数 policy 的 modules 段登记了多少个 module id。
 //
 // 判据是**段内**的 `  - id:` 条目：modules 段到下一个顶层键为止。
 // 为什么自己数而不引 YAML 依赖：本仓的门禁解析器（archcheck）已经有一套，

@@ -956,10 +956,6 @@ for {
         Obs:     obs,
     }, b, cfg)
 
-    if d.Warn {
-        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会
-        msgs = append(msgs, hostWarnMessage(d.Shape))
-    }
     if !d.Continue {
         if d.Reason == roundguard.ReasonForcedFinal {
             // 软：额度用尽但按「强制收尾」口径处置 ⇒ 再给模型一次**不带工具**的
@@ -979,6 +975,16 @@ for {
         return finish(d)
     }
     msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
+    if d.Warn {
+        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会。
+        // ⚠️ 必须排在 assistantMsg / toolResultsMsg **之后**：警告是针对**这一回合**的
+        //    判据 ⇒ 排在它前面 = 模型先看到警告、后看到触发警告的那一回合
+        //    （**语义倒置**；而配对不破 ⇒ 没有编译错误、没有断言能抓到它）。
+        // ⚠️ 这个位置**不会**漏掉警告：Warn=true ⇒ Continue=true（首档只警告不停止，
+        //    见 decide.go 的 tierFinding：Stalled 与 Warn 互斥）⇒ 上面那个
+        //    !d.Continue 分支在 Warn=true 时根本不会进。
+        msgs = append(msgs, hostWarnMessage(d.Shape))
+    }
 }
 ```
 
