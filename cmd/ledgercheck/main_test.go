@@ -45,11 +45,28 @@ func writeLedger(t *testing.T, body string) string {
 	return root
 }
 
-// runCheck 跑门禁，返回退出码与输出。
+// syntheticIssueStates 与 syntheticLedger 一致的 issue 开关状态（判据 5 的数据源）。
+//
+// 必须注入而不是走真 gh：夹具单号 #101/#102 恰好落在**真实** issue 号段里，
+// 真查会让「合成台账」与「真实仓库状态」对账——判据对了，用例却错了。
+// 且真查每个用例一次 API 调用（实测 3.5s），注入后归零。
+func syntheticIssueStates() (map[int]bool, error) {
+	// #101 台账标已合入 ⇒ 真实状态应为已关（false = 不再开着）；
+	// #102 台账状态列为空（派生成「仍开着」）⇒ 真实状态应为仍开着。
+	return map[int]bool{101: false, 102: true}, nil
+}
+
+// runCheck 跑门禁，返回退出码与输出（数据源用与夹具一致的构造数据）。
 func runCheck(t *testing.T, root string) (int, string) {
 	t.Helper()
+	return runWithFetcher(t, root, syntheticIssueStates)
+}
+
+// runWithFetcher 跑门禁（数据源可换：判据 5 是纯函数，喂什么状态表就判什么）。
+func runWithFetcher(t *testing.T, root string, fetch func() (map[int]bool, error)) (int, string) {
+	t.Helper()
 	var out bytes.Buffer
-	code := run([]string{"-root", root, "-ledger", "docs/ledger.md"}, &out, &out)
+	code := runWith([]string{"-root", root, "-ledger", "docs/ledger.md"}, &out, &out, fetch)
 	return code, out.String()
 }
 

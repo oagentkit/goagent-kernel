@@ -2102,6 +2102,21 @@ egress_paths:
         之前，故这里保证的是「只要宿主声明了代理，env 一定按声明生成，生成不出就不起
         子进程」——SubprocessOptions.Egress 的零值（不限制）逐字返回原 env，旧调用点行为
         不变。真正的强制（代理本体、deny 列表）归上游与宿主：本仓不造第二套网络栈。
+    - path: cmd/ledgercheck/issuestate.go
+      fn: fetchIssueStates
+      mode: unrestricted
+      notes: |
+        台账门禁判据 5（issue #455）的 issue 状态拉取点：起 `gh issue list --state all
+        --json number,state` 子进程，把「台账说已合入」与「GitHub 上还开着」这类
+        **两个系统之间**的漂移判出来（#427/#428/#430 就是这么关漏的）。
+        登记成 unrestricted 是**事实**而不是放行：gh 自己持 token 出站，本进程是
+        门禁工具、不跑 netguard，给不出「被代理强制」的证据——登记成 proxy 只会让
+        门禁以为「这条路径的出口有人管过」（与 cmd/releasecheck 的 gitOut 同款口径）。
+        子进程环境走唯一事实源 procx.ChildEnv（PATH/HOME 等基础白名单 + 按名放行
+        GH_TOKEN / GITHUB_TOKEN），**不继承全量 environ**：本工具在 CI 里跑，父进程
+        环境可能带凭据。
+        将来若有人把这个拉取改成**写**操作（关单 / 改标题），本条目必须同步审视——
+        门禁只判「有没有登记」，不判你拿它干了什么。
     - path: cmd/releasecheck/main.go
       fn: gitOut
       mode: unrestricted

@@ -44,6 +44,9 @@ on:
 
 permissions:
   contents: read
+  # ledgercheck 的判据 5（issue #455）要对账「台账状态 ↔ GitHub issue 实际开关
+  # 状态」——没有它，漏关的 issue 在 CI 上判不出来（而那正是这条判据存在的理由）。
+  issues: read
 
 jobs:
   # ── unit 层：静态门禁 + 全量单测（故障注入显式排除，那里有自己的层）──
@@ -77,6 +80,11 @@ jobs:
 
       - name: make unit
         run: make unit
+        env:
+          # ledgercheck 判据 5 走 gh 拉 issue 状态（issue #455）：不给 token 时
+          # gh 匿名调用只有 60 次/小时/IP，共享 runner 上必撞限流 ⇒ 判据会以
+          # 「给不出结论」（exit 2）失败，而不是静默跳过。
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ── race 层：全仓竞态检测（开 cgo）──
   # 竞态是本类内核最贵的一类缺陷（代次/闸/共享 map 都在并发路径上，失效形态
