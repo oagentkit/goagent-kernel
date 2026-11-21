@@ -1,4 +1,4 @@
-// scan.go —— 接缝枚举、调用点计数与约束成文判定（issue #400）。
+// scan.go —— 接缝枚举、调用点计数与约束成文判定（issue #400；#433 成本脱钩）。
 package main
 
 import (
@@ -7,14 +7,24 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
 
-// collect 扫描 root 并汇总接缝、调用点与约束成文情况。
-func collect(root string) (Report, error) {
+// loadPackages 加载 dir 下的全部包——**包加载器接缝**（用例可注入合成夹具）；**不设 NeedDeps**（#433）：依赖走导出数据，成本不再随依赖规模放大（依赖引用不到本仓类型）。
+func loadPackages(dir string) ([]*packages.Package, error) {
+	mode := packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
+		packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports
+	return packages.Load(&packages.Config{Mode: mode, Dir: dir}, "./...")
+}
+
+// collect 扫描 root 并汇总接缝、调用点与约束成文情况。load 是**包加载器接缝**、
+// root 是**扫描根接缝**（issue #433）：用例层指向合成夹具（临时目录里的迷你
+// module），真仓扫描由 make seamcheck 门禁承担。
+func collect(root string, load func(string) ([]*packages.Package, error)) (Report, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return Report{}, err
@@ -24,12 +34,7 @@ func collect(root string) (Report, error) {
 		return Report{}, err
 	}
 
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedSyntax |
-			packages.NeedTypes | packages.NeedTypesInfo | packages.NeedImports | packages.NeedDeps,
-		Dir: abs,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
+	pkgs, err := load(abs)
 	if err != nil {
 		return Report{}, err
 	}
@@ -185,10 +190,5 @@ func constraints(doc string) []string {
 }
 
 func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(subs, func(sub string) bool { return strings.Contains(s, sub) })
 }
