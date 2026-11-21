@@ -331,7 +331,9 @@ func TestRequireRuleExamplesSwitch(t *testing.T) {
 		t.Fatal("本仓 policy 应开启 require_rule_examples（否则这条口径只是散文）")
 	}
 	for _, r := range pol.Rules {
-		if r.ForbidRegex == "" && r.ForbidImport == "" {
+		// 「有执行体」有三个口径：正则、import 路径、结构化执行体（check_kind）。
+		// 漏掉第三个 ⇒ 新增的 check_kind 规则会被当成「无执行体」而误报。
+		if r.ForbidRegex == "" && r.ForbidImport == "" && r.CheckKind == "" {
 			t.Fatalf("真实 policy 里出现了无执行体的规则 %q", r.ID)
 		}
 		if len(r.Examples) == 0 {

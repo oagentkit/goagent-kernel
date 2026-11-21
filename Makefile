@@ -163,6 +163,21 @@ RACE_EVIDENCE_DIR ?= $(or $(TMPDIR),/tmp)/goagent-kernel-race
 # 启动期楔死时是否做串行复核（反事实实验）。默认开：复核通过 ⇒ 判「环境面已
 # 复核」（判绿但留痕），复核失败 ⇒ 按复核结论判红。
 RACE_RECHECK ?= true
+# ── 测试阶段的单包超时（TEST_GO_TIMEOUT）──
+#
+# 为什么必须显式给：Go 的默认单包上限是 10m，而本仓有一个**天然分钟级**
+# 的包——`cmd/seamcheck` 的扫描用 packages.Load(NeedTypes|NeedTypesInfo|
+# NeedDeps) 对**全仓 + 全部依赖**做完整类型检查。实测（2026-11-20，本机
+# load average 280~380）：
+#   单独跑（带 -cover）        489.346s（RC=0）
+#   在 cover-gate 里与全仓并行  602s ⇒ 撞穿 Go 默认 10m ⇒ 门禁红
+# ⇒ 判据的**量纲**（10m 默认上限）与**前提**（这个包的成本）在负载下对不齐。
+#
+# 取值 15m：与本仓既有做法一致（examples/pgstore 15m、
+# examples/containerbackend 20m）。
+# ⚠ 这**不是**放宽判据：真挂死仍然是红（15 分钟后必红），只是不再被机器
+# 负载放大出来的排队时间误判。根因（seamcheck 全仓类型检查太贵）另开单跟踪。
+TEST_GO_TIMEOUT := 15m
 # 交叉构建矩阵：只声明**真的验过**的平台。
 # windows 回归在列（issue #34 收尾）：上游 runtime/procx 已落地 windows
 # 进程树路径（Job Object，runtime v0.11.0 起），windows/amd64 恢复交叉构建
@@ -226,7 +241,7 @@ lint: ## 静态检查（未安装 / 版本不符都明确报错退出，与宿�
 	$(EXPORT) $(GOENV) golangci-lint run ./...
 
 test:
-	$(EXPORT) $(GOENV) go test ./... -count=1
+	$(EXPORT) $(GOENV) go test ./... -count=1 -timeout $(TEST_GO_TIMEOUT)
 
 race: ## 竞态检测（**开 cgo**：Linux 上 -race 强制要求 cgo，见 RACE_ENV 注释）
 	@# 这条门禁此前从未被跑过：race 目标存在，但既不在 check 的依赖链里，
@@ -265,7 +280,7 @@ race: ## 竞态检测（**开 cgo**：Linux 上 -race 强制要求 cgo，见 RAC
 	  -recheck $(RACE_RECHECK)
 
 cover:
-	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1
+	$(EXPORT) $(GOENV) go test ./... -coverprofile=coverage.out -count=1 -timeout $(TEST_GO_TIMEOUT)
 	go tool cover -func=coverage.out | tail -1
 
 cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应随内核成熟度上调）
@@ -295,7 +310,7 @@ cover-gate: ## 覆盖率阈值门禁（全局门槛 + 逐包下限；阈值应�
 	@# ⚠️ 注释只能写在块**外**：下面是一个用 `\` 续行的 shell 块，块内出现的 `#`
 	@# 会把该行连同续行符一起变成注释，报 "syntax error: unexpected end of file"。
 	@log=$$(mktemp); \
-	$(EXPORT) $(GOENV) go test ./... -cover -coverprofile=coverage.out -count=1 >"$$log" 2>&1 || { \
+	$(EXPORT) $(GOENV) go test ./... -cover -coverprofile=coverage.out -count=1 -timeout $(TEST_GO_TIMEOUT) >"$$log" 2>&1 || { \
 	  echo "覆盖率测试未通过——失败详情："; \
 	  cat "$$log"; \
 	  rm -f "$$log"; \
@@ -522,7 +537,7 @@ k8s-e2e: ## K8s 出站禁网真集群验收（自建 kind+Calico 集群，跑完
 # 带上 deploycheck / ledgercheck / releasecheck（后者在非 tag 提交上显式跳过，
 # 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
-	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault'
+	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault' -timeout $(TEST_GO_TIMEOUT)
 	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享

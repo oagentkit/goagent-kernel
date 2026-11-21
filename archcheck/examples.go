@@ -72,6 +72,10 @@ func sampleFileName(r Rule) string {
 // 返回值是完整的 []Violation 而不是 bool：调用方要能回显「判在哪里、判成什么」，
 // 否则样例失配时只能看到「正例没判中」，看不到判据把它判成了什么。
 func (r Rule) sampleViolations(text string) ([]Violation, error) {
+	if r.CheckKind != "" {
+		// 结构化执行体的样例走**同一个判定核**（gjSampleViolations → gjJudgeFiles）。
+		return gjSampleViolations(r, text)
+	}
 	if r.ForbidImport != "" {
 		re, err := regexp.Compile(r.ForbidImport)
 		if err != nil {
@@ -172,7 +176,7 @@ func exampleViolations(r Rule) []string {
 //
 // 故两个方向各需至少一条。这不是「样例越多越好」，是**一正一反才构成一次判定**。
 func exampleCoverageProblems(r Rule) []string {
-	if r.ForbidRegex == "" && r.ForbidImport == "" {
+	if r.ForbidRegex == "" && r.ForbidImport == "" && r.CheckKind == "" {
 		return nil // 无执行体由 selfcheck 的另一条口径报，不在这里重复
 	}
 	var hit, miss int
