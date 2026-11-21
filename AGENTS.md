@@ -1621,7 +1621,7 @@ v0.47.0 的 tag run **7/7 绿**，且 unit 层日志里 `releasecheck` **判了*
 （archcheck 的 `harness-test-goroutine-joined` 判的是**静态形状**，判不出这个 ⇒
 门禁绿着，机制不成立）。
 
-⇒ **这条纪律已有门禁**（v0.63.0，issue #440）：规则 `harness-test-defer-cleanup`
+⇒ **这条纪律已有门禁**（v0.62.2，issue #440）：规则 `harness-test-defer-cleanup`
 （`check_kind: defer_cleanup`）专判这一条——用例内起的 goroutine，其收尾等待点
 写在**普通语句**里、且它与 `go` 语句之间存在 `t.Fatal` 族 / `runtime.Goexit` 的
 直接调用 ⇒ **红**（失败路径上 Goexit 会跳过这一步 ⇒ goroutine 实际未被 join）。
@@ -1650,7 +1650,7 @@ defer ⇒ join 被拖到整个用例结束 ⇒ **语义改变**（例：尾随�
 
 **判别的口径**：一个断言若**只靠时间流逝**才可能成立，它就是拿墙钟当尺子。
 
-⇒ **这条纪律已有门禁**（v0.63.0，issue #441）：规则 `harness-test-wallclock-ruler`
+⇒ **这条纪律已有门禁**（v0.62.2，issue #441）：规则 `harness-test-wallclock-ruler`
 （`check_kind: wallclock_ruler`）判测试函数体里的**裸 `time.Sleep`**（不在 for/range
 循环体内）⇒ **红**。**显式登记的三条边界**：轮询退避（sleep 在循环体内）、
 goroutine 体里的 sleep（那是被测机制自己的节奏）、policy `managed_helpers:` 登记的
