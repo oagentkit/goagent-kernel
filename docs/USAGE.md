@@ -3413,13 +3413,15 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-sandbox-execution-single-entry` | **error** | 外部程序执行只允许经 **`ptc` 执行后端**；其余生产代码不得直接 import os/exec（收口点已从 `sandbox` 迁到 `ptc`——sandbox 门包已删，档位语义直连 guardx）|
 | `tool-pairing-key-single-source` | **error** | 工具配对键（`call_id`）只允许经 `eventbus.ToolCallID` 读取（两处各写一份 ⇒ 同一事件流两个相反结论）|
 
-另有 **18 条**不走正则表、由 `go/ast` 判定的结构性规则（其中**六条**是租户隔离证据门，issue #177 补齐；含一条 policy 自校验）——判据是语法结构，逐行看文本判不出：
+另有不走正则表、由 `go/ast` 判定的结构性规则（条数随 `archcheck/*.go` 增减而变，**以 `make architecture-check` 的输出为准**——抄在这里就是给自己造一份会静默过期的真相；其中**六条**是租户隔离证据门，issue #177 补齐；含一条 policy 自校验）——判据是语法结构，逐行看文本判不出：
 
 | 规则 | 拦什么 | 落点 |
 |---|---|---|
 | `harness-facade-stays-facade` | 门包长出实现（本仓当前 `facades` 段是**空清单**；`dispatch` 已是本仓真实实现，不在门包之列）| `policy.yaml` 的 `facades` 段 + `archcheck/facade.go` |
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | `harness-test-goroutine-joined` | 测试函数（`Test*`/`Benchmark*`/`Fuzz*`）里起了 goroutine，**而该函数或它调用的包内函数（深度 ≤2）里没有等待点**（接收表达式 `<-ch` 或 `X.Wait()`）⇒ 用例返回后 goroutine 仍可能在跑 | `policy.yaml` 的 `rules` 段（`check_kind: goroutine_join`）+ `archcheck/testgoroutine.go` |
+| `harness-test-defer-cleanup` | 测试函数里起的 goroutine，其**收尾等待点**写在**普通语句**里，而它与 `go` 语句之间存在 `t.Fatal` 族 / `runtime.Goexit` 的直接调用 ⇒ 用例失败时 Goexit 会跳过这一步 ⇒ goroutine 实际未被 join（**#440**）| `policy.yaml` 的 `rules` 段（`check_kind: defer_cleanup`）+ `archcheck/testgoroutine_defer.go`；**同步等待**不判 |
+| `harness-test-wallclock-ruler` | 测试函数体里的**裸 `time.Sleep`**（不在 for/range 循环体内）⇒ 拿墙钟窗口当尺子（**#441**）；轮询退避 / goroutine 体里的 sleep / policy 登记的受管辅助除外 | `policy.yaml` 的 `rules` 段（`check_kind: wallclock_ruler` + `managed_helpers:`）+ `archcheck/wallclock.go` |
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
 | `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询）；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |
