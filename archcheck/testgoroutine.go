@@ -121,6 +121,10 @@ type gjFunc struct {
 	decl *ast.FuncDecl
 	rel  string // 相对仓库根的路径（报告用）
 	fset *token.FileSet
+	// timeLocal / runtimeLocal 是本文件里 time 与 runtime 两个 import 的本地名
+	// （含别名）。判据按 import 路径认调用，不按源码文本认 ⇒ 别名导入也判得到。
+	timeLocal    string
+	runtimeLocal string
 }
 
 // gjFile 一个已解析的 Go 文件。
@@ -238,7 +242,14 @@ func gjGroupPackages(files []gjFile) []*gjPkg {
 			if !ok || fd.Recv != nil {
 				continue
 			}
-			fn := &gjFunc{name: fd.Name.Name, decl: fd, rel: f.rel, fset: f.fset}
+			fn := &gjFunc{
+				name:         fd.Name.Name,
+				decl:         fd,
+				rel:          f.rel,
+				fset:         f.fset,
+				timeLocal:    tsImportLocal(f.file, "time"),
+				runtimeLocal: tsImportLocal(f.file, "runtime"),
+			}
 			if isTest && gjIsTestFunc(fd.Name.Name) {
 				p.tests = append(p.tests, fn)
 				continue
