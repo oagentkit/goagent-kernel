@@ -30,7 +30,17 @@ var syntheticLedger = strings.Join([]string{
 	"> 落文档 PR #301。",
 }, "\n")
 
-// writeLedger 造一份只含台账的临时仓库。
+// syntheticIssueState 与 syntheticLedger 逐字对齐的 issue 状态快照：
+// #101 已关（台账「已合入」）、#102 仍开（台账状态列空着）。
+//
+// 两份夹具必须一起给：issue #455 的判据面是「台账 ↔ 快照」，只给台账时门禁
+// 会以「快照缺失 ⇒ 给不出结论」（退出码 2）失败——那不是判据红，是输入不全。
+const syntheticIssueState = "updated: 2026-01-02\n" +
+	"issues:\n" +
+	"  101: closed\n" +
+	"  102: open\n"
+
+// writeLedger 造一份只含台账（与对齐快照）的临时仓库。
 func writeLedger(t *testing.T, body string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -42,7 +52,16 @@ func writeLedger(t *testing.T, body string) string {
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeIssueState(t, root, syntheticIssueState)
 	return root
+}
+
+// writeIssueState 覆盖快照（对账类用例靠它改事实面）。
+func writeIssueState(t *testing.T, root, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(root, "docs", "issue-state.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // runCheck 跑门禁，返回退出码与输出。

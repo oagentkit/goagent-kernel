@@ -31,6 +31,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
 )
@@ -47,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	root := fs.String("root", ".", "仓库根目录（从它向上找台账）")
 	ledger := fs.String("ledger", ledgerstatus.DefaultPath, "台账路径（相对仓库根）")
+	issueState := fs.String("issue-state", ledgerstatus.DefaultIssueStateFile,
+		"issue 状态快照文件名（与台账同目录；由 make issue-state 刷新）")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -62,16 +65,35 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
+	// issue 状态快照（issue #455）：判据面与数据源分离——本命令只读这份快照，
+	// 绝不联网；刷新是 make issue-state 的事（那里才允许调 gh）。
+	// 缺快照时**给不出结论**（退出码 2）而不是跳过：跳过等于这条判据静默不存在。
+	snapPath := filepath.Join(filepath.Dir(path), *issueState)
+	snap, err := ledgerstatus.ParseIssueSnapshot(snapPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			_, _ = fmt.Fprintf(stderr,
+				"ledgercheck: issue 状态快照 %s 不存在——它是本判据的输入，缺了就给不出结论：\n"+
+					"  跑 make issue-state 生成（需要 gh 与网络；门禁本身不联网）\n", snapPath)
+			return 2
+		}
+		_, _ = fmt.Fprintf(stderr, "ledgercheck: %v\n", err)
+		return 2
+	}
+
 	probs := checkLedger(led)
+	probs = append(probs, ledgerstatus.Reconcile(led, snap)...)
 	if len(probs) == 0 {
-		_, _ = fmt.Fprintf(stdout, "台账校验通过：%d 个单号 / %d 处出现点 ✓\n",
-			len(led.Entries()), countOccurrences(led))
+		age := snap.AgeDays(time.Now())
+		_, _ = fmt.Fprintf(stdout,
+			"台账校验通过：%d 个单号 / %d 处出现点（issue 快照 %s，%d 天前）✓\n",
+			len(led.Entries()), countOccurrences(led), snap.Updated, age)
 		return 0
 	}
 	for _, p := range probs {
 		_, _ = fmt.Fprintf(stdout, "✗ %s\n", p)
 	}
-	_, _ = fmt.Fprintf(stdout, "共 %d 处违反。四条判据见本命令的包头注释。\n", len(probs))
+	_, _ = fmt.Fprintf(stdout, "共 %d 处违反。判据见本命令的包头注释（含 issue #455 的双向对账）。\n", len(probs))
 	return 1
 }
 

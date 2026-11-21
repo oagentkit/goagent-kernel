@@ -768,7 +768,9 @@ modules:
   # 哪些词算状态标记）是**本仓文档约定**，不是运维词表。
   - id: ledgerstatus
     roots: [internal/ledgerstatus]
-    requires: ["ext:github.com/oekit/pkg"]
+    # yaml：issue 状态快照（docs/issue-state.yaml）的解析——#455 要求判据面与
+    # 数据源分离（门禁只读快照、不联网），快照格式与本仓其余声明面同款。
+    requires: ["ext:github.com/oekit/pkg", "ext:gopkg.in/yaml.v3"]
     owner: harness
     managed: true
     notes: |
