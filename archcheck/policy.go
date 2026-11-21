@@ -59,8 +59,22 @@ type Rule struct {
 	// 兼容性：这是**源码级 additive 变更**——给导出的结构体加字段，会让下游
 	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
 	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
-	ManagedHelpers []string    `yaml:"managed_helpers"`
-	NegFollow      []NegFollow `yaml:"negative_follow"`
+	ManagedHelpers []string `yaml:"managed_helpers"`
+	// ForbidCalls 是「测试面不得直接调用」的**符号清单**（check_kind:
+	// test_no_direct_call 用，issue #449）。
+	//
+	// 为什么由 policy 声明而不是 archcheck 硬编码：哪些函数是「包级全局态 setter」
+	// 是宿主的知识（本仓是 SetEnabled/SetSurfaces/SetStrategy/SetDigestKey，别的
+	// 仓各不相同）。archcheck 只提供判定面——「测试里出现这些符号的调用点即违规，
+	// 除非它落在受管辅助内」。
+	//
+	// 判的是**调用点**（go/ast）：函数定义、注释、字符串、测试名（TestSetDigestKeyGuards）
+	// 都不算——逐行正则会把它们一起命中，规则误报到没人信它就等于没有规则。
+	//
+	// 兼容性：与 ManagedHelpers 同款，是**源码级 additive 变更**（给导出结构体
+	// 加字段会让下游用位置参数写字面量的代码编译不过）。
+	ForbidCalls []string    `yaml:"forbid_calls"`
+	NegFollow   []NegFollow `yaml:"negative_follow"`
 	// ImportExempt import 路径级的**精确**例外（issue #15）。
 	//
 	// 存在的原因：只有 `forbid_import_regex`（正则禁令）时，宿主若要放行

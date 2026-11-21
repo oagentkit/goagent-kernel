@@ -50,7 +50,25 @@ const selfCheckRuleID = "harness-policy-self-check"
 // selfCheckViolations 校验 policy 自身的结构一致性。
 //
 // 判定面是 policy 文件 + 仓库实际目录，不涉及任何业务代码。
+//
+// 例外对账那一条（「例外命中不到任何违反」）**需要实际违规集**，纯 policy 层
+// 判不了 ⇒ 由 selfCheckWithViolationSet 判；本入口传 nil，只判不依赖违规集的
+// 那些形态（各判据的单测走这条）。
 func selfCheckViolations(root string, pol *Policy) []Violation {
+	return selfCheckWithViolationSet(root, pol, nil)
+}
+
+// selfCheckWithViolationSet 同 selfCheckViolations，另带本轮**实际查出的违规集**
+// （键为 exceptionKey(rule, path, line)），用于例外与实际命中面的对账（issue #447）。
+//
+// 为什么这条必须拿到违规集：例外的失效形态是**静默的**——站点被改、文件被拆、
+// 规则口径变了之后，那条例外命中不到任何违反，门禁照样绿，而它仍躺在声明面上
+// 「像是还有人管的已知债」。until 只在例外**命中**时才有意义：命中不到时它连
+// 到期都不会报 ⇒ 已不需要的豁免可以永久留在声明面。
+//
+// violated 为 nil ⇒ 跳过该判据（纯 policy 层调用）。主路径（Run）必须传真实违规集，
+// 否则这条判据静默不判——由 TestRunFlagsZombieException 端到端钉住。
+func selfCheckWithViolationSet(root string, pol *Policy, violated map[string]bool) []Violation {
 	var out []Violation
 
 	add := func(path string, line int, format string, args ...any) {
@@ -220,17 +238,24 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		knownRules[id] = true
 	}
 	for _, ex := range pol.Exceptions {
+		// badTarget：例外**指向的东西本身有问题**（规则不存在 / 不在判 / 缺字段……）。
+		// 这些形态下它命中不到违反是**已知后果**，下面的僵尸对账不重复报它。
+		badTarget := false
 		switch {
 		case ex.Rule == "":
+			badTarget = true
 			add(policyPath, 0, "例外登记缺少 rule 字段：无法定位它豁免的是哪条规则")
 		case ex.Rule == selfCheckRuleID:
 			// 自校验是豁免机制的**前置条件**：豁免它等于让任何声明都能静音——
 			// 包括「这条豁免登记本身不合法」这件事。故它不可豁免。
+			badTarget = true
 			add(policyPath, 0, "例外登记不得豁免自校验规则 %q：自校验是豁免机制的前置条件，"+
 				"豁免它等于让任何声明都能静音（含「这条豁免本身不合法」）", ex.Rule)
 		case !knownRules[ex.Rule]:
+			badTarget = true
 			add(policyPath, 0, "例外登记指向不存在的规则 %q：它豁免的东西无从查证", ex.Rule)
 		case isBuiltinRule(ex.Rule) && !builtinRuleEnforced(pol, ex.Rule):
+			badTarget = true
 			add(policyPath, 0, "例外登记指向的规则 %q 当前不在判（该段被显式关闭或该判定面不存在）："+
 				"这条豁免今天什么都没豁免，却会在将来那条规则被启用时无声地开始生效", ex.Rule)
 		}
@@ -239,6 +264,23 @@ func selfCheckViolations(root string, pol *Policy) []Violation {
 		}
 		if ex.Removal == "" {
 			add(policyPath, 0, "例外登记（%s %s:%d）缺少 removal（拆除条件）字段：没有拆除条件的例外是赖账", ex.Rule, ex.Path, ex.Line)
+		}
+
+		// ── 僵尸例外（issue #447）：登记了，但命中不到任何违反 ──
+		//
+		// 判据是**这一条例外有没有命中它声称的那条违反**（按 rule+path+line 三元组
+		// 对账），不是「例外条数 == 命中数」那种粗判——不同规则命中数不同、同一站点
+		// 可能命中多条规则。
+		//
+		// 为什么失败形态必须是**变红**：站点被改 / 文件被拆 / 规则口径变了之后，这条例外
+		// 就再也命中不到东西，而门禁照样绿 ⇒ 已不需要的豁免可以永久留在声明面上，下一个
+		// 看声明面的人会以为「这里还有一条已知债」。本仓最贵的失效形态是「门禁变绿」。
+		if violated != nil && !badTarget && !violated[exceptionKey(ex.Rule, ex.Path, ex.Line)] {
+			add(policyPath, 0,
+				"僵尸例外（%s %s:%d）：命中不到任何违反——该站点今天没有这条规则的违规，"+
+					"这条例外什么都没豁免却仍留在声明面上。站点已修复 / 文件已拆 / 规则口径已变的，"+
+					"删掉本条例外；确属预防性登记的不成立（例外只豁免**已存在**的违反）",
+				ex.Rule, ex.Path, ex.Line)
 		}
 	}
 

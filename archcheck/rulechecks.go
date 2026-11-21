@@ -86,6 +86,15 @@ func ruleSelfCheck(root string, pol *Policy, policyPath string) (map[string]bool
 					"规则 %q 同时声明了 check_kind 与 forbid_regex/forbid_import_regex："+
 						"一条规则只能有一个执行体，否则两套判定各判各的、结论可能相反", r.ID)
 			}
+			// test_no_direct_call 的判定面**来自** forbid_calls：没声明被禁符号时
+			// 执行体一条都判不了（返回零违规），而规则在、severity 是 error、报告里
+			// 照常计入条数 ⇒ 与「字段名拼错」同一类的静默失效，失败形态是门禁变绿。
+			if r.CheckKind == checkKindTestNoDirectCall && len(r.ForbidCalls) == 0 {
+				add(policyPath, 0,
+					"规则 %q 声明了 check_kind %s 却没有 forbid_calls：被禁符号是它的判定面，"+
+						"不声明就一条都判不了（规则在、severity 是 error、报告里仍计入条数）",
+					r.ID, checkKindTestNoDirectCall)
+			}
 		}
 
 		// 有执行体却 scope 为空 ⇒ 一行都不判。

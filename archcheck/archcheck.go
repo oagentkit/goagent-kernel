@@ -258,8 +258,15 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	}
 
 	// policy 自校验：门禁自己也得能被检查（规则没有执行体、id 重复、
-	// 阈值判定面漏包、例外指向不存在的规则……）。详见 selfcheck.go。
-	res.Violations = append(res.Violations, selfCheckViolations(root, pol)...)
+	// 阈值判定面漏包、例外指向不存在的规则、僵尸例外……）。详见 selfcheck.go。
+	//
+	// 例外对账（「这一条例外有没有命中它声称的那条违反」，issue #447）需要**实际
+	// 违规集**：此处业务违规已收集完毕、selfcheck 自己的产出尚未混入 ⇒ 对账面干净。
+	violated := make(map[string]bool, len(res.Violations))
+	for _, v := range res.Violations {
+		violated[exceptionKey(v.Rule, v.Path, v.Line)] = true
+	}
+	res.Violations = append(res.Violations, selfCheckWithViolationSet(root, pol, violated)...)
 
 	// severity 分流：error 违规阻断，warn 仅报告（口径见 ruleinfo.go）。
 	sevOf := severityMap(pol)
