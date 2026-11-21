@@ -2,6 +2,67 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.62.2] — 2026-11-21
+
+### 新增(archcheck)：「收尾等待点必须写成 defer」与「尺子必须是可以观测事实」两条纪律变成门禁判定（#440 / #441）
+
+上一轮（v0.62.1）立了两条纪律，但都只是纪律、**没有门禁** ⇒ 同形面可再生。本版把它们
+变成 `check_kind` 判定：
+
+- **新增规则 `harness-test-defer-cleanup`**（`check_kind: defer_cleanup`）——用例内起的 goroutine，
+  其**收尾等待点**必须写在 `defer` 里。判定口径：只扫测试文件、只判测试函数；等待点 = 接收
+  表达式 `<-ch` 或调用 `X.Wait()`（**跳过 go 语句自身的函数字面量**——那是 goroutine 在等别人）；
+  等待点在测试函数体的 `defer` 内、或在**由 `defer` 调用的包内助手**里（深度 ≤2）⇒ 合规；
+  等待点在普通语句里 ⇒ 从该 `go` 语句到它之间**没有** `t.Fatal` / `t.Fatalf` / `t.FailNow` /
+  `t.Skip` / `t.Skipf` / `runtime.Goexit` 的**直接调用** ⇒ 同步等待（合规，goroutine 一定在用例
+  继续之前结束）；**有** ⇒ 收尾等待（违规）。
+  它关掉兄弟规则 `harness-test-goroutine-joined` 的**已知边界第 4 条**：那条规则判的是「测试侧
+  有没有等待点」，判不出「那个等待点会不会被 Goexit 跳过」（Goexit 执行所有 defer，但**不执行**
+  它之后的普通语句）⇒ 失败路径上 goroutine 实际未被 join，而规则判它合规。
+- **新增规则 `harness-test-wallclock-ruler`**（`check_kind: wallclock_ruler`）——测试面不许拿裸
+  `time.Sleep` 当尺子：固定睡一段再断言 ⇒ 窗口长度单独决定结论（机器一忙 ⇒ 假红；被测机制抢跑 ⇒
+  白测）。**显式登记的边界**：① 轮询退避（sleep 落在 for/range 循环体内）不是尺子（退出条件是
+  循环条件本身）；② goroutine 体里的 sleep 是**被测机制自己的节奏**，不是测试侧的尺子。
+- **新增「执行上下文」作用域模型**（`archcheck/testscope.go`）——两条规则判的都是结构关系，而
+  结构关系的粒度是执行上下文：`t.Run` 子用例闭包跑在**另一个 goroutine** 里 ⇒ 它的 `t.Fatal`
+  终止的是子用例、**不是父用例**（不区分就会把「子用例失败」误当成「父用例被提前终止」⇒ 假红）；
+  go 语句自身的函数字面量里的 `<-ch` 不是测试侧的等待；`defer` 注册的收尾助手在函数返回时才跑 ⇒
+  它是「收尾等待」。T 绑定的归属与词法父作用域**分开记**（闭包自己声明了 `*testing.T` 参数 ⇒ 它的
+  `t.Fatal` 归子用例；没声明 ⇒ 归外层那个 goroutine）。
+- **判定走 `go/ast`，不走正则**——import 别名、调用形态、循环形态、go 语句的函数字面量都要按
+  语法树认；逐行正则必然漏，且漏得毫无声响。
+- **`archcheck.Rule` 新增字段 `ManagedHelpers`**（源码级 additive）——policy 侧登记「受管辅助」，
+  其函数体内部的 sleep 不判。声明放在 policy 侧而不是硬编码进执行体：`archcheck` 是要跨宿主
+  复用的库，硬编码辅助名单等于把宿主的事写进内核。
+
+**反向验证**：注入一处违规 ⇒ 门禁**红**且**点名注入的那一条**（文件:行、用例名、等待点形态、
+以及那个「能让用例提前终止的调用」）；撤销后复绿。判据被放宽 / 等待点形态漏识别 ⇒ 当场红
+（夹具里真的有「会被 Goexit 跳过」的等待点 ⇒ 必须判中；合规形态 ⇒ 必须不判中）。
+
+### 修复(test)：被新规则照到的 9 处用例改成「可观测事实 + defer 收尾」形态（#440 / #441）
+
+- **收尾等待 → `defer` 形态**（5 处）：`coord/board_list_test.go`（末尾 `close(stop)` + `wg.Wait()`
+  圈进 `defer` 闭包）、`examples/sqliteadapter/control_run_test.go`、`examples/pgstore/pg_clock_test.go`、
+  `ptc/stress_subprocess_recovery_test.go`、`worker/renew_concurrency_test.go`（两处；`defer` 是 LIFO ⇒
+  `cancel` 注册在 `wg.Wait` 之后 ⇒ 先 cancel 再 join，互不等待）。
+- **墙钟窗口 → 等可观测事实**（4 处）：`drain/drain_test.go`（夹具加探针计数，等「Drain 真的轮询过」）
+  ——**原写法睡 50ms 而收敛轮询间隔是 200ms ⇒ 窗口落空 ⇒ 用例一直在覆盖「入口即 Done」分支
+  （白测：注释说的分支与实际覆盖的不是同一个）**，改后覆盖的才是它声称的「循环内 Done 分支」；
+  `netguard/netguard_test.go`（假解析器拨号时发信号，等「解析面真被拨过号」再取消）；
+  `watchdog/turn_test.go`（轮询驱动 TTL 清扫，直到真报出 `open_leak`）；
+  `worker/managed_lease_test.go`（轮询到「任务真被接管」为止）。
+
+### 门禁口径：policy 登记两条新规则 + 8 条例外（并行工作线在改的包）
+
+`architecture-policy.yaml` 登记两条规则（含**加载期验活**的样例：`want: hit` / `want: miss` 的完整
+Go 源码，由**同一个判定核**判 ⇒ 样例过了才说明真判定也过）。另登记 8 条例外（每条带 `until` 与
+拆除条件）：`eventbus/**` 6 处（该包正由并行工作线改造，本轮不碰）、`examples/pgstore` 1 处
+（替代判据需要 PG 侧可观测事实，本机没有 PostgreSQL、改了也验不了）、`pii/**` 1 处（该包正由并行
+工作线改造）。
+
+⚠ 例外按 `rule + path + line` 三元组**精确匹配** ⇒ 并行工作线改动 `eventbus/**` / `pii/**` 会让
+这 6 条例外的行号漂移，合并前需复核。
+
 ## [v0.62.1] — 2026-11-21
 
 ### 修复(examples)：尾随收尾点改成 defer 形态——失败路径仍 join（#431）
