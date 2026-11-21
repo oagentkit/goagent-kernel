@@ -768,9 +768,11 @@ modules:
   # 哪些词算状态标记）是**本仓文档约定**，不是运维词表。
   - id: ledgerstatus
     roots: [internal/ledgerstatus]
-    # yaml：issue 状态快照（docs/issue-state.yaml）的解析——#455 要求判据面与
-    # 数据源分离（门禁只读快照、不联网），快照格式与本仓其余声明面同款。
-    requires: ["ext:github.com/oekit/pkg", "ext:gopkg.in/yaml.v3"]
+    # gopkg.in/yaml.v3（issue 状态快照的解析）**不写进 requires**：它是第三方依赖，
+    # 按 dependency_direction 的口径「不在受管面内、不需要逐包声明」——archcheck 同样
+    # import 它而 requires 为空。写成 ext: 反而会因它不在 ext_prefixes 里被判越界
+    # （2026-11-21 实测：加了当场 exit 2）。
+    requires: ["ext:github.com/oekit/pkg"]
     owner: harness
     managed: true
     notes: |
