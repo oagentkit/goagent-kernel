@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/yi-nology/goagent-kernel/raceprobe"
 )
 
 // runReport 一轮门禁的完整结论。
@@ -19,7 +21,7 @@ type runReport struct {
 	// TimedOut 首轮是否被看门狗掐掉。
 	TimedOut bool
 	// Verdict 形态结论。
-	Verdict Verdict
+	Verdict raceprobe.Verdict
 	// Passed 跑完且通过的包。
 	Passed []string
 	// Failed 跑完但失败的包。

@@ -880,6 +880,17 @@ modules:
       零内部依赖是刻意的——budget/cost/deadline/watchdog 是**平级的不同量纲**，
       互相不引（引了就成环，且两处口径会漂）。回合结局是**第三根轴**，
       不复用 contract 会话状态 / statemachine 环节状态。
+  - id: raceprobe
+    roots: [raceprobe]
+    requires: [] # 零内部依赖：判定层只用 stdlib（regexp/sort/strings）
+    owner: harness
+    managed: true
+    notes: |
+      race 门禁失败形态的**判定层**（六种形态分类 + 结论结构，纯函数）。
+      从 cmd/raceprobe 下沉为可导入包（台账 §26 建议 1）：机制面若要跨仓复用，
+      就不能锁在 package main 里——判定面与执行面分离，本仓别的门禁
+      （fault-injection / integration 也可能撞上「会挂死」的形态）与宿主复用同一份判据。
+      requires 为空：classify.go 只 import regexp/sort/strings，不依赖本仓任何机制包。
 
 # ── 可执行规则 ──
 rules:
@@ -2297,7 +2308,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard]
+  scan_roots: [protocol, statemachine, eventbus, spill, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
