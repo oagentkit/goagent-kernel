@@ -92,7 +92,8 @@ PKG_COV_EXEMPT :=
 # 反过来，「没命中任何包」（包被删了/改名了）仍判红：那时豁免的**对象**没了，
 # 这才是真失效。故本表的纪律仍是「失效即红」，只是失效的判据是「对象没了」
 # 而不是「自己达标了」。
-PKG_COV_STRUCTURAL_EXEMPT := examples/pgstore
+PKG_COV_STRUCTURAL_EXEMPT :=
+# （原 examples/pgstore 条目随包迁至 goagent-runtime v0.67.0，本表当前为空。）
 # 零测试文件豁免（逗号分隔，按包路径**后缀**匹配）。同样「失效即红」。
 #
 # 为什么要这条判据（issue #30）：`go test` 对无测试文件的包输出
@@ -107,17 +108,13 @@ PKG_COV_STRUCTURAL_EXEMPT := examples/pgstore
 #                  判定逻辑全在 archcheck 包，那里有完整用例。
 #   cmd/ptcchild   子进程夹具：不作为独立包被调用，而是由 ptc 的用例用
 #                  `go build` 编出来当被测子进程（见 ptc/subprocess_exec_test.go）。
-#   examples/pgstore/cmd/pgsmoke  部署冒烟入口（issue #105）：它的「用例」就是
-#                  compose 的 smoke 服务 / make integration 真跑一遍（连真实
-#                  PostgreSQL 断言四条判据）——环境依赖的 integration 入口，
-#                  与 examples/pgstore 的豁免同一理由；拆装配层判据进常规层
-#                  即可缩窄。
+#   （原 examples/pgstore/cmd/pgsmoke 条目随包迁往 goagent-runtime，已摘。）
 #
 # examples/sqliteadapter 的那条临时豁免已于 2026-11-19（issue #424，Task 2）
 # 当天拆除：那是 Task 1 登记驱动破例时的**占位包**豁免（占位包无测试文件），
 # 骨架落地并写上真用例后它即失效——豁免留着会与逐包下限判据打架（豁免包自己
 # 达标 ⇒ cover-gate 报「豁免失效，请从 PKG_NO_TEST_EXEMPT 移除」）。
-PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild,examples/pgstore/cmd/pgsmoke
+PKG_NO_TEST_EXEMPT := cmd/archcheck,cmd/ptcchild
 # 门禁工具的版本口径。**单一来源在这里**，ci.yml 必须与之一致（versioncheck 判）。
 # 运行时还要再断言一次实跑版本（lint / vuln 目标里）——「钉了版本」与「跑的是
 # 那个版本」是两件事：命令在 PATH 里只说明门禁会跑，不说明跑的是同一套判据。
