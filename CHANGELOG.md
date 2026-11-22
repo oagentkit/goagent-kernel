@@ -2,6 +2,24 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.67.0] — 2026-11-22
+
+### chore：PG/SQLite 参考实现迁往 goagent-runtime，撤驱动破例（PR #470）
+
+边界迁移收尾（runtime v0.2.0 已收编）：存储参考实现归装配层，「内核不实现存储」从**门禁破例**变成**结构事实**——主 module 依赖图不再含任何数据库驱动（pgx/modernc 撤除，go.mod 里的长段破例注释换成一段迁移说明）。
+
+**破坏性变更（minor 理由）**：`examples/pgstore` 与 `examples/sqliteadapter` 删除（生产 -7969 行 / 38 文件、测试 -49 文件）。外部若 import，改指 `github.com/yi-nology/goagent-runtime/pgstore` / `.../sqliteadapter`（API 逐字未变，判据套件同源）。CI 的 integration job 与 `make integration` 一并迁 runtime 仓。
+
+**门禁的跨仓降级（判据语义不变，判不了的明说判不了）**：
+
+- `deploycheck`：contract 证据支持 `https://` 跨仓引用——形态检查通过后放行，外部文件的存在性由 runtime 仓自己的门禁兜；
+- `storagecheck`：`code_root` / `facade.package` 支持 `external:` 前缀——门面代码派生（F1）跳过由该仓自判，F3 两侧同款对位仍判（声明面↔声明面），F4 门面覆盖按 `/blob/main/` 后的仓内包路径对账，能力落点的 source 位置检查对外部引用豁免；
+- DEPLOY-MATRIX / STORAGE-SELECTION 的全部落点 ref 改指 runtime 仓链接；#447 僵尸例外判据当场抓出 pgstore 留下的 wallclock 例外。
+
+配套：`taskboard` 指纹判据 4→2（PG/SQLite 的 Board.Claim 实现随仓走）；覆盖率两张豁免表摘 pgstore/pgsmoke 条目；生命周期登记 60→57；底座重算为 71,421 行 / 380 文件 / 479 测试文件。
+
+**下游要做什么**：import 两个参考实现的改指 runtime 仓（v0.2.0）；其余零动作——契约套件（sidetest/boardtest）留在 kernel 且逐字未变。
+
 ## [v0.66.1] — 2026-11-22
 
 ### fix(ptc)：stress 测试的 PID 文件隔离到测试专属 TMPDIR（#465 根因）
