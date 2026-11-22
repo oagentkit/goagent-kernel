@@ -133,25 +133,6 @@ CREATE TABLE IF NOT EXISTS pgref_run (
     status TEXT   NOT NULL DEFAULT '',
     gen    BIGINT NOT NULL DEFAULT 0
 );
-
--- 版本锚（全局修订号）：三个 Commit* 在同一个事务里「校验版本 → 留痕 →
--- 写状态 → 推进版本」。快照之后目标被任何副本改过 ⇒ 提交必失败。
-CREATE TABLE IF NOT EXISTS pgref_control_version (
-    id  SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-    ver BIGINT   NOT NULL DEFAULT 0
-);
-
-INSERT INTO pgref_control_version (id) VALUES (1) ON CONFLICT DO NOTHING;
-
--- 控制面效果裁决账（SnapshotEffect / CommitEffect）。权威接线（#268）应
--- 优先走 NewAuthoritativeStorePlane + SideEffectAuthority：裁决落到副作用
--- 闸读取的同一份状态，本表只是 Store 契约的独立后端落点。
-CREATE TABLE IF NOT EXISTS pgref_control_effect (
-    key       TEXT PRIMARY KEY,
-    uncertain BOOLEAN NOT NULL DEFAULT FALSE,
-    unsafe    BOOLEAN NOT NULL DEFAULT FALSE,
-    resolved  TEXT    NOT NULL DEFAULT ''
-);
 `
 
 // tenantDDL vN+1 迁移（issue #275/#278）：把**已部署的旧表**补上租户列 /
@@ -329,6 +310,11 @@ func EnsureSchema(ctx context.Context, pool *pgxpool.Pool, schema string) error 
 		}
 		if _, err := tx.Exec(ctx, schemaDDL); err != nil {
 			return fmt.Errorf("pgstore: 建表失败（schema %s）: %w", schema, err)
+		}
+		// 控制面表组（schema_control.go）：与上表同一事务执行——半截 schema
+		// （运行表建了、控制面表没建）不落地。
+		if _, err := tx.Exec(ctx, controlDDL); err != nil {
+			return fmt.Errorf("pgstore: 控制面建表失败（schema %s）: %w", schema, err)
 		}
 		// 动作身份三列（ErrActionConflict）**只在这里定义一次**：CREATE TABLE
 		// 不带它们，新老表统一由下面三条幂等 ALTER 加上——两处各写一份列

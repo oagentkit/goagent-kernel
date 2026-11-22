@@ -189,6 +189,12 @@ func (p *StorePlane) taskViewAuthoritative(ctx context.Context, id taskboard.Tas
 // 令牌判定——只有一方能赢；输家得到 taskboard.ErrLeaseLost（可观测），
 // 控制面重读重判后给出「已不在认领态」的结论。
 func (p *StorePlane) forceReleaseAuthoritative(ctx context.Context, req ForceRelease) error {
+	// 留痕面缺位 ⇒ 介入一律拒绝（ErrNoAuditor）要在**任何状态变更之前**：
+	// 旧实现把这道检查放在 Release 成功之后——「租约已放、才发现无留痕面」
+	// 与「留痕失败但状态已变」是同一家族的事故（介入留痕与状态同事务）。
+	if p.aud == nil {
+		return ErrNoAuditor
+	}
 	target := string(req.TaskID)
 	for range storePlaneCASMaxAttempts {
 		tasks, err := p.tasks.List(ctx)
@@ -216,14 +222,8 @@ func (p *StorePlane) forceReleaseAuthoritative(ctx context.Context, req ForceRel
 			return errors.Wrap(taskboard.ErrLeaseLost,
 				"该任务不在认领态：无可强制释放的租约（若这是介入重试，说明首次强释已生效）")
 		}
-		err = p.tasks.Release(ctx, req.TaskID, cur.Lease.Token)
-		if errors.Is(err, taskboard.ErrLeaseLost) || errors.Is(err, taskboard.ErrNotFound) {
-			continue // 与 Worker 的收场/接管并发：重读重判（只有一方能赢）
-		}
-		if err != nil {
-			return errors.Wrap(err, "controlplane: 权威任务板拒绝强制释放")
-		}
-		// 成功路径：任务板已裁决（旧令牌当场作废），留痕随后追加。
+		// 成功路径的留痕条目在动作**之前**构造好：原子路径把它带进同一事务，
+		// 两步形态在动作成功后追加。
 		entry := AuditEntry{
 			Operator: req.Operator,
 			Action:   ActionForceRelease,
@@ -231,9 +231,23 @@ func (p *StorePlane) forceReleaseAuthoritative(ctx context.Context, req ForceRel
 			Basis:    req.Basis,
 			Detail:   "经权威任务板强制释放；旧令牌已作废",
 		}
-		if p.aud == nil {
-			return ErrNoAuditor
+		// 原子路径：任务权威实现 ForceReleaseAtomic ⇒ 「校验 + 释放 + 留痕」
+		// 收敛进同一事务提交，「已释放但无成功留痕」的窗口闭合。
+		// 探测必须在分步 Release **之前**——在 Release 成功之后才走原子，
+		// 等于把同一动作施加两遍（第二遍必撞 ErrLeaseLost）。
+		if atomic, ok := p.tasks.(ForceReleaseAtomic); ok {
+			return atomic.ForceReleaseWithAudit(ctx, req.TaskID, cur.Lease.Token, entry)
 		}
+		err = p.tasks.Release(ctx, req.TaskID, cur.Lease.Token)
+		if errors.Is(err, taskboard.ErrLeaseLost) || errors.Is(err, taskboard.ErrNotFound) {
+			continue // 与 Worker 的收场/接管并发：重读重判（只有一方能赢）
+		}
+		if err != nil {
+			return errors.Wrap(err, "controlplane: 权威任务板拒绝强制释放")
+		}
+		// 两步形态（窗口如实声明）：此刻任务板已裁决（旧令牌当场作废），留痕
+		// 随后——留痕失败 ⇒ 租约已释放而缺成功记录，调用方须对账审计平台。
+		// 消窗 = 让任务权威实现 ForceReleaseAtomic（见 intervention_atomic.go）。
 		return appendAudit(ctx, p.aud, entry)
 	}
 	return errors.Wrap(ErrStoreConflict, "controlplane: 强释在重试上限内未提交（并发介入持续冲突）")
@@ -274,8 +288,8 @@ func (p *StorePlane) adjudicateAuthoritative(ctx context.Context, req Adjudicati
 		Basis:    req.Basis,
 		Detail:   "已裁决: " + string(req.Verdict) + "（副作用闸同一份状态）",
 	}
-	if p.aud == nil {
-		return ErrNoAuditor
-	}
+	// 两步形态（窗口如实声明）：此刻裁决已生效，留痕随后——留痕失败 ⇒
+	// 裁决已落而缺成功记录。效果权威的原子接缝（与 ForceReleaseAtomic 同构）
+	// 待参考实现就绪后提供，届时在此探测。
 	return appendAudit(ctx, p.aud, entry)
 }
