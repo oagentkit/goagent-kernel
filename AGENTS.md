@@ -122,9 +122,12 @@ make check                # 全量门禁，见下方 check 目标的依赖链
 make architecture-check   # 单跑架构门禁；--report 看全量
 ```
 
-门禁本体**全部在 `make check` 里**，CI 只执行它——门禁若只挂在 ci.yml 上，
-本地要到推送之后才知道自己违规，那不是「提交前门禁」而是「推送后门禁」。
-新增门禁一律接进 `check`，不要只加到工作流文件里。
+门禁本体**全部在 Makefile 的分层 target 里**（本地一条命令跑全是 `make check`），
+CI 执行的也是这些分层 target（`unit` / `race` / `contract` / `fault-injection` /
+`gates`），**不是 `make check` 本身**——门禁若只挂在 ci.yml 上，本地要到推送之后
+才知道自己违规，那不是「提交前门禁」而是「推送后门禁」。
+新增门禁一律接进 `check`，**并且**接进 CI 跑的那个分层 target（否则 CI 不判）。
+详见 §「接进 `make check` 不等于 CI 会跑它」。
 
 - 提交前必须绿。门禁红了不要绕过——先判断是**代码错了**还是**规则该改**，
   后者必须走「先改 policy 再写代码」，且在 commit 说明里写清理由。
@@ -618,7 +621,7 @@ façade **承担了零关注点**——它挂在类型上的方法数 ≈ **公�
 
 处置（**改口径，不改判定**）：`Makefile` 新增 `TEST_GO_TIMEOUT := 15m`，给
 `test` / `cover` / `cover-gate` / `unit` 四个目标显式 `-timeout`
-（与本仓既有做法一致：`examples/pgstore` 15m、`examples/containerbackend` 20m）。
+（沿用迁移前本仓既有做法：`examples/pgstore` 15m、`examples/containerbackend` 20m——两者现均在 goagent-runtime 仓）。
 
 配套两条纪律：
 
@@ -1470,11 +1473,12 @@ v0.46.1 已把这条作业跑绿两次（main 推送 + tag 快照，tag run 7/7�
 ### 「接进 `make check`」不等于 CI 会跑它（2026-11-18 实测发现）
 
 **纪律**：CI 执行的是**分层目标**（`unit` / `race` / `contract` /
-`fault-injection` / `gates` / `integration`），**不是 `make check` 本身**
+`fault-injection` / `gates` / `windows-test`），**不是 `make check` 本身**
+（`integration` 层已随 PG/SQLite 参考实现迁至 goagent-runtime，2026-11-22）
 ⇒ 只挂在 `check` 上、没进任何分层目标的门禁，**CI 上从来没跑过**。
 
 2026-11-18 实测：`deploycheck`（部署清单门禁）与 `releasecheck`（发版纪律门禁）
-两条一直只挂在 `check` 上，而 CI 的七个作业里没有任何一个执行 `make check`
+两条一直只挂在 `check` 上，而 CI 的六个作业里没有任何一个执行 `make check`
 ⇒ 两条门禁**在 CI 上一次都没跑过**：矩阵漂了没人知道，tag 推送时那四条发版
 纪律（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间无混装提交）也
 没人判。修法：把它们接进 `unit` 层（**不改编排目标的层次结构**，避免动到

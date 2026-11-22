@@ -3364,9 +3364,11 @@ for {
 make check
 ```
 
-CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**——
-门禁若只挂在工作流文件上，本地要到推送之后才知道自己违规，
-那不是「提交前门禁」而是「推送后门禁」。
+CI 执行的是 Makefile 的**分层 target**（`unit` / `race` / `contract` /
+`fault-injection` / `gates`），**不是 `make check` 本身**——两者共享同一批门禁
+本体。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**：门禁若只挂在工作流
+文件上，本地要到推送之后才知道自己违规，那不是「提交前门禁」而是「推送后门禁」。
+⇒ 新增门禁接进 `check` 之还要接进 CI 的那个分层 target，否则 CI 不判。
 
 `make check` 的依赖链：
 
@@ -3383,7 +3385,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
 | `ledgercheck` | 演进台账纪律：同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态须为 `#N` / 正文引用的单号必须有主 + **台账 ↔ GitHub issue 状态双向对账（#455）**——「已合入」而 issue 仍开、issue 已关而台账没登记关闭 PR 号，**两个方向都判**。**判据面与数据源分离**：判据是纯函数（喂构造状态表即可离线钉住），数据源**两级**——实时 `gh` 为主，拉不到退回 `docs/issue-state.yaml` 快照（刷新走 `make issue-state`，**不在** `check` 里），两级都拿不到 ⇒ **退出码 2「给不出结论」**而不是跳过；退回快照时**大声回显**日期与天数 |
-| `architecture-check` | 13 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
+| `architecture-check` | 12 条规则（以命令输出为准，本表不抄数）+ 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向 |
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
