@@ -72,12 +72,12 @@ func TestBoardClaimImplementationsUseClaimable(t *testing.T) {
 		t.Fatalf("扫描 Board.Claim 实现失败: %v", err)
 	}
 	// 防假绿：扫描面本身失效（路径写错 / 跳过太多）时，claims 会变空而
-	// 循环一条断言都不跑。2 是当前实现 taskboard.Board 签名的方法数
-	// （coord / examples/reference-runtime；PG 与 SQLite 参考实现已于 v0.67.0
-	// 迁至 goagent-runtime，其 Board.Claim 实现随仓走、那边自判）；
+	// 循环一条断言都不跑。1 是当前实现 taskboard.Board 签名的方法数
+	// （coord；PG / SQLite 参考实现于 v0.67.0、内存演示于 v0.68.0 迁往
+	// goagent-runtime，其余 Board.Claim 实现随仓走、那边自判）；
 	// controlplane.MemStore.Claim 是运行时面签名（ttl time.Duration），
 	// 由下面的专条判据覆盖。
-	if len(claims) < 2 {
+	if len(claims) < 1 {
 		t.Fatalf("只扫到 %d 个 Board.Claim 实现（扫描了 %d 个生产文件）：%v\n"+
 			"判据已失效——实现改名/移动时必须同步本判据的指纹", len(claims), len(scanned), claims)
 	}

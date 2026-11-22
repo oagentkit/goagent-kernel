@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 94,
-  "callsites": 440,
+  "declarations": 93,
+  "callsites": 433,
   "fully_written": 5,
   "seams": [
     {
@@ -92,7 +92,7 @@
     {
       "id": "controlplane.Auditor",
       "kind": "interface",
-      "callsites": 3,
+      "callsites": 1,
       "written": [
         "blocking",
         "panic"
@@ -267,11 +267,6 @@
       "callsites": 0
     },
     {
-      "id": "examples/containerbackend.K8sCNICapability",
-      "kind": "interface",
-      "callsites": 1
-    },
-    {
       "id": "finalize.Store",
       "kind": "interface",
       "callsites": 5
@@ -432,7 +427,7 @@
     {
       "id": "taskboard.Board",
       "kind": "interface",
-      "callsites": 76
+      "callsites": 73
     },
     {
       "id": "taskboard.ReadyBoard",
@@ -495,7 +490,7 @@
     {
       "id": "worker.Handler",
       "kind": "interface",
-      "callsites": 2
+      "callsites": 1
     },
     {
       "id": "worker.HandlerFunc",

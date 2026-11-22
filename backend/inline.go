@@ -3,7 +3,7 @@
 // 它不是容器隔离的实现——它声明 IsolationNone（显式最弱一档），存在的意义
 // 有三：① 让契约在零外部依赖下可测（判据跑在它身上）；② 给单进程编排一个
 // 不引任何容器运行时的保底执行件；③ 作为「如何实现 Backend」的最小样板。
-// 真实的容器隔离见 examples/containerbackend（Docker Engine 参考实现）。
+// 真实的容器隔离见 goagent-runtime 仓的 containerbackend（v0.68.0 迁出）（Docker Engine 参考实现）。
 package backend
 
 import (
