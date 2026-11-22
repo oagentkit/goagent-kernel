@@ -114,11 +114,6 @@ packages:
     level: Stable
     since: v0.33.0
     reason: 优雅排水（轮取消脱钩/在途收敛/预算强制收刀）已定型。
-  - pkg: pii
-    level: Stable
-    since: v0.33.0
-    reason: 敏感面/处置策略注册表 + 单指针原子交换。注册表只增（additive），交换语义已定型。
-
   # ── 仍在演进的包（Experimental：理由必填，升级风险自负）──
   - pkg: budget
     level: Experimental
@@ -198,10 +193,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 架构门禁执行体，可被宿主复用（ADR-0002），但规则集随 policy 演进会增删——判据面本身不适合 Stable 承诺。
-  - pkg: internal/subhub
-    level: Experimental
-    since: v0.33.0
-    reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。
   - pkg: internal/ledgerstatus
     level: Experimental
     since: v0.47.0

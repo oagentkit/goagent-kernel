@@ -82,7 +82,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"github.com/yi-nology/goagent-kernel/internal/subhub"
+	"github.com/oekit/pkg/subhub"
 )
 
 // assemblyState 装配面发布出去的当前状态：一份集合 + 它的代次。

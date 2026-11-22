@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/oekit/pkg/errors"
-	"github.com/oekit/pkg/slicex"
 	"github.com/oekit/pkg/stringx"
 )
 
@@ -188,7 +187,7 @@ func ineligible(e Entry, q Query) string {
 		return "作用域不匹配（" + e.Scope + "）；不做父级兜底，否则作用域失去意义"
 	}
 	for _, want := range q.Tags {
-		if !slicex.Contains(e.Tags, want) {
+		if !slices.Contains(e.Tags, want) {
 			return "缺少标签 " + want
 		}
 	}
