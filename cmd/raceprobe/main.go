@@ -8,6 +8,10 @@
 //	-out <目录>             取证落盘目录（默认 $TMPDIR/raceprobe）
 //	-recheck <bool>         是否允许串行复核这条反事实实验（默认 true）
 //	-recheck-timeout <时长> 复核自己的上限（默认 10m）
+//	-race <bool>            是否开 -race（默认 true；false = 复用给不判竞态的门禁）
+//	-run <模式>             传给 go test -run 的过滤（默认空）
+//	-v                      传给 go test -v（默认关）
+//	-label <名字>           门禁名，进取证文件名与报告文案（默认 race）
 //
 // 退出码：0 = 通过（含「环境面已复核」）；1 = 未通过；2 = 用法/配置错。
 package main
@@ -42,6 +46,10 @@ func runMain() int {
 	outDir := fs.String(flagOutDir, filepath.Join(os.TempDir(), "raceprobe"), "取证落盘目录")
 	recheck := fs.Bool("recheck", true, "启动期楔死时是否做串行复核（反事实实验）")
 	recheckTimeout := fs.Duration("recheck-timeout", 10*time.Minute, "串行复核自己的上限")
+	noRace := fs.Bool("race", true, "是否开 -race（false = 复用本工具跑不判竞态的门禁，如 fault-injection）")
+	runPattern := fs.String("run", "", "传给 go test -run 的过滤（如 ^TestFault；空 = 不加）")
+	verbose := fs.Bool("v", false, "传给 go test -v")
+	label := fs.String("label", "race", "门禁名：进取证文件名与报告文案")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return 2
 	}
@@ -53,6 +61,10 @@ func runMain() int {
 		outDir:         *outDir,
 		recheck:        *recheck,
 		recheckTimeout: *recheckTimeout,
+		noRace:         !*noRace,
+		runPattern:     *runPattern,
+		verbose:        *verbose,
+		label:          *label,
 		spawn:          defaultSpawner,
 		now:            time.Now,
 	}

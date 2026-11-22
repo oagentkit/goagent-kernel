@@ -523,8 +523,27 @@ contract:
 # -run '^TestFault' 只跑注入用例：这类用例构造的是「坏实现必红」的对照形态，
 # 与普通单测分开成层，是为了它红的时候信号不被大批绿灯淹没。
 # -v 让每个注入场景的失败形态直接可见（这类用例的红就是它们的文档）。
+#
+# **2026-11-22 起由 raceprobe 接管**（§26 建议 2：「会挂死」的门禁统一形态）——
+# 此前它只回「绿 / 红」，红的形态（挂死 vs 真断言失败 vs 启动期楔死）靠人读
+# 日志猜，而处置方向完全不同。现在与 race 门禁**共用同一套判据与取证**：
+# 跑（输出实时透传 + 全量落盘）→ 判（raceprobe.Classify 六形态）→ 取证
+# （原始输出 + 形态结论落盘）。-race=false：本层不判竞态，绑 cgo 只会白慢一轮
+# （childEnv 随开关注入 CGO_ENABLED，与 GOENV 同口径）。
+FAULT_EVIDENCE_DIR ?= $(or $(TMPDIR),/tmp)/goagent-kernel-fault
+FAULT_GO_TIMEOUT := 7m
+FAULT_WATCHDOG := 10m
+
 fault-injection:
-	$(EXPORT) $(GOENV) go test ./... -count=1 -run '^TestFault' -v
+	@$(EXPORT) $(GOENV) go run ./cmd/raceprobe \
+	  -packages ./... \
+	  -run '^TestFault' \
+	  -v \
+	  -race=false \
+	  -label fault-injection \
+	  -timeout $(FAULT_GO_TIMEOUT) \
+	  -watchdog $(FAULT_WATCHDOG) \
+	  -out $(FAULT_EVIDENCE_DIR)
 	@echo "故障注入层 ✓（TestFault* 全过）"
 
 # gates：与测试正交的静态门禁聚合（CI 的 gates 层与本地复跑的等价入口）。

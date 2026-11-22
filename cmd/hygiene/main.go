@@ -22,6 +22,20 @@
 // 扩展名可以改：把 docsync 改名叫 docsync.bin 就绕过了扩展名判据。魔数是
 // **内容事实**——ELF/Mach-O/PE/ar/wasm 的文件头写死了格式标识，改不改名都在。
 //
+// # 第二条判据：被跟踪却命中 .gitignore（force-add 形态，2026-11-22 补）
+//
+// 魔数只认**二进制**，而 `bin/` 与覆盖配置这类位置的本地产物是**文本**
+// （coverage.out / bin/ 下的脚本），`git add -f` 强加进库时魔数一声不响——
+// §16 第八阶段建议 3 点名的正是这两个位置「仍开着」。
+//
+// 判据取 git 自己的答案：`git ls-files -i -c --exclude-standard` = 被跟踪
+// **且**命中忽略规则的文件。两个方向都判：① `git add -f` 强加了本地产物；
+// ② 文件先入库、忽略规则后加（陈旧跟踪）——后者正是 .gitignore 头注里
+// `/archcheck` 那次「忽略规则把整包静默排除」的同族形态，只是方向相反。
+//
+// 不自己解析 .gitignore：模式语义（否定、目录、嵌套 include）由 git 判，
+// 复述一遍就是第二份会漂移的真相。
+//
 // # 失败形态
 //
 // 非零退出 + 逐条列出（路径 / 命中的格式 / 修法）。git 不可用时**报错退出**
@@ -66,7 +80,8 @@ var magics = []binaryMagic{
 // headBytes 读文件头这么多字节：最长的魔数是 ar 的 8 字节。
 const headBytes = 8
 
-// offender 一条违规：被跟踪的编译产物。
+// offender 一条违规：被跟踪的编译产物（魔数命中）或被跟踪却命中忽略规则
+// （force-add / 陈旧跟踪，format 说明是哪一种）。
 type offender struct {
 	path   string
 	format string
@@ -168,16 +183,38 @@ func trackedFiles(root string) ([]string, error) {
 // report 把违规清单写成人读的报告。返回 true = 通过。
 func report(w io.Writer, total int, bad []offender) bool {
 	if len(bad) == 0 {
-		_, _ = fmt.Fprintf(w, "hygiene: %d 个被跟踪文件，零编译产物二进制 ✓\n", total)
+		_, _ = fmt.Fprintf(w, "hygiene: %d 个被跟踪文件，零编译产物二进制、零命中忽略规则的文件 ✓\n", total)
 		return true
 	}
-	_, _ = fmt.Fprintf(w, "hygiene: 仓库跟踪了 %d 个编译产物二进制：\n", len(bad))
+	_, _ = fmt.Fprintf(w, "hygiene: 仓库跟踪了 %d 个不该入库的文件：\n", len(bad))
 	for _, o := range bad {
 		_, _ = fmt.Fprintf(w, "  %s（%s）\n", o.path, o.format)
 	}
-	_, _ = fmt.Fprintln(w, "  修法：git rm --cached <路径> 并删掉工作树副本，同时把该路径补进 .gitignore。")
-	_, _ = fmt.Fprintln(w, "        构建产物请用 make 目标或 go build -o bin/ 产出，不要留在仓库根。")
+	_, _ = fmt.Fprintln(w, "  修法：git rm --cached <路径> 并删掉工作树副本；")
+	_, _ = fmt.Fprintln(w, "        若它是本地产物，确认该路径已在 .gitignore（构建产物用 make 目标或 go build -o bin/ 产出）。")
 	return false
+}
+
+// checkIgnored 列出「被跟踪且命中 .gitignore」的文件（force-add 形态）。
+//
+// 判据全交给 git（--exclude-standard 含 .gitignore / .git/info/exclude /
+// core.excludesFile）：本仓不复述忽略规则的语义。git 起不来时报错，不静默返回空。
+func checkIgnored(root string) ([]offender, error) {
+	out, err := gitOut(root, "ls-files", "--full-name", "-i", "-c", "--exclude-standard", "-z")
+	if err != nil {
+		return nil, errors.Wrap(err, "git ls-files -i 失败", "root", root)
+	}
+	var bad []offender
+	for _, p := range strings.Split(string(out), "\x00") {
+		if p == "" {
+			continue
+		}
+		bad = append(bad, offender{
+			path:   p,
+			format: "命中 .gitignore 却在版本库里（git add -f 强加，或忽略规则后加的陈旧跟踪）",
+		})
+	}
+	return bad, nil
 }
 
 // run 执行一次卫生检查，返回进程退出码（0 = 通过）。
@@ -192,6 +229,12 @@ func run(root string, out io.Writer) int {
 		_, _ = fmt.Fprintln(out, "hygiene: "+err.Error())
 		return 1
 	}
+	ignored, err := checkIgnored(root)
+	if err != nil {
+		_, _ = fmt.Fprintln(out, "hygiene: "+err.Error())
+		return 1
+	}
+	bad = append(bad, ignored...)
 	if !report(out, len(files), bad) {
 		return 1
 	}

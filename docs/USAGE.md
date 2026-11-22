@@ -3394,7 +3394,7 @@ CI 执行的是 Makefile 的**分层 target**（`unit` / `race` / `contract` /
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
-| `hygiene` | 仓库**跟踪**了编译产物二进制（本地构建产物留在工作树里是正确状态，判的是「进了版本库」）——`git rm --cached <路径>` + 删掉工作树副本 + 把该路径补进 `.gitignore` |
+| `hygiene` | 仓库**跟踪**了编译产物二进制（本地构建产物留在工作树里是正确状态，判的是「进了版本库」），**或**跟踪了命中 `.gitignore` 的文件（`git add -f` 强加的文本产物 / 忽略规则后加的陈旧跟踪）——`git rm --cached <路径>` + 删掉工作树副本 + 确认该路径已在 `.gitignore` |
 
 ```bash
 make architecture-check --report   # 看全量违规清单（默认前 10 条）

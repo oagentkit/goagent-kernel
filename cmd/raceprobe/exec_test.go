@@ -78,7 +78,7 @@ func TestDefaultSpawnerTimeoutKillsTree(t *testing.T) {
 // 那正是 egress 门禁第 5 条要拦的形态（宿主凭据递给子进程）。
 func TestChildEnvDoesNotInheritFullEnv(t *testing.T) {
 	t.Setenv("RACEPROBE_FAKE_SECRET", "s3cret")
-	for _, kv := range childEnv() {
+	for _, kv := range childEnv(true) {
 		if strings.HasPrefix(kv, "RACEPROBE_FAKE_SECRET=") {
 			t.Fatalf("子进程环境带上了父进程的任意变量：%s", kv)
 		}
@@ -92,7 +92,7 @@ func TestChildEnvDoesNotInheritFullEnv(t *testing.T) {
 func TestChildEnvInjectsCGOEnabled(t *testing.T) {
 	t.Setenv("CGO_ENABLED", "0")
 	var found string
-	for _, kv := range childEnv() {
+	for _, kv := range childEnv(true) {
 		if strings.HasPrefix(kv, "CGO_ENABLED=") {
 			found = kv
 		}

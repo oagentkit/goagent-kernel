@@ -76,11 +76,17 @@ func defaultSpawner(ctx context.Context, argv []string, env []string, out, errOu
 //   - **按名透传**的 Go 工具链变量（父进程没有就丢弃）：GOCACHE / GOMODCACHE /
 //     GOPATH / GOFLAGS / GOTOOLCHAIN / GOPROXY / GOSUMDB / GOPRIVATE。
 //     不透传的后果是子进程用另一套缓存目录（整仓重编一遍）或换一套代理。
-//   - **字面注入**的 CGO_ENABLED=1：race 必须开 cgo（Linux 上 `-race requires cgo`）。
-//     字面注入而不是透传，是为了不继承父进程可能带的 CGO_ENABLED=0。
-func childEnv() []string {
+//   - **字面注入**的 CGO_ENABLED：race 必须开 cgo（Linux 上 `-race requires cgo`），
+//     故 -race 形态注入 1；关掉 -race 的复用形态（fault-injection 等）注入 0，
+//     与本仓 GOENV 同口径——那些门禁本来就不判竞态，绑上 cgo 只会白慢一轮。
+//     字面注入而不是透传，是为了不继承父进程可能带的相反取值。
+func childEnv(enableRace bool) []string {
+	cgo := "CGO_ENABLED=0"
+	if enableRace {
+		cgo = "CGO_ENABLED=1"
+	}
 	extra := []string{
-		"CGO_ENABLED=1",
+		cgo,
 		"GOFLAGS", "GOCACHE", "GOMODCACHE", "GOPATH",
 		"GOTOOLCHAIN", "GOPROXY", "GOSUMDB", "GOPRIVATE", "GOEXPERIMENT",
 	}
@@ -104,7 +110,7 @@ func runGoTest(ctx context.Context, o options, args []string, out, errOut io.Wri
 		spawn = defaultSpawner
 	}
 	argv := append([]string{"go"}, args...)
-	code, err := spawn(ctx, argv, childEnv(), out, errOut)
+	code, err := spawn(ctx, argv, childEnv(!o.noRace), out, errOut)
 	return goTestOutcome{
 		ExitCode: code,
 		TimedOut: ctx.Err() != nil,

@@ -144,6 +144,58 @@ func TestRunGreenOnRepoWithoutBinary(t *testing.T) {
 	}
 }
 
+// TestRunFlagsForceAddedIgnoredFile 反向验证：**文本**产物被 `git add -f`
+// 强加进库 ⇒ 门禁转红（§16 第八阶段建议 3：bin/ 与覆盖配置的位置）。
+//
+// 这一条钉的是魔数判据的盲区：coverage.out 是文本，魔数永远不响；
+// 判据改回「只判二进制」时本用例即红。
+func TestRunFlagsForceAddedIgnoredFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git 不可用，跳过: %v", err)
+	}
+	// 覆盖配置：.gitignore 收着，但 -f 能绕过去——这正是判据要拦的形态。
+	writeFile(t, filepath.Join(dir, ".gitignore"), []byte("/coverage.out\n"))
+	writeFile(t, filepath.Join(dir, "coverage.out"), []byte("mode: set\n"))
+	if out, err := exec.Command("git", "-C", dir, "add", ".gitignore").CombinedOutput(); err != nil {
+		t.Fatalf("git add .gitignore 失败: %v（%s）", err, out)
+	}
+	// -f：忽略规则挡不住强加——这正是判据要拦的形态。
+	if out, err := exec.Command("git", "-C", dir, "add", "-f", "coverage.out").CombinedOutput(); err != nil {
+		t.Fatalf("git add -f 失败: %v（%s）", err, out)
+	}
+
+	var buf bytes.Buffer
+	if code := run(dir, &buf); code == 0 {
+		t.Fatalf("强加了命中 .gitignore 的文件时门禁必须红（退出码 0，报告 %q）", buf.String())
+	}
+	if !strings.Contains(buf.String(), "coverage.out") {
+		t.Errorf("红点必须点名被强加的文件（实得 %q）", buf.String())
+	}
+}
+
+// TestRunGreenWhenIgnoredFileNotTracked 上一条的另一半：忽略规则在、但文件没进
+// 索引 ⇒ 绿（本地构建产物留在工作树里是正确状态，判「文件存在」就是噪声）。
+func TestRunGreenWhenIgnoredFileNotTracked(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Skipf("git 不可用，跳过: %v", err)
+	}
+	writeFile(t, filepath.Join(dir, ".gitignore"), []byte("/coverage.out\n"))
+	writeFile(t, filepath.Join(dir, "coverage.out"), []byte("mode: set\n"))
+	writeFile(t, filepath.Join(dir, "main.go"), []byte("package main\n"))
+	for _, p := range []string{".gitignore", "main.go"} {
+		if out, err := exec.Command("git", "-C", dir, "add", p).CombinedOutput(); err != nil {
+			t.Fatalf("git add %s 失败: %v（%s）", p, err, out)
+		}
+	}
+
+	var buf bytes.Buffer
+	if code := run(dir, &buf); code != 0 {
+		t.Fatalf("只在工作树里的忽略产物不得判红（退出码 %d，报告 %q）", code, buf.String())
+	}
+}
+
 // TestRunFailsWhenGitUnavailable git 不可用时**明确失败**，不静默跳过。
 //
 // 判据跑不起来却报绿，是最贵的失效形态——所以这一条钉住「非零退出 + 报错」，
