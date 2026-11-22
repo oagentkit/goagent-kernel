@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS pgref_control_effect (
 CREATE TABLE IF NOT EXISTS pgref_control_audit (
     id       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     at       TIMESTAMPTZ NOT NULL,
-    operator TEXT      NOT NULL,
+    operator TEXT      NOT NULL CHECK (operator <> ''),
     action   TEXT      NOT NULL,
     target   TEXT      NOT NULL,
     basis    TEXT      NOT NULL,

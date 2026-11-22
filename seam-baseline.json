@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 93,
-  "callsites": 439,
+  "declarations": 94,
+  "callsites": 440,
   "fully_written": 5,
   "seams": [
     {
@@ -115,6 +115,11 @@
     },
     {
       "id": "controlplane.EffectResolver",
+      "kind": "interface",
+      "callsites": 1
+    },
+    {
+      "id": "controlplane.ForceReleaseAtomic",
       "kind": "interface",
       "callsites": 1
     },
