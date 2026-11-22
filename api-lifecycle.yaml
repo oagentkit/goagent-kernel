@@ -64,10 +64,6 @@ packages:
     reason: sideeffect.Store 共享契约套件。场景集只增不减（additive），契约面 Stable 则套件判定口径随之稳定。
 
   # ── 零依赖小判据（Stable：已冻结的单一真相）──
-  - pkg: toolname
-    level: Stable
-    since: v0.33.0
-    reason: 工具名 → JS 标识符的单一真相，96 行零依赖，生产/消费两侧共用判据已逐字钉死。
   - pkg: pending
     level: Stable
     since: v0.33.0
