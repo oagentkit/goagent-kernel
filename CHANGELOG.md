@@ -2,6 +2,16 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.69.0] — 2026-11-22
+
+### chore：toolname 上移 oekit/pkg（v0.58.0，PR #472）
+
+边界审计第二批上移：toolname（工具名规范名/净化/一致性校验，纯 stdlib 零依赖，生产 101 行）按「机制与宿主无关 → 归上游基础库」上移至 oekit/pkg（oekit/pkg#578，v0.58.0，API 逐字未变）。
+
+**破坏性变更（minor 理由）**：github.com/yi-nology/goagent-kernel/toolname 删除——外部消费方改指 github.com/oekit/pkg/toolname。仓内消费方 ptc（5 文件）与 tooldisclose（2 文件）import 已改指，零行为变化。依赖地板 oekit/pkg v0.57.0 → v0.58.0。
+
+**同批对账结论**：netguard 维持现状（消费方 tooldisclose/ptc 在编排出站链；与上游 oekit/pkg/urlguard 的分工——IP 策略单源 egress、域名后缀层本仓为超集——已写在包文档）；watchdog 深耦合 contract/eventbus/reconcile/trajectory，属编排判据本体，留 kernel；ticket 留待下批（需先理清消费面）。
+
 ## [v0.68.0] — 2026-11-22
 
 ### chore：三个演示迁往 goagent-runtime，examples/ 清空（PR #471）
