@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/yi-nology/goagent-kernel/raceprobe"
 )
 
 // fakeResult 一次假执行的预设结果。
@@ -86,7 +88,7 @@ func TestRunRaceDataRaceIsRed(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("数据竞争必须判红，得到 code=%d", code)
 	}
-	if !strings.Contains(msg, string(KindDataRace)) {
+	if !strings.Contains(msg, string(raceprobe.KindDataRace)) {
 		t.Fatalf("结论里没有形态：%s", msg)
 	}
 	if *calls != 1 {
@@ -164,7 +166,7 @@ func TestRunRaceStartupWedgeRecheckFailsStaysRed(t *testing.T) {
 	if *calls != 2 {
 		t.Fatalf("必须做一次串行复核，实际 %d 轮", *calls)
 	}
-	if !strings.Contains(msg, string(KindTestFailure)) {
+	if !strings.Contains(msg, string(raceprobe.KindTestFailure)) {
 		t.Fatalf("复核失败时应按复核结论判形态：%s", msg)
 	}
 }

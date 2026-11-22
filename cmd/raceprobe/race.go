@@ -45,6 +45,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
+	"github.com/yi-nology/goagent-kernel/raceprobe"
 	"io"
 	"os"
 	"path/filepath"
@@ -160,15 +162,15 @@ func runRace(ctx context.Context, o options) (int, string) {
 	elapsed := o.now().Sub(started)
 
 	output := buf.String()
-	verdict := Classify(output)
+	verdict := raceprobe.Classify(output)
 	report := runReport{
 		Started:  started.UTC().Format(time.RFC3339),
 		Duration: elapsed.Round(time.Second).String(),
 		ExitCode: outcome.ExitCode,
 		TimedOut: outcome.TimedOut,
 		Verdict:  verdict,
-		Passed:   PassedPackages(output),
-		Failed:   FailedPackages(output),
+		Passed:   raceprobe.PassedPackages(output),
+		Failed:   raceprobe.FailedPackages(output),
 		LogPath:  logPath,
 	}
 
@@ -178,8 +180,8 @@ func runRace(ctx context.Context, o options) (int, string) {
 	}
 
 	// 启动期楔死 ⇒ 做串行复核（反事实实验）。
-	if verdict.Kind == KindStartupWedge && o.recheck {
-		targets := RecheckTargets(output)
+	if verdict.Kind == raceprobe.KindStartupWedge && o.recheck {
+		targets := raceprobe.RecheckTargets(output)
 		report.Targets = targets
 		if len(targets) > 0 {
 			code, recheckLog, recheckOut := o.runRecheck(ctx, targets, stamp)
@@ -194,7 +196,7 @@ func runRace(ctx context.Context, o options) (int, string) {
 				return 0, text
 			}
 			// 复核仍红 ⇒ 按复核的结论判（复核可能揭出真正的代码面缺陷）。
-			report.Verdict = Classify(recheckOut)
+			report.Verdict = raceprobe.Classify(recheckOut)
 			report.Recheck = "串行复核未通过 ⇒ 以复核结论为准"
 		} else {
 			report.Recheck = "输出里没有可复核的受害包（cmd/go 没收到失败包行）⇒ 无法做反事实实验"
