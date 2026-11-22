@@ -35,6 +35,7 @@ require (
 	github.com/oagentkit/guardx v0.28.0
 	github.com/oagentkit/runtime v0.13.0
 	github.com/oagentkit/toolgate v0.17.4
+	github.com/oagentkit/toolname v0.1.0
 	github.com/oagentkit/tools v0.15.0
 	github.com/oekit/concurrency v0.38.1
 	github.com/oekit/logx v0.11.0
@@ -71,7 +72,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oagentkit/mcpkit v0.14.0 // indirect
-	github.com/oagentkit/toolname v0.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
