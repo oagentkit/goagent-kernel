@@ -2,6 +2,62 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.73.0] — 2026-11-23
+
+### 重构(boundary)：三包上抛上游——netguard/ticket → guardx，cmdpolicy → tools
+
+按**概念域**分派（不按实现依赖），本仓这三个包的位置不对：
+- `netguard`（出站 URL 守卫 SSRF）属**执行安全域**，与 `guardx/egress` 同族同层。
+  它的 IP 策略依据本来就在 `guardx/egress` ⇒ 机制住在编排内核、判据依据住在上游，
+  是分层倒挂（分层倒挂比放错仓更贵）。
+- `ticket`（一次性短时授权票据）属**执行安全域**（准入凭据），与
+  `guardx/permgate` / `rbac` / `fence` 同族。
+- `cmdpolicy`（命令级放行裁决）与它的**事实面**（`tools/bashguard` 真 shell AST）
+  本是同一件事的两半：原先分家在不同仓，依赖只能向上够；同仓之后依赖天然成立。
+为什么不落 `toolgate`：toolgate 与 tools **同为 tier 2**，迁过去会构成同层依赖
+（矩阵纪律：依赖严格自底向上）；而命令级裁决的邻居正是同仓的 bashguard。
+**BREAKING（破坏性 minor）**：本仓这三个包的导出面整体消失，下游若 import 过
+这三个包路径，编译期即红。旧新对照与迁移路径三件齐：
+- `netguard` → `github.com/oagentkit/guardx/netguard`（API 逐字未变）
+- `ticket` → `github.com/oagentkit/guardx/ticket`（API 逐字未变）
+- `cmdpolicy` → `github.com/oagentkit/tools/cmdpolicy`（API 逐字未变）
+判据与导出面**逐字未变**（三包在本仓内零 kernel 内部依赖，迁入即等价）；
+**必须 `go mod tidy`**：`oagentkit/tools` 从本仓依赖图移除。
+只用其余内核包的宿主：既有包导出面逐字未变 ⇒ 行为零变化。
+本仓侧：删三个包；policy 摘三处 module 登记 + `scan_roots` 三项；
+api-lifecycle 摘三条（Stable 19→18 / Experimental 35→33）；README 包表与
+「下游升级须知」同步；docs/{USAGE,api-compat,error-semantics,AI-GUIDE,OAGENTKIT-OVERLAP}.md
+口径同步（含 error-semantics 两处幽灵条目与门面包幽灵分组清理）；
+文档站四页与生成页同步；`go.mod` 撤 `oagentkit/tools` 依赖。
+接缝清单随迁包同步：ticket 的两处导出时钟接缝随之迁走 ⇒ 下限 13 → 12；
+降的是**清单**不是判据——少一处接缝立刻红，这个机制本身不变（本次正是它报出来的）。
+上游已发版：guardx v0.29.0（迁入 netguard + ticket）、tools v0.16.0（迁入 cmdpolicy）。
+
+- 文档(boundary)：迁出后仓内残留断言改指上游——「同仓/本仓的 netguard」表述失效（18 处注释，零行为变化）
+
+三包上抛后，本仓若干处注释仍在把 `netguard` / `ticket` / `pii` 说成
+「同仓」「本仓已有先例」——那是迁移前为真的事实，现在成了假话。注释里的
+位置断言错了，读者会照着它去找一个已经不在本仓的包。
+逐条清点（18 处，**纯注释、零行为变化**）：
+- `guardset/assembly.go`：包头「形态对齐**同仓**的 netguard」→「对齐**上游
+  guardx/netguard**」；「「换整份」这件事**本仓已有先例**」→「上游 guardx/netguard
+  已有先例」；对齐表首列 `netguard` → `guardx/netguard`；代次投影、Subscription
+  类型别名、代次投影三处指路补「上游」
+- `guardset/assembly.go` + `assembly_subscribe.go`：订阅表机制的位置
+  `internal/subhub` → `oekit/pkg/subhub`（v0.66.0 已上移），同现时并列的两个
+  包改指 `guardx/netguard` / `oekit/pkg/pii`
+- `guardset/guardset.go`：包头「本仓的守卫（…）」补注 `netguard`/`pii`/`toolfail`
+  已上移上游
+- `egress/egress.go`：包头「**本仓的** netguard 判定挂在 http.Client / Transport 上」
+  → 「**上游 guardx/netguard** 的判定」——这句是 egress 补的那个洞的起点，
+  指错位置会让人以为 egress 仍与 netguard 同仓
+- `eventbus/durable.go`（两处）、`reconcile/reconcile.go`、`guardset/assembly_gen_test.go`（两处）、
+  `ptc/sandbox_test.go`：同款机制/同风格类比补「上游」定位词
+**只改位置断言，不改机制描述**——「同款」「同风格」类比本身仍然成立
+（上游同名包的判据与导出面逐字未变），补的是「它现在住在哪」。
+本次是回执走查的产物（走查盲区：门禁只判 README 包表与 USAGE 口径，
+**不判 Go 注释里的位置断言** ⇒ 迁移后这类话会静默过期）。
+
 ## [v0.72.2] — 2026-11-22
 
 ### feat(gates): 台账清账——承接链末端建议逐条处置（§42，PR #484）
