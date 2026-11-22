@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/oagentkit/toolname"
 	"github.com/oekit/pkg/errors"
-	"github.com/oekit/pkg/toolname"
 )
 
 func toolWith(name string, required []string, props ...string) Tool {

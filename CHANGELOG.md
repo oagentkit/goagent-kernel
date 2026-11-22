@@ -2,6 +2,18 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.70.0] — 2026-11-22
+
+### chore：toolname 从 oekit 归位 oagentkit（概念归属纠偏）
+
+v0.69.0 把 toolname 上移至 oekit/pkg——**归错位了**：实现虽纯 stdlib，概念域却是工具治理（消费方是工具披露链与程序化工具编排链），与 toolgate/guardx 同属 oagentkit 家族；oekit 是纯基础设施，不认识「工具」。本次归位：
+
+- 新家：github.com/oagentkit/toolname（v0.1.0，独立仓）
+- oekit/pkg 的 toolname 标记 Deprecated 指向新仓（v0.58.2），保留仅为既有调用方兼容
+- kernel 消费方（ptc 5 文件 / tooldisclose 2 文件）import 再改指 oagentkit/toolname，零行为变化
+
+**边界分层口径（此后上移按此判）**：纯基础设施（不认识 agent/工具/沙箱）→ oekit；工具/沙箱/执行安全域 → oagentkit（guardx 家族）；编排判据 → kernel；装配与参考实现 → goagent-runtime。netguard 维持现状（消费方在出站链）；watchdog 深耦合编排判据留 kernel；ticket 的归属按本口径应看 guardx，留待下批。
+
 ## [v0.69.0] — 2026-11-22
 
 ### chore：toolname 上移 oekit/pkg（v0.58.0，PR #472）

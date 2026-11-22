@@ -27,10 +27,10 @@ import (
 	"time"
 
 	"github.com/dop251/goja"
+	"github.com/oagentkit/toolname"
 	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
-	"github.com/oekit/pkg/toolname"
 )
 
 // ErrInvalidSignature 形态串非法（装配期缺陷，非程序问题）。

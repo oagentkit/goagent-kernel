@@ -13,8 +13,8 @@ import (
 
 	"github.com/dop251/goja"
 	"github.com/oagentkit/guardx/invoke"
+	"github.com/oagentkit/toolname"
 	"github.com/oekit/pkg/errors"
-	"github.com/oekit/pkg/toolname"
 )
 
 // bindingCaller 一次绑定调用的执行面。
