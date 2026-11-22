@@ -338,20 +338,6 @@
 | `ErrMountDenied` | 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 / 形态不合法，创建阶段先于引擎或 apiserver 调用拒绝） | 修作业声明：来源改到白名单内或按策略放开 `AllowWritable`；**不得降级执行**——策略拒绝是 fail-closed 的（#187） |
 | `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
 
-### examples/pgstore
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrIntentIncomplete` | 动作行的执行意图四列（`intent_resource` / `intent_fence` / `intent_holder` / `intent_expires`）部分为 NULL——半写行（人工订正 / schema 迁移 / 仓外写入），本包写入路径只产生「四列全有」或「四列全空」 | 修数据：把该行补齐成完整意图或整体清空；**不得绕过**——半写行既解引用不了（panic）也不能当「无意图」放行（会重新授予执行权 ⇒ 重复施加） |
-| `ErrTenantMismatch` | 租户作用域存储（`NewTenantEffectStore` / `NewTenantEventStore` / `NewTenantDownstream`）收到「动作/事件声明的 Tenant」与「ctx 租户」不一致的写入（issue #275） | 修声明：两处只能给同一个租户，或只给 ctx 一处；存储拒绝猜测哪一份是对的（猜错方向是跨租户串数据）。缺租户上下文是 `tenant.ErrNoContext`，不是本哨兵 |
-
-### examples/sqliteadapter
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrIntentIncomplete` | 动作行（表 `gak_effect_action`）的执行意图四列（`intent_resource` / `intent_fence` / `intent_holder` / `intent_expires`）部分为 NULL——半写行（人工订正 / schema 迁移 / 仓外写入），本包写入路径只产生「四列全有」或「四列全空」 | 修数据：把该行补齐成完整意图或整体清空；**不得绕过**——半写行既解引用不了（panic）也不能当「无意图」放行（会重新授予执行权 ⇒ 重复施加） |
-| `ErrTenantMismatch` | 租户作用域存储（`NewTenantEffectStore` / `NewTenantEventStore` / `NewTenantDownstream` / `NewTenantTailCursorStore` 与门面的 `Store.Tenant*` 入口）收到「动作/事件声明的 Tenant」与「ctx 租户」不一致的写入（issue #275） | 修声明：两处只能给同一个租户，或只给 ctx 一处；存储拒绝猜测哪一份是对的（猜错方向是跨租户串数据）。缺租户上下文是 `tenant.ErrNoContext`，不是本哨兵 |
-
 ### tooldisclose
 
 | 哨兵 | 触发条件 | 调用方处置 |

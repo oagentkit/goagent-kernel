@@ -1,6 +1,7 @@
 name: ci
 
-# 测试分层（issue #102）：unit / race / contract / fault-injection / integration
+# 测试分层（issue #102）：unit / race / contract / fault-injection
+# （integration 层随 PG/SQLite 参考实现一并迁至 goagent-runtime，见该仓 ci.yml）
 # 五层各自成 job，加上静态门禁聚合（gates）与 windows 真跑，共七个。
 #
 # 分层的理由不是审美：五层混在一条链里时，「哪个层红了」要靠读日志——race
@@ -12,7 +13,7 @@ name: ci
 # 七个 job 同一条触发面：PR 与 push main。刻意**不用** paths 过滤——required
 # context 的 job 被 paths 过滤成 skip 时会永远停在 Expected，把合并卡死
 # （这是 ci job 名截断教训的姊妹形态：保护规则与 workflow 的匹配必须全量）。
-# windows / integration 带环境成本，但它们判的是「换个底座还跑得对吗」
+# windows 带环境成本，但它判的是「换个底座还跑得对吗」
 # 「跨进程契约在真 PG 上成立吗」——恰恰是只有推送时才说话的门禁，不省。
 #
 # # 跳过政策（跳过必须显式，不许静默）
@@ -20,8 +21,6 @@ name: ci
 #   - unit / contract / fault-injection：无环境依赖，任何 runner 上直接跑，不跳。
 #   - race：Linux 上 -race 要求 cgo（Makefile RACE_ENV=CGO_ENABLED=1 处理）；
 #     runner 自带 gcc，缺编译器会**明确变红**而不是静默跳过。
-#   - integration：判据要真连数据库。CI 用 postgres service container 每次
-#     推送必跑；本地等价入口 `make integration` 无 docker 时**明确报错**
 #     （不静默跳过），指向已有实例的覆盖写法见 Makefile。
 #   - 门禁本体仍全部在 Makefile 的分层 target 里（unit / race / contract /
 #     fault-injection / gates / integration / check），CI 只是执行它——
@@ -196,39 +195,3 @@ jobs:
           cache: true
       - run: go build ./...
       - run: go test ./... -count=1
-
-  # ── integration 层：PG 参考实现的共享契约套件 + SIGKILL 故障恢复 e2e ──
-  # （issue #94 #95 #105）。判据要真的连数据库：check/unit 必须在任何机器上
-  # 一条命令可跑（无 docker 也要绿），而这里的判据不因此变弱——套件场景级
-  # 硬失败不静默跳过；service container 保证 CI 每次推送都真跑。
-  # 本地等价入口：make integration / compose 的 verify profile。
-  integration:
-    name: integration（PG 契约套件 + SIGKILL e2e）
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: gakref
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d gakref"
-          --health-interval 2s
-          --health-timeout 3s
-          --health-retries 30
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: PG 契约套件 + 故障恢复 e2e（硬失败，无环境开洞）
-        env:
-          GAK_PGREF_DSN: postgres://postgres:postgres@localhost:5432/gakref?sslmode=disable
-        run: |
-          CGO_ENABLED=0 go test ./examples/pgstore/ -count=1 -timeout 15m -v

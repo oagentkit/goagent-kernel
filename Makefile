@@ -185,10 +185,6 @@ TEST_GO_TIMEOUT := 15m
 CROSS_TARGETS := linux/amd64 linux/arm64 darwin/arm64 windows/amd64
 # govulncheck 版本口径：CI 装这个版本，与本机验证过的一致（同 lint 的理由）。
 GOVULNCHECK_VERSION := v1.7.0
-# PG 参考实现（examples/pgstore）的 integration 测试 DSN。compose 起 postgres
-# 后用它；指向已有实例时直接覆盖（PGREF_DSN=... make integration）。
-PGREF_DSN := postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
-COMPOSE   := docker compose -f examples/docker-compose.yml
 # 性能基线五包（issue #101）：基线是记录不是提交前门禁，bench 目标不在 check 里。
 # 数字口径与演进纪律见 docs/BENCH-BASELINE-20261113.md。
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
@@ -404,29 +400,6 @@ architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 # 会在报告里以包数凭据显形。
 architecture-check-types: ## 架构门禁严格档（go/types 类型感知：覆盖赋值形态盲区，慢，opt-in）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck -types $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
-
-# ── integration 层（issue #94 #95 #105）──────────────────────────────
-#
-# 为什么不在 check 里：check 必须在任何机器上一条命令可跑（无 docker 也要绿），
-# 而 PG 契约验证要真的连数据库。判据不因此变弱——CI 有 postgres service
-# container 的 integration job 必跑它；compose 的 verify profile 是同一批用例
-# 的另一种起法。跳过只发生在**环境入口**（无 DSN 时测试显式 Skipf 带原因），
-# 套件场景本身硬失败不静默跳过（sidetest 的既有纪律，保持）。
-integration: ## PG 契约套件 + SIGKILL e2e（compose 起 PostgreSQL；起不来明确报错，不静默跳过）
-	@command -v docker >/dev/null 2>&1 || { \
-	  echo "docker 未安装：PG 参考实现的契约验证需要 PostgreSQL。"; \
-	  echo "起法一：安装 docker 后重跑 make integration；"; \
-	  echo "起法二：GAK_PGREF_DSN=... 指向已有实例，go test ./examples/pgstore/ -count=1"; \
-	  exit 1; }
-	@$(COMPOSE) up -d --wait postgres || { \
-	  echo "docker compose 起 postgres 失败——PG 契约验证不静默跳过，明确失败。"; \
-	  echo "排查：docker daemon 是否在跑？5432 端口是否被占？"; \
-	  exit 1; }
-	@status=0; \
-	GAK_PGREF_DSN=$(PGREF_DSN) $(GOENV) go test ./examples/pgstore/ -count=1 -timeout 15m || status=1; \
-	$(COMPOSE) down >/dev/null 2>&1 || true; \
-	if [ $$status -ne 0 ]; then echo "PG 契约套件 / SIGKILL e2e 未通过（见上方输出）"; exit 1; fi; \
-	echo "PG 契约套件 + SIGKILL e2e ✓（sidetest/boardtest/栅栏套件 + 故障恢复）"
 
 # ── K8s 出站禁网真集群验收（issue #418）──────────────────────────────
 #

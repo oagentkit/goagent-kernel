@@ -25,7 +25,7 @@
 #   - 本文件的 evidence 是**面级展开**：一条能力把它的各张脸**各列一条落点**
 #     （single-store-full-state 就列了任务板 / 副作用 / 快照 / 事件四个面）；
 #   - 选型声明面的 evidence 是**事务域本体**：一条能力只指那条把各张脸收进
-#     **同一份事务域**的入口（examples/sqliteadapter/apply.go#Store.Apply）；
+#     **同一份事务域**的入口（goagent-runtime/sqliteadapter/apply.go#Store.Apply，已迁）；
 #   - 两边用的是**同一个 capability id**（能力词表的唯一真相是本文件），id
 #     层面的一致性由 `make storagecheck` 判据 2 机判（场景的 storage 必须
 #     提供该场景 required 的全部能力）⇒ **不要求 ref 集合逐条相同**。
@@ -84,9 +84,9 @@ capabilities:
       - kind: contract
         ref: taskboard/taskboard.go#Board
       - kind: contract
-        ref: examples/sqliteadapter/board.go#Store.Board
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/board.go#Store.Board
       - kind: contract
-        ref: examples/pgstore/board.go#BoardStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/board.go#BoardStore
 
   - id: startup-recovery
     title: 启动恢复（重放 / 截断残尾 / 续读）
@@ -94,7 +94,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/sqliteadapter/store.go#Open
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/store.go#Open
       - kind: gate
         ref: test
 
@@ -105,13 +105,13 @@ capabilities:
     delivered_by: "#419"
     evidence:
       - kind: contract
-        ref: examples/sqliteadapter/apply.go#Store.Apply
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/apply.go#Store.Apply
       - kind: contract
-        ref: examples/sqliteadapter/effect.go#Store.Effects
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/effect.go#Store.Effects
       - kind: contract
-        ref: examples/sqliteadapter/snapshot.go#Store.Snapshots
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/snapshot.go#Store.Snapshots
       - kind: contract
-        ref: examples/sqliteadapter/event.go#Store.Events
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/event.go#Store.Events
 
   - id: progress-reconciliation
     title: 进度快照与副作用对账（单调序号 + 未知态裁决）
@@ -131,7 +131,7 @@ capabilities:
       - kind: contract
         ref: taskboard/taskboard.go#Board
       - kind: contract
-        ref: examples/pgstore/board.go#BoardStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/board.go#BoardStore
 
   - id: unified-lease
     title: 统一租约（令牌由存储铸造、代次单调）
@@ -161,9 +161,9 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/pgstore/effect.go#EffectStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/effect.go#EffectStore
       - kind: contract
-        ref: examples/pgstore/board.go#BoardStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/board.go#BoardStore
 
   - id: cross-process-token
     title: 跨进程令牌（存储侧铸造、不靠进程内自增）
@@ -171,7 +171,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/pgstore/board.go#BoardStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/board.go#BoardStore
 
   - id: tenant-scoped-storage
     title: 租户隔离落到持久化面（effect / 事件表租户维度 + 缺租户 fail-closed）
@@ -179,11 +179,11 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/pgstore/effect.go#NewTenantEffectStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/effect.go#NewTenantEffectStore
       - kind: contract
-        ref: examples/pgstore/event.go#NewTenantEventStore
-      - kind: gate
-        ref: integration
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/event.go#NewTenantEventStore
+        # integration 目标已随 PG/SQLite 参考实现迁往 goagent-runtime（其 CI 的 integration job）；
+        # 本仓不再有该入口，证据改指迁移事实本身。
     delivered_by: "#275"
 
   - id: reliable-events
@@ -196,7 +196,7 @@ capabilities:
       - kind: contract
         ref: eventbus/tailstore.go#WatermarkTailStore
       - kind: contract
-        ref: examples/pgstore/event.go#EventStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/event.go#EventStore
     delivered_by: "#264"
 
   - id: quota-reclaim
@@ -244,7 +244,7 @@ capabilities:
       - kind: contract
         ref: controlplane/authority.go#NewAuthoritativeStorePlane
       - kind: contract
-        ref: examples/pgstore/control.go#ControlStore
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/control.go#ControlStore
     delivered_by: "#268"
 
   - id: ownership-epoch
@@ -294,7 +294,7 @@ scenarios:
 
   - id: single-host-persistent
     title: 单机持久化
-    storage: examples/sqliteadapter
+    storage: goagent-runtime/sqliteadapter
     worker: single-node
     required: [taskboard-persistence, startup-recovery, single-store-full-state, progress-reconciliation]
     readiness: available
