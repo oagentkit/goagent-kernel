@@ -315,12 +315,12 @@ storages:
         source: kernel
         evidence:
           - kind: contract
-            ref: examples/containerbackend/k8sjob.go#K8sJob
+            ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjob.go#K8sJob
       - id: network-egress-enforcement
         source: kernel
         evidence:
           - kind: contract
-            ref: examples/containerbackend/k8sjobegress.go#K8sEgressProbe
+            ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjobegress.go#K8sEgressProbe
 
   # ── shared-authority-pg：多集群共享同一份权威库（部署形态）──────────
   - id: shared-authority-pg
