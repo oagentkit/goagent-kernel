@@ -44,7 +44,7 @@ func setOf(t *testing.T, names ...string) *Set {
 // TestGenerationIsProjectionOfCurrent 钉住：代次是**当前份的投影**，不是另一个计数器。
 //
 // 判据不是「两者相等」——分开读会得到「集合是第 N 代、代次是第 N-1 代」这种
-// 自相矛盾的一对（netguard 修掉的「两套真相」的可观测形态）。
+// 自相矛盾的一对（上游 guardx/netguard 修掉的「两套真相」的可观测形态）。
 // 正确的不变式是**一次读出**：`Snapshot()` 的两个字段来自同一次装载。
 func TestGenerationIsProjectionOfCurrent(t *testing.T) {
 	asm, err := NewAssembly(setOf(t, "g1"))
@@ -77,7 +77,7 @@ func TestGenerationIsProjectionOfCurrent(t *testing.T) {
 
 // TestGenerationUniqueUnderConcurrentSwap 钉住：并发换分的代次必须**互不相同**。
 //
-// 判据与 netguard 同款：N 次成功换份后，代次必须恰好比起始值大 N。
+// 判据与上游 guardx/netguard 同款：N 次成功换份后，代次必须恰好比起始值大 N。
 // 若代次来自「另一个计数器 + 1」，并发写者会读到同一个旧值、各自算出同一个
 // next，代次**重复**——于是「换过没有」给不出答案。
 func TestGenerationUniqueUnderConcurrentSwap(t *testing.T) {

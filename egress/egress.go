@@ -6,7 +6,7 @@
 //
 // # 它补的是哪个洞
 //
-// 本仓的 netguard 判定挂在 Go 的 http.Client / Transport 上，覆盖面是
+// 上游 `guardx/netguard` 的判定挂在 Go 的 http.Client / Transport 上，覆盖面是
 // 「本进程内走 netguard 的 HTTP 出站」。而工具执行的两类主流形态都在它之外：
 //
 //   - 子进程（ptc 的子进程 Provider 用 exec.Command 重新拉起自己）；

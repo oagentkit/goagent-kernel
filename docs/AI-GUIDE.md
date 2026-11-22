@@ -244,7 +244,7 @@ ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
 架构门禁通过（12 条规则 + 0 个门面包 + 51 个包的依赖方向，policy version 1；无阻断级违反）
 
 # ③ make docsync
-README 与仓库一致（49 个包；工程底座 65285 行 / 348 文件 / 444 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
+README 与仓库一致（49 个包；工程底座 65286 行 / 348 文件 / 444 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
 
 # ④ make ledgercheck
 台账校验通过：145 个单号 / 621 处出现点 / 322 条 issue 状态已对账✓

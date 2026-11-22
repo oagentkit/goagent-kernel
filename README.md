@@ -453,7 +453,7 @@ Job 声明的完整校验不写进本示例，但**不是缺判据**：上游 `s
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 65,285 行 / 348 文件（不含 `_test.go`）|
+| 生产代码 | 65,286 行 / 348 文件（不含 `_test.go`）|
 | 测试 | 444 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
@@ -703,7 +703,7 @@ make devunlink   # 断开，构建回到 go.mod 声明的已发布版本
 
 | 本仓版本 | 变更 | 下游要做什么 |
 |---|---|---|
-| **v0.73.0**（待发版） | **边界归位：三个包上抛——`netguard` → `guardx`、`ticket` → `guardx`、`cmdpolicy` → `tools`**：按「概念域分派，不按实现依赖」的口径，① `netguard`（出站 URL 守卫 SSRF）属**执行安全域**，与 `egress` 同族同层——原先守卫住在编排内核、而它的 IP 策略依据在 guardx ⇒ 机制与判据依据分家（分层倒挂）；② `ticket`（一次性短时授权票据）属**执行安全域**（准入凭据），与 `permgate`/`rbac`/`fence` 同族；③ `cmdpolicy`（命令级放行裁决）与它的**事实面**（bashguard 真 shell AST）本是同一件事的两半，分家在不同仓 ⇒ 依赖只能向上够（且 `toolgate` 与 tools **同为 tier 2**，迁过去会构成同层依赖，矩阵纪律禁止）。三包的判据与导出面**逐字未变**（包内零 kernel 内部依赖） | **① 若你 import 过这三个包**：改指 `github.com/oagentkit/guardx/netguard`、`github.com/oagentkit/guardx/ticket`、`github.com/oagentkit/tools/cmdpolicy`（API 逐字未变）。<br>**② 必须 `go mod tidy`**：依赖面变化（`oagentkit/tools` 从本仓依赖图移除）。<br>**③ 只用其余内核包的宿主**：既有包导出面逐字未变 ⇒ 行为零变化。 |
+| **v0.73.0**（已发版，tag `v0.73.0`） | **边界归位：三个包上抛——`netguard` → `guardx`、`ticket` → `guardx`、`cmdpolicy` → `tools`**（PR #486）：按「概念域分派，不按实现依赖」的口径，① `netguard`（出站 URL 守卫 SSRF）属**执行安全域**，与 `egress` 同族同层——原先守卫住在编排内核、而它的 IP 策略依据在 guardx ⇒ 机制与判据依据分家（分层倒挂）；② `ticket`（一次性短时授权票据）属**执行安全域**（准入凭据），与 `permgate`/`rbac`/`fence` 同族；③ `cmdpolicy`（命令级放行裁决）与它的**事实面**（bashguard 真 shell AST）本是同一件事的两半，分家在不同仓 ⇒ 依赖只能向上够（且 `toolgate` 与 tools **同为 tier 2**，迁过去会构成同层依赖，矩阵纪律禁止）。三包的判据与导出面**逐字未变**（包内零 kernel 内部依赖）；同批清理仓内 18 处「同仓/本仓的 netguard」注释残留（纯注释、零行为变化） | **① 若你 import 过这三个包**：改指 `github.com/oagentkit/guardx/netguard`、`github.com/oagentkit/guardx/ticket`、`github.com/oagentkit/tools/cmdpolicy`（API 逐字未变；上游 guardx ≥ v0.29.0 / tools ≥ v0.16.0 起提供）。<br>**② 必须 `go mod tidy`**：依赖面变化（`oagentkit/tools` 从本仓依赖图移除）。<br>**③ 只用其余内核包的宿主**：既有包导出面逐字未变 ⇒ 行为零变化。 |
 | **v0.72.2**（已发版，tag `v0.72.2`） | **台账清账 + 两条门禁判据**（§42，PR #484）：① `fault-injection` 统一取证——`cmd/raceprobe` 参数化（`-race=false`/`-run`/`-v`/`-label`），与 race 共用同一套形态判据与取证（失败时给形态结论 + 落盘原始输出），cgo 随开关注入；② `hygiene` 补第二条判据——被跟踪**且命中 .gitignore** 的文件即红（`git add -f` 强加的文本产物 / 陈旧跟踪，魔数判不到这一类）；③ 台账 §42 把承接链末端的建议逐条处置（2 落地 / 2 结论 / 1 定案 / 3 开单 #481–#483）| **① 下游无需任何动作**：`raceprobe` 导出包与内核包公开契约面**逐字未变**（改动全在 `package main` 的 CLI 与 Makefile 接线），依赖地板零变化 ⇒ **无需 `go mod tidy`**。<br>**② 若你复用本仓 Makefile**：`make fault-injection` 现在走 raceprobe，失败时多出取证目录与形态结论（行为增强，退出码语义不变）；`hygiene` 多判一类文件。 |
 | **v0.72.1**（已发版，tag `v0.72.1`） | **全量文档与现状对齐**——33 处过期表述更正（PR #478）：CI 分层七→六作业（integration 层迁 goagent-runtime）、README 分支保护「两条检查」→ 实际六条 required contexts、口径数字按实测更新（52 包 / 54 module id / 12 规则 / 463 测试）、已迁包引用改指新家（`toolname`→oagentkit、`pii`→oekit/pkg）、AGENTS 与 USAGE「CI 只执行 make check」自相矛盾统一 | **① 纯文档，零行为变化**：内核包公开契约面逐字未变、依赖地板未动 ⇒ 无需 `go mod tidy`。<br>**② 若你读本仓文档**：CI 作业数、required context 数、包数等口径已按实测刷新。 |
 | **v0.72.0**（已发版，tag `v0.72.0`） | **raceprobe 判定层下沉为可导入包**（§26 建议 1 清偿）：race 门禁的六种失败形态判定（data-race / test-hang / startup-wedge / test-failure / unknown / none）此前锁在 `cmd/raceprobe`（`package main`）里，别的门禁与宿主 import 不到、各写一遍必然各判一套 ⇒ 判定层下沉为新包 `raceprobe`（`FailureKind` + 6 常量、`Verdict`、`Classify`、包级筛选函数全部导出，只依赖 stdlib），`cmd/raceprobe` 改 import 消费，夹具同源；policy 登记 + api-lifecycle 定 **Experimental**（与 archcheck / roundguard 同款理由：判定面随口径演进会增删） | **① 下游无需任何动作**：零导出符号消失、零既有签名变更、依赖地板零变化 ⇒ **无需 `go mod tidy`**。<br>**② 新增可复用面**：宿主可 import `raceprobe.Classify` 复用六种形态判定，不必自写第二份。 |
