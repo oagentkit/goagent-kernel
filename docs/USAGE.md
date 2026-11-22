@@ -3384,7 +3384,8 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|
-| `architecture-check` | 10 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
+| `ledgercheck` | 演进台账纪律：同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态须为 `#N` / 正文引用的单号必须有主 + **台账 ↔ GitHub issue 状态双向对账（#455）**——「已合入」而 issue 仍开、issue 已关而台账没登记关闭 PR 号，**两个方向都判**。**判据面与数据源分离**：判据是纯函数（喂构造状态表即可离线钉住），数据源**两级**——实时 `gh` 为主，拉不到退回 `docs/issue-state.yaml` 快照（刷新走 `make issue-state`，**不在** `check` 里），两级都拿不到 ⇒ **退出码 2「给不出结论」**而不是跳过；退回快照时**大声回显**日期与天数 |
+| `architecture-check` | 13 条规则 + 门面包已清零（v0.35.0 删五门面）+ 各包依赖方向（包数以该命令输出为准）|
 | `docsync` | README 包表 ↔ 仓库实际（生产行数 / 外部依赖） |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐——按 `docs/SEAM-CONTRACT.md` 补声明与三条约束 |
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
@@ -3436,7 +3437,7 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-word-table-relation-anchor-drift` | 同形关系的锚点指向的东西不再对（常量改名/被删、取值不再属于那张表、两端不成对、distinct 却锚到同一处声明）；**all 形态**下：共有取值在本端没有对应常量，或 distinct 的**每一个**共有取值都解析到同一处声明 | `policy.yaml` 的 `word_tables.relations` 段 `anchors`（`{all: true}` = 锚住两端共有取值的全集）|
 | `tenant-policy-drift` | 清单登记的表在模型面已不存在（登记漂移 = 空登记） | 同上 |
 | `tenant-table-name-missing` | 含租户字段的模型没有可从 AST 识别的表名方法（缺省 `TableName`）——解析不出物理表名，登记面核对不了 | 同上 |
-| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）| `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
+| `harness-policy-self-check` | policy 自相矛盾：规则无执行体 / id 重复 / `scan_roots` 漏包 / 例外无 `until` / 例外 `status` 取值不在封闭值域内 / 包根指向空目录 / 租户门缺形状 / **词表登记面自相矛盾**（包名或类别写错、归一出口挂错表、重复登记、豁免缺理由）**+ 例外与实际命中面对账（#447）**：命中 0 条违反且未标 `status: stale` 即红（僵尸例外），标了 `stale` 却仍命中也红（矛盾），报告逐条点名 | `archcheck/selfcheck.go` + `archcheck/tenantgate_selfcheck.go` + `archcheck/selfcheck_wordtable.go` |
 
 > 「未登记的包目录」这条更隐蔽：未登记的包对本门禁完全隐形，
 > 任何模块都能 import 它而不判违规。

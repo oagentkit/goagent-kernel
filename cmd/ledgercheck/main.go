@@ -84,20 +84,30 @@ func runWith(args []string, stdout, stderr io.Writer, fetcher func() (map[int]bo
 
 	probs := checkLedger(led)
 
-	// 判据 5：台账状态 ↔ GitHub issue 实际状态。
+	// 判据 5：台账状态 ↔ GitHub issue 实际状态（issue #455）。
 	//
-	// 拉不到 ⇒ 给不出结论（exit 2），既不并进 1（有违反）也不当 0（通过）：
+	// 数据源**两级**：实时 gh 为主（数据永远是当下事实），拉不到时退回仓内快照
+	// （让门禁在离线 / 没装 gh 的机器上也能跑——「跑不起来的门禁」与「没有门禁」
+	// 是同一件事）。判定只有一条路径 checkIssueStates：换的只是喂给它的状态表，
+	// 两套判定各判一套必然漂移。
+	//
+	// 两级都拿不到 ⇒ 给不出结论（exit 2），既不并进 1（有违反）也不当 0（通过）：
 	// 「查不到」与「没有违反」是两件事，混起来就是本仓最贵的失效形态。
-	issueOpen, err := fetcher()
+	src, err := issueStatesWithFallback(fetcher,
+		filepath.Join(filepath.Dir(path), ledgerstatus.DefaultIssueStateFile))
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "ledgercheck: %v\n", err)
 		return 2
 	}
-	probs = append(probs, checkIssueStates(led, issueOpen)...)
+	// 退回快照必须**大声**：判据现在对着一份可能过期的数据在跑。
+	if src.Warn != "" {
+		_, _ = fmt.Fprintf(stderr, "%s\n", src.Warn)
+	}
+	probs = append(probs, checkIssueStates(led, src.Open)...)
 
 	if len(probs) == 0 {
-		_, _ = fmt.Fprintf(stdout, "台账校验通过：%d 个单号 / %d 处出现点 / %d 条 issue 状态已对账 ✓\n",
-			len(led.Entries()), countOccurrences(led), len(issueOpen))
+		_, _ = fmt.Fprintf(stdout, "台账校验通过：%d 个单号 / %d 处出现点 / %d 条 issue 状态已对账%s✓\n",
+			len(led.Entries()), countOccurrences(led), len(src.Open), src.Tag)
 		return 0
 	}
 	for _, p := range probs {

@@ -225,7 +225,7 @@
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # ① 全量单测（当前 526 个测试文件）
+make test                 # ① 全量单测（当前 539 个测试文件）
 make architecture-check   # ② 架构门禁（规则 / 门包 / 包数见输出）
 make docsync              # ③ README 包表与「工程底座」三项确定性量
 make ledgercheck          # ④ 演进台账纪律
@@ -241,13 +241,13 @@ ok  	github.com/yi-nology/goagent-kernel/worker	3.859s
 ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
 
 # ② make architecture-check
-架构门禁通过（10 条规则 + 0 个门面包 + 61 个包的依赖方向，policy version 1；无阻断级违反）
+架构门禁通过（13 条规则 + 0 个门面包 + 61 个包的依赖方向，policy version 1；无阻断级违反）
 
 # ③ make docsync
-README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 526 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
+README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 539 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
 
 # ④ make ledgercheck
-台账校验通过：132 个单号 / 421 处出现点 ✓
+台账校验通过：140 个单号 / 568 处出现点 ✓
 ```
 
 **四条都绿再动手。** 任一条红 ⇒ 先查它是不是本来就红的（见 §4.2），别把自己的改动
@@ -823,7 +823,7 @@ make check
 ### 4.1 架构门禁的规则表
 
 > **条数口径**：`make architecture-check` 打印的是「N 条规则 + 0 个门面包 + M 个包的
-> 依赖方向」——「N 条」指 policy `rules` 段的条目数（**当前 10 条**），
+> 依赖方向」——「N 条」指 policy `rules` 段的条目数（**当前 13 条**），
 > **不含**用 `go/ast` 判的结构规则（条数随 `archcheck/*.go` 增减而变，
 > 以 `make architecture-check` 的输出为准）——后者含门包不变 / 依赖方向 /
 > 沙箱档位登记 / 执行路径 / 子进程出口 / 未受管逃逸 / 接缝契约三形态 /
@@ -836,7 +836,7 @@ make check
 > 另记：`require_rule_examples: true` 让每条 `rules` 条目**必须自带能过的样例**——
 > 缺样例即红。这使 `rules` 段的条数有了下限保证：不会因为某人删了样例而变成空转。
 
-**第一组：policy `rules` 段（正则类，当前 10 条）**
+**第一组：policy `rules` 段（正则类，当前 13 条）**
 
 | 规则 | 拦什么 | 典型修法 |
 |---|---|---|
@@ -969,6 +969,10 @@ make check
 | 20 | 接缝契约三形态没写齐（声明 / 调用点 / 三条约束）| 以为「接缝是注释」 | 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 | `seamcheck` |
 | 21 | `harness-test-defer-cleanup` 报红：收尾等待点写在普通语句里 | 用例体末尾（或中途）写 `stopTailer(...)` / `<-done` 这类**普通语句**当收尾点 ⇒ 用例中途 `t.Fatalf` 触发的 `runtime.Goexit` **会跳过它**（Goexit 只执行 defer）⇒ goroutine 活过用例结束 | 把收尾点写进 `defer`（`defer func(){ <-done }()` 或 `defer` 收尾助手）；**中途**收尾别一刀切 defer（会把 join 拖到用例结束 ⇒ 语义改变）⇒ 圈成闭包、defer 写闭包里 | `architecture-check`（`harness-test-defer-cleanup`）|
 | 22 | `harness-test-wallclock-ruler` 报红：拿裸 `time.Sleep` 当尺子 | 睡一段再断言计数 ⇒ 窗口长度单独决定结论：机器一忙就**假红**，机制抢跑就**白测**（什么都没验却绿）| 改成「等可观测事实」（计数器 / 通道 / 标志 / 状态）+ 明确的截止时间；**轮询间隔不是尺子**；确需在辅助里等事实的，在 policy 的 `managed_helpers:` 登记该辅助 | `architecture-check`（`harness-test-wallclock-ruler`）|
+
+| 23 | `harness-policy-self-check` 报「僵尸例外」：例外命中不到任何违反 | 例外登记后**没人回头看它还命中不命中**：站点修好 / 文件拆分之后它照常躺在声明面里计数，**已失效的豁免被当成在用**（#447 实录：6 条例外在文件拆分后全部失效而无人知晓）| 删掉它；确实还要留着的标 `status: stale`（**已失效待删**）。标了 `stale` 却**仍命中**违反也会红——否则标记就成了「写一次永久免检」的免死金牌 | `architecture-check`（`harness-policy-self-check` 的例外对账）|
+| 24 | `harness-test-no-direct-mutator` 报红：测试文件直调包级可变入口 | 用例为了「直接驱动策略」绕过受管 helper 去调 setter / `updatePolicy` ⇒ 每个用例自己还原全局态、时机各写各的 ⇒ `-count>1` 概率串扰（#442 实录 19/20）| 改走受管 helper；确需在某函数里直写的，把该函数登记进 `managed_helpers:`（按**函数名**结构性放行——行号例外改几行就漂）| `architecture-check`（`harness-test-no-direct-mutator`）|
+| 25 | `ledgercheck` 报「单号 #N：台账登记为已合入，而 issue 状态快照是 open」（或反向）| 台账与 GitHub 各说各话，而**两侧都没有判据**：`ledgercheck` 此前只判台账内部一致性（#455 实录：台账把三条记成「已合入」、代码也核实落地，GitHub 上三条全开着）| 先判断**哪一侧是真的**：issue 没关就关掉它；台账没跟着翻面就把状态列补成「✅ 已合入 (#N)」。快照过期先跑 `make issue-state` 再判 | `ledgercheck`（双向对账；判据离线，只读 `docs/issue-state.yaml`）|
 
 ### 5.2 六条判据通则（跨模式复用）
 
