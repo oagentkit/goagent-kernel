@@ -103,6 +103,8 @@ github.com/oagentkit/runtime v0.13.0 h1:HYK0+rippfI5MEYJk39cHIUVlsIlPfTrqhLB/CxI
 github.com/oagentkit/runtime v0.13.0/go.mod h1:vnLZJnmO00Q76ICx7JRwwRmKQ8CGdTXYhzrLCAkjsrc=
 github.com/oagentkit/toolgate v0.17.4 h1:58lvN0emgWbQ5uKXQDmNnhJHPejPh3n+ms3Za/Ie33w=
 github.com/oagentkit/toolgate v0.17.4/go.mod h1:s1EAC2LV7LrnIcNYt1BI3HfIlyIHlUYoJYPf7eGcfko=
+github.com/oagentkit/toolname v0.1.0 h1:ZIG6bAPwEO4sHExZkG7m6mYHdzUPgYsy0kgZNZeMg14=
+github.com/oagentkit/toolname v0.1.0/go.mod h1:d7EQQQchzDyQjgF06TwmByd/dXbIxokon8/ZkKh4xCE=
 github.com/oagentkit/tools v0.15.0 h1:pxpRcD7ceoohujRwwXVH1Kngj7J4XpmixbB8RnzgBVw=
 github.com/oagentkit/tools v0.15.0/go.mod h1:0X7yjSliQSdNE7gM1p2q5QKlL63HjdaD2PHM9qRawqU=
 github.com/oekit/concurrency v0.38.1 h1:eGJt9IVc7J3FYN5nNx7OQz1D7Cpm7JtJ+xjIt5Chezw=
