@@ -31,6 +31,22 @@
 部署建议在故障注入矩阵里补「worker↔DB 持续分区 > TTL」场景，断言旧
 worker 在截止后不再发出新的业务动作。
 
+## [v0.64.3] — 2026-11-22
+
+### fix(controlplane)：权威强释的原子接缝——释放与介入留痕同事务（P0-A 任务侧，PR #461）
+
+深度评审确认的 P0：\`forceReleaseAuthoritative\` 的默认形态是两步——先\`Release\`（租约当场作废），成功后 \`appendAudit\`。两步之间死掉或留痕失败 ⇒ **租约已释放、方法返回错误、本次介入缺成功审计**——违背「介入留痕与状态同事务」的既定纪律（非权威路径由 \`Store.Commit*\` 原子兑现，唯独权威路径此前没有这个接缝）。
+
+**\`ForceReleaseAtomic\` 可选接缝**（本版新增的唯一导出接口）：实现方把「校验并释放 + 写审计行」收敛进同一事务；审计失败 ⇒ 释放一并回滚；拒绝路径（令牌不匹配）不产生审计行。\`StorePlane\` 探测到即走原子路径，未实现保留两步形态并在调用点如实声明窗口。同版顺手修了两个同族缺口：探测点必须在分步 Release **之前**（放之后等于同一动作施加两遍，单测当场抓住）；\`ErrNoAuditor\` 检查移到任何状态变更之前（旧实现「租约已放才发现无留痕面」）。
+
+参考实现（examples/pgstore）：新表 \`pgref_control_audit\`（DDL 拆出 \`schema_control.go\` 守结构阈值），留账与释放同事务、留痕时刻一律 \`clock_timestamp()\`（介入方进程时钟不可信）、\`operator\` 列 \`CHECK (operator <> '')\` 落「介入者必填」契约。\`BoardStore.ForceReleaseWithAudit\` 经 \`withinTx\` 兑现。
+
+判据：controlplane 四个单测（原子路径优先 / 审计失败状态未变 / 两步回退兼容 / auditor 前置拒绝）+ pgstore 三个真 PG 用例（同事务落库 / 审计失败回滚 / 拒绝不留痕）+ 接缝基线登记（\`seamcheck\`，调用点 1 = StorePlane 探测处）。
+
+**边界声明**：效果权威（\`adjudicateAuthoritative\`）的两步窗口本版用 auditor 前置收窄，其原子接缝（\`AdjudicateAtomic\`）**待参考实现就绪后同构提供**——不把没有实现方的接口发出去变成死条文。
+
+**下游要做什么**：宿主若用 \`NewAuthoritativeStorePlane\` 装配权威控制面，让任务权威（运行时的 \`taskboard.Board\` 存储实现）实现 \`ForceReleaseAtomic\` 即自动闭合窗口（参考 \`examples/pgstore.BoardStore\`）；不实现则保持两步形态，留痕失败需对账审计平台。
+
 ## [v0.64.2] — 2026-11-21
 
 ### feat(ledgercheck)：台账 ↔ GitHub issue 状态双向对账（#455）
