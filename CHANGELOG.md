@@ -2,6 +2,19 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.72.1] — 2026-11-22
+
+### docs：全量文档与现状对齐——33 处过期表述更正（PR #478）
+
+迁移与迭代之后文档没跟上的事实，逐条按实测改（**零行为变化**，不改任何代码判据）：
+
+- **CI 分层已变**：`integration` 层随 PG/SQLite 参考实现迁 goagent-runtime ⇒ CI 七作业→**六作业**（ci.yml 注释 / AGENTS / AI-GUIDE 三处的分层清单、触发面、职责句）；README「分支保护必须通过两条检查」→ **实际六条 required contexts**（并写入 2026-11-22 过期 context 卡死所有 PR 的实录：job 名与 context 必须逐字同步，迁移 job 时保护规则不能忘）
+- **口径数字**：AI-GUIDE §1.3（53 包 / 61 module id / 差 8 个 → **52 / 54 / 差 2 个**，examples/* 与 subhub 已迁出）；规则条数 13→**12**（USAGE / AI-GUIDE 三处）；测试文件 539→**463**；docsync / ledgercheck 示例输出按最新实测更新
+- **已迁包的引用改指新家**：`toolname` → `oagentkit/toolname`、`pii` → `oekit/pkg/pii`（AI-GUIDE 选型表两行 + 单一真相例）；`examples/pgstore` 的 `make integration` 与覆盖率豁免条目改为**历史措辞并注明去向**；Makefile 结构性豁免注释「现存一条」→「曾有一条（本表现为空）」
+- **自相矛盾修复**：AGENTS / USAGE 说「CI 只执行 `make check`」与同文件「CI 执行分层目标、**不是** `make check` 本身」打架 ⇒ 统一为后者，并写明「接进 `check` 之后还要接进 CI 的分层 target」
+- `docs/api-compat.md`：raceprobe 登记版本 0.70.0 → **0.72.0**（v0.71.0 被同日依赖抬升占用，tag 不含该包）
+
+**零行为变化**：纯文档与注释，内核包公开契约面逐字未变，依赖地板未动 ⇒ 下游无需 `go mod tidy`。
 ## [v0.72.0] — 2026-11-22
 
 ### refactor(raceprobe)：判定层从 cmd 下沉为可导入包（台账 §26 建议 1，PR #473）
