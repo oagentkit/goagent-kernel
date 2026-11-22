@@ -3355,3 +3355,49 @@ CI 也绿 ⇒ 不是本轮改动引入，但**连续两次**按「同形面要�
 - **来源**：分支 `fix/465-pidfile` ⇒ 合并进主干（PR **#468**）。
 - **门禁**：`make check` 全绿。
 
+
+
+## 40. 第三十一轮台账（2026-11-22）：raceprobe 判定层下沉为可导入包（§26 建议 1 清偿）
+
+> **本轮清偿的是 §26（第十七轮）建议 1**——它被 §27 / §28 各自注明「本轮未处理」
+> 跳过两轮，此后再没被提起。台账里的建议不会自己消失，只是会被下一轮的紧迫题
+> 盖过去；**跳过的建议要有人记得**，这正是把它写进台账而不是记在脑子里的意义。
+
+### 缺口：判定层锁在 package main 里
+
+`cmd/raceprobe` 的 `classify.go` 自己写着「**纯函数层，不碰进程**」——形态判定
+（输入一段输出文本、输出一个结论）本该可复用，却因为住在 `package main` 里
+**别的门禁与宿主都 import 不到**：fault-injection / integration 也可能撞上
+「会挂死」的形态，各自再写一遍判定 ⇒ 各判一套，漂移到没人发现。
+
+本仓的老教训（§26 原话）：**机制面若要跨仓复用，就不能锁在 `package main` 里**。
+与 `archcheck` 当年的下沉同款纪律。
+
+### 落点
+
+| 动作 | 内容 |
+|---|---|
+| 移动 | `cmd/raceprobe/{classify.go,classify_test.go}` → `raceprobe/`（`package main` → `package raceprobe`）|
+| 导出面 | `FailureKind` + 6 个 Kind 常量、`Verdict`、`Classify`、`PassedPackages` / `FailedPackages` / `NoTestPackages` / `RecheckTargets`——此前不可 import，现可复用 |
+| 改引用 | `cmd/raceprobe` 的 `race.go` / `report.go` / `race_test.go` 加 import 与前缀 |
+| 夹具同源 | 新增 `cmd/raceprobe/fixtures_test.go`：编排层用例要的输出样本与 `raceprobe/classify_test.go` 同源（Go 的 `_test.go` 不跨包可见），注释写明**改动需同步** |
+| policy | `modules` 段登记 `raceprobe`（`requires: []`——判定层只依赖 stdlib）+ `thresholds.scan_roots` 补它（自校验强制两者一致）|
+| 生命周期 | `api-lifecycle.yaml` 登记 **Experimental / v0.72.0**（与 `archcheck` / `roundguard` 同款定级理由：判定面随口径演进会增删，且尚无第二个消费方验证）+ 包注释标记同步 |
+| 计数同步 | README 包表加行、包数 52→**53**、policy 登记数 54→**55**、生命周期登记 54→**55**、工程底座三数 **67,591 行 / 361 文件 / 464 测试** |
+
+### 导出面审计
+
+- **零导出符号消失**（只是从 `package main` 搬到 `raceprobe`，同名同型）；
+- **零既有签名变更**；
+- **新增包** = 源码级 additive（下游可 import 但不必须）；
+- **依赖地板零变化**（`go.mod` / `go.sum` 未动）⇒ 下游**无需 `go mod tidy`**。
+
+### 版本口径
+
+**新增可导入包** ⇒ 按 `roundguard` 下沉时的口径抬 **minor（v0.72.0）**——v0.71.0 已被同日的依赖抬升占用，tag 不含本改动。
+
+### 出货回执（2026-11-22，第三十一轮）
+
+- **来源**：分支 `feat/sink-raceprobe` ⇒ 合并进主干（PR **#473**）。
+- **门禁**：`make check` 全绿（6/6）。
+- **同批**：PR **#474**（`go mod tidy` 单独成 PR——`releasecheck` 判「依赖文件不得与非依赖文件混装」，`oagentkit/toolname` 由 indirect 修正为直接依赖）。

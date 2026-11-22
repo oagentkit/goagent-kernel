@@ -2,6 +2,20 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.72.0] — 2026-11-22
+
+### refactor(raceprobe)：判定层从 cmd 下沉为可导入包（台账 §26 建议 1，PR #473）
+
+`cmd/raceprobe` 的 `classify.go` 自己写着「纯函数层，不碰进程」，却因住在 `package main` 里别的门禁与宿主都 import 不到——race 门禁的失败形态判定（data-race / test-hang / startup-wedge / test-failure / unknown / none 六种）本可复用，各写一遍必然各判一套、漂移到没人发现。本仓老教训：**机制面若要跨仓复用，就不能锁在 `package main` 里**（与 `archcheck` 当年的下沉同款纪律）。
+
+- 新包 `raceprobe`：`FailureKind` + 6 个 Kind 常量、`Verdict`、`Classify`、`PassedPackages` / `FailedPackages` / `NoTestPackages` / `RecheckTargets` 全部导出（此前不可 import）
+- `cmd/raceprobe` 改为 import 消费；新增 `fixtures_test.go` 与新包用例同源（Go 的 `_test.go` 不跨包可见，注释写明改动需同步）
+- policy `modules` + `thresholds.scan_roots` 登记（`requires: []`，判定层只依赖 stdlib）；`api-lifecycle` 登记 **Experimental**（比照 `archcheck` / `roundguard` 定级理由）
+- **新增可导入包 ⇒ minor**；导出面零消失、零签名变更，依赖地板零变化 ⇒ 下游**无需 `go mod tidy`**
+
+### chore(deps)：go mod tidy —— oagentkit/toolname 由 indirect 修正为直接依赖（PR #474）
+
+v0.70.0 起 `github.com/oagentkit/toolname` 是 `ptc` / `releasecheck` 的直接 import，但 go.mod 里仍留在 indirect 块（当时只改了 import 未跑 tidy）。**单独成 PR**：`releasecheck` 判「依赖文件不得与非依赖文件混装」。`go.sum` 同步删 2 条已被 v0.59.0 取代的 `oekit/pkg v0.57.0` 旧条目。**零行为变化**。
 ## [v0.71.0] — 2026-11-22
 
 ### chore(deps)：oekit/pkg v0.59.0——废弃原语清零（PR #475）

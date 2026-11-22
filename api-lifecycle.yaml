@@ -257,7 +257,7 @@ packages:
     reason: 运行中接管五件套（ErrSteered Cause / 保产摘要 / 回可认领态 / 队列感知 / 单协程迁移）刚下沉——摘要文案头与排队结算留宿主注入，判据面待第二个宿主验证。
   - pkg: raceprobe
     level: Experimental
-    since: v0.71.0
+    since: v0.72.0
     reason: race 门禁失败形态的判定层从 cmd/raceprobe 下沉为可导入包（台账 §26 建议 1）——判定面本身随 race 门禁口径演进会增删（形态取值、判据措辞），不适合 Stable 扩诺；且下沉后尚未被第二个消费方验证（比照 archcheck 的定级理由）。
   - pkg: roundguard
     level: Experimental
