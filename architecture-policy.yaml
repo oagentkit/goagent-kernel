@@ -146,7 +146,7 @@ modules:
 
   - id: tooldisclose
     roots: [tooldisclose]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"] # 函数名规整规则已随 toolname 上移 oekit/pkg（v0.58.0），与 ptc 共用同一套
+    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/toolname", "ext:github.com/oekit/pkg"] # 函数名规整规则唯一的真相在 oagentkit/toolname（v0.70.0 归位），与 ptc 共用同一套
     owner: harness
     managed: true
     notes: |
@@ -161,7 +161,7 @@ modules:
   # 从未被执行过，连漂移都没人发现（执行体见 archcheck/deps.go）。
   - id: ptc
     roots: [ptc]
-    requires: [egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/runtime", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议；执行档位与后端协议自 v0.35.0 起直连） # runtime/procx 管「子进程能看见什么环境」（白名单，非全量继承）；工具名→JS 标识符的规整规则唯一的真相在 oekit/pkg/toolname（v0.58.0 上移）
+    requires: [egress, "ext:github.com/oagentkit/guardx", "ext:github.com/oagentkit/runtime", "ext:github.com/oagentkit/toolname", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg", "ext:github.com/oekit/logx"] # guardx 含 sandbox/wire（跨进程协议；执行档位与后端协议自 v0.35.0 起直连） # runtime/procx 管「子进程能看见什么环境」（白名单，非全量继承）；工具名→JS 标识符的规整规则唯一的真相在 oekit/pkg/toolname（v0.58.0 上移）
     owner: harness
     managed: true
     notes: 程序化工具编排沙箱（goja VM，三重预算替代 OS 沙盘）
