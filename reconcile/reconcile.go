@@ -264,7 +264,7 @@ func New(store Store, pub Pub, cfg Config) *Reconciler {
 	return NewWithClock(store, pub, cfg, time.Now)
 }
 
-// NewWithClock 构造并**注入时钟**（ticket.NewWithClock 同款）：租约过期、
+// NewWithClock 构造并**注入时钟**（上游 guardx/ticket.NewWithClock 同款）：租约过期、
 // 静默超阈、启动锚点三个判定全依赖 now，读真实时间的过期用例恒不触发——
 // 判据会退化成一组空断言（全绿但什么都没验）。
 //

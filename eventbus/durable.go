@@ -28,7 +28,7 @@
 //     一字不变（本文件不给 Bus/Hub 加任何字段）；
 //  3. **判定留包内、状态归存储**：次序不变量（先落库→取 ID→广播；失败
 //     →不广播+留痕）收口在本文件，权威游标 ID 由存储铸造——与 #145 落的
-//     commitgate「令牌由存储铸造」、ticket「TTL 判定留包内、票据状态归
+//     commitgate「令牌由存储铸造」、上游 guardx/ticket「TTL 判定留包内、票据状态归
 //     Backend」同一条分工。
 //
 // # 脱敏/字段裁剪等宿主差异不越界（issue (e) 风险节）
@@ -49,7 +49,7 @@ import (
 )
 
 // Store 持久化存储接缝（宿主实现；issue #160，形态与 #145 的
-// commitgate.Store / ticket.Backend 同风格）。
+// commitgate.Store / 上游 guardx/ticket.Backend 同风格）。
 //
 // 契约五条（含 #400 要求的三条接缝约束）：
 //   - **游标由存储铸造**：Insert 返回的 uint64 是权威游标 ID（bq_event 式

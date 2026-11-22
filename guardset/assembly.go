@@ -30,13 +30,13 @@
 // 空集合在 `New` 那里就被拒绝了（没人看着的调用不该看起来能用），
 // 换份面是同一条纪律的运行期落点——**降级可以撤一条，不能撤到一条不剩**。
 //
-// # 本包的形态对齐同仓的 netguard（不是另发明一套）
+// # 本包的形态对齐上游 guardx/netguard（不是另发明一套）
 //
-// 「换整份」这件事本仓已有先例：`netguard` 的「扩展名单整份原子交换」。
+// 「换整份」这件事上游 `guardx/netguard` 已有先例：它的「扩展名单整份原子交换」。
 // 本文件刻意**沿用它的全部机制**，而不是借个名字另写一版——
 // 各写一套必然各判一套，漂移到没人发现为止。对齐的四处：
 //
-//	netguard                        本包
+//	guardx/netguard                本包
 //	─────────────────────────────    ─────────────────────────────
 //	curPolicy atomic.Pointer[Policy]  current atomic.Pointer[assemblyState]
 //	代次住在指针目标里（Policy.gen）    代次住在指针目标里（assemblyState.gen）
@@ -88,7 +88,7 @@ import (
 // assemblyState 装配面发布出去的当前状态：一份集合 + 它的代次。
 //
 // 代次与集合**在同一处**发布 ⇒ 快照与代次不可能来自两个真相。
-// 这是 netguard「代次只存在于策略指针内部，PolicyGeneration() 是它的投影」
+// 这是上游 guardx/netguard「代次只存在于策略指针内部，PolicyGeneration() 是它的投影」
 // 那条纪律在本包的落点。
 type assemblyState struct {
 	set *Set
@@ -98,7 +98,7 @@ type assemblyState struct {
 // Snapshot 某一时刻的快照：当前那一份守卫集合 + 它的代次。
 //
 // 两个字段**必须一起读**——分开读会得到「集合是第 N 代、代次是第 N-1 代」这种
-// 自相矛盾的一对（那正是 netguard 修掉的「两套真相」的可观测形态）。
+// 自相矛盾的一对（那正是上游 guardx/netguard 修掉的「两套真相」的可观测形态）。
 // 故本包只提供 `Assembly.Snapshot()` 这一个读入口。
 type Snapshot struct {
 	// Set 当前那一份守卫集合（只读，可长期持有）。
@@ -145,7 +145,7 @@ type SwapGate func(ctx context.Context, next *Set) error
 // Subscription 订阅句柄，传给 `Unsubscribe` 注销。0 表示无效。
 //
 // 它是**本包自己的命名类型**（底层 uint64），不是 subhub.Handle 的别名：
-// 别名会让 guardset.Subscription 与 netguard.Subscription 变成同一个类型，
+// 别名会让 guardset.Subscription 与上游 netguard.Subscription 变成同一个类型，
 // 把别处的句柄传进本包 Unsubscribe 将编译通过然后静默什么都不注销。
 type Subscription uint64
 
@@ -198,7 +198,7 @@ type Assembly struct {
 	recorder func(SwapRecord)
 
 	// subs 换份订阅表。机制（快照式替换 + 句柄铸造 + 锁外通知 + panic 隔离）
-	// 在 internal/subhub，与 netguard、pii 共用同一份实现。零值可用。
+	// 在 oekit/pkg/subhub，与上游 guardx/netguard、oekit/pkg/pii 共用同一份实现。零值可用。
 	//
 	// 句柄分配器（原 subSeq）也一并收进 Registry：它**不是**状态投影
 	// （不回答「换过没有」），只是句柄 ID 的来源，故与代次无关。
@@ -236,7 +236,7 @@ func (a *Assembly) Current() *Set {
 
 // Generation 当前那一份的代次。调用方可在前后各取一次，变化即说明期间换过。
 //
-// 它是 `current` 的**投影**，不是另一个计数器——与 netguard 的
+// 它是 `current` 的**投影**，不是另一个计数器——与上游 guardx/netguard 的
 // `PolicyGeneration()` 同构。
 func (a *Assembly) Generation() uint64 {
 	return a.Snapshot().Generation
