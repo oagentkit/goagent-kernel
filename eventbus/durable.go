@@ -45,7 +45,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/internal/subhub"
+	"github.com/oekit/pkg/subhub"
 )
 
 // Store 持久化存储接缝（宿主实现；issue #160，形态与 #145 的

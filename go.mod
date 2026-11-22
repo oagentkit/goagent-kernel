@@ -53,7 +53,7 @@ require (
 	github.com/oagentkit/tools v0.15.0
 	github.com/oekit/concurrency v0.38.1
 	github.com/oekit/logx v0.11.0
-	github.com/oekit/pkg v0.52.0
+	github.com/oekit/pkg v0.57.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	golang.org/x/tools v0.52.1-0.20261106145633-d407941a339a
 	gopkg.in/yaml.v3 v3.0.1

@@ -230,16 +230,6 @@
 | `ErrBadExt` | 扩展名非法（会拼进逻辑键，未经净化使去重失效） | **条目级** fail-soft：该条目保持内联，修配置后下轮生效 |
 | `ErrBadHash` | 内容摘要长度不足，无法推导分片目录 | 条目级 fail-soft：同上 |
 
-### pii
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrUnknownSurface` | 宿主配置注入了未登记的敏感面（fail-closed） | 修声明：修正配置里的面名 |
-| `ErrUnknownStrategy` | 配置注入了未登记的处置策略 | 修声明：修正策略名 |
-| `ErrNilSubscriber` | 处置策略订阅回调为 nil | 修声明：装配订阅回调 |
-| `ErrDigestKeyTooShort` | `SetDigestKey` 注入的 hash 档密钥短于 16 字节（可被离线爆破，拒绝接收） | 换 ≥16 字节的密钥；不注入密钥时 hash 档按 fail-closed 处置（不出摘要，见 #293 缺省形态） |
-| `ErrUnsupportedShape` | `ValidateShape` 发现未登记的载荷形状（错误带 `$.path` 定位） | 接线期换用已登记容器（string / map[string]any / map[string]string / []any / []string）；运行期未登记形状 `ApplyValue` 走 fail-closed（整段替换 + blocked，见 #295） |
-
 ### protocol
 
 | 哨兵 | 触发条件 | 调用方处置 |

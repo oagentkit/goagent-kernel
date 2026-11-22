@@ -29,7 +29,7 @@
 
 package guardset
 
-import "github.com/yi-nology/goagent-kernel/internal/subhub"
+import "github.com/oekit/pkg/subhub"
 
 // Subscribe 订阅换份：换份真正落地的那一刻，把新快照推给回调。
 //
