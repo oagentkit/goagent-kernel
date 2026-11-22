@@ -1,6 +1,6 @@
 // classify.go —— race 门禁失败形态的**判定**（纯函数层，不碰进程）。
 //
-// 生命周期: Experimental（v0.71.0 定级）——判定面随 race 门禁的口径演进会增删，
+// 生命周期: Experimental（v0.72.0 定级）——判定面随 race 门禁的口径演进会增删，
 // 本包仍会改、删、拆，不承诺任何兼容；升级风险自负。定级理由见 api-lifecycle.yaml，
 // 分级规则见 docs/api-compat.md。
 //
