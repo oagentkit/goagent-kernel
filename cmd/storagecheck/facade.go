@@ -108,6 +108,12 @@ func checkFacadeLists(f *facadeDecl) []string {
 // checkFacadeAgainstCode F1：声明面与代码派生集**双向**比对。
 func checkFacadeAgainstCode(root string, f *facadeDecl) ([]string, []string) {
 	where := fmt.Sprintf("%s: 门面 %s", selectionPath, f.key)
+	// 跨仓门面（package 以 external: 前缀声明）：本仓读不到外部仓的代码，
+	// 派生判据（F1 逐字相符）对外部门面不适用——跳过，由该仓自判；
+	// 两侧同款对位（F3 parity）仍判（声明面 ↔ 声明面，与代码位置无关）。
+	if strings.HasPrefix(f.pkg, "external:") {
+		return nil, []string{fmt.Sprintf("说明 门面 %s（%s）：跨仓门面（%s），代码派生在本仓不适用，由该仓自判", f.key, strings.Join(f.storages, "、"), f.pkg)}
+	}
 	methods, incomplete, err := facadeMethods(root, f.pkg, f.typ)
 	if err != nil {
 		return []string{where + " 派生失败：" + err.Error()}, nil
