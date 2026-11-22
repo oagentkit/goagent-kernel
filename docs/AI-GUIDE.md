@@ -94,19 +94,19 @@
 
 *图 1：判定口诀的决策路径——「需要」与「不需要」各有一条确定的落地序列。*
 
-### 1.3 53 个包分四组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 52 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（**53** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
-> **61 个 module id**（`make architecture-check` 打印的「61 个包的依赖方向」就是它）。
-> **61 与 53 差的 8 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
-> `reference-runtime` / `pgrefstore` / `sqliteadapter` / `containerbackend` /
-> `worker-runtime-ref`（根在 `examples/*`）、`ptcchild`（根在 `cmd/ptcchild`）、
-> `subhub` / `ledgerstatus`（根在 `internal/*`）——README 包表只收一级目录，故它们
-> 不进表，但**照样在依赖方向门禁下**。
-> ⚠️ **两个数不是同一种量**：61 数的是 **module id**（`archcheck` 打印
-> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 63 个**——`taskboard` 与
-> `pgrefstore` 各有两个 root；`taskboard` 的第二个 root 是 `taskboard/boardtest`，
-> 它计在 `taskboard` 行内，**不是独立的 module id**。
+> 口径：与 README 包表（**52** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
+> **54 个 module id**（`make architecture-check` 打印的「54 个包的依赖方向」就是它）。
+> **54 与 52 差的 2 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
+> `ptcchild`（根在 `cmd/ptcchild`）、`ledgerstatus`（根在 `internal/ledgerstatus`）
+> ——README 包表只收一级目录，故它们不进表，但**照样在依赖方向门禁下**。
+> （`examples/*` 五个 module 与 `internal/subhub` 已随边界迁移迁出，2026-11-22 起
+> 不再出现在本仓 policy 里。）
+> ⚠️ **两个数不是同一种量**：54 数的是 **module id**（`archcheck` 打印
+> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 55 个**——`taskboard` 有两个
+> root；它的第二个 root 是 `taskboard/boardtest`，计在 `taskboard` 行内，
+> **不是独立的 module id**。
 > 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
 > `toolfail` / `sandbox` 四个门包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
 > 宿主直连上游矩阵 `oagentkit/toolgate/policy` 与 `oagentkit/guardx/*`），
@@ -117,10 +117,10 @@
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（48 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `pii` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `toolname` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。 |
+| **机制面**（46 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。（`pii` 上移 `oekit/pkg`、`toolname` 归位 `oagentkit/toolname`，本仓不再提供。） |
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
-| **门禁执行体**（1 个 + 2 个 CLI） | `archcheck` / `cmd/archcheck` `cmd/docsync` | policy 的可执行面。可导入包，宿主可复用同一套判据。 |
+| **门禁执行体**（2 个 + 2 个 CLI） | `archcheck` `raceprobe` / `cmd/archcheck` `cmd/docsync` | policy 与 race 门禁的可执行面。可导入包，宿主可复用同一套判据（race 门禁的六种失败形态判定层，v0.72.0 从 `cmd/raceprobe` 下沉）。 |
 
 > **门包不可变是硬约束，不是建议**（当前 policy `facades: []`，清单为空；规则与
 > 执行体仍在）。`docs/OAGENTKIT-OVERLAP.md` 里那句「保持门面，别再在本仓加逻辑」
@@ -210,7 +210,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（61 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（54 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -225,7 +225,7 @@
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # ① 全量单测（当前 539 个测试文件）
+make test                 # ① 全量单测（当前 463 个测试文件）
 make architecture-check   # ② 架构门禁（规则 / 门包 / 包数见输出）
 make docsync              # ③ README 包表与「工程底座」三项确定性量
 make ledgercheck          # ④ 演进台账纪律
@@ -241,13 +241,13 @@ ok  	github.com/yi-nology/goagent-kernel/worker	3.859s
 ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
 
 # ② make architecture-check
-架构门禁通过（13 条规则 + 0 个门面包 + 61 个包的依赖方向，policy version 1；无阻断级违反）
+架构门禁通过（12 条规则 + 0 个门面包 + 54 个包的依赖方向，policy version 1；无阻断级违反）
 
 # ③ make docsync
-README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 539 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
+README 与仓库一致（52 个包；工程底座 67498 行 / 360 文件 / 463 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
 
 # ④ make ledgercheck
-台账校验通过：140 个单号 / 568 处出现点 ✓
+台账校验通过：141 个单号 / 601 处出现点 / 319 条 issue 状态已对账✓
 ```
 
 **四条都绿再动手。** 任一条红 ⇒ 先查它是不是本来就红的（见 §4.2），别把自己的改动
@@ -293,7 +293,7 @@ README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 539 �
 | 工具失败分类（可重试/退避/需人工/重发安全） | 上游 `guardx/toolfail`（**本仓不再提供该包**）| 分类是**数据表**，不要散落 if |
 | 渐进披露、披露门禁 | `tooldisclose` | **被拒不激活**：schema 未取回时原样重试不会成功（`ErrNotLoaded` 的模型指引原文）。恢复路径是「先取回 schema，再构造参数调用」 |
 | 多守卫合成拒绝 | `guardset` | 取「全部可重试才算可重试」的保守侧 |
-| 工具名 → JS 标识符 | `toolname` | **单一真相**，`tooldisclose` 与 `ptc` 共用 |
+| 工具名 → JS 标识符 | 上游 `oagentkit/toolname`（**本仓不再提供该包**，v0.70.0 归位）| **单一真相**，`tooldisclose` 与 `ptc` 共用 |
 | 沙箱内程序化编排 | `ptc` | 程序内 `host.<tool>()` 也要过判定环 |
 | 执行沙箱的档位语义与后端协议 | 上游 `guardx/sandbox`（**本仓不再提供该包**）| 档位是后端**自报**的，内核不校验其真实性；要求档位**无满足者即拒绝**，不降级 |
 | 续跑快照、序号闸 | `checkpoint` | 「续跑而非重放」三条硬规则 + 依赖声明（并行组乱序采信）|
@@ -302,7 +302,7 @@ README 与仓库一致（53 个包；工程底座 78673 行 / 411 文件 / 539 �
 | 输出溢出取回 | `spill` | 与 `offload` 是姊妹机制，别搞混职责 |
 | 大对象外置 | `offload` | **两阶段**：首次只标记不替换 |
 | 出站 SSRF | `netguard` | 拨号层闭窗 + 放行面具名 |
-| 个人信息脱敏 | `pii` | 只回报信号，**阻断动作归宿主** |
+| 个人信息脱敏 | 上游 `oekit/pkg/pii`（**本仓不再提供该包**，v0.66.0 上移）| 只回报信号，**阻断动作归宿主** |
 | 回合守卫（结局分类 / 额度 / 无进展 / 组合结论） | `roundguard` | Experimental、无生产调用方；额度判定**一律在调用前**；`Budget` 必须先 `Validate()`（§1.6）|
 | 依赖方向 / 门禁规则 | `archcheck` + `architecture-policy.yaml` | 先改 policy 再写代码 |
 
@@ -496,7 +496,8 @@ go test ./worker/faultmatrix -run TestFaultDeploymentMatrix -v    # 只跑矩阵
    「不报错就行」。
 3. 进程内可复现的格子直接进矩阵（内存后端 + 可注入时钟/故障模拟），
    验证判定与时序；跨进程原子性仍由 `boardtest` / `sidetest` 契约套件与
-   `examples/pgstore` 的 `make integration` 覆盖——两层各判一段，不互相冒充。
+   goagent-runtime 仓的 `make integration` 覆盖（本层 2026-11-22 随参考实现迁出）
+   ——两层各判一段，不互相冒充。
 4. 只能在真集群验证的格子，给 `matrixCase.requiresEnv` 填所需环境并用
    `t.Skipf` 显式跳过（原因必须打出来）。**不许静默跳过**。
 
@@ -781,9 +782,9 @@ make check
 
 *图 4：`make check` 的全链目标分层——自上而下逐条执行，第一条红的就先查它。*
 
-> **CI 执行面（2026-11-18 实测补记，别按旧文理解）**：CI 的**七个作业**
+> **CI 执行面（2026-11-18 实测补记，2026-11-22 更新）**：CI 的**六个作业**
 > （`unit` / `race` / `contract` / `fault-injection` / `gates` /
-> `windows-test` / `integration`）执行的是**分层目标**，
+> `windows-test`；`integration` 层已随参考实现迁至 goagent-runtime）执行的是**分层目标**，
 > **没有任何一个执行 `make check` 本身**
 > ⇒ **只挂在 `check` 上、没进任何分层目标的门禁，CI 上一次都不会跑**
 > （实测被漏掉的是 `deploycheck` 与 `releasecheck`——本轮已接进 `unit` 层）。
@@ -823,7 +824,7 @@ make check
 ### 4.1 架构门禁的规则表
 
 > **条数口径**：`make architecture-check` 打印的是「N 条规则 + 0 个门面包 + M 个包的
-> 依赖方向」——「N 条」指 policy `rules` 段的条目数（**当前 13 条**），
+> 依赖方向」——「N 条」指 policy `rules` 段的条目数（**当前 12 条**），
 > **不含**用 `go/ast` 判的结构规则（条数随 `archcheck/*.go` 增减而变，
 > 以 `make architecture-check` 的输出为准）——后者含门包不变 / 依赖方向 /
 > 沙箱档位登记 / 执行路径 / 子进程出口 / 未受管逃逸 / 接缝契约三形态 /
@@ -836,7 +837,7 @@ make check
 > 另记：`require_rule_examples: true` 让每条 `rules` 条目**必须自带能过的样例**——
 > 缺样例即红。这使 `rules` 段的条数有了下限保证：不会因为某人删了样例而变成空转。
 
-**第一组：policy `rules` 段（正则类，当前 13 条）**
+**第一组：policy `rules` 段（正则类，当前 12 条）**
 
 | 规则 | 拦什么 | 典型修法 |
 |---|---|---|
@@ -956,7 +957,7 @@ make check
 | 7 | `harness-no-printf-log-callback` 报红 | printf 回调一旦焊进公开签名就是**不可逆 API 债** | 留痕走 `logx.Delegating` 懒解析，宿主用 `logx.SetDefault` 换后端 | `architecture-check`（`harness-no-printf-log-callback`）|
 | 8 | 并发下代次不唯一 / 回退；轮询方看到「6 → 6」以为没换过 | 为「方便查询」加第二个计数器 ⇒ 两次交换拿到同一代次是**静默**的：不崩溃，只是偶尔给错答案 | 只允许**一个真相**；需要全局视图时让它是真相的**投影** | 无门禁 ⇒ **靠用例钉**（这类失效靠人记）|
 | 9 | 某个位置成了整条链上**唯一绕过所有门禁**的路径 | 把「程序化调用」当特例（普通工具调用过判定环，程序内 `host.<tool>()` 走另一条路）| `ptc` 程序内调用与普通工具调用**走同一套 Stage 判定环**；逃逸口 `AllowUnmanaged` 在生产代码里出现即违规 | `architecture-check`（`harness-ptc-unmanaged-escape`）|
-| 10 | 「生产侧派得出、消费侧认不出」 | 跨包契约各写一份 ⇒ 两边慢慢漂移 | 规则收成**单一真相**（如 `toolname`），两侧共用；用**端到端用例**钉「派生 → 装配 → 执行」整条链 | `architecture-check`（`tool-pairing-key-single-source`）+ `test` |
+| 10 | 「生产侧派得出、消费侧认不出」 | 跨包契约各写一份 ⇒ 两边慢慢漂移 | 规则收成**单一真相**（如上游 `oagentkit/toolname`），两侧共用；用**端到端用例**钉「派生 → 装配 → 执行」整条链 | `architecture-check`（`tool-pairing-key-single-source`）+ `test` |
 | 11 | 模型写 `"OUT"` 而非 `"out"`，scope 被**反转**，且不归一的条目**被静默丢弃**（连 warn 都没有）| 逐个字段补枚举位 ⇒ 漏一个就静默丢一条 | 归一**收成一处共享口径**（`protocol/report_normalize.go`），并用**枚举式**用例把「漏一个就红」变成机械判定 | `test`（枚举式用例）+ `architecture-check`（域词）|
 | 12 | README「工程底座」表里的数字与实际差很远，但**没有任何门禁报红** | 以为「改了代码文档自然会更新」，或以为「README 是文档，文档不会被测」| 生产行数 / 文件数 / 测试文件数**已判相等不留容差** ⇒ 不用手算，门禁会告诉你实测值。**覆盖率那一格仍没人判** ⇒ 改前手算 | `docsync`（三项确定性量）|
 | 13 | 某类型的方法数超 `max_methods_per_type`，但它明明是**已经拆干净的 façade** | 「方法多 = 复杂」在两种类型上含义不同：真 god object 上是**复杂度集中度**，façade 上是**公共 API 表面规模** | 阈值比的是**实质方法数**（总数 − 转发壳数）；新增纯转发访问器**不计入**。别为「让数好看」去调 `forwarding_shell_max_chars` | `architecture-check`（`max_methods_per_type`）|
@@ -1065,7 +1066,6 @@ make race                           # 竞态检测（开 cgo）
 make contract                       # 契约套件自测（sidetest + boardtest）
 make fault-injection                # 全仓 TestFault*（注入矩阵）
 make gates                          # versioncheck + cover-gate + vuln + crossbuild
-make integration                    # PG 契约套件 + SIGKILL e2e（要 docker，起不来明确报错）
 
 # ── 单包迭代 ──────────────────────────────
 go test ./protocol/ -run TestXxx -count=1

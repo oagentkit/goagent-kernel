@@ -2,19 +2,20 @@ name: ci
 
 # 测试分层（issue #102）：unit / race / contract / fault-injection
 # （integration 层随 PG/SQLite 参考实现一并迁至 goagent-runtime，见该仓 ci.yml）
-# 五层各自成 job，加上静态门禁聚合（gates）与 windows 真跑，共七个。
+# 四层各自成 job，加上静态门禁聚合（gates）与 windows 真跑，共六个。
 #
-# 分层的理由不是审美：五层混在一条链里时，「哪个层红了」要靠读日志——race
+# 分层的理由不是审美：四层混在一条链里时，「哪个层红了」要靠读日志——race
 # 的一次抖动会淹没故障注入的信号，反之亦然。每层独立红绿、独立超时、独立
 # 触发条件，失败的就是失败的层。
 #
 # # 触发条件（逐层写明，不是省略）
 #
-# 七个 job 同一条触发面：PR 与 push main。刻意**不用** paths 过滤——required
+# 六个 job 同一条触发面：PR 与 push main。刻意**不用** paths 过滤——required
 # context 的 job 被 paths 过滤成 skip 时会永远停在 Expected，把合并卡死
 # （这是 ci job 名截断教训的姊妹形态：保护规则与 workflow 的匹配必须全量）。
-# windows 带环境成本，但它判的是「换个底座还跑得对吗」
-# 「跨进程契约在真 PG 上成立吗」——恰恰是只有推送时才说话的门禁，不省。
+# windows 带环境成本，但它判的是「换个底座还跑得对吗」——恰恰是只有推送时
+# 才说话的门禁，不省。（「跨进程契约在真 PG 上成立吗」原属 integration 层，
+# 已随参考实现迁 goagent-runtime。）
 #
 # # 跳过政策（跳过必须显式，不许静默）
 #
@@ -23,7 +24,8 @@ name: ci
 #     runner 自带 gcc，缺编译器会**明确变红**而不是静默跳过。
 #     （不静默跳过），指向已有实例的覆盖写法见 Makefile。
 #   - 门禁本体仍全部在 Makefile 的分层 target 里（unit / race / contract /
-#     fault-injection / gates / integration / check），CI 只是执行它——
+#     fault-injection / gates / check；integration 层已随参考实现迁 goagent-runtime），
+#     CI 只是执行它——
 #     本仓既有纪律：推送后才说话的是「推送后门禁」，故规则本体不写在本文件。
 #
 # # job 名纪律
