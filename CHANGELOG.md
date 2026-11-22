@@ -2,6 +2,20 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.68.0] — 2026-11-22
+
+### chore：三个演示迁往 goagent-runtime，examples/ 清空（PR #471）
+
+边界迁移第三批：kernel 的 examples/ 目录**清空**——编排演示与容器后端参考实现的受众是装配层与宿主，住 runtime 仓才是它们的家（runtime 侧已收编，随该仓下一版发）。
+
+**破坏性变更（minor 理由）**：examples/reference-runtime、examples/worker-runtime、examples/containerbackend 删除（生产 -3842 行 / 19 文件、测试 -16 文件）。外部消费方改指 github.com/yi-nology/goagent-runtime 的 examples/reference-runtime、examples/worker-runtime、containerbackend（API 逐字未变）。
+
+**faultmatrix 行十四（真实 NetworkPolicy 验证）随 containerbackend 迁出**：声明面格在 runtime 改名 TestNetworkPolicyDeclarationFailClosed（判据逐字随迁，networkpolicy_matrix_test.go），真集群格由该仓 k8sjob_realcluster_test.go 继续守；矩阵自检的「删格必红」集合（newFaultClasses）同步摘除 ClassNetworkPolicy——这是迁移不是退化，判据覆盖由 runtime 兜，行内注释写明去向。
+
+配套：taskboard 指纹判据 2→1（kernel 只剩 coord 一个 Board.Claim 实现）；接缝基线刷新（containerbackend 的 K8sCNICapability 接缝随包迁出）；选型面两处能力落点改指 runtime 仓；policy / api-lifecycle / 哨兵总表 / DEPLOY-MATRIX / backend 包注释全量同步；底座重算为 67,583 行 / 361 文件 / 463 测试文件。
+
+**判据不动**：backend 契约面、faultmatrix 矩阵本体、worker 生命周期契约留在 kernel 且逐字未变。
+
 ## [v0.67.0] — 2026-11-22
 
 ### chore：PG/SQLite 参考实现迁往 goagent-runtime，撤驱动破例（PR #470）
