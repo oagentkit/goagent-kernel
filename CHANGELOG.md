@@ -2,6 +2,16 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.66.0] — 2026-11-22
+
+### chore：pii 与 internal/subhub 上移 oekit/pkg（v0.57.0，PR #464）
+
+边界审计结论：pii（PII 价值模式检测打码，生产 765 行 + 测试 3600+ 行）是**文本安全原语、不认识编排**，且在 kernel **零消费方**；internal/subhub（快照式订阅表）是 pii/guardset/eventbus/netguard 共用的通用并发数据结构。两者按「机制与宿主无关 → 归上游基础库」的边界纪律上移至 oekit/pkg（oekit/pkg#571，v0.57.0）。
+
+**破坏性变更（minor 版理由）**：github.com/yi-nology/goagent-kernel/pii 与 internal/subhub 删除，Stable 级的 pii 同步退役——外部若 import 这两个包，改指 github.com/oekit/pkg/pii 与 github.com/oekit/pkg/subhub（API 逐字未变）。仓内零消费方（pii）与四个消费方的 import 重指（eventbus/guardset/netguard/apilifecheck，import path 唯一改动，零行为变化）已在本版完成。
+
+配套清理：policy 摘两模块登记 / scan_roots / requires / wrappers 死引用，harness-test-no-direct-global-setter 规则随 pii 退役（check_kind 判定面留在 archcheck 可供宿主复用）；docs/error-semantics.md 哨兵总表 pii 小节随包摘除；api-lifecycle 登记 62→60；README/USAGE 口径重算（61→59 module id、53→52 包）。依赖地板 oekit/pkg v0.52.0 → v0.57.0（跨 5 版：memorypipe 的 slicex.Contains 改接 stdlib slices.Contains——上游 v0.57.0 已 deprecate 该符号）。
+
 ## [v0.65.1] — 2026-11-22
 
 ### fix(ledgerstatus)：状态词的同行归属歧义（#411 / #412 / #413 不再被误判）
@@ -62,16 +72,6 @@
   内核包公开契约面**逐字未变**，依赖地板未动 ⇒ **无需 `go mod tidy`**。
 - 本版改动只影响**本仓自己的门禁**（`ledgercheck` 判据 1/5 与 `deploymatrix`）
   如何解析台账正文。
-
-## [v0.66.0] — 2026-11-22
-
-### chore：pii 与 internal/subhub 上移 oekit/pkg（v0.57.0，PR #464）
-
-边界审计结论：pii（PII 价值模式检测打码，生产 765 行 + 测试 3600+ 行）是**文本安全原语、不认识编排**，且在 kernel **零消费方**；internal/subhub（快照式订阅表）是 pii/guardset/eventbus/netguard 共用的通用并发数据结构。两者按「机制与宿主无关 → 归上游基础库」的边界纪律上移至 oekit/pkg（oekit/pkg#571，v0.57.0）。
-
-**破坏性变更（minor 版理由）**：github.com/yi-nology/goagent-kernel/pii 与 internal/subhub 删除，Stable 级的 pii 同步退役——外部若 import 这两个包，改指 github.com/oekit/pkg/pii 与 github.com/oekit/pkg/subhub（API 逐字未变）。仓内零消费方（pii）与四个消费方的 import 重指（eventbus/guardset/netguard/apilifecheck，import path 唯一改动，零行为变化）已在本版完成。
-
-配套清理：policy 摘两模块登记 / scan_roots / requires / wrappers 死引用，harness-test-no-direct-global-setter 规则随 pii 退役（check_kind 判定面留在 archcheck 可供宿主复用）；docs/error-semantics.md 哨兵总表 pii 小节随包摘除；api-lifecycle 登记 62→60；README/USAGE 口径重算（61→59 module id、53→52 包）。依赖地板 oekit/pkg v0.52.0 → v0.57.0（跨 5 版：memorypipe 的 slicex.Contains 改接 stdlib slices.Contains——上游 v0.57.0 已 deprecate 该符号）。
 
 ## [v0.65.0] — 2026-11-21
 
