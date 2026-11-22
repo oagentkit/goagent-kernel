@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/oagentkit/guardx/wire"
-	"github.com/yi-nology/goagent-kernel/toolname"
+	"github.com/oekit/pkg/toolname"
 )
 
 // runProgramInChild 在子进程里跑一段程序。

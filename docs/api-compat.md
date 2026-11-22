@@ -115,7 +115,7 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **54** 个包（Stable 20 / Experimental 34 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard）。
+api-lifecycle.yaml 登记 **53** 个包（Stable 19 / Experimental 34 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard）。
 逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /

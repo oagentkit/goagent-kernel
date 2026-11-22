@@ -36,15 +36,15 @@
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **54** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **54** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 仓里有什么 | **51** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **53** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **53** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **54** 个 module id（61 数的是
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **51** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **53** 个 module id（61 数的是
 > `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **63** 个——`taskboard`
 > 与 `pgrefstore` 各有两个 root。**两个数不是同一种量**：61 数 module id，63 数
 > root 目录）。
