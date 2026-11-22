@@ -159,6 +159,20 @@ func TestStressSubprocessImmediateExitReaps(t *testing.T) {
 // （OOM killer 的同形态注入）：父侧报「执行域异常终止」，PID 被收割，
 // goroutine 数回落，宿主还能继续干活。
 func TestStressSubprocessKillMidRunReaps(t *testing.T) {
+	// PID 文件必须落在**本测试专属**的 TMPDIR 里（issue #465）。
+	//
+	// 它此前是固定系统路径（os.TempDir()/gak_ptc_child_pid），而 os.TempDir 是
+	// **所有进程共享**的：两个测试进程并发时（本地多 worktree / 并行会话同时跑
+	// 测试，全量 check 下的「负载偶发」多半就是这么来的）会互相读写——
+	// 后启动的那个 readChildPID 会**删掉对方写的文件**、读到**对方子进程的 PID**，
+	// 于是 SIGKILL 杀掉的是别人的子进程，而自己的子进程没人杀 ⇒ 父侧 20s 超时
+	//「挂死」；反过来读到对方已退出的 PID 则是「应存活（还没轮到杀）」。
+	//
+	// 子进程源码不用改：它写 filepath.Join(os.TempDir(), …) 而 TMPDIR 在
+	// procx.ChildEnv 的基础白名单里 ⇒ 继承本测试设下的目录。取值先算再设，
+	// 避免 t.Setenv 的参数求值与 t.TempDir 的缓存顺序产生嵌套。
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
 	bin := buildChildProgramVari(t, pidFileChildSource())
 	_ = ptc.Run(context.Background(), `return 1`, nil, ptc.Options{Stages: allowStages()})
 	baseline := baselineGoroutines()
