@@ -304,12 +304,17 @@ func TestSeamContractBlocksRun(t *testing.T) {
 
 // TestRepoClockSeamsAnnotated 真实仓的导出时钟接缝必须全部带齐标记。
 //
-// min_declarations 取 13（当前枚举面：coord×2 / controlplane / handoff×3 /
-// reconcile / scheduling / sidetest / boardtest / ticket×2 / worker）。
+// min_declarations 取 12（当前枚举面：coord×2 / controlplane / handoff×3 /
+// reconcile / scheduling / sidetest / boardtest / worker×2）。
 // 少一个声明（改签名/删接缝）时本用例会提醒同步清单；多出的声明缺标记则红。
+//
+// v0.73.0 起由 13 降为 12：ticket 的两处导出时钟接缝随该包上移
+// github.com/oagentkit/guardx/ticket 一并迁走（归属判据见 AGENTS.md
+// 「边界纪律」——一次性授权票据属执行安全域，与 permgate/rbac/fence 同族）。
+// 降的是**清单**，不是判据：少一处接缝立刻红，正是本用例存在的理由。
 func TestRepoClockSeamsAnnotated(t *testing.T) {
 	rules := seamFixtureRules()
-	rules.MinDeclarations = 13
+	rules.MinDeclarations = 12
 	vs, err := seamContractViolations("..", rules, "architecture-policy.yaml")
 	if err != nil {
 		t.Fatal(err)

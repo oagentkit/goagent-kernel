@@ -94,19 +94,19 @@
 
 *图 1：判定口诀的决策路径——「需要」与「不需要」各有一条确定的落地序列。*
 
-### 1.3 52 个包分四组（另有 `taskboard/boardtest` 一个子包）
+### 1.3 49 个包分四组（另有 `taskboard/boardtest` 一个子包）
 
-> 口径：与 README 包表（**52** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
-> **54 个 module id**（`make architecture-check` 打印的「54 个包的依赖方向」就是它）。
-> **54 与 52 差的 2 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
+> 口径：与 README 包表（**49** 行，`make docsync` 判）逐行对齐；policy `modules` 段登记
+> **51 个 module id**（`make architecture-check` 打印的「51 个包的依赖方向」就是它）。
+> **51 与 49 差的 2 个不是「漏登记的包」**，而是**根目录不在一级目录**的 module：
 > `ptcchild`（根在 `cmd/ptcchild`）、`ledgerstatus`（根在 `internal/ledgerstatus`）
 > ——README 包表只收一级目录，故它们不进表，但**照样在依赖方向门禁下**。
 > （`examples/*` 五个 module 与 `internal/subhub` 已随边界迁移迁出，2026-11-22 起
 > 不再出现在本仓 policy 里。）
-> ⚠️ **两个数不是同一种量**：54 数的是 **module id**（`archcheck` 打印
-> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 55 个**——`taskboard` 有两个
-> root；它的第二个 root 是 `taskboard/boardtest`，计在 `taskboard` 行内，
-> **不是独立的 module id**。
+> ⚠️ **两个数不是同一种量**：51 数的是 **module id**（`archcheck` 打印
+> `len(pol.Modules)`），这些 id 覆盖的 **root 目录共 52 个**——`taskboard` 有两个
+> root（第二个是子包 `taskboard/boardtest`，它计在 `taskboard` 行内，**不是独立的
+> module id**）。
 > 本表此前写「51 个包 / 门面 4 个」，与实际差在三处：`policy` / `reminder` /
 > `toolfail` / `sandbox` 四个门包在 v0.35.0 已整包删除（**本仓不再提供这四个包**，
 > 宿主直连上游矩阵 `oagentkit/toolgate/policy` 与 `oagentkit/guardx/*`），
@@ -117,7 +117,7 @@
 
 | 组 | 包 | 特征 |
 |---|---|---|
-| **机制面**（46 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `netguard` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `sideeffect` `cmdpolicy` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `ticket` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。（`pii` 上移 `oekit/pkg`、`toolname` 归位 `oagentkit/toolname`，本仓不再提供。） |
+| **机制面**（43 个） | `protocol` `scheduling` `eventbus` `dispatch` `spill` `statemachine` `contract` `checkpoint` `commitgate` `budget` `offload` `tooldisclose` `sideeffect` `egress` `delta` `pending` `sessionref` `drain` `deadline` `reconcile` `finalize` `steer` `ptc` `backend` `watchdog` `guardset` `trajectory` `eval` `taskboard` `coord` `skilldisclose` `hookengine` `memorypipe` `delegate` `handoff` `ownership` `worker` `worktree` `metrics` `cost` `tenant` `controlplane` `roundguard` | 真正的逻辑所在。改这些包 = 改本仓的对外能力。（`pii` 上移 `oekit/pkg`、`toolname` 归位 `oagentkit/toolname`、`netguard`/`ticket` 上移 `oagentkit/guardx`、`cmdpolicy` 上移 `oagentkit/tools`，本仓不再提供。） |
 | **契约套件**（1 个 + 1 个子包） | `sidetest`（+ `taskboard/boardtest`） | 判「宿主的实现是否满足契约」的**判据**，不是能力本身。只给「怎么判」，不给「一份能用的实现」——见 AGENTS.md「共享契约测试套件」那条纪律。`boardtest` 是同一形态：`taskboard` 的原子性由存储保证，本仓只能给判据（`ConcurrentClaim` 跑一遍，成功者必须恰好 1 个）。 |
 | **组合机制**（3 个） | `retryplan` `gatecheck` `preset` | 把多个机制的既有判定**组合**成一条结论（与 `guardset` 同族：**组合逻辑归内核，判定归各自机制**）。`retryplan` 只回答「该走哪条路径」；`gatecheck` 把审批层与沙箱层合成一条判定（两层都同意才放行）；`preset` 把档位 × 审批 × 出口收成一份具名组合。三者都**不重新判定**任何东西。**依赖方向是 preset → gatecheck**（高层组装件认识低层判据，反过来不行）。 |
 | **门禁执行体**（2 个 + 2 个 CLI） | `archcheck` `raceprobe` / `cmd/archcheck` `cmd/docsync` | policy 与 race 门禁的可执行面。可导入包，宿主可复用同一套判据（race 门禁的六种失败形态判定层，v0.72.0 从 `cmd/raceprobe` 下沉）。 |
@@ -210,7 +210,7 @@
 |---|---|---|---|
 | 1 | [README](../README.md) 的「边界」与「包清单」两节 | 3 min | 哪个包管什么事 |
 | 2 | [AGENTS.md](../AGENTS.md) 的「边界纪律」+「工程门禁」 | 5 min | 什么不能做、什么会红 |
-| 3 | `architecture-policy.yaml` 的 `modules` 段（54 个 id + requires） | 2 min | 哪个包能依赖哪个 |
+| 3 | `architecture-policy.yaml` 的 `modules` 段（51 个 id + requires） | 2 min | 哪个包能依赖哪个 |
 | 4 | 你要动的那一个包的包头注释 | 3 min | 这个包为什么长这样 |
 | 5 | 那个包的 `_test.go` | — | 契约的实际形状（比注释准） |
 
@@ -225,7 +225,7 @@
 ```bash
 cd /Users/zhangyi/my_project/goagent-kernel
 
-make test                 # ① 全量单测（当前 463 个测试文件）
+make test                 # ① 全量单测（当前 444 个测试文件）
 make architecture-check   # ② 架构门禁（规则 / 门包 / 包数见输出）
 make docsync              # ③ README 包表与「工程底座」三项确定性量
 make ledgercheck          # ④ 演进台账纪律
@@ -241,13 +241,13 @@ ok  	github.com/yi-nology/goagent-kernel/worker	3.859s
 ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
 
 # ② make architecture-check
-架构门禁通过（12 条规则 + 0 个门面包 + 54 个包的依赖方向，policy version 1；无阻断级违反）
+架构门禁通过（12 条规则 + 0 个门面包 + 51 个包的依赖方向，policy version 1；无阻断级违反）
 
 # ③ make docsync
-README 与仓库一致（52 个包；工程底座 67498 行 / 360 文件 / 463 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
+README 与仓库一致（49 个包；工程底座 65285 行 / 348 文件 / 444 个测试文件；ADR 9 条 / docs 20 篇已登记）；USAGE 口径已判✓
 
 # ④ make ledgercheck
-台账校验通过：141 个单号 / 601 处出现点 / 319 条 issue 状态已对账✓
+台账校验通过：145 个单号 / 621 处出现点 / 322 条 issue 状态已对账✓
 ```
 
 **四条都绿再动手。** 任一条红 ⇒ 先查它是不是本来就红的（见 §4.2），别把自己的改动

@@ -23,7 +23,7 @@
 ⑤ 上下文三件套  budget + spill + offload   ← 上下文怎么不被撑爆（建议）
 ⑥ 实时事件      eventbus + watchdog        ← 进度怎么给前端（可选）
 ⑦ 流式与退出    delta + drain + pending    ← 流式输出与优雅停机（可选）
-⑧ 安全面        netguard + pii             ← 出站与个人信息（按需）
+⑧ 安全面        上游 netguard + pii        ← 出站与个人信息（按需，**两包已上移上游**）
 ⑨ 程序化编排    ptc                        ← 多工具聚合场景（进阶）
 ⑩ 判定与改派    dispatch + roundguard + 上游 toolfail / policy / sandbox / injectband ← 失败与循环怎么判（上游四件的核心在 oagentkit，宿主直连上游）
 ```
@@ -36,19 +36,19 @@
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **54** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **54** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 仓里有什么 | **49** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **51** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **51** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **54** 个 module id（61 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **63** 个——`taskboard`
-> 与 `pgrefstore` 各有两个 root。**两个数不是同一种量**：61 数 module id，63 数
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **49** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **51** 个 module id（51 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **52** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：51 数 module id，52 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
-> CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
+> CLI 装配层（`cmd/*`）、契约测试套件
 > （`sidetest`）、子包（`taskboard/boardtest`）与参考示例
 > （参考运行时/worker/容器后端演示已于 v0.68.0 迁往 goagent-runtime 仓）——演示不是「能力包」，但它们在的那一侧同样受门禁管。
 
@@ -76,8 +76,8 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 崩了怎么接着跑 | `checkpoint` + `commitgate` | `StoreCAS` 实现、终态词表注入 |
 | 上下文怎么不被撑爆 | `budget` + `spill` + `offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
 | 进度怎么推给前端 | `eventbus` + `watchdog` | 落库 + 广播、告警发布出口 |
-| 出站请求怎么防 SSRF | `netguard` | 挂在自己的 `DialContext` 上 |
-| 个人信息怎么脱敏 | `pii` | 阻断决策（内核只回报信号） |
+| 出站请求怎么防 SSRF | 上游 `guardx/netguard` | 挂在自己的 `DialContext` 上 |
+| 个人信息怎么脱敏 | 上游 `oekit/pkg/pii` | 阻断决策（内核只回报信号） |
 | 多工具聚合怎么省往返 | `ptc` | 工具绑定、判定环切片 |
 | 失败后还能不能派、派给谁 | `dispatch` | 候选枚举接缝、执行步接缝（改派面在宿主侧）|
 | 执行的隔离强度怎么声明与保证 | 上游 `guardx/sandbox` | 执行后端（可选）、每次执行的档位要求 |
@@ -1931,9 +1931,11 @@ func readPending(col string) (pending.State, bool) {
 
 ---
 
-### 3.9 安全面：`netguard` + `pii`
+### 3.9 安全面：出站守卫与脱敏（**两包已上移上游**）
 
-#### 3.9.1 `netguard`：出站 SSRF 守卫
+> **两个包已不在本仓**（kernel v0.73.0 起删除本仓副本）：`netguard` → `github.com/oagentkit/guardx/netguard`（出站守卫，与 `egress` 同族同层），`pii` → `github.com/oekit/pkg/pii`（纯文本安全原语，不认识编排）。**API 逐字未变**，下文的用法与判据一字不改，只是 import 路径换了。
+
+#### 3.9.1 `netguard`（上游 `github.com/oagentkit/guardx/netguard`）：出站 SSRF 守卫
 
 **三层判定**：名字层（解析前按名拒）+ 解析后逐 IP 过 egress + 重定向逐跳重验。
 
@@ -1942,7 +1944,7 @@ package myapp
 
 import (
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/goagent-kernel/netguard"
+	"github.com/oagentkit/guardx/netguard"
 )
 
 func guardOutbound(rawURL string) error {
@@ -2011,7 +2013,7 @@ func updatePolicy() error {
 client 注入口）：
 
 ```go
-import "github.com/yi-nology/goagent-kernel/netguard"
+import "github.com/oagentkit/guardx/netguard"
 
 // 生产：零值放行面 = 私网与回环全拒
 hc, err := netguard.NewClient(nil, netguard.Allow{})
@@ -2063,7 +2065,7 @@ import (
 	"context"
 	"net"
 
-	"github.com/yi-nology/goagent-kernel/netguard"
+	"github.com/oagentkit/guardx/netguard"
 )
 
 // 宿主自己的解析器（测试里则是一个表驱动的假解析器）
@@ -2102,14 +2104,14 @@ err = netguard.CheckChainWithResolver(ctx, start, hops, netguard.Allow{}, netgua
   就必须真的注入一个解析器。
 - **只给单跳接缝、忘了链条面**。逐跳校验每一跳都要解析；只迁移单跳用例的话，
   链条用例仍会在真实 DNS 上假红。
-#### 3.9.2 `pii`：个人信息脱敏
+#### 3.9.2 `pii`（上游 `github.com/oekit/pkg/pii`）：个人信息脱敏
 
 在 `logredact`（凭据类值模式）之外补「个人信息价值面」——大陆手机号与 18 位居民身份证。
 
 ```go
 package myapp
 
-import "github.com/yi-nology/goagent-kernel/pii"
+import "github.com/oekit/pkg/pii"
 
 func main() {
 	// 装配期：面名自查（fail-closed 是保险，不是日常路径）
@@ -2806,13 +2808,13 @@ req, err := set.GateRequest(baseReq, cfg.Preset)   // 三面一次性展开进�
 - **依赖方向是 preset → gatecheck**。`gatecheck` 不认识 `preset`，别反向接——
   低层判据认识高层组装件会立刻出现循环。
 
-#### `cmdpolicy`：一次审批通过之后，那条命令怎么判
+#### `cmdpolicy`（上游 `github.com/oagentkit/tools/cmdpolicy`）：一次审批通过之后，那条命令怎么判
 
 上游 `policy` / `gatecheck` 的判定面停在**工具名**上：一次 `exec` 审批通过后，它内部跑的是
 `git status` 还是 `rm -rf /`，此前没有任何机制面看得见。
 
 ```go
-import "github.com/yi-nology/goagent-kernel/cmdpolicy"
+import "github.com/oagentkit/tools/cmdpolicy"
 
 pol, err := cmdpolicy.New([]cmdpolicy.Rule{
 	{
