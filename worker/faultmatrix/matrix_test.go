@@ -23,7 +23,8 @@
 //	事件乱序提交                      —          ✓          ✓
 //	配额悬挂                         —          —          ✓
 //	控制面并发介入                    —          —          ✓
-//	真实 NetworkPolicy 验证           —          —        ✓(+真集群)
+//	真实 NetworkPolicy 验证           —          —        已迁 runtime（v0.68.0 随
+//	                                 containerbackend 整体迁出，判据在该仓继续跑）
 //
 // # 落在哪一层跑
 //
@@ -93,6 +94,9 @@ const (
 	// ClassControlPlaneRace 控制面并发介入（强释与 Worker 完成只有一次有效转换）。
 	ClassControlPlaneRace faultClass = "controlplane_concurrent_intervention"
 	// ClassNetworkPolicy 真实 NetworkPolicy 验证（声明面 fail-closed + 数据面实测）。
+	// **行已迁出**：v0.68.0 随 containerbackend 整体迁往 goagent-runtime，判据在该仓
+	// containerbackend 包继续跑（networkpolicy_matrix_test.go / k8sjob_realcluster_test.go）；
+	// 本仓保留类声明只为历史台账可读，矩阵不再登记该行。
 	ClassNetworkPolicy faultClass = "network_policy_enforcement"
 )
 
@@ -151,7 +155,9 @@ var requiredMatrixCells = []requiredCell{
 	{ClassEventReorder, ModeCluster, 1},
 	{ClassQuotaDangling, ModeCluster, 1},
 	{ClassControlPlaneRace, ModeCluster, 1},
-	{ClassNetworkPolicy, ModeCluster, 2}, // 声明面 fail-closed + 真集群实测
+	// ClassNetworkPolicy 行已于 v0.68.0 随 containerbackend 整体迁往
+	// goagent-runtime（判据在该仓 containerbackend 包继续跑：
+	// networkpolicy_matrix_test.go 声明面格 + k8sjob_realcluster_test.go 真集群格）。
 }
 
 // deploymentMatrix 矩阵的**唯一声明面**（执行前自检完整性）。
@@ -252,20 +258,6 @@ var deploymentMatrix = []matrixCase{
 		name:  "controlplane-concurrent-intervention",
 		modes: []deploymentMode{ModeCluster},
 		run:   runControlPlaneConcurrentIntervention,
-	},
-	{
-		class: ClassNetworkPolicy,
-		name:  "network-policy-declaration-fail-closed",
-		modes: []deploymentMode{ModeCluster},
-		run:   runNetworkPolicyDeclaration,
-	},
-	{
-		class: ClassNetworkPolicy,
-		name:  "network-policy-real-dataplane",
-		modes: []deploymentMode{ModeCluster},
-		requiresEnv: "Kubernetes 1.29+ 集群 + 实现 NetworkPolicy 数据面的 CNI（Calico/Cilium 等）" +
-			"+ 允许创建执行命名空间、NetworkPolicy 与探测镜像；触发条件：真集群就绪后用实际出站探测断言禁网",
-		localFact: runNetworkPolicyDeclaration,
 	},
 }
 

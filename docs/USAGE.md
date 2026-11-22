@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **57** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **57** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **54** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **54** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **57** 个 module id（61 数的是
+> `architecture-policy.yaml` 的 `modules` 段登记 **54** 个 module id（61 数的是
 > `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **63** 个——`taskboard`
 > 与 `pgrefstore` 各有两个 root。**两个数不是同一种量**：61 数 module id，63 数
 > root 目录）。
@@ -52,7 +52,7 @@
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
 > CLI 装配层（`cmd/*`）、判定所需的单一真相包（`toolname`）、契约测试套件
 > （`sidetest`）、子包（`taskboard/boardtest`）与参考示例
-> （`examples/reference-runtime`）——它们不是「能力包」，但都在仓里、都在门禁下。
+> （参考运行时/worker/容器后端演示已于 v0.68.0 迁往 goagent-runtime 仓）——演示不是「能力包」，但它们在的那一侧同样受门禁管。
 
 ---
 

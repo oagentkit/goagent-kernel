@@ -216,7 +216,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/containerbackend/k8sjob.go#K8sJob
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjob.go#K8sJob
       - kind: gate
         ref: test
     delivered_by: "#263"
@@ -227,7 +227,7 @@ capabilities:
     state: available
     evidence:
       - kind: contract
-        ref: examples/containerbackend/k8sjobegress.go#K8sEgressProbe
+        ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjobegress.go#K8sEgressProbe
       - kind: gate
         ref: k8s-e2e
       - kind: doc

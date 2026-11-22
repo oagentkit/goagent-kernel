@@ -82,7 +82,8 @@ var newFaultClasses = map[faultClass]bool{
 	ClassEventReorder:         true,
 	ClassQuotaDangling:        true,
 	ClassControlPlaneRace:     true,
-	ClassNetworkPolicy:        true,
+	// ClassNetworkPolicy 行已随 containerbackend 迁 goagent-runtime（v0.68.0），
+	// 不在「删格必红」集合内——判据覆盖由该仓的 networkpolicy_matrix_test.go 兜。
 }
 
 // TestMatrixNewCasesNotDeletable 「删掉任一新用例 ⇒ 门禁红」的反向验证：

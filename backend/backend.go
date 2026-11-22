@@ -39,7 +39,7 @@
 //
 // Docker Engine / Kubernetes Job 的接入牵涉宿主的部署形态（socket 位置、
 // 集群凭据、镜像仓库策略），都是宿主的事——内核只给契约与判据。参考实现
-// 在 `examples/containerbackend`（Docker Engine API 逐字实现本契约 +
+// 在 `goagent-runtime 仓的 containerbackend（v0.68.0 迁出）`（Docker Engine API 逐字实现本契约 +
 // Kubernetes Job 接入占位），宿主抄它、不 import 它（与 examples/pgstore
 // 对 taskboard.Board 的分工同构：内核证契约，示例证接线）。
 package backend

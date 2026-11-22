@@ -328,16 +328,6 @@
 | `ErrUnauthorized` | 授权不足（required 不在注入上下文的 Scopes 内） | 放弃本次动作并换有权限的上下文；重试不会让凭据多出权限 |
 | `ErrQuotaExceeded` | 配额超限（Enforce 判定出口，明细随包装链消息携带） | 等配额释放或提升限额后重试；结构性超限按拒绝处理，不绕过 Enforce |
 
-### examples/containerbackend
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrEngineCall` | Docker Engine 调用失败（创建 / 启动 / 等待 / 读取任一步） | 重试或查引擎侧（不可达 / 镜像不存在 / 参数被拒）；作业没跑起来属基础设施故障 |
-| `ErrAPICall` | kube-apiserver 调用失败（创建 / 轮询 / 读日志 / 清理任一步） | 重试或查集群侧（不可达 / 凭据 / RBAC / 参数被拒）；作业没跑起来属基础设施故障 |
-| `ErrNetworkPolicy` | NetworkPolicy 未能建立——`Egress=denied` 无法兑现，拒绝创建作业（fail-closed） | 修集群能力（CNI / RBAC）后重试；或显式 `WithK8sNetworkPolicy(false)` 并接受 `Egress` 自报降级。**不得跳过策略继续执行**——不能兑现的禁网不许静默降级 |
-| `ErrMountDenied` | 挂载被 MountPolicy 拒绝（来源不在白名单 / 读写档未放开 / 形态不合法，创建阶段先于引擎或 apiserver 调用拒绝） | 修作业声明：来源改到白名单内或按策略放开 `AllowWritable`；**不得降级执行**——策略拒绝是 fail-closed 的（#187） |
-| `errWallClock`（包内） | 墙钟预算到点（context.Cause 的标记；对外呈现为 `Result{OK:false, Detail:{budget_exceeded: wall_clock}}`，不是 error 返回） | 无需处置：预算被强制兑现是契约行为；作业没跑完按作业失败对待 |
-
 ### tooldisclose
 
 | 哨兵 | 触发条件 | 调用方处置 |

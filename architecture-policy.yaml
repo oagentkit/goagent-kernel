@@ -579,58 +579,9 @@ modules:
       配对，缺口进 Issues 显式可见；增量投影支持「先喂一半再喂后半，行被更新
       而非重复」。依赖 eventbus 是为了吃本仓自己的事件词表，不另立事件模型。
 
-  # 2026-10-19 新增：门禁执行体从 package main 下沉为可导入包。
-  #
-  # 为什么它属于本仓（而不是留在宿主仓各写一遍）：判据是「AST + 一张声明表」，
-  # 不认识任何领域概念——**机制面**。而门禁执行体若锁在 package main 里，
-  # 别的仓就够不着：于是每个宿主要么各写一遍判据（各判一套，漂移到没人发现），
-  # 要么干脆不写（policy 的依赖拓扑表变成死条文：躺在文件里、看起来有人维护过，
-  # 实际一条都不判）。
-  # 参考运行时示例（v0.32.0 新增）：端到端演示机制怎么串起来。
-  #
-  # 为什么它是**模块**而不是散落的脚本：未登记的包目录对依赖方向门禁**隐形**——
-  # 任何模块都能 import 它而不判违规。于是示例里长出的真实依赖（checkpoint /
-  # commitgate / sideeffect / taskboard）就没人管了。
-  #
-  # 为什么它零新依赖：存储用**纯 stdlib 内存实现**。本仓「依赖面窄」是既有优势，
-  # 不为示例牺牲——真实 PostgreSQL 的接入形态由下面的 pgrefstore 模块承担
-  # （v0.33.0 起，issue #94）。
-  - id: reference-runtime
-    roots: [examples/reference-runtime]
-    requires: [checkpoint, commitgate, contract, sideeffect, taskboard, "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      参考运行时示例：创建任务 → 多步骤执行 → 中断 → 恢复续跑 → 并发认领 →
-      副作用对账。它是**示例**不是能力包：机制面仍在 checkpoint/commitgate/
-      sideeffect/taskboard 里，本目录只演示它们怎么接线。
 
 
 
-  # 容器执行后端参考实现（2026-11-13 新增，issue #109）：backend.Backend 的
-  # 容器形态落点。
-  #
-  # 为什么它是**独立示例子包**而不是内核子包：与 pgrefstore 同一条边界——
-  # 参考实现不是内核依赖，容器引擎的接入形态（socket 位置 / 集群凭据 /
-  # 镜像仓库策略）是宿主资产。宿主抄它、不 import 它。
-  #
-  # 为什么零第三方依赖：Docker 走 Engine HTTP API（stdlib net/http，
-  # unix socket 直连），**不引 Docker 客户端库**；Kubernetes 走
-  # kube-apiserver HTTP API（stdlib net/http + in-cluster token/CA），
-  # **不引 client-go**——引它会让示例的依赖图追着 K8s 版本跑。
-  - id: containerbackend
-    roots: [examples/containerbackend]
-    requires: [backend, "ext:github.com/oagentkit/guardx", "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      Docker Engine 参考实现（IsolationContainer + EgressDenied 以 network=none
-      兑现 + 内存经容器上限兑现，日志多路复用流 demux）+ Kubernetes Job 参考
-      实现（issue #192：Namespace/ServiceAccount 可配、Egress=denied 以逐作业
-      NetworkPolicy 兑现且建不出来即拒绝创建作业、ttlSecondsAfterFinished 兜底
-      清理、conditions/succeeded/failed/active 状态对账——Pod 被强删/节点失联/
-      Job 消失一律 unknown 失败，不谎报成功）。测试以 httptest 假引擎 /
-      假 apiserver 对拍，不需要真实守护进程或集群。
 
   - id: archcheck
     roots: [archcheck]
@@ -872,16 +823,6 @@ modules:
       消费 contract.StatusTimedOut 词表与 contract.ErrUserCancelled 哨兵；
       与 drain.ErrDeadline 是两个 Cause。
 
-  - id: worker-runtime-ref
-    roots: [examples/worker-runtime]
-    requires: [coord, taskboard, worker, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      Worker 生命周期的参考实现（package main，issue #106）：内存注册表 +
-      coord 任务板 + Loop 全生命周期端到端演示（含崩溃恢复接管）。它是
-      **示例**不是能力包——机制面在 worker/coord/taskboard，本目录只演示
-      怎么接线；注册表落库归宿主的跨进程存储。
 
   # ── 2026-11-15 新增（issue #167 #168，收尾域下沉提案；登记先于代码）──
   #
@@ -2366,7 +2307,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/ledgerstatus, cmd, examples/reference-runtime, backend, handoff, ownership, eval, examples/containerbackend, coord, worker, scheduling, examples/worker-runtime, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard]
+  scan_roots: [protocol, statemachine, eventbus, spill, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, toolname, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；
