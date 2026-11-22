@@ -32,6 +32,8 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
+	"time"
 
 	"github.com/oagentkit/runtime/procx"
 
@@ -144,6 +146,78 @@ func checkIssueStates(led *ledgerstatus.Ledger, open map[int]bool) []string {
 	}
 	sort.Strings(probs)
 	return probs
+}
+
+// issueSource 判据 5 的数据源结果：状态表 + 它是从哪来的。
+type issueSource struct {
+	// Open 单号 → 是否仍开着（与 fetchIssueStates 同形）。
+	Open map[int]bool
+	// Tag 进成功行的短标签：空 = 实时；退回快照时是「（⚠ 离线快照 <日期>，N 天前）」。
+	Tag string
+	// Warn 非空 ⇒ 调用方必须打印到 stderr：退回快照的完整原因。
+	Warn string
+}
+
+// issueStatesWithFallback 判据 5 的**两级数据源**：实时 gh 为主，拉不到时退回仓内快照。
+//
+// # 为什么不是「拉不到就 exit 2」
+//
+// 门禁在**离线 / 没装 gh / 没有 token** 的机器上也该能跑——「跑不起来的门禁」与
+// 「没有门禁」是同一件事，而开发者机离线跑 `make check` 是常态。快照就是给这种
+// 情况兜底的：判定仍走同一条 `checkIssueStates`，换的只是喂给它的状态表。
+//
+// # 但兜底必须大声（否则就是「判据说谎」）
+//
+// 对着一份可能过期的数据判，最坏形态是**永远绿**——那把「没有判据」换成了
+// 「判据会说谎」。所以退回时：`Tag` 进成功行、`Warn` 进 stderr，两处都点明
+// 「数据可能不是当下事实」。**刷新是 `make issue-state` 的事**，判据本身不做
+// 时效判定（时间判据会让门禁红在与被判事实无关的原因上）。
+//
+// 两级都拿不到才返回 error ⇒ 调用方 exit 2（给不出结论）。
+func issueStatesWithFallback(fetcher func() (map[int]bool, error), snapPath string) (issueSource, error) {
+	live, err := fetcher()
+	if err == nil {
+		return issueSource{Open: live}, nil
+	}
+	snap, date, age, serr := loadIssueSnapshot(snapPath)
+	if serr != nil {
+		return issueSource{}, fmt.Errorf(
+			"实时拉取失败：%v；仓内快照也不可用（%s）：%w —— 两级都拿不到就给不出结论，"+
+				"不许静默当成「没有违反」", err, snapPath, serr)
+	}
+	return issueSource{
+		Open: snap,
+		Tag:  fmt.Sprintf("（⚠ 离线快照 %s，%d 天前）", date, age),
+		Warn: fmt.Sprintf(
+			"⚠ ledgercheck: 实时拉取失败，已退回仓内快照（%s，%d 天前）——"+
+				"判据现在对着快照在跑，数据可能不是当下事实；要刷新跑 make issue-state。原因：%v",
+			date, age, err),
+	}, nil
+}
+
+// loadIssueSnapshot 读仓内快照，返回「单号 → 是否仍开着」+ 日期 + 距今天数。
+//
+// 快照由 `make issue-state` 刷新（docs/issue-state.yaml，与台账同目录——两者是
+// 同一件事的两面，分开放会让人只更新一个）。取值域由解析层封闭：未知取值报错，
+// 不静默忽略——静默忽略会让那个单号从对账里消失，而消失的方向是门禁变绿。
+func loadIssueSnapshot(path string) (map[int]bool, string, int, error) {
+	snap, err := ledgerstatus.ParseIssueSnapshot(path)
+	if err != nil {
+		return nil, "", 0, err
+	}
+	open := make(map[int]bool, len(snap.Issues))
+	for k, v := range snap.Issues {
+		n, err := strconv.Atoi(k)
+		if err != nil {
+			return nil, "", 0, fmt.Errorf("快照 %s 里的键 %q 不是单号：%w", path, k, err)
+		}
+		open[n] = v == ledgerstatus.IssueOpen
+	}
+	if len(open) == 0 {
+		return nil, "", 0, fmt.Errorf(
+			"快照 %s 是空的——空结果与「查不到」不可分，按给不出结论处理", path)
+	}
+	return open, snap.Updated, snap.AgeDays(time.Now()), nil
 }
 
 // registryOccurrence 取该单号在**登记表里**的出现点（报错要指到那一行）。

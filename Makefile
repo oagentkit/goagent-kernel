@@ -194,7 +194,7 @@ COMPOSE   := docker compose -f examples/docker-compose.yml
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck issue-state releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -612,6 +612,28 @@ ledgercheck: ## 演进台账纪律门禁（单号状态一致 / 关闭 PR 号 / 
 	@# 派生器），并当场判四条：状态矛盾 / 已合入却没给关闭 PR / 关闭 PR 号形态
 	@# 不对 / 正文引用的单号没进登记面（单号漂浮 = 无主）。
 	$(EXPORT) $(GOENV) go run ./cmd/ledgercheck
+
+# ── issue 状态快照的数据源（issue #455）─────────────────────────────
+# 台账是**声明面**、GitHub 是**事实面**，两者会漂：2026-11-21 实录——台账把
+# #427/#428/#430 记成「已合入 (#436)」、代码也逐条核实落地，而 gh issue list 里
+# 三条**全部还开着**（当轮手工关闭）。
+#
+# 判据必须**离线可跑**（CI 不一定有 GitHub token / 网络）⇒ 判据面与数据源分离：
+# 本目标是**唯一允许调 gh 的地方**，它刷新 docs/issue-state.yaml；
+# make ledgercheck 只读那份快照、一个网络调用都没有。
+#
+# ⚠ 本目标**不在** make check 里（它需要网络）。发版前跑一次即可。
+issue-state: ## 刷新 docs/issue-state.yaml（需要 gh 与网络；ledgercheck 只读它、不联网）
+	@command -v gh >/dev/null 2>&1 || { echo "issue-state: 需要 gh CLI（https://cli.github.com/）"; exit 1; }
+	@{ \
+	  echo "# 由 make issue-state 刷新——手改无效（重跑会整份覆盖）。"; \
+	  echo "# 门禁（make ledgercheck）只读本文件、不联网；刷新需要 gh 与网络。"; \
+	  echo "updated: $$(date -u +%F)"; \
+	  echo "issues:"; \
+	  gh issue list --state all --limit 1000 --json number,state \
+	    --jq '.[] | "  \(.number): \(.state|ascii_downcase)"'; \
+	} > docs/issue-state.yaml
+	@echo "issue-state: 已刷新 docs/issue-state.yaml（$$(grep -c ': ' docs/issue-state.yaml) 条状态）"
 
 site: ## 构建 VuePress 文档站到 site/docs/.vuepress/dist（gen.mjs 先生成机器事实页，解析失败即退出）
 	cd site && (test -d node_modules || npm ci --no-audit --no-fund) && npm run docs:build

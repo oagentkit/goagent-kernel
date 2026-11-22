@@ -266,6 +266,31 @@ func selfCheckWithViolationSet(root string, pol *Policy, violated map[string]boo
 			add(policyPath, 0, "例外登记（%s %s:%d）缺少 removal（拆除条件）字段：没有拆除条件的例外是赖账", ex.Rule, ex.Path, ex.Line)
 		}
 
+		// ── status 取值域封闭（issue #447 的后半句）──
+		//
+		// 只认省略（在用）或 exceptionStatusStale。拼错的取值若被当成「在用」，命中 >0
+		// 时它会**绿**：维护者写下的意图与结论相反，且没有任何机器能发现（词表 kind 同款
+		// 纪律——未知取值不许静默降级）。
+		if ex.Status != "" && ex.Status != exceptionStatusStale {
+			add(policyPath, 0,
+				"例外登记（%s %s:%d）的 status 取值 %q 不合法：只能省略（在用）或 %q（已失效待删）——"+
+					"取值域封闭，拼错的标记会被当成另一回事，对账结论与维护者写下的意图相反",
+				ex.Rule, ex.Path, ex.Line, ex.Status, exceptionStatusStale)
+		}
+
+		// ── 标了 stale 却仍命中 ⇒ 矛盾（issue #447 的后半句）──
+		//
+		// 不判红的话，stale 就成了「写一次永久免检」的免死金牌——本条要防的静默换个马甲
+		// 就回来了；且「仍命中」意味着站点并没有修好，标记与事实相反。
+		if violated != nil && !badTarget && ex.Status == exceptionStatusStale &&
+			violated[exceptionKey(ex.Rule, ex.Path, ex.Line)] {
+			add(policyPath, 0,
+				"例外登记（%s %s:%d）标了 status: %s 却仍命中违反：该标记的语义是「已失效待删」，"+
+					"而它今天仍在豁免真实违规 ⇒ 确认与事实相反。要么去掉标记（它还在用），"+
+					"要么把站点修掉（它确实不需要了）",
+				ex.Rule, ex.Path, ex.Line, exceptionStatusStale)
+		}
+
 		// ── 僵尸例外（issue #447）：登记了，但命中不到任何违反 ──
 		//
 		// 判据是**这一条例外有没有命中它声称的那条违反**（按 rule+path+line 三元组
@@ -275,7 +300,11 @@ func selfCheckWithViolationSet(root string, pol *Policy, violated map[string]boo
 		// 为什么失败形态必须是**变红**：站点被改 / 文件被拆 / 规则口径变了之后，这条例外
 		// 就再也命中不到东西，而门禁照样绿 ⇒ 已不需要的豁免可以永久留在声明面上，下一个
 		// 看声明面的人会以为「这里还有一条已知债」。本仓最贵的失效形态是「门禁变绿」。
-		if violated != nil && !badTarget && !violated[exceptionKey(ex.Rule, ex.Path, ex.Line)] {
+		// 标了 stale 的例外**不参与僵尸判定**——那正是标记的语义（维护者已确认它
+		// 不再需要，等 `until` 到期后随那次清理一起删掉）。它仍由报告逐条点名，
+		// 不是静默留着。
+		if violated != nil && !badTarget && ex.Status != exceptionStatusStale &&
+			!violated[exceptionKey(ex.Rule, ex.Path, ex.Line)] {
 			add(policyPath, 0,
 				"僵尸例外（%s %s:%d）：命中不到任何违反——该站点今天没有这条规则的违规，"+
 					"这条例外什么都没豁免却仍留在声明面上。站点已修复 / 文件已拆 / 规则口径已变的，"+
