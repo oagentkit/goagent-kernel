@@ -39,6 +39,8 @@ const changelogPath = "CHANGELOG.md"
 // 判据不变：新提交一旦混装就红。这张表存在只因为「已发布的历史不可重写」——
 // 不登记它们，本门禁在 v0.41.0 上会永远红，而红理由是既成事实、修不了。
 var legacyMixed = map[string]string{
+	"b2e6305": "v0.70.0：go get oagentkit/toolname 的 go.mod/go.sum 与 README 依赖列同步混装；" +
+		"main 已推送不可重写。依赖部分是 v0.70.0 改指的唯一依赖入口，与文档同步同提交",
 	"6ad6650": "v0.70.0：toolname 改指 oagentkit 的提交混装 go.mod/go.sum 与 import 重指；" +
 		"main 已推送不可重写。其依赖部分是新 module oagentkit/toolname 的引入，与" +
 		"import 重指互为因果；行为变更已在 v0.70.0 CHANGELOG 写明，未藏进依赖段",
