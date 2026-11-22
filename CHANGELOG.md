@@ -2,6 +2,14 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.71.0] — 2026-11-22
+
+### chore(deps)：oekit/pkg v0.59.0——废弃原语清零（PR #475）
+
+上游 oekit/pkg v0.59.0 删除了 v0.58.2 标记 Deprecated 的 toolname 包（强制更换生效）。kernel 自 v0.70.0 起已使用 github.com/oagentkit/toolname，本版仅抬依赖面：go.mod 的 oekit/pkg v0.58.2 → v0.59.0，依赖图不再包含任何已删除包。**零行为变化**，下游无需任何动作。
+
+边界迁移至此全部收口：kernel 51 包全部为编排判据本体，pii/subhub→oekit、toolname→oagentkit、存储参考实现与演示→runtime，废弃原语（整包级）在四个仓均已清零。
+
 ## [v0.70.0] — 2026-11-22
 
 ### chore：toolname 从 oekit 归位 oagentkit（概念归属纠偏）
