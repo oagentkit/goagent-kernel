@@ -147,6 +147,30 @@ RECORD 375 条 0 条含 test）。版本差为补丁级，以下均为**行为**
 **已下沉的 5 个门面**由 `harness-facade-stays-facade` 门禁守着（policy 的 `facades` 段登记），
 「核心归上游、门面留本仓」有机器约束，不只靠本文。
 
+### 2026-11-23：`watchdog` / `trajectory` / `eventbus` 留本仓——以及「若要搬，前置是什么」
+
+独立取证复现了 v0.69.0 那批的结论（`watchdog` 留 kernel：深耦合编排判据），并把**前置条件**
+写清，避免下一次重复评估或误搬：
+
+- `eventbus` **不是通用总线**：它同时承载**编排事件词表**（`EventToolCall` /
+  `EventTurnStarted` / `EventTurnEnded` / …）+ **`ToolCallID` 铸源**（配对键的单源）+
+  `ClosedBy*` 闭合归因词表 ⇒ 属**编排语义面**，不是「与宿主无关的机制」。
+- `watchdog` 的依赖面只有两处：编排事件面（`eventbus`）与编排终态词表
+  （`contract.IsTerminalStatus`）⇒ 它判的是**编排生命周期的不变量**，与编排同层。
+- `trajectory` 依赖 `eventbus` ⇒ 同层。
+- ⇒ 三者一起留在本仓：迁出即形成「矩阵内仓 → kernel」的**反向依赖**（矩阵内仓不得依赖下游）。
+
+**若将来要搬，前置是两件事**（缺一件就会造出「同一事实两份真相」或 breaking 变更）：
+① `eventbus` 的**事件词表 + `ToolCallID` 铸源整块下沉**（拆开搬 ⇒ 事件名与铸造规则分家，
+两处各判一次就会漂）；② `contract` 的终态词表改**接缝注入**（`watchdog` 不再 import
+`contract`）——这是 Stable 包的 **breaking 变更**，须走 `docs/api-compat.md` 的流程。
+在那之前不动。
+
+（取证 2026-11-23：`go list -deps` 实测——`eventbus` 零本仓内部依赖；`trajectory` 仅依赖
+`eventbus`；`watchdog` 依赖 `eventbus` + `contract`。消费方清单：kernel 内 `eventbus`
+5 个消费方（eval / reconcile / trajectory / watchdog / worker-faultmatrix），`trajectory`
+3 个（2 个是测试），`watchdog` 零内部引用。）
+
 **该让（上游已覆盖或本就属宿主/运行时）**：bashguard 式规则 DSL、permgate、fence、
 澄清/合议/复审/路由、工具调度与限流、tokenizer 估算、provider 消息块形态识别。
 
