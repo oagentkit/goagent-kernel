@@ -164,13 +164,41 @@ func ParseText(text, file string) *Ledger {
 			inTable[i] = true
 		}
 	}
+	inCode := fencedCodeLines(lines)
 	for i, line := range lines {
-		if inTable[i] {
+		if inTable[i] || inCode[i] {
 			continue
 		}
 		l.parseProse(lines, i, line)
 	}
 	return l
+}
+
+// fencedCodeLines 标出围栏代码块（``` 起止）内的行，供主循环跳过。
+//
+// **代码块不是台账的叙述**：它是示例与引用——合成数据、被改掉的原文、命令、
+// 输出。把它们当声明会凭空造出状态归属：§36 / §37 为了说明「状态标记词的歧义」
+// 逐字引用了那句原文，判据当场把 #411 派生成待清偿（而它 2026-11-17 就关了）。
+//
+// 这个坑连踩三次（§36 正文 / §36 引用原文 / §37 引用原文），每次都是「改措辞
+// 绕开」——**靠作者记得改措辞防不住**，故由机制挡：围栏内的行不进单号视图。
+//
+// 只认**行首**的 ```（允许前导缩进）：正文里夹的行内反引号不是围栏。
+// 围栏行本身也跳过（它只是标记，不含声明）。
+func fencedCodeLines(lines []string) map[int]bool {
+	out := make(map[int]bool, len(lines))
+	in := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			in = !in
+			out[i] = true
+			continue
+		}
+		if in {
+			out[i] = true
+		}
+	}
+	return out
 }
 
 // File 返回台账文件路径。

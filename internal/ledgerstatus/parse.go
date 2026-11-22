@@ -183,10 +183,11 @@ func (l *Ledger) parseRow(line int, cells []string, regIdx map[int]bool, statusI
 			}
 			continue
 		}
+		cellStatus := statusForLine(cell)
 		for _, n := range issueNumbersIn(cell) {
 			l.add(Occurrence{
 				Number: n, File: l.file, Line: line + 1,
-				Kind: OccurrenceReference, Status: statusFromText(cell),
+				Kind: OccurrenceReference, Status: cellStatus,
 				Text: truncate(cell, truncateWidth),
 			})
 		}
@@ -198,7 +199,7 @@ func (l *Ledger) parseProse(lines []string, idx int, line string) {
 	if strings.TrimSpace(line) == "" {
 		return
 	}
-	status := statusFromText(line)
+	status := statusForLine(line)
 	for _, n := range issueNumbersIn(line) {
 		l.add(Occurrence{
 			Number: n, File: l.file, Line: idx + 1,
@@ -273,6 +274,50 @@ func issueNumbersIn(text string) []int {
 		out = append(out, n)
 	}
 	return out
+}
+
+// issueMentionsIn 返回文本里非 PR 单号的**全部出现**（含同一单号重复出现、
+// 不去重）。
+//
+// 与 issueNumbersIn（去重）分开是有意的：判「这一行的状态词修饰谁」要看的是
+// **出现次数**，不是不同单号的个数——
+//
+//	——#411 就是这条的实例。**本轮动了一处**（#411 的用例换成……），**仍开着**——……
+//
+// 这一行里 #411 只有一个**编号**，却出现在两处语境里（前半句讲它是什么、
+// 后半句讲「这条建议」的状态），而「仍开着」到底修饰谁，形式上判不出来。
+// 去重后的长度是 1 ⇒ 用它判会漏掉这种形态（issue #411 的实际误判就是这么来的）。
+func issueMentionsIn(text string) []int {
+	prs := prRefsIn(text)
+	var out []int
+	for _, m := range numberRe.FindAllStringIndex(text, -1) {
+		n, err := strconv.Atoi(text[m[0]+1 : m[1]])
+		if err != nil || prs[n] {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// statusForLine 读一行散文/一个单元格的状态声明。
+//
+// **多个单号出现时一律不猜**（返回 StatusUnknown）：状态词只出现一次，而它
+// 修饰哪一个单号形式上判不出来——猜一个就是替台账做决定。
+//
+// 这与 statusFromText 已有的「一行里两种标记同时出现 ⇒ 判不出」是同一条哲学：
+// **归属不确定时宁可不表态**。假声明比没声明贵（它会被判据 1 拿去判出假矛盾、
+// 被判据 5 拿去对账出假红——#411 就是后者：它其实早在 2026-11-17 就关了，
+// 却因为「那条建议仍开着」这句被派生成待清偿）。
+//
+// 代价（如实登记）：多单号正文行的**辅助**状态声明不再生效 ⇒ 判据 1 对这类行
+// 可能漏报矛盾。权威状态在**登记表的状态列**（statusFromCell，整行一个状态、
+// 与单号个数无关），它不受本函数影响 ⇒漏掉的只是叙述性辅助，不是权威面。
+func statusForLine(text string) Status {
+	if len(issueMentionsIn(text)) > 1 {
+		return StatusUnknown
+	}
+	return statusFromText(text)
 }
 
 // prRefsIn 找出文本里以 PR 形态出现的号。
