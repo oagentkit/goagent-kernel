@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 93,
-  "callsites": 433,
+  "declarations": 91,
+  "callsites": 428,
   "fully_written": 5,
   "seams": [
     {
@@ -302,11 +302,6 @@
       "callsites": 3
     },
     {
-      "id": "netguard.URLResolver",
-      "kind": "interface",
-      "callsites": 1
-    },
-    {
       "id": "offload.Store",
       "kind": "interface",
       "callsites": 1
@@ -466,11 +461,6 @@
       "id": "tenant.QuotaSource",
       "kind": "interface",
       "callsites": 1
-    },
-    {
-      "id": "ticket.Backend",
-      "kind": "interface",
-      "callsites": 4
     },
     {
       "id": "watchdog.Pub",

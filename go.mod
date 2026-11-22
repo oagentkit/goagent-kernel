@@ -36,7 +36,6 @@ require (
 	github.com/oagentkit/runtime v0.13.0
 	github.com/oagentkit/toolgate v0.17.4
 	github.com/oagentkit/toolname v0.1.0
-	github.com/oagentkit/tools v0.15.0
 	github.com/oekit/concurrency v0.38.1
 	github.com/oekit/logx v0.11.0
 	github.com/oekit/pkg v0.59.0
@@ -74,6 +73,7 @@ require (
 	github.com/oagentkit/mcpkit v0.14.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/rogpeppe/go-internal v1.15.0 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/slongfield/pyfmt v0.0.0-20220222012616-ea85ff4c361f // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -88,5 +88,4 @@ require (
 	golang.org/x/sync v0.25.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
-	mvdan.cc/sh/v3 v3.14.1 // indirect
 )

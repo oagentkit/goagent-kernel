@@ -115,24 +115,27 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **54** 个包（Stable 19 / Experimental 35 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe）。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
+api-lifecycle.yaml 登记 **51** 个包（Stable 18 / Experimental 33 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe，v0.73.0 删 netguard/ticket/cmdpolicy（三包上移上游））。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /
   `checkpoint` / `commitgate` / `statemachine` / `sidetest`——宿主实现这些
   接口就是绑定承诺，它们的变更成本最高，所以最先进 Stable；
-- **门面 Stable + 跟随上游**：`dispatch` / `policy` / `reminder` / `toolfail` /
-  `sandbox`——调用面稳定，判据语义随上游 oagentkit/guardx、toolgate 演进
-  （`follows_upstream` 登记，门禁验 import 面）；
-- **小判据 Stable**：`toolname` / `pending` / `ticket` / `watchdog` /
-  `statemachine`——小、冻结、判据已写死（`watchdog` 只依赖 eventbus 与
-  contract 两个内部包，无外部依赖）；
+- **门面 Stable + 跟随上游**：这一组**如今不存在**——`dispatch` / `policy` /
+  `reminder` / `toolfail` / `sandbox` 五个门面包已于 v0.35.0 整包删除，
+  消费方直连上游（oagentkit/agent·toolgate·guardx），policy 的 `facades` 段
+  置空。别按旧版本文档把门面登记回来；
+- **小判据 Stable**：`pending` / `watchdog`——小、冻结、判据已写死
+  （`watchdog` 生产面只依赖 eventbus / contract / trajectory 三个内部包，
+  无外部依赖）。`toolname`（v0.69.0 上移、v0.70.0 归位 oagentkit）与
+  `ticket`（v0.73.0 上移 guardx）已不在本仓，不在本组；
 - **Experimental**：两类——「明显还在演进」的（`ptc` 两轮 BREAKING 未远、
-  `budget` 压实骨架刚落、`trajectory` 投影面随上游事件流扩、`egress`/
-  `netguard` 出口强制件两端仍空、2026-11-06 批次的七个新包
+  `budget` 压实骨架刚落、`trajectory` 投影面随上游事件流扩、`egress`
+  出口强制件两端仍空、2026-11-06 批次的六个新包
   `sessionref`/`delegate`/`worktree`/`memorypipe`/`hookengine`/
-  `skilldisclose`/`cmdpolicy`），以及**无对外承诺也不该有**的门禁与内部件
-  （`archcheck` 判据面随 policy 演进、`internal/subhub` 被 Go 可见性挡住、
-  `taskboard/boardtest` 与 `examples/reference-runtime` 是测试/示例）。
+  `skilldisclose`），以及**无对外承诺也不该有**的门禁与内部件
+  （`archcheck` 判据面随 policy 演进、`internal/ledgerstatus` 是内部件、
+  `taskboard/boardtest` 是契约测试子包）。已上移上游的包（`netguard` /
+  `cmdpolicy`，v0.73.0）不在本组——它们的定级由上游仓的清单各自负责。
 
 Experimental → Stable 的晋级条件：**一个 minor 版本内无 breaking**且
 判定语义有配套契约套件或负对照的，下一版可晋级——晋级是显式动作

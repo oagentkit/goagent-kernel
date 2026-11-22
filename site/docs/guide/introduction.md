@@ -78,7 +78,7 @@ title: 介绍
 | 崩了怎么接着跑 | `checkpoint` + `commitgate` | `StoreCAS` 实现、终态词表注入 |
 | 上下文怎么不被撑爆 | `budget` + `spill` + `offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
 | 进度怎么推给前端 | `eventbus` + `watchdog` | 落库 + 广播、告警发布出口 |
-| 出站请求怎么防 SSRF | `netguard` | 挂在自己的 `DialContext` 上 |
+| 出站请求怎么防 SSRF | 上游 `guardx/netguard` | 挂在自己的 `DialContext` 上 |
 | 个人信息怎么脱敏 | `pii` | 阻断决策（内核只回报信号） |
 | 多工具聚合怎么省往返 | `ptc` | 工具绑定、判定环切片 |
 | 副作用怎么保证只做一次 | `sideeffect` + `retryplan` | `Store` 实现（跨进程原子）、幂等键 |

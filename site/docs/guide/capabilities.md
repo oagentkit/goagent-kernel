@@ -38,13 +38,13 @@ title: 能力详解
     <text x="130" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">budget · spill · offload</text>
     <rect x="270" y="156" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
     <text x="380" y="182" text-anchor="middle">⑤ 程序化编排</text>
-    <text x="380" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">ptc · sandbox · cmdpolicy · egress</text>
+    <text x="380" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">ptc · sandbox · egress</text>
     <rect x="520" y="156" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
     <text x="630" y="182" text-anchor="middle">⑥ 实时与流式</text>
     <text x="630" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">eventbus · watchdog · delta · drain · pending</text>
     <rect x="20" y="244" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
     <text x="130" y="270" text-anchor="middle">⑦ 安全面</text>
-    <text x="130" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">netguard（SSRF）· pii（脱敏）</text>
+    <text x="130" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">netguard · pii（已上移上游）</text>
     <rect x="270" y="244" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
     <text x="380" y="270" text-anchor="middle">⑧ 副作用只做一次</text>
     <text x="380" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">retryplan · sideeffect · sidetest</text>
@@ -225,7 +225,7 @@ title: 能力详解
 
 **什么时候用**：工具面大、历史长、或产出含大对象（图片、日志、报告全文）。
 
-## 5 · 程序化编排：`ptc` + `sandbox` + `cmdpolicy` + `egress` + `preset`
+## 5 · 程序化编排：`ptc` + `sandbox` + `egress` + `preset`
 
 **解决**：N 轮 ReAct 往返的上下文成本与原始数据过模型面的问题。
 
@@ -266,7 +266,7 @@ title: 能力详解
   <line x1="464" y1="160" x2="502" y2="160" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
   <path d="M566,142 C566,118 120,118 88,138" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
   <text x="20" y="218" font-size="11" fill="#9aa7b8">三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘 · 纯 Go 零 CGO</text>
-  <text x="20" y="242" font-size="11" fill="#9aa7b8">程序内 host.&lt;tool&gt;() 走同一套判定环 · cmdpolicy 把判据下探到命令行 · egress 管子进程出口</text>
+  <text x="20" y="242" font-size="11" fill="#9aa7b8">程序内 host.&lt;tool&gt;() 走同一套判定环 · egress 管子进程出口 · 命令级判据在上游 tools</text>
 </svg>
 </div>
 <p class="diagram-cap">同一个任务：上面每一轮的原始数据都要挤进上下文；下面只有一次往返，原始数据留在沙箱里。</p>
@@ -274,7 +274,7 @@ title: 能力详解
 - `ptc`：绑定可带 Signature（净化名，撞名装配期拒）；
 - `sandbox`：档位声明与兑现（`sandbox.Capable`）——子进程后端用 cgroup v2 `memory.max`
   兑现 `MaxMemory`，**建不出即拒绝执行**；
-- `cmdpolicy`：命令级判据（前缀 token 规则 + 三态裁决，规则自带样例、加载期自检）；
+- `cmdpolicy`（**上游 `oagentkit/tools/cmdpolicy`**）：命令级判据（前缀 token 规则 + 三态裁决，规则自带样例、加载期自检）；
 - `preset`：把「档位 × 审批 × 出口」收成一份具名组合。
 
 **什么时候用**：一次任务要聚合多次工具调用（多表查询、批量巡检、逐机采样）。
@@ -287,14 +287,14 @@ title: 能力详解
 - `drain`：优雅排水（用 `DrainSession` 而非全局 `Drain`）；
 - `pending`：多轮挂起态载体（落列必须走 `pending.ColumnValue`）。
 
-## 7 · 安全面：`netguard` + `pii`
+## 7 · 安全面：出站守卫与脱敏（**两包已上移上游**）
 
 <div class="diagram">
 <svg viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
     <marker id="ar7" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
   </defs>
-  <text x="16" y="24" font-size="12.5" fill="#e6edf3">netguard：出站请求的四道放行判据，逐层收紧</text>
+  <text x="16" y="24" font-size="12.5" fill="#e6edf3">netguard（上游 guardx）：出站请求的四道放行判据，逐层收紧</text>
   <g font-size="11" fill="#e6edf3">
     <rect x="16" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
     <text x="98" y="62" text-anchor="middle">① 名字层</text>
@@ -334,9 +334,9 @@ title: 能力详解
 </div>
 <p class="diagram-cap">出站四道判据逐层收紧，最后一道在建连之后核对真实地址；脱敏只回报信号，处置在宿主。</p>
 
-- `netguard`：出站 SSRF 守卫——名字层 + 逐 IP 过 egress + 重定向逐跳重验 +
+- `netguard`（**上游 `oagentkit/guardx/netguard`**）：出站 SSRF 守卫——名字层 + 逐 IP 过 egress + 重定向逐跳重验 +
   `DialFunc` 建连后核对真实 RemoteAddr（闭合 rebinding 窗口）；
-- `pii`：个人信息脱敏（手机号/身份证四重校验），内核只回报信号，阻断由宿主执行。
+- `pii`（**上游 `oekit/pkg/pii`**）：个人信息脱敏（手机号/身份证四重校验），内核只回报信号，阻断由宿主执行。
 
 **什么时候用**：模型/工具能碰外网，或报告/上下文里可能进个人信息。
 
@@ -390,11 +390,12 @@ title: 能力详解
 ## 9 · 协作与治理面
 
 `taskboard`（多 agent 认领与依赖）· `skilldisclose`（技能渐进披露）·
-`hookengine`（钩子装配）· `memorypipe`（记忆管道）· `ticket` / `trajectory`（工单与轨迹）·
+`hookengine`（钩子装配）· `memorypipe`（记忆管道）· `trajectory`（轨迹）·
 `toolname`（工具名净化）· `gatecheck`（审批 × 档位联合判据）·
 `sessionref` / `worktree` / `delegate`（会话引用 / 工作树 / 委派）。
 跨宿主必须一致的判定语义**只在上游有一份**：失败分类 `guardx/toolfail`、
-隔离档位 `guardx/sandbox`、审批门 `toolgate/policy`、
+隔离档位 `guardx/sandbox`、审批门 `toolgate/policy`、出站守卫 `guardx/netguard`、
+一次性票据 `guardx/ticket`、命令级裁决 `tools/cmdpolicy`、
 派发可达性 `oagentkit/agent/dispatch`——本仓不保留转发门面（`facades` 段为空）。
 本仓的 `dispatch` 是**派发失败面**（transient / fatal / other 三档 + 兜底改派环），
 不是可达性门面。

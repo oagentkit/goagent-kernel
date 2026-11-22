@@ -91,13 +91,6 @@ modules:
     notes: 输出预算溢出：提示契约/取回/按龄清理，宿主与前端共用判据
 
 
-  - id: netguard
-    roots: [netguard]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"] # 订阅表已随 pii 上移 oekit/pkg/subhub（v0.57.0）
-    owner: harness
-    managed: true
-    notes: 出站 URL 守卫（SSRF），纯 stdlib 叶子层
-
   - id: contract
     roots: [contract]
     requires: ["ext:github.com/oekit/pkg"] # 哨兵用 pkg/errors（ErrSessionDeadline 单源，#333）
@@ -262,41 +255,6 @@ modules:
 
       Resolve 遇到未登记名字**报错而不降级**：降级到缺省的方向不可预测（可能更松），
       而「打错一个字就用上另一档权限」没有任何信号。
-
-  - id: cmdpolicy
-    roots: [cmdpolicy]
-    requires: ["ext:github.com/oekit/pkg", "ext:github.com/oagentkit/tools"]
-    owner: harness
-    managed: true
-    notes: |
-      命令级判据：把判定面从「工具调用」向下延伸到「工具内部实际执行的那条命令」。
-
-      此前判定边界停在工具名上：一次 tools.exec 被审批通过之后，它内部跑的是
-      git status 还是 rm -rf / 没有任何机制面看得见。宿主只能用正则黑名单兜，
-      而黑名单在「写法与语义不一致」时必然失效（多空格、变量拼接、子命令替换）。
-      本包改用**前缀 token 规则**：先分词再比 token，判据不随引号/转义/空白漂移，
-      且拒绝理由可解释、能直接回给模型。
-
-      三态裁决（allow / prompt / forbidden）与 toolgate 的裁决词表同义，不引入
-      第二套口径——prompt 直接接 gatecheck 的「需人审」档。
-
-      **规则自带样例，加载即自检**：每条规则可带 Match / NotMatch，New 在加载期
-      用真实判定路径跑一遍，不一致即报错。这是「从没见过它触发的规则等于没有规则」
-      那条纪律的机器化——规则会随命令名漂移，而漂移不会报错，只会静静地不再命中。
-
-      SplitCommands 单独存在是因为前缀判据有一个典型绕过："git status; rm -rf /" 的
-      前缀是 git，对整串只判一次就会让一条 git 的 allow 规则放行后半段。
-
-      **分词面归上游**（2026-11-11 收编）：分词是 oekit/pkg/shellx.Split，段文本拼装是
-      shellx.QuoteArgv（它的逆运算，保证段可往返）。本仓不再维护第二份分词口径——
-      口径只有一处真相，且 POSIX 细节（双引号内反斜杠、分隔符合并、CR 归空白）
-      由上游维护。判据面（前缀规则 / 三态裁决 / 样例自检）仍归本仓。
-
-      **事实面归上游**（2026-11-11 收编）：「这条命令里出现了什么」（全调用集、
-      全重定向集、动态词）走 oagentkit/tools/bashguard 的真 shell AST（mvdan.cc/sh），
-      本仓不手写 shell 解析器。前缀判据的三类典型绕过（多段 / 命令替换 / 写重定向）
-      由「全调用面取最严 + 事实面下限（写重定向、动态展开 ⇒ 不低于 prompt）」闭合。
-      bashguard 的只读/不可逆风险分级是另一套语义，本包不用。
 
   - id: egress
     roots: [egress]
@@ -547,17 +505,6 @@ modules:
   # 本包把口径收成单源：**时长只有起止时刻相减一个出处**，行里不存时长字段
   # （Duration() 现算），于是估算值结构性无处安放——不是靠纪律约束，是装不进去。
   # 配对缺口（缺结果/重复结果/无对应调用/重复声明）显式可见，不静默丢弃。
-  - id: ticket
-    roots: [ticket]
-    requires: []
-    owner: harness
-    managed: true
-    notes: |
-      一次性短时授权票据的机制面：签发/单次消费/TTL/用途绑定。消费即作废，
-      过期判定与消费判定同一处；绑定载荷原样携带，语义归宿主解释。零内部依赖
-      （纯 stdlib），时钟可注入——过期语义要能被确定性测，不靠 sleep。
-      票据空间有界且满了显式拒发（默默淘汰会让宿主以为票据还在，实际已失效）。
-
   - id: trajectory
     roots: [trajectory]
     requires: [eventbus]
@@ -2308,7 +2255,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, netguard, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, cmdpolicy, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, ticket, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

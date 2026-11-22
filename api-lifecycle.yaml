@@ -68,10 +68,6 @@ packages:
     level: Stable
     since: v0.33.0
     reason: 多轮挂起态载体，73 行零依赖，编码/宽容解码口径冻结。
-  - pkg: ticket
-    level: Stable
-    since: v0.33.0
-    reason: 一次性短时授权票据，零依赖；过期判定与消费判定同处、时钟可注入，机制自洽且 2026-11-06 后未动。
   - pkg: watchdog
     level: Stable
     since: v0.33.0
@@ -123,10 +119,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: v0.31/v0.33 两轮 BREAKING（缺省即拒绝、内存上限）都落在本包；VM 编排面仍在演进，2026-11-11 还在动。
-  - pkg: netguard
-    level: Experimental
-    since: v0.33.0
-    reason: 出站守卫与 egress 兑现链耦合，出口强制件两端仍空（GAP-20261107 的开项 P0），强制语义未定型。
   - pkg: egress
     level: Experimental
     since: v0.33.0
@@ -139,10 +131,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 预设集随「档位×审批×出口」三件判据演进，三件其一未冻结则预设组合还会变。
-  - pkg: cmdpolicy
-    level: Experimental
-    since: v0.33.0
-    reason: 命令级判据（前缀 token 规则）2026-11-06 立包，危险形态清单是开放的，规则集还会扩。
   - pkg: skilldisclose
     level: Experimental
     since: v0.33.0

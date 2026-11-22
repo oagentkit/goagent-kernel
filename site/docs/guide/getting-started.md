@@ -321,4 +321,4 @@ case dispatch.ClassOther:     // 不确定：仅同域重试
 - [坑速查](../reference/pitfalls.md)——接完线自查一遍；
 - 仓内 [docs/USAGE.md](https://github.com/yi-nology/goagent-kernel/blob/main/docs/USAGE.md)
   ——逐包的「职责 → 集成片段 → 关键符号 → 坑」，包括 eventbus / delta / drain /
-  netguard / pii / sideeffect 等本文没展开的组。
+  netguard / pii（均已上移上游）/ sideeffect 等本文没展开的组。

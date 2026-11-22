@@ -8,6 +8,11 @@
 > 幽灵条目 ⇒ 红。**先登记再合入**，不是发版后补文档。
 > 清单小节名必须与 `api-lifecycle.yaml` 的 `pkg` 完全一致（含 `internal/`
 > 前缀这类路径形态），段落挂错包名同样红。
+>
+> **本表只登记本仓的包**：已上移上游的包（`netguard` → `github.com/oagentkit/guardx/netguard`、
+> `ticket` → `github.com/oagentkit/guardx/ticket`、`cmdpolicy` → `github.com/oagentkit/tools/cmdpolicy`；
+> v0.73.0 起本仓不再有副本）其哨兵与结构化错误类型**去上游各自的包注释查**——
+> 本表不留幽灵行（同门禁双向判定：代码里没有的条目，表里写了即红）。
 
 ## 判定方式
 
@@ -60,12 +65,6 @@
 | `ErrStoreMissing` | 未装配存储就要提交快照 | 修声明：装配存储（显式失败，不静默成功） |
 | `ErrStaleFence` | 栅栏条件提交（`SaveIfNewerFenced` / `CommitFenced`）发现出示的会话代次已被更新（任务已易主） | 停手：本执行者已失去持有资格，进度不得再写；按重新认领后的新会话提交，或放弃本次执行 |
 | `ErrFenceUnsupported` | 存储不实现栅栏条件提交，调用方仍要求带代次提交（不支持时不降级、显式失败） | 换实现栅栏条件提交的存储；或改走普通 `SaveIfNewer` 并自行接受「无栅栏则旧持有者迟到写可落库」的弱口径（显式选择，不得静默） |
-
-### cmdpolicy
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrUnjudgeable` | 命令超长或解析失败，未进 AST 判定 | 修声明口径的 fail-closed：**判不了就不放行**，按审批拒绝处置，不得当成「没有命中规则」放行 |
 
 ### commitgate
 
@@ -212,16 +211,6 @@
 | `ErrSingleRegion` | 单区域本地权威不支持跨区域转移 | 修装配：多区域部署接共享权威；单区域无需转移 |
 | `ErrBadMapping` | 区域权威映射不合法（空映射 / 空任务域 / 空区域） | 修声明：装配期修正映射；不得以空映射启动（否则配置错误与业务错误分不开） |
 
-### netguard
-
-| 哨兵 | 触发条件 | 调用方处置 |
-|---|---|---|
-| `ErrBlockedName` | 出站主机名命中拦截名单 | 放弃该主机；用 `As` 取 `BlockedNameError` 读 host 与命中规则留痕 |
-| `ErrNilSubscriber` | 扩展策略订阅回调为 nil | 修声明：装配订阅回调 |
-| `ErrInvalidBlockedSuffix` | 扩展拦截后缀非法（注入期拒绝） | 修声明：修正后缀配置 |
-| `ErrTooManyHops` | 重定向跳数超限 | 放弃该 URL（安全策略拦下，重试同一 URL 无意义） |
-| `ErrEmptyLocation` | 3xx 无 Location——「链条到此终止」信号，**不是被拒** | 把当前响应当最终响应返回；不要重试，也不要把它当失败留痕 |
-
 ### offload
 
 | 哨兵 | 触发条件 | 调用方处置 |
@@ -360,8 +349,6 @@
 | 符号 | 含义 | 调用方处置 |
 |---|---|---|
 | `commitgate.AlreadyCommittedError` | 终态重复提交的现场：先前提交者（`Prev`）、`PrevSeq`、双方状态与分支 | `As` 后读字段对账谁是赢家；`Unwrap` 回 `ErrAlreadyCommitted` 可统一 Is 判定 |
-| `netguard.BlockedNameError` | 名字层拒绝现场：`Host` 与命中原因 `Reason` | `As` 后读字段留痕；`Unwrap` 回 `ErrBlockedName` |
-| `netguard.HopDeniedError` | 重定向链某一跳被拒：`Hop`（1 = 起始 URL）、`URL`、底层 `Err` | `As` 后按跳号定位是哪一跳出的问题，再对 `Err` 做 Is 判定 |
 | `ptc.ExecutionAborted` | 子进程执行域异常终止：退出状态 `Exit` 与**已脱敏**的 `Stderr` 尾部 | `As` 后读 `Stderr` 判死因（内核兜底 vs 自身 fatal）；与 `ErrMemoryLimitUnsupported` 分开处置 |
 | `tooldisclose.GateError` | 门禁拒绝的结构化形态：工具名、拒绝类别、是否可重试、是否已激活 | `As` 后按字段分派处置；模型侧指引走链上 `Reason`，不要自己拼文案 |
 
