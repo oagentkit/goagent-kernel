@@ -12,6 +12,8 @@ import (
 
 // runReport 一轮门禁的完整结论。
 type runReport struct {
+	// Label 门禁名（race / fault-injection …），进报告文案。
+	Label string
 	// Started 起始时刻（UTC RFC3339）。
 	Started string
 	// Duration 墙钟耗时。
@@ -38,6 +40,14 @@ type runReport struct {
 	RecheckLog string
 }
 
+// label 取门禁名；未填时按 race 处理（与编排层的归一化同款缺省）。
+func (r runReport) label() string {
+	if r.Label == "" {
+		return "race"
+	}
+	return r.Label
+}
+
 // renderReport 渲染结论块。
 //
 // 判绿（环境面已复核）与判红用**不同的开头**——
@@ -48,7 +58,7 @@ func renderReport(r runReport) string {
 		b.WriteString("⚠️  raceprobe: 检出「启动期楔死」（环境面），并已用**串行复核**排除代码面\n")
 		b.WriteString("    本次门禁判绿——但事件已留痕，且这不是豁免，是一次有据的复核。\n")
 	} else {
-		b.WriteString("raceprobe: race 门禁未通过\n")
+		fmt.Fprintf(&b, "raceprobe: %s 门禁未通过\n", r.label())
 	}
 	fmt.Fprintf(&b, "    · 起始：%s　耗时：%s　退出码：%d\n", r.Started, r.Duration, r.ExitCode)
 	if r.TimedOut {
@@ -81,7 +91,10 @@ func renderReport(r runReport) string {
 }
 
 // writeEvidence 把结论块写进取证目录（与原始输出同一目录，一眼能找到）。
-func writeEvidence(dir, stamp, text string) error {
-	path := filepath.Join(dir, "race-"+stamp+".verdict.txt")
+func writeEvidence(dir, label, stamp, text string) error {
+	if label == "" {
+		label = "race"
+	}
+	path := filepath.Join(dir, label+"-"+stamp+".verdict.txt")
 	return os.WriteFile(path, []byte(text), 0o644)
 }

@@ -484,7 +484,7 @@ Cluster）和执行函数；`TestFaultDeploymentMatrix` 先自检「**每个已�
 **怎么跑**：
 
 ```bash
-make fault-injection                                              # 全仓 TestFault*（门禁层）
+make fault-injection                                              # 全仓 TestFault*（门禁层；raceprobe 接管）
 go test ./worker/faultmatrix -run TestFaultDeploymentMatrix -v    # 只跑矩阵
 ```
 
@@ -809,6 +809,7 @@ make check
 | `architecture-check` | 规则 + 门包 + 各包依赖方向（**条数 / 门包数 / 包数一律以该命令输出为准**，本表不抄——抄进来就是给自己造一份会静默过期的真相）| 见下表 |
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**） | 依赖漏洞抬版本；**标准库**漏洞抬 go.mod 的 `go` 指令（`toolchain` 指令会被忽略）|
 | `race` | 数据竞争（`-race`，**开 cgo**：Linux 上 `-race requires cgo`）。失败时由 `cmd/raceprobe` 出**形态判定**：数据竞争 / 用例挂死（**有** goroutine 栈 ⇒ 代码面）/ **启动期楔死**（**没有**栈 ⇒ Go 运行时压根没起来 ⇒ **环境面**，改代码没用，查机器面）/ 普通用例失败 / 认不出 | 按形态处置：代码面按栈或失败用例名修；环境面看 raceprobe 落的取证（原始输出 + 结论块，默认在 `$TMPDIR/goagent-kernel-race`）；别把该目标改成 `CGO_ENABLED=0` |
+| `fault-injection` | 全仓 `TestFault*`（注入矩阵）的失败形态——**2026-11-22 起由 raceprobe 接管**（§26 建议 2）：与 race 共用同一套判据与取证，失败时给形态结论 + 落盘（原始输出 + 结论块，默认 `$TMPDIR/goagent-kernel-fault`）| 按形态处置（同 race 行）；本层 `-race=false`（不判竞态，cgo 随开关注入 0）；预算 `FAULT_GO_TIMEOUT=7m` / `FAULT_WATCHDOG=10m`（看门狗必须 > 用例超时 + 1m）|
 | `crossbuild` | 声明支持的平台（`CROSS_TARGETS` = linux/amd64、linux/arm64、darwin/arm64、**windows/amd64**）编不过 | 看是否引入了平台专属符号；windows 侧是**语义降级**（无进程组信号语义，TERM 优雅退出降级为整树硬终止），不是不支持 |
 | `docsync` | README **包表** ↔ 仓库实际（包名 / 行数 / 依赖列 / 职责列）+ **「工程底座」表的三项确定性量**（生产行数 / 文件数 / 测试文件数，判相等不留容差）| 按报错给的实测值改 README；**覆盖率与其余描述性行不在判定面内**，那几格要自己手算 |
 | `seamcheck` | 接缝契约三形态（A 只读 / B 阻断 / C 阻断）没写齐（issue #400）| 按 `docs/SEAM-CONTRACT.md` 补声明与三条约束；基线用 `go run ./cmd/seamcheck -update` 落 |
@@ -819,7 +820,7 @@ make check
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
-| `hygiene` | 仓库**跟踪**了编译产物二进制（本地构建产物留在工作树里是正确状态，判的是「进了版本库」）| `git rm --cached <路径>` + 删掉工作树副本 + 把该路径补进 `.gitignore`；构建产物请用 `make` 目标或 `go build -o bin/` 产出 |
+| `hygiene` | 仓库**跟踪**了编译产物二进制，**或**跟踪了命中 `.gitignore` 的文件（force-add 的文本产物 / 陈旧跟踪）| `git rm --cached <路径>` + 删掉工作树副本 + 确认路径已在 `.gitignore`；构建产物请用 `make` 目标或 `go build -o bin/` 产出 |
 
 ### 4.1 架构门禁的规则表
 
@@ -1064,7 +1065,7 @@ make lint                           # 只跑 golangci-lint
 make unit                           # 静态门禁 + 全量单测 + 一串一致性门禁
 make race                           # 竞态检测（开 cgo）
 make contract                       # 契约套件自测（sidetest + boardtest）
-make fault-injection                # 全仓 TestFault*（注入矩阵）
+make fault-injection                # 全仓 TestFault*（注入矩阵；raceprobe 接管，失败出形态+取证）
 make gates                          # versioncheck + cover-gate + vuln + crossbuild
 
 # ── 单包迭代 ──────────────────────────────

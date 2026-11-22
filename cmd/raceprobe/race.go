@@ -70,6 +70,19 @@ type options struct {
 	recheck bool
 	// recheckTimeout 复核自己的上限。
 	recheckTimeout time.Duration
+	// noRace 关掉 -race（零值 = 开 race，即 race 门禁的默认形态）。
+	//
+	// 给**别的门禁**复用本工具时用（如 fault-injection：它不判竞态，
+	// 跑 -race 只会白慢一轮，且 cgo 依赖会把它绑到编译器上）。
+	noRace bool
+	// runPattern 传给 go test -run 的过滤（零值 = 不加该 flag）。
+	// fault-injection 用它钉住 `^TestFault`，与原 `go test -run` 形态逐字一致。
+	runPattern string
+	// verbose 传给 go test -v（零值 = 不加）。故障注入层要它：
+	// 每个注入场景的失败形态直接可见（这类用例的红就是它们的文档）。
+	verbose bool
+	// label 门禁名：进取证文件名与报告文案（零值归一为 "race"）。
+	label string
 	// spawn 可注入接缝（用例用假的 spawner）。
 	spawn spawner
 	// now 取时间的函数（用例可固定）。
@@ -117,7 +130,16 @@ func (o options) testArgs(parallelism string, packages []string) []string {
 	if parallelism != "" {
 		args = append(args, "-p", parallelism)
 	}
-	args = append(args, "-race", "-count=1", "-timeout", o.goTimeout.String())
+	if !o.noRace {
+		args = append(args, "-race")
+	}
+	if o.verbose {
+		args = append(args, "-v")
+	}
+	args = append(args, "-count=1", "-timeout", o.goTimeout.String())
+	if o.runPattern != "" {
+		args = append(args, "-run", o.runPattern)
+	}
 	return append(args, packages...)
 }
 
@@ -132,9 +154,12 @@ func runRace(ctx context.Context, o options) (int, string) {
 	if o.now == nil {
 		o.now = time.Now
 	}
+	if o.label == "" {
+		o.label = "race"
+	}
 
 	stamp := o.now().UTC().Format("20060102T150405Z")
-	logPath := filepath.Join(o.outDir, "race-"+stamp+".log")
+	logPath := filepath.Join(o.outDir, o.label+"-"+stamp+".log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		return 2, "raceprobe: 建日志文件失败: " + err.Error()
@@ -164,6 +189,7 @@ func runRace(ctx context.Context, o options) (int, string) {
 	output := buf.String()
 	verdict := raceprobe.Classify(output)
 	report := runReport{
+		Label:    o.label,
 		Started:  started.UTC().Format(time.RFC3339),
 		Duration: elapsed.Round(time.Second).String(),
 		ExitCode: outcome.ExitCode,
@@ -175,8 +201,8 @@ func runRace(ctx context.Context, o options) (int, string) {
 	}
 
 	if outcome.ExitCode == 0 {
-		return 0, fmt.Sprintf("raceprobe: race 门禁通过（%d 个包，耗时 %s，原始输出 %s）",
-			len(report.Passed), report.Duration, logPath)
+		return 0, fmt.Sprintf("raceprobe: %s 门禁通过（%d 个包，耗时 %s，原始输出 %s）",
+			o.label, len(report.Passed), report.Duration, logPath)
 	}
 
 	// 启动期楔死 ⇒ 做串行复核（反事实实验）。
@@ -192,7 +218,7 @@ func runRace(ctx context.Context, o options) (int, string) {
 					"同树串行重跑（-p 1）%d 个受害包全部通过 ⇒ 并行启动期的机器面争用，不是代码缺陷",
 					len(targets))
 				text := renderReport(report)
-				_ = writeEvidence(o.outDir, stamp, text)
+				_ = writeEvidence(o.outDir, o.label, stamp, text)
 				return 0, text
 			}
 			// 复核仍红 ⇒ 按复核的结论判（复核可能揭出真正的代码面缺陷）。
@@ -204,7 +230,7 @@ func runRace(ctx context.Context, o options) (int, string) {
 	}
 
 	text := renderReport(report)
-	_ = writeEvidence(o.outDir, stamp, text)
+	_ = writeEvidence(o.outDir, o.label, stamp, text)
 	return 1, text
 }
 
@@ -212,7 +238,7 @@ func runRace(ctx context.Context, o options) (int, string) {
 //
 // 返回（退出码，复核日志路径，复核输出）。
 func (o options) runRecheck(ctx context.Context, targets []string, stamp string) (int, string, string) {
-	logPath := filepath.Join(o.outDir, "race-"+stamp+".recheck.log")
+	logPath := filepath.Join(o.outDir, o.label+"-"+stamp+".recheck.log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
 		return 1, logPath, ""

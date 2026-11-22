@@ -236,10 +236,87 @@ func TestTestArgs(t *testing.T) {
 	}
 }
 
+// TestTestArgsReuseShapes 钉住**复用形态**的参数拼装（§26 建议 2：fault-injection
+// 走同一套编排时，go test 的参数必须与它原来的形态逐字一致）。
+//
+// 反向验证：把 -race 无条件加回去 / 丢掉 -run / 丢掉 -v，本表任一行即红——
+// 「复用」若偷偷改了被复用门禁的参数，它就不再是同一个门禁了。
+func TestTestArgsReuseShapes(t *testing.T) {
+	// fault-injection 形态：不判竞态、钉 ^TestFault、要 -v。
+	o := options{goTimeout: 7 * time.Minute, noRace: true, runPattern: "^TestFault", verbose: true}
+	args := o.testArgs("", []string{"./..."})
+	want := []string{"test", "-v", "-count=1", "-timeout", "7m0s", "-run", "^TestFault", "./..."}
+	if len(args) != len(want) {
+		t.Fatalf("参数个数错：%v，期望 %v", args, want)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Fatalf("参数错：%v，期望 %v", args, want)
+		}
+	}
+	for _, a := range args {
+		if a == "-race" {
+			t.Fatalf("noRace 形态不该带 -race：%v", args)
+		}
+	}
+	// race 形态（缺省）：带 -race、不带 -run / -v。
+	r := options{goTimeout: 10 * time.Minute}
+	ra := r.testArgs("", []string{"./..."})
+	hasRace, hasRun, hasV := false, false, false
+	for _, a := range ra {
+		switch a {
+		case "-race":
+			hasRace = true
+		case "-run":
+			hasRun = true
+		case "-v":
+			hasV = true
+		}
+	}
+	if !hasRace || hasRun || hasV {
+		t.Fatalf("race 缺省形态错：%v", ra)
+	}
+}
+
+// TestChildEnvCgoFollowsRaceSwitch 钉住 cgo 注入跟着 -race 开关走。
+//
+// 反向验证：把 childEnv 改回无条件注入 1 ⇒ 关 race 的复用形态会绑上 cgo
+// （fault-injection 白慢一轮，且本机无编译器时直接红）；改成不注入 ⇒ race 形态
+// 在 Linux 上 `-race requires cgo` 报错。
+func TestChildEnvCgoFollowsRaceSwitch(t *testing.T) {
+	t.Setenv("CGO_ENABLED", "1") // 父进程取值相反也必须被字面注入覆盖
+	cgoOf := func(enableRace bool) string {
+		for _, kv := range childEnv(enableRace) {
+			if strings.HasPrefix(kv, "CGO_ENABLED=") {
+				return kv
+			}
+		}
+		return ""
+	}
+	if got := cgoOf(true); got != "CGO_ENABLED=1" {
+		t.Fatalf("race 形态的 cgo 注入错：%q", got)
+	}
+	if got := cgoOf(false); got != "CGO_ENABLED=0" {
+		t.Fatalf("关 race 形态的 cgo 注入错：%q", got)
+	}
+}
+
+// TestEvidenceFileNameFollowsLabel 钉住 label 进取证文件名——
+// 两个门禁共用一个取证目录时，文件名不带门禁名就会互相覆盖。
+func TestEvidenceFileNameFollowsLabel(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeEvidence(dir, "fault-injection", "20260101T000000Z", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fault-injection-20260101T000000Z.verdict.txt")); err != nil {
+		t.Fatalf("取证文件没按 label 命名：%v", err)
+	}
+}
+
 // TestWriteEvidence 钉住取证文件落盘。
 func TestWriteEvidence(t *testing.T) {
 	dir := t.TempDir()
-	if err := writeEvidence(dir, "20260101T000000Z", "hello"); err != nil {
+	if err := writeEvidence(dir, "race", "20260101T000000Z", "hello"); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "race-20260101T000000Z.verdict.txt"))
