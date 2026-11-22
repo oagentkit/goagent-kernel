@@ -39,6 +39,10 @@ const changelogPath = "CHANGELOG.md"
 // 判据不变：新提交一旦混装就红。这张表存在只因为「已发布的历史不可重写」——
 // 不登记它们，本门禁在 v0.41.0 上会永远红，而红理由是既成事实、修不了。
 var legacyMixed = map[string]string{
+	"02a5e39": "v0.67.0：参考实现迁移主提交的 go.mod/go.sum 与删包文件混装；" +
+		"PR #470 已合并发布不可重写。其依赖部分是 pgx/modernc 驱动撤除，与被删的" +
+		"两个参考实现互为因果（不 tidy 删不干净）；行为变更已在本段与 CHANGELOG" +
+		"写明（examples 两目录删除，消费方改指 runtime 仓），未藏进依赖段",
 	"00b4d1d": "v0.66.0：pii/subhub 上移提交的 go.mod/go.sum 与删包/import 重指混装；" +
 		"PR #464 已合并发布不可重写。其依赖部分是 oekit/pkg v0.52 到 v0.57 的地板抬升，" +
 		"与被删包的替代 import 互为因果（不抬版本编译不过）；行为变更已在本段与" +
