@@ -39,6 +39,11 @@ const changelogPath = "CHANGELOG.md"
 // 判据不变：新提交一旦混装就红。这张表存在只因为「已发布的历史不可重写」——
 // 不登记它们，本门禁在 v0.41.0 上会永远红，而红理由是既成事实、修不了。
 var legacyMixed = map[string]string{
+	"ece11ad": "v0.73.0：三包上抛上游提交的 go.mod/go.sum 与删包/import 重指混装；" +
+		"PR #486 已合并发布不可重写。其依赖部分是 oagentkit/tools 从依赖图移除" +
+		"（rogpeppe/go-internal 随之降 indirect、mvdan.cc/sh/v3 退出），与被删的" +
+		"三个包互为因果（不 tidy 删不干净）；行为变更已在本段与 CHANGELOG 写明" +
+		"（三包删除 + 改指上游路径 + 必须 go mod tidy），未藏进依赖段",
 	"b2e6305": "v0.70.0：go get oagentkit/toolname 的 go.mod/go.sum 与 README 依赖列同步混装；" +
 		"main 已推送不可重写。依赖部分是 v0.70.0 改指的唯一依赖入口，与文档同步同提交",
 	"6ad6650": "v0.70.0：toolname 改指 oagentkit 的提交混装 go.mod/go.sum 与 import 重指；" +
