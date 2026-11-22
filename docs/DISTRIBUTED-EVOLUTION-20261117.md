@@ -3584,7 +3584,11 @@ toolname 上移 oekit（中间态）/ 三演示迁 runtime / 存储两件套迁 
 
 ### 出货回执（2026-11-22，第三十三轮）
 
-- **来源**：分支 `chore/ledger-clear` ⇒ 合并进主干（PR **#484**）。
-- **门禁**：`make check` 全绿（回执在 PR CI 上复核）。
-- **同批**：#481 / #482 / #483 三个 issue 已开并登记。
+- **来源**：分支 `chore/ledger-clear` ⇒ 合并进主干（PR **#484**，已合并）。
+- **门禁**：本地 `make check` 全绿（MAKE_EXIT=0）；PR CI **6/6 SUCCESS**
+  （unit / race / contract / fault-injection / gates / windows——其中 fault-injection
+  作业在 CI 上用的正是本轮新接的 raceprobe 链路，等于新接线在 CI 复跑了一遍）。
+- **同批**：#481 / #482 / #483 三个 issue 已开并登记（判据 5 双向对账绿）。
+- **一笔操作事故见上文实录**：read 的展示文本被当文件内容 write 回去，台账一度截成
+  7 行——靠写入字节数对不上发现，git checkout 还原。
 
