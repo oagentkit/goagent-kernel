@@ -26,6 +26,12 @@ func resolveRef(root, ref string) (bool, string) {
 	if !strings.HasSuffix(path, ".go") {
 		return false, "必须指向 .go 文件"
 	}
+	// 跨仓引用（参考实现已迁至 goagent-runtime）：本仓机判不了外部文件的
+	// 存在性与符号表——形态检查通过后放行（.go 后缀已在上文判过），
+	// 存在性由该仓自己的门禁兜。判不了就明说判不了。
+	if strings.HasPrefix(path, "https://") {
+		return true, ""
+	}
 	full := filepath.Join(root, path)
 	if _, err := os.Stat(full); err != nil {
 		return false, "所在文件不存在"

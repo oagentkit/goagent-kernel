@@ -230,6 +230,15 @@ func checkContractRef(root, ref string) error {
 	if !ok || path == "" || symbol == "" {
 		return fmt.Errorf("contract 证据必须写成 path#Symbol")
 	}
+	// 跨仓引用（参考实现迁至 goagent-runtime 后的形态）：本仓机判不了外部文件的
+	// 存在性——退化为形态检查（https 链接 + 带符号），存在性由该仓自己的门禁与
+	// 评审纪律兜。判不了就明说判不了，不假装能判。
+	if strings.HasPrefix(path, "https://") {
+		if !strings.HasSuffix(path, ".go") {
+			return fmt.Errorf("跨仓 contract 证据必须指向 .go 文件（%s）", path)
+		}
+		return nil
+	}
 	full := filepath.Join(root, path)
 	if _, err := os.Stat(full); err != nil {
 		return fmt.Errorf("文件 %s 不存在", path)

@@ -98,11 +98,14 @@ func checkStorageCapabilities(root string, st Storage, known map[string]bool) ([
 				continue
 			}
 			path, _, _ := strings.Cut(ev.Ref, "#")
-			if c.Source == sourceStorage && !underRoot(st.CodeRoot, path) {
+			// 跨仓落点（https）无法机判它在哪个仓的代码根下——source 标注的
+			// 位置对账对外部引用降级为「声明面如实即可」，与本仓引用的判据分开。
+			externalRef := strings.HasPrefix(path, "https://")
+			if c.Source == sourceStorage && !externalRef && !underRoot(st.CodeRoot, path) {
 				probs = append(probs, fmt.Sprintf("%s 标注为存储自证型，但落点 %s 不在该存储的代码根 %q 下",
 					ep, path, st.CodeRoot))
 			}
-			if c.Source == sourceKernel && underRoot(st.CodeRoot, path) {
+			if c.Source == sourceKernel && !externalRef && underRoot(st.CodeRoot, path) {
 				probs = append(probs, fmt.Sprintf("%s 标注为内核交付型，但落点 %s 就在该存储的代码根 %q 下",
 					ep, path, st.CodeRoot))
 			}

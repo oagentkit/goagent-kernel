@@ -3,7 +3,7 @@
 // # 为什么判据要扫全仓
 //
 // #323 修了 coord.BoardAdapter 一个实现，契约文本与另外四个参考实现都没跟上
-// （controlplane、examples/pgstore、examples/reference-runtime、examples/sqliteadapter）。
+// （controlplane、coord、examples/reference-runtime；PG/SQLite 参考实现已迁至 goagent-runtime）。
 // 只测某一个实现，下一个实现照抄契约时仍然会漏。故这里用 go/ast 扫
 // **方法指纹**（签名匹配、名字可任意），断言每个 Board.Claim 的方法体都调用了
 // `State.Claimable()`——判据是结构性的，不是「某几个已知文件里有这个字符串」。
@@ -72,11 +72,12 @@ func TestBoardClaimImplementationsUseClaimable(t *testing.T) {
 		t.Fatalf("扫描 Board.Claim 实现失败: %v", err)
 	}
 	// 防假绿：扫描面本身失效（路径写错 / 跳过太多）时，claims 会变空而
-	// 循环一条断言都不跑。4 是当前实现 taskboard.Board 签名的方法数
-	// （coord / examples/pgstore / examples/reference-runtime /
-	// examples/sqliteadapter）；controlplane.MemStore.Claim 是运行时面签名
-	// （ttl time.Duration），由下面的专条判据覆盖。
-	if len(claims) < 4 {
+	// 循环一条断言都不跑。2 是当前实现 taskboard.Board 签名的方法数
+	// （coord / examples/reference-runtime；PG 与 SQLite 参考实现已于 v0.67.0
+	// 迁至 goagent-runtime，其 Board.Claim 实现随仓走、那边自判）；
+	// controlplane.MemStore.Claim 是运行时面签名（ttl time.Duration），
+	// 由下面的专条判据覆盖。
+	if len(claims) < 2 {
 		t.Fatalf("只扫到 %d 个 Board.Claim 实现（扫描了 %d 个生产文件）：%v\n"+
 			"判据已失效——实现改名/移动时必须同步本判据的指纹", len(claims), len(scanned), claims)
 	}

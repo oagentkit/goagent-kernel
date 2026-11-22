@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **52** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **59** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **60** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **57** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **57** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 >
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **52** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **59** 个 module id（61 数的是
+> `architecture-policy.yaml` 的 `modules` 段登记 **57** 个 module id（61 数的是
 > `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **63** 个——`taskboard`
 > 与 `pgrefstore` 各有两个 root。**两个数不是同一种量**：61 数 module id，63 数
 > root 目录）。
@@ -2909,7 +2909,7 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 | 场景 | 推荐存储 | Worker 模式 | 必需能力 | 当前状态 |
 |---|---|---|---|---|
 | `single-process-agent` 单进程 Agent | memory | single-process | 幂等键作用域、Context 取消 | available |
-| `single-host-persistent` 单机持久化 | examples/sqliteadapter | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
+| `single-host-persistent` 单机持久化 | goagent-runtime/sqliteadapter | single-node | 任务板持久化、启动恢复、单一存储全状态、进度对账 | available |
 | `multi-process-same-host` 同机多进程 | PostgreSQL | multi-process | 多进程认领、统一租约、数据库时钟、跨进程令牌、租户隔离存储 | available |
 | `k8s-single-cluster` K8s 单集群多副本 | PostgreSQL | deployment | 统一租约、续期、可靠事件、配额回收、Job 幂等、出站禁网实测、租户隔离存储 | available |
 | `multi-cluster-single-region` 多集群单区域 | shared-authority-pg | local-workers | 权威唯一、可靠事件、租户隔离存储、可靠交接 | available |
@@ -3095,7 +3095,7 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 
 1. **需要跨进程 / 跨机共享写**（多副本、多机、K8s）⇒ **PostgreSQL**。
 2. **需要重启后恢复，且不想为此多起一个服务进程** ⇒ **SQLite**
-   （单文件 WAL 库，参考实现 `examples/sqliteadapter`）。
+   （单文件 WAL 库，参考实现已迁至 goagent-runtime/sqliteadapter）。
 3. **只要进程内判据正确、不要持久化** ⇒ **memory**（进程内实现，不落库）。
 
 **边界写死：单机多进程一律判 PostgreSQL。** SQLite 的单写者模型在多写者下
@@ -3114,7 +3114,7 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 
 **怎么落地**：场景 → 存储的对应关系在
 [docs/DEPLOY-MATRIX.yaml](DEPLOY-MATRIX.yaml)（`single-host-persistent` →
-`examples/sqliteadapter`；`multi-process-same-host` / `k8s-single-cluster` →
+goagent-runtime/sqliteadapter；`multi-process-same-host` / `k8s-single-cluster` →
 `PostgreSQL`），**选型声明面**在
 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml)——那里逐条写了每个存储
 **认领**哪些能力、能力在代码里的落点（`path#Symbol`，`make storagecheck`
@@ -3172,7 +3172,7 @@ n, err := store.SweepExpired(ctx) // Worker 失联：Reconciler 定期扫
 | `batch-cursor-write` | 批内写游标：PG 侧**显式拒绝**（游标独立提交会越过被回滚的事件 ⇒ 静默丢帧），SQLite 侧**挂到 ctx 超时**——都响亮，但**失败形态不同** |
 | `same-store-identity` | 「同一份存储」的判据：SQLite 侧按**文件路径**判（两个路径 / 符号链接 / 两处挂载 ⇒ 装配期拒），PG 侧按 **host/port/database/schema** 四元组判——两侧同款口径 |
 | `control-version-anchor` | 版本锚只被**控制面自身的提交**推进 ⇒ 检测不到控制面之外的写入——**两侧共有**的契约边界，不是 SQLite 的短板 |
-| `facade-schema-bootstrap` | 建表入口的公开面**不对位**：SQLite 侧有 `Store.EnsureSchema`，PG 侧是**包级函数** `pgstore.EnsureSchema` ⇒ 只持门面的宿主在 PG 侧拿不到建表入口 |
+| `facade-schema-bootstrap` | 建表入口的公开面**不对位**：SQLite 侧有 `Store.EnsureSchema`，PG 侧是**包级函数** `pgstore.EnsureSchema`（pgstore 已迁至 goagent-runtime） ⇒ 只持门面的宿主在 PG 侧拿不到建表入口 |
 
 ⇒ **跨引擎迁移时别假设两侧行为一致**（尤其「批内读看得见什么」「批内写游标怎么报错」）。
 逐条全文与落点见 [docs/STORAGE-SELECTION.yaml](STORAGE-SELECTION.yaml) 的
@@ -3380,7 +3380,7 @@ CI 只执行它。**门禁本体全部在 Makefile 里，不在 `ci.yml` 里**�
 | `vet` | go vet |
 | `lint` | golangci-lint（**未安装时明确报错退出**，不静默跳过） |
 | `test` | 全量单测 |
-| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`；豁免分**三张表**：普通豁免（当前为空）、结构性豁免（`examples/pgstore`，环境依赖型）、零测试文件豁免（`cmd/archcheck`、`cmd/ptcchild`、`examples/pgstore/cmd/pgsmoke`）；实测值以该目标输出为准）|
+| `cover-gate` | 全局覆盖率 < 60% **或**任一包 < 70% 即红（逐包判据执行体 `cmd/pkgcov`；豁免分**三张表**：普通豁免（当前为空）、结构性豁免（原 `examples/pgstore` 条目已随包迁出，当前为空）、零测试文件豁免（`cmd/archcheck`、`cmd/ptcchild`）；实测值以该目标输出为准）|
 | `vuln` | `govulncheck` 报出可达漏洞（未安装时**明确报错退出**，不静默跳过）|
 | `race` | 数据竞争（`-race`；**开 cgo**，Linux 上 `-race requires cgo`）。由 `cmd/raceprobe` 接管：红时给**形态判定**（数据竞争 / 用例挂死 / 启动期楔死 / 普通用例失败 / 认不出），并把原始输出与结论落盘到 `RACE_EVIDENCE_DIR`（默认 `$TMPDIR/goagent-kernel-race`）|
 | `crossbuild` | 声明支持的平台编不过（linux/amd64、linux/arm64、darwin/arm64、**windows/amd64（语义降级）**）|

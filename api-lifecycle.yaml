@@ -205,14 +205,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 参考实现（package main）。示例演示契约怎么满足，不构成任何兼容承诺。
-  - pkg: examples/pgstore
-    level: Experimental
-    since: v0.33.0
-    reason: PostgreSQL 参考实现（issue #94 #84 #95）。参考实现不是内核依赖，随契约套件与参考部署演进，不构成任何兼容承诺。
-  - pkg: examples/pgstore/cmd/pgsmoke
-    level: Experimental
-    since: v0.33.0
-    reason: 部署冒烟入口（issue #105）。它的验收是 compose 冒烟 / make integration 真跑，不是稳定 API 面。
   # ── 2026-11-13 清零轮新增（issue #109 / #110 / #111）──
   - pkg: backend
     level: Experimental
@@ -236,10 +228,6 @@ packages:
     reason: 容器后端参考实现随契约与真实引擎演进（与 examples/pgstore 同一性质），不构成任何兼容承诺。
 
   # ── 2026-11-19 新增（issue #424）──
-  - pkg: examples/sqliteadapter
-    level: Experimental
-    since: v0.50.0
-    reason: SQLite(WAL) 单机持久化参考实现——真 SQLite 落库形态（驱动为 modernc.org/sqlite，纯 Go）。路径与表结构随契约套件与参考部署演进，不构成任何兼容承诺。
 
 
   # ── 2026-11-13 新增（issue #106 #107 #108）──

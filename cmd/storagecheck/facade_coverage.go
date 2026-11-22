@@ -91,7 +91,24 @@ func coveredAccessors(sel *Selection, f *facadeDecl) map[string]bool {
 				path, symbol, found := strings.Cut(ev.Ref, "#")
 				// ref 的 path 是**文件**路径，门面声明的 package 是**包目录**
 				// ⇒ 判「落点文件在这个门面包里」，不是判两者字面相等。
-				if !found || !underRoot(f.pkg, path) {
+				inPkg := false
+				if strings.HasPrefix(f.pkg, "external:") {
+					// 跨仓门面：ref 是 https://…/blob/main/<仓内路径> 形态，按 external: 根
+					// 对账「落点在该门面包的仓内路径下」。存在性机判不了（已明说），
+					// 这里只对账**声明面内部一致性**（落点确实指向这个门面包）。
+					const marker = "/blob/main/"
+					// external: 根是 org/repo/pkg 形态，URL 里 blob/main/ 之后是 repo 内的
+					// pkg/... 形态 ⇒ 对账用**包路径末段**（repo 内的相对包目录）。
+					extRoot := strings.TrimPrefix(f.pkg, "external:")
+					extPkg := extRoot[strings.LastIndex(extRoot, "/")+1:]
+					if idx := strings.Index(path, marker); found && idx >= 0 &&
+						strings.HasPrefix(path[idx+len(marker):], extPkg+"/") {
+						inPkg = true
+					}
+				} else {
+					inPkg = found && underRoot(f.pkg, path)
+				}
+				if !inPkg {
 					continue
 				}
 				for _, a := range f.accessors {
