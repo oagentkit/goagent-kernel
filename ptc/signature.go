@@ -30,7 +30,7 @@ import (
 	"github.com/oekit/pkg/encoding"
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
-	"github.com/oekit/pkg/toolname"
+	"github.com/oagentkit/toolname"
 )
 
 // ErrInvalidSignature 形态串非法（装配期缺陷，非程序问题）。
