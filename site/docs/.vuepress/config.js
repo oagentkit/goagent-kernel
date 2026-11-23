@@ -80,6 +80,7 @@ export default defineUserConfig({
         text: 'AI 直读',
         children: [
           { text: '本站 llms.txt', link: 'https://yi-nology.github.io/goagent-kernel/llms.txt' },
+          { text: 'goagent-runtime llms.txt', link: 'https://yi-nology.github.io/goagent-runtime/llms.txt' },
           { text: 'oekit llms.txt', link: 'https://oekit.github.io/llms.txt' },
           { text: 'oagentkit llms.txt', link: 'https://oagentkit.github.io/llms.txt' },
         ],

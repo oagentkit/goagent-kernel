@@ -350,6 +350,7 @@ const llms = [
   '3. **单向依赖**：本仓不 import 宿主，宿主 import 本仓（门禁强制）。',
   '',
   '## AI 直读入口（同族）',
+  '- goagent-runtime（Agent 运行时装配层，本仓的下游）: https://yi-nology.github.io/goagent-runtime/llms.txt',
   '- oekit（基础库矩阵）: https://oekit.github.io/llms.txt',
   '- oagentkit（Agent/LLM 编排工具链矩阵）: https://oagentkit.github.io/llms.txt',
   '',
