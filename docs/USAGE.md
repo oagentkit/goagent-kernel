@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **49** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **51** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **51** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **52** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **52** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **49** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **51** 个 module id（51 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **52** 个——`taskboard`
-> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：51 数 module id，52 数
+> `architecture-policy.yaml` 的 `modules` 段登记 **52** 个 module id（52 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **53** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：52 数 module id，53 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
@@ -3393,6 +3393,7 @@ CI 执行的是 Makefile 的**分层 target**（`unit` / `race` / `contract` /
 | `apilifecheck` | API 生命周期四方不一致（清单 ↔ 包注释 ↔ 生产包集合 ↔ Deprecated 替代）+ 错误哨兵登记表 ↔ 代码不等——见 `docs/api-compat.md` |
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
 | `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点 / 存储 `kind` 不在封闭值域内 / 写者数与写者上限交叉校验（W1 存储侧 + W2 场景侧 + W3 陈旧形态键）/ 两侧门面的面访问器集合相等（F3）+ 门面清单与代码派生集双向相等（F1）+ 清单形状（F2）+ 每个面访问器都有能力落点或已登记（F4）+ 有方法级落点的存储必须登记门面段（F5）——见 `docs/STORAGE-SELECTION.yaml` |
+| `acceptancecheck` | 验收路径「被执行过」证据对账（issue #483）：登记面 `docs/acceptance-paths.yaml` ↔ 证据文件的三行机器可读字段（`acceptance-path-id` / `-ran-at` / `-conclusion`）↔ Makefile 入口标记，**双向对账**——登记了却没证据 ⇒ **显形点名并即红**（「从未跑过」不许靠人记得）；证据与登记对不上 / 入口目标不存在 / 入口没打标记 / Makefile 声明过的路径漏登记，一律即红；**时效过期只回显不判红**（跑过一次即算数，与 `issue-state` 快照同口径）；跨仓路径（`owner` 非空）入口存在性本仓无从核实 ⇒ 只回显。判据是纯函数（`internal/acceptancepath`，时钟与文件读取均可注入）⇒ 用例可离线钉住；读不到 Makefile ⇒ **退出码 2「给不出结论」**而不是「没有违反」 |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
@@ -3424,7 +3425,8 @@ make architecture-check --report   # 看全量违规清单（默认前 10 条）
 | `harness-module-dependency-direction` | 包间依赖超出 `modules[].requires` 声明；**以及未登记的包目录** | `policy.yaml` 的 `modules` 段 + `archcheck/deps.go` |
 | `harness-test-goroutine-joined` | 测试函数（`Test*`/`Benchmark*`/`Fuzz*`）里起了 goroutine，**而该函数或它调用的包内函数（深度 ≤2）里没有等待点**（接收表达式 `<-ch` 或 `X.Wait()`）⇒ 用例返回后 goroutine 仍可能在跑 | `policy.yaml` 的 `rules` 段（`check_kind: goroutine_join`）+ `archcheck/testgoroutine.go` |
 | `harness-test-defer-cleanup` | 测试函数里起的 goroutine，其**收尾等待点**写在**普通语句**里，而它与 `go` 语句之间存在 `t.Fatal` 族 / `runtime.Goexit` 的直接调用 ⇒ 用例失败时 Goexit 会跳过这一步 ⇒ goroutine 实际未被 join（**#440**）| `policy.yaml` 的 `rules` 段（`check_kind: defer_cleanup`）+ `archcheck/testgoroutine_defer.go`；**同步等待**不判 |
-| `harness-test-wallclock-ruler` | 测试函数体里的**裸 `time.Sleep`**（不在 for/range 循环体内）⇒ 拿墙钟窗口当尺子（**#441**）；轮询退避 / goroutine 体里的 sleep / policy 登记的受管辅助除外 | `policy.yaml` 的 `rules` 段（`check_kind: wallclock_ruler` + `managed_helpers:`）+ `archcheck/wallclock.go` |
+| `harness-test-wallclock-ruler` | 测试函数体里的**裸 `time.Sleep`**（不在 for/range 循环体内）与**墙钟阈值形态**（固定秒数断言 / 纯计时器窗口）⇒ 拿墙钟窗口当尺子（**#441/#481**）；轮询退避 / goroutine 体里的 sleep / policy 登记的受管辅助除外；阈值形态须**逐条登记分类**（超时上限类豁免并写明理由 / 尺子类必须改写成可观测事实），漏登记、登记成尺子类、改完不删登记一律即红 | `policy.yaml` 的 `rules` 段（`check_kind: wallclock_ruler` + `managed_helpers:` + `ruler_classifications:`）+ `archcheck/wallclock.go`、`archcheck/wallclock_threshold.go`、`archcheck/wallclock_classify.go` |
+| `harness-external-dep-seam` | 问外部世界（**时钟 / 环境变量 / 文件系统 / 外部程序 / 出网**）的**生产函数**必须登记角色（`tool` 执行外部动作本身就是目的 / `stamp` 把外部量写进记录 / `decide` 拿外部量做判定）；**decide 角色**必须配可注入接缝或显式登记豁免理由；漏登记 / 陈旧登记 / 接缝符号在包内不存在，一律即红（**#482**）| `policy.yaml` 的 `rules` 段（`check_kind: external_seam` + `registry:`）+ `archcheck/externalseam.go` + 清单 `docs/EXTERNAL-DEPS.yaml`（骨架由 `make external-deps -update` 刷新，判断字段由人维护）|
 | 沙箱档位登记 | 执行沙箱后端未在 `sandbox_providers` 段登记，或登记的档位与代码事实漂移 | `policy.yaml` 的 `sandbox_providers` 段 + `archcheck/sandbox.go` |
 | `harness-sandbox-execution-path` | `execution_paths` 登记的「档位 → 构造器」与代码事实偏离 | `policy.yaml` 的 `execution_paths` 段 + `archcheck/execution.go` |
 | `harness-subprocess-egress` | spawn 点未登记出口档位（含别名 / 点导入 / 包级初始化，以及 `os.StartProcess`、`syscall.*` 入口）；登记 `proxy` 却在 spawn 前看不到兑现的**两半**（env 生成 + 后端能力问询）；登记 `denied`（本层兑现不了）；**启动点所在文件把整份父环境读出来**（`os.Environ` / `procx.InheritAllExcept`，按**文件**判）| `policy.yaml` 的 `egress_paths` 段 + `archcheck/egresspaths.go` |

@@ -100,6 +100,47 @@ type Rule struct {
 	// 调的是同一份代码），不是另写一套近似实现——另写一套的话，样例过了也说明不了
 	// 真判定能过（两套实现各自漂移，而样例那套只看几个字符串、漂得更慢）。
 	Examples []RuleExample `yaml:"examples"`
+	// RulerClassifications 是「墙钟判定」的逐条分类登记（check_kind: wallclock_ruler 用，issue #481）。
+	//
+	// 它回答的是 issue 的那句话：「凡是把阈值挂在墙钟上的判据，都要问一句『这个量变了
+	// 我判的东西还成立吗』」。答案不能留在脑子里 ⇒ 逐条登记，并由门禁对账
+	//（漏登记即红、登记成尺子类即红、改完不删登记即红）。
+	//
+	// 兼容性：这是**源码级 additive 变更**——给导出的结构体加字段，会让下游
+	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
+	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
+	RulerClassifications []RulerClassification `yaml:"ruler_classifications"`
+	// Registry 是「外部依赖清单」的文件路径（check_kind: external_seam 用，issue #482）。
+	//
+	// 为什么清单单独一个文件而不是 policy 的一段：policy 是**手写的规则面**，
+	// 清单是**盘点结果**（由工具生成骨架、人维护判断字段）。两者各自有各自的
+	// 真相，混在一份文件里 ⇒ 刷新清单会重排整个 policy。
+	//
+	// 路径相对仓库根；宿主仓可以用自己的清单（archcheck 是跨宿主复用的库，
+	// 写死路径等于把宿主的事写进内核）。
+	//
+	// 兼容性：这是**源码级 additive 变更**——给导出的结构体加字段，会让下游
+	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
+	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
+	Registry string `yaml:"registry"`
+}
+
+// RulerClassification 一条「墙钟判定」的逐条分类登记（issue #481）。
+//
+// 键是三段：**目录 + 函数名 + 形态**——目录与函数名在代码演进中稳定（行号不稳），
+// 形态段让同一个函数里的两类判定点分别登记。同一键下多处判定点按出现顺序与
+// 登记项一一对应（登记少一条即漏登记，多一条即僵尸登记）。
+type RulerClassification struct {
+	// Package 相对 module 根的**目录**（如 "handoff"、"cmd/raceprobe"）。
+	Package string `yaml:"package"`
+	// Func 归属函数名（测试函数或包内助手）。
+	Func string `yaml:"func"`
+	// Form 形态（取值域封闭：fixed_seconds_assert | timer_only_select）。
+	Form string `yaml:"form"`
+	// Class 分类（取值域封闭：timeout_cap | ruler）。
+	Class string `yaml:"class"`
+	// Reason 理由（必填——空理由的登记等于没判过）。
+	Reason string `yaml:"reason"`
 }
 
 // RuleExample 一条规则的样例。

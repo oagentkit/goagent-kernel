@@ -181,6 +181,10 @@ packages:
     level: Experimental
     since: v0.47.0
     reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。它派生的「单号 → 状态」只服务本仓的台账门禁与部署清单，不是宿主面。
+  - pkg: internal/acceptancepath
+    level: Experimental
+    since: v0.74.0
+    reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。它派生的「验收路径跑过没跑过」只服务本仓的验收路径门禁，不是宿主面。
   - pkg: taskboard/boardtest
     level: Experimental
     since: v0.33.0

@@ -19,6 +19,20 @@
 复跑入口：**`make bench`**。它是独立目标，**不在 `make check` 里**——基线是
 记录与量级参照，不是每次 PR 都要真跑的提交前门禁（见 issue #101 验收）。
 
+## 机器可读登记块（issue #483）
+
+本文件是验收路径 `bench-baseline` 的**证据**（结论存档随判据体留在内核仓）。
+下面三行是门禁认的唯一证据形态：
+
+```text
+acceptance-path-id: bench-baseline
+acceptance-path-ran-at: 2026-11-13
+acceptance-path-conclusion: pass
+```
+
+字段行的值必须与登记面（`docs/acceptance-paths.yaml`）逐字一致 ⇒ 复制别的路径的结论、
+或改了结论却没改登记面，门禁当场判红。
+
 ## 怎么读：allocs/op 是判据，ns/op 是参照
 
 - **allocs/op 是主判据**：分配次数由代码结构决定，跨机器可比、不随负载抖动。

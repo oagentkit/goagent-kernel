@@ -584,6 +584,27 @@ modules:
   # 宿主资产（容器引擎怎么接、跨进程存储怎么落库、录制格式怎么演化），
   # 内核只定「要求 vs 实际」的判定口径——与 taskboard「不给存储实现」、
   # delegate「线格式归上游」是同一条分工。
+  # 2026-11-23 新增（issue #483）：验收路径「被执行过」证据的**派生器**。
+  #
+  # 为什么进内核而不是留在 cmd 里：判据（cmd/acceptancecheck）与登记面
+  # （docs/acceptance-paths.yaml）各读一遍事实，结论必然分叉——而分叉的方向
+  # 恰好是「门禁判的和登记写的不是一套」。派生器下沉为可导入包，判据与数据源
+  # 分离（时钟与根目录注入 ⇒ 用例可确定性测）。
+  #
+  # 为什么是机制面而不是资产：它不认识任何宿主领域——输入是一份登记结构体 +
+  # 仓内事实（证据文件 / Makefile），输出是「跑过 / 没跑过 / 过期 / 入口在不在」。
+  # 「真集群」「性能基线」这些词只存在于登记面的注释里，不在判据代码里。
+  - id: acceptancepath
+    roots: [internal/acceptancepath]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      验收路径「被执行过」的证据对账：登记面 ↔ 证据文件的三行机器可读字段 ↔
+      Makefile 入口标记，双向对账（漏登记即红 / 入口不在即红 / 证据对不上即红）。
+      requires 为空：只依赖 stdlib（yaml 解析在 cmd 侧做，判据层只吃已解析的
+      结构体）——判据层不引第三方解析器，是为了让它能被别的仓直接复用。
+
   - id: backend
     roots: [backend]
     requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
@@ -1250,7 +1271,7 @@ rules:
   # 判据走 **go/ast**（check_kind: wallclock_ruler），不走正则：import 别名、
   # 调用形态、循环形态都要按语法树认。
   - id: harness-test-wallclock-ruler
-    desc: 测试面不许拿裸 time.Sleep 当尺子（窗口长度单独决定结论即违规；轮询退避与 goroutine 体里的 sleep 除外）
+    desc: 测试面不许拿墙钟当尺子（裸 time.Sleep / 固定秒数断言 / 纯计时器窗口：窗口长度单独决定结论即违规；轮询退避、带事实分支的有界等与显式登记的超时上限除外）
     severity: error
     scope: [.]
     include: ["*.go"]
@@ -1268,6 +1289,57 @@ rules:
     managed_helpers:
       - pgstore.runChildE2E
       - pgstore.runChildSnapshotSave
+    # 墙钟判定的**逐条分类登记**（issue #481）。
+    #
+    # 键 = 目录 + 函数名 + 形态；同一键下多处判定点按出现顺序与登记项一一对应
+    #（登记少一条即「漏登记」，多一条即「僵尸登记」，两者都判红）。
+    #
+    # **三类形态、三种处置**（写在这里，也写进执行体的文件头与报告）：
+    #   - 退避类（sleep 落在 for/range 循环体内）⇒ **结构化豁免**，不进本表
+    #     （退出条件是循环条件本身，不是窗口长度）；
+    #   - 超时上限类（窗口只作等待上界，结论由等到的**事实**决定）⇒ 登记豁免 +
+    #     **写明理由**；
+    #   - 尺子类（结论由窗口长度单独决定）⇒ **必须改写**成可观测事实；
+    #     登记成尺子类**也不豁免**（登记只是记账，不是放行）。
+    #
+    # 为什么超时上限类要**显式登记**而不是让判据自己推：「阈值比机制自身的时限
+    # 宽 50 倍 ⇒ 窗口不决定结论」这件事**推不出来**——同一个形状（elapsed > 15s）
+    # 在一条用例里是宽松上限、在另一条里是紧阈值，差别只在「坏实现会耗时多久」，
+    # 那不在语法里 ⇒ 只能逐条判定并写下来，再由门禁盯着这张表。
+    ruler_classifications:
+      - package: handoff
+        func: TestConcurrentTake
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 ConcurrentTake 的第 5 个参数（50ms），这里的 5s 是它的
+          100 倍 ⇒ 判据问的是「挂死实现有没有被按时限收口」，结论由**机制的事实**
+          （返回了 timeout 错误）决定，窗口只是兜底上限 ⇒ 超时上限类。
+      - package: ptc
+        func: TestStressSubprocessImmediateExitReaps
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          好形态是「子进程启动即退出 ⇒ 父侧收场」，它比 15s 小两个数量级；坏形态
+          （父侧挂死）在 15s 与同一处 select 的 20s 两道窗口上都会红 ⇒ 结论由「父侧
+          返回了」这个事实决定，窗口只是兜底 ⇒ 超时上限类。
+      - package: ptc
+        func: TestDeadlineCancelsBlockedBinding
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 Options.Timeout（100ms），这里的 2s 是它的 20 倍；结论由
+          **事实**承担（res.OK 为假 + ErrorKind 属于 deadline/runtime）⇒ 这条上界
+          只负责把「阻塞绑定把 Run 拖成死锁」变成一条干净的断言失败（没有它，
+          坏实现会让用例超时——同样红，只是诊断更差）⇒ 超时上限类。
+      - package: cmd/raceprobe
+        func: TestDefaultSpawnerTimeoutKillsTree
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 ctx 的 200ms，这里的 15s 是它的 75 倍 ⇒ 判据问的是「超时
+          后进程有没有被杀掉」（进程还在 ⇒ 15s 后必然红，与机器快慢无关），窗口只是
+          「不至于挂死在那里」的兜底 ⇒ 超时上限类。
     examples:
       # ① 违规形态：用例体里的裸 sleep——窗口长度单独决定结论。
       - text: |-
@@ -1310,7 +1382,120 @@ rules:
               }()
           }
         want: miss
+      # ④ 固定秒数断言（issue #481）：把已流逝时长与**固定时长常量**比较 ⇒
+      #    结论（「有没有超过那个秒数」）由墙钟单独决定 ⇒ 尺子。
+      - text: |-
+          package sample
 
+          import "time"
+
+          func TestFixedSeconds(t *testing.T) {
+              start := time.Now()
+              doWork()
+              if time.Since(start) > 2*time.Second {
+                  t.Fatalf("太慢了")
+              }
+          }
+        want: hit
+      # ⑤ 阈值是**派生量**（limit/2）⇒ 不是「固定秒数」⇒ 不判。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestDerivedThreshold(t *testing.T) {
+              start := time.Now()
+              doWork()
+              if time.Since(start) > limit/2 {
+                  t.Fatalf("太慢了")
+              }
+          }
+        want: miss
+      # ⑥ 纯计时器窗口：select 里只有计时器分支 ⇒ 窗口到期本身就是结论 ⇒ 尺子。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestTimerOnlyWindow(t *testing.T) {
+              select {
+              case <-time.After(2 * time.Second):
+                  t.Fatal("这 2s 内什么都没发生")
+              }
+          }
+        want: hit
+      # ⑦ 带事实分支的 select ⇒ 窗口是「等事实的上限」，结论由事实决定 ⇒ 不判。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestBoundedWait(t *testing.T) {
+              select {
+              case <-ch:
+                  t.Log("到了")
+              case <-time.After(2 * time.Second):
+                  t.Fatal("超时")
+              }
+          }
+        want: miss
+
+
+  # 规则：问外部世界的生产函数必须登记角色与接缝（issue #482）。
+  #
+  # 「判定面要问外部世界」的函数（DNS / 拨号 / 时钟 / 环境变量 / 文件系统）
+  # 要么配一对**可注入的接缝**，要么显式登记豁免理由——与 exceptions 同款纪律。
+  #
+  # #412 补了 netguard 的另一半（链条面 CheckChainWithResolver），但
+  # 「判定面与拨号层的接缝清单」从没盘过：哪些函数在问外部世界、其中哪些已有
+  # 接缝、哪些还没有，**没有一张表** ⇒ 没有一张表就没有「漏了谁」的信号。
+  #
+  # 判定面是**清单**（docs/EXTERNAL-DEPS.yaml）与代码现状的对账，四个方向：
+  #   - **漏登记**（代码里有、清单里没有）⇒ 红；
+  #   - **陈旧/漂移**（清单里的函数没了，或依赖类变了）⇒ 红；
+  #   - **decide 角色**（拿外部量做判定）既无接缝又无豁免理由 ⇒ 红；
+  #   - **声明的接缝符号在包内不存在** ⇒ 红（接缝声明不能是一句空话）。
+  #
+  # 清单的**骨架**由工具生成（make external-deps -update），人只维护**判断**字段
+  # （role / seam / exempt / reason）⇒ 新出现的外部触达会以「role 留空」的形式
+  # 当场判红，等人判定；刷新不会覆盖已有人工判断。
+  #
+  # 样例面是**清单片段**（YAML）而不是源码：这条规则判的是「清单与代码现状的
+  # 对账」，样例必须能表达「这样一份清单会不会被判红」。
+  - id: harness-external-dep-seam
+    desc: 问外部世界的生产函数必须登记角色；decide 角色须有接缝或显式豁免理由
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    check_kind: external_seam
+    registry: docs/EXTERNAL-DEPS.yaml
+    examples:
+      # ① decide 角色却既无接缝也无豁免理由 ⇒ 红。
+      - text: |-
+          deps:
+            - package: demo
+              function: Decide
+              deps: [clock]
+              role: decide
+        want: hit
+      # ② decide 角色有接缝 ⇒ 绿（接缝存在性由 Go 用例钉住，样例里没有包）。
+      - text: |-
+          deps:
+            - package: demo
+              function: Decide
+              deps: [clock]
+              role: decide
+              seam: "Demo.now"
+        want: miss
+      # ③ tool 角色（执行外部动作本身就是目的）⇒ 不要求接缝 ⇒ 绿。
+      - text: |-
+          deps:
+            - package: demo
+              function: ReadManifest
+              deps: [fs]
+              role: tool
+        want: miss
 
   - id: harness-no-printf-log-callback
     desc: SDK 包不得把 printf 风格日志回调焊进公开 API 签名；留痕走 logx.Delegating
@@ -1554,8 +1739,15 @@ dependency_direction:
 #                                            （红在缺能力），本门禁红在「选错引擎」——
 #                                            两件事的失败形态不同，混在一起会让「哪个门禁
 #                                            在管我」变得不可追。
+#   cmd/acceptancecheck                 验收路径纪律门禁（2026-11-23，issue #483）：
+#                                            判 docs/acceptance-paths.yaml ↔ 证据文件的三行
+#                                            机器可读字段 ↔ Makefile 入口标记（双向对账）；
+#                                            读 yaml / 证据文件 / Makefile 是工具职责，
+#                                            不形成机制依赖。它与 cmd/deploymatrix 共读
+#                                            internal/acceptancepath（证据对账的唯一派生器），
+#                                            两处各判一套必然漂移。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -2255,7 +2447,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

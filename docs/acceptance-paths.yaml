@@ -1,0 +1,65 @@
+# 验收路径登记表（issue #483）
+#
+# 这张表回答一个问题：**哪些验收路径被执行过**、什么时候跑的、结论是什么。
+#
+# # 为什么需要这张表
+#
+# 真集群类验收很贵（docker + kind + 拉镜像），人不会天天跑 ⇒「上次跑是什么时候、
+# 哪条路径跑过」没人说得清。而第十八轮台账 §27 实测撞见过「判据代码**从未被执行
+# 过**」这一形态（叠加策略那条路径常年 Skipf）——测试在、绿着，但从没跑过。
+# 真集群验收比那条更贵：代价是**连「从没跑过」都不显形**。
+#
+# ⇒ 每条路径登记**证据**（结论存档的路径 + 跑过的时间 + 当时的结论）；登记了却
+# 找不到证据 ⇒ 门禁判红并**点名**（逼人真跑一次）；跑过一次即算数，时效只回显。
+#
+# # 三条口径（判据本体在 internal/acceptancepath，门禁入口 make acceptancecheck）
+#
+#  1. **从未跑过 = 阻断**：登记了却没证据 ⇒ 红。没跑过的路径必须显形，不能靠人记得。
+#  2. **时效只回显不判红**：跑过一次即算数；过期只回显（与 issue-state 快照同口径）。
+#  3. **入口必须真的存在**：本仓自有的路径（owner 留空），其 Makefile 目标必须存在、
+#     且带 `# acceptance-path: <id>` 标记；反向也对账（Makefile 声明过的验收路径
+#     必须进这张表）⇒ 挡住「判据体搬走了、入口没跟着搬」。
+#
+# # 字段约定
+#
+#   id          路径 id（表内唯一）；必须与证据文件里的 `acceptance-path-id:` 一致
+#   scope       这条路径验的是什么（一句话）
+#   command     可复跑入口；**本仓自有的路径必须给 `make <target>` 形态**
+#   owner       判据体所在仓（留空 = 本仓）。跨仓路径的入口存在性本仓无从核实 ⇒ 只回显
+#   evidence    结论存档（相对仓库根）——它同时是「跑过」的证据
+#   ran_at      跑过的时间（YYYY-MM-DD），必须与证据文件里的一致
+#   conclusion  当时的结论（pass / fail），必须与证据文件里的一致
+#
+# # 证据文件的机器可读块
+#
+# 每份证据文件里要有这三行（门禁认的唯一证据形态，值必须与本表逐字一致）：
+#
+#   acceptance-path-id: <id>
+#   acceptance-path-ran-at: <YYYY-MM-DD>
+#   acceptance-path-conclusion: <pass|fail>
+#
+# 正文里「提到这条路径」不算证据——那是本判据要挡的假绿。
+updated: 2026-11-23
+
+paths:
+  # 真集群类验收（本 issue 点名的形态）。判据体与可复跑入口已随边界迁移到
+  # goagent-runtime ⇒ owner 写那个仓 ⇒ 入口存在性本仓无从核实（只回显）。
+  # 结论存档随判据体留在内核仓（别仓的仓内文件本仓核实不到 ⇒ 核验不到就只能
+  # 靠人记 ⇒ 判据就空了）。
+  - id: k8s-egress-denied
+    scope: 真集群上 K8s Job 后端 Egress=denied 档——出站被 NetworkPolicy 数据面真拦，且同一条探针在对照 Pod 上连得上
+    command: make k8s-e2e
+    owner: goagent-runtime
+    evidence: docs/K8S-EGRESS-E2E-20261119.md
+    ran_at: 2026-11-19
+    conclusion: pass
+
+  # 本仓自有的验收路径（owner 留空）⇒ 门禁核验它的入口：Makefile 里必须有
+  # `bench` 目标，且该目标带 `# acceptance-path: bench-baseline` 标记。
+  # 不在本仓 Makefile 里的目标 ⇒ 门禁当场判红（登记了一条不存在的入口）。
+  - id: bench-baseline
+    scope: 真机性能基线复跑（allocs/op 是判据、ns/op 是参照；数字与口径同行登记）
+    command: make bench
+    evidence: docs/BENCH-BASELINE-20261113.md
+    ran_at: 2026-11-13
+    conclusion: pass

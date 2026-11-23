@@ -247,21 +247,20 @@ func TestRejectedRenderInterruptClassifiedAsDeadline(t *testing.T) {
 // 分类必须**立刻**拿到（不等墙钟、不受敌意代码拖延）。
 //
 // 旧代码在锚定与消息两处都要渲染被拒值 ⇒ 死循环烧完 5s 墙钟才收口（实测
-// 5.001s）且分类丢失；新代码无渲染路径，瞬间返回 stage_denied。elapsed 上界
-// 把「回归到渲染路径」钉死在时间维度上。
+// 5.001s）且分类丢失；新代码无渲染路径，瞬间返回 stage_denied。
+//
+// 「回归到渲染路径」由**分类本身**钉死（走渲染路径时分类会丢，ErrorKind 不再是
+// stage_denied），**不靠墙钟上界**——墙钟阈值单独决定结论 ⇒ 机器一忙就假红
+// （issue #481 的尺子类：本轮把这一处的墙钟上界删掉，尺子换成可观测事实）。
 func TestRejectedCarrierWithPoisonedToStringStillClassified(t *testing.T) {
 	deny := invoke.StageFunc{StageName: "审计门",
 		Fn: func(context.Context, invoke.Call) (invoke.Verdict, error) {
 			return invoke.Verdict{Allow: false, Reason: "策略否定"}, nil
 		}}
-	start := time.Now()
 	res := Run(context.Background(),
 		`try { await host.t() } catch (e) { e.toString = function(){ while (true) {} }; throw e; }`,
 		[]Binding{{Name: "t", Call: func(context.Context, string) (string, error) { return "x", nil }}},
 		Options{Stages: []invoke.Stage{deny}, Timeout: 5 * time.Second})
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("身份锚定不进 VM，不得被敌意 toString 拖住：耗时 %v", elapsed)
-	}
 	if res.ErrorKind != "stage_denied" {
 		t.Fatalf("原样重抛（含 toString 被下毒）仍须归因 stage_denied，got %q（Error=%q）",
 			res.ErrorKind, res.Error)

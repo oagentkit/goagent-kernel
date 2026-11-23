@@ -1,0 +1,916 @@
+# 外部依赖清单（issue #482）——由 make external-deps -update 生成骨架。
+#
+# 人只维护**判断**字段：role（tool/stamp/decide）、seam（接缝符号）、
+# exempt（显式豁免理由）、reason（判定理由）。刷新**不会**覆盖这些字段。
+# 新出现的条目 role 留空 ⇒ 门禁判红，等人判定。
+#
+# 键 = 目录 + 函数名。deps 是实测值（刷新时按代码现状覆盖）。
+updated: ""
+deps:
+    - package: archcheck
+      function: FindRoot
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: Load
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: RunWithOptions
+      deps:
+        - clock
+      role: decide
+      seam: ""
+      exempt: 例外到期判定本身已可注入（exceptionExpiry(ex, now)），门禁入口读的是**当下墙钟**——「现在」的正确答案就是本机时钟；给宿主注入时钟会让门禁对着假时钟判。
+      reason: 例外到期判定本身已可注入（exceptionExpiry(ex, now)），门禁入口读的是**当下墙钟**——「现在」的正确答案就是本机时钟；给宿主注入时钟会让门禁对着假时钟判。
+    - package: archcheck
+      function: UpdateExternalDeps
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: checkRule
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: collectSpawnSites
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: dependencyViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: executionPathViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: extLoadRegistry
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: extSeamExists
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: extSeamParamExists
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: gjScanFiles
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: godObjects
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: hasProductionGo
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: importViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: indexPackage
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: isNestedModule
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: judgeEgressEntry
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: longFilesReport
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: moduleImportPath
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: packageNameOf
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: parseTenantTree
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: readTenantManifest
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: ruleFiles
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: ruleSelfCheck
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: sandboxProviderViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: selfCheckWithViolationSet
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: symbolDeclared
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: tenantGateSelfCheck
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: tenantGateViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: typeAwareViolations
+      deps:
+        - env
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: unmanagedAssignInPackage
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: unmanagedLiteralViolations
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: archcheck
+      function: wordTableSelfCheck
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/acceptancecheck
+      function: loadRegistry
+      deps:
+        - fs
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 读登记面并交给判据层：判定不在本层（结论全在 internal/acceptancepath.Judge）
+    - package: cmd/acceptancecheck
+      function: run
+      deps:
+        - clock
+      role: decide
+      seam: runWith
+      exempt: ""
+      reason: 时钟是接缝（runWith 注入）：判据层吃注入时钟（Options.Now），门禁入口读死 time.Now 的话，时效回显这条判据就没法被确定性测
+    - package: cmd/apilifecheck
+      function: LoadManifest
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/apilifecheck
+      function: checkDocsBlocks
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/apilifecheck
+      function: fileRegular
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/apilifecheck
+      function: findRoot
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/apilifecheck
+      function: hasProdGo
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/apilifecheck
+      function: parseErrorTable
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: checkContractRef
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: checkEvidence
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: checkGateRef
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: checkUsageBlock
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: findRoot
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: loadIssueCorpus
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/deploymatrix
+      function: loadMatrix
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: checkDocIndex
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: checkUsage
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: countPolicyModules
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: fileExists
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: listPackages
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: measure
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: measureBaseline
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: newConstResolver
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/docsync
+      function: run
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/hygiene
+      function: gitOut
+      deps:
+        - exec
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/hygiene
+      function: readHead
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/ledgercheck
+      function: fetchIssueStates
+      deps:
+        - exec
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/ledgercheck
+      function: findLedger
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/ledgercheck
+      function: loadIssueSnapshot
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: cmd/ptcchild
+      function: main
+      deps:
+        - env
+      role: decide
+      seam: ""
+      exempt: 环境变量就是父子进程协议本身（父进程靠它让子进程进入 noop 模式）；注入它等于改了协议，不是接缝的正确形态。
+      reason: 环境变量就是父子进程协议本身（父进程靠它让子进程进入 noop 模式）；注入它等于改了协议，不是接缝的正确形态。
+    - package: cmd/raceprobe
+      function: defaultSpawner
+      deps:
+        - exec
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/raceprobe
+      function: options.runRecheck
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/raceprobe
+      function: runMain
+      deps:
+        - clock
+      role: stamp
+      seam: options.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: cmd/raceprobe
+      function: runRace
+      deps:
+        - clock
+        - fs
+      role: stamp
+      seam: options.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: cmd/raceprobe
+      function: writeEvidence
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/releasecheck
+      function: gitOut
+      deps:
+        - exec
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/releasecheck
+      function: run
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/seamcheck
+      function: loadBaseline
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/seamcheck
+      function: modulePath
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/seamcheck
+      function: writeBaseline
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/storagecheck
+      function: decodeYAML
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/storagecheck
+      function: facadeMethods
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/storagecheck
+      function: resolveRef
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: controlplane
+      function: MemAuditor.Append
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: controlplane
+      function: MemStore.now
+      deps:
+        - clock
+      role: stamp
+      seam: MemStore.clock
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: coord
+      function: resolveNow
+      deps:
+        - clock
+      role: stamp
+      seam: param:injected
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: delta
+      function: New
+      deps:
+        - clock
+      role: stamp
+      seam: Pacer.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: eventbus
+      function: Bus.Publish
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: eventbus
+      function: DurablePublisher.publishSerialized
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: handoff
+      function: MemoryLedger.Now
+      deps:
+        - clock
+      role: stamp
+      seam: MemoryLedger.clock
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: handoff
+      function: NewDesk
+      deps:
+        - clock
+      role: stamp
+      seam: Desk.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: handoff
+      function: NewMemoryLedger
+      deps:
+        - clock
+      role: stamp
+      seam: MemoryLedger.clock
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: internal/acceptancepath
+      function: Judge
+      deps:
+        - fs
+      role: decide
+      seam: Options.ReadFile
+      exempt: ""
+      reason: 拿外部量（证据文件 / Makefile）做判定 ⇒ 必须有接缝：接缝是 Options.ReadFile（nil 时取 os.ReadFile），有接缝后用例不必碰磁盘就能钉住判据
+    - package: internal/ledgerstatus
+      function: Parse
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: internal/ledgerstatus
+      function: ParseIssueSnapshot
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: ptc
+      function: MaybeRunChild
+      deps:
+        - env
+      role: decide
+      seam: ""
+      exempt: 环境变量就是父子进程协议本身（子进程模式开关）；注入它等于改了协议，不是接缝的正确形态。
+      reason: 环境变量就是父子进程协议本身（子进程模式开关）；注入它等于改了协议，不是接缝的正确形态。
+    - package: ptc
+      function: linuxMemCgroup.attach
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: ptc
+      function: linuxMemCgroup.release
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: ptc
+      function: mountBindings
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: ptc
+      function: mountDiscover
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: ptc
+      function: newChildPipes
+      deps:
+        - exec
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: ptc
+      function: newMemCgroup
+      deps:
+        - clock
+        - fs
+      role: decide
+      seam: ""
+      exempt: 探测的是**运行环境本身**（这一层 cgroup 上有没有 memory 控制器）——它是「这台机器长什么样」的答案；用例要测的是探测逻辑，自己造目录即可。
+      reason: 探测的是**运行环境本身**（这一层 cgroup 上有没有 memory 控制器）——它是「这台机器长什么样」的答案；用例要测的是探测逻辑，自己造目录即可。
+    - package: ptc
+      function: ownCgroupDir
+      deps:
+        - fs
+      role: decide
+      seam: ""
+      exempt: 读 /proc/self/cgroup 得到的是**本进程在环境里的位置**——它没有「别的取值」可注入。
+      reason: 读 /proc/self/cgroup 得到的是**本进程在环境里的位置**——它没有「别的取值」可注入。
+    - package: ptc
+      function: runChild
+      deps:
+        - env
+      role: decide
+      seam: ""
+      exempt: 环境变量提供子进程调用通道的 fd 编号——它是协议的一部分，不是可替换的依赖。
+      reason: 环境变量提供子进程调用通道的 fd 编号——它是协议的一部分，不是可替换的依赖。
+    - package: reconcile
+      function: New
+      deps:
+        - clock
+      role: stamp
+      seam: NewWithClock
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: reconcile
+      function: NewWithClock
+      deps:
+        - clock
+      role: stamp
+      seam: param:now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: scheduling
+      function: NewMemQuotaStore
+      deps:
+        - clock
+      role: stamp
+      seam: MemQuotaStore.clock
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: spill
+      function: List
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: spill
+      function: Prune
+      deps:
+        - clock
+        - fs
+      role: decide
+      seam: ""
+      exempt: TTL 的刻度与存档 mtime 同源（都是墙钟）；注入「现在」只会造出两套刻度并存（按墙钟删 vs 按注入时钟删），比不注入更糟。
+      reason: TTL 的刻度与存档 mtime 同源（都是墙钟）；注入「现在」只会造出两套刻度并存（按墙钟删 vs 按注入时钟删），比不注入更糟。
+    - package: spill
+      function: ReadPage
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: watchdog
+      function: Watcher.maybeSweep
+      deps:
+        - clock
+      role: decide
+      seam: ""
+      exempt: '**待补接缝**（不是永久豁免）：清扫节奏与空闲 TTL 的刻度都是墙钟量，而 Watcher 目前没有时钟接缝；给 Watcher 补一个可注入时钟后删掉本条。'
+      reason: '**待补接缝**（不是永久豁免）：清扫节奏与空闲 TTL 的刻度都是墙钟量，而 Watcher 目前没有时钟接缝；给 Watcher 补一个可注入时钟后删掉本条。'
+    - package: watchdog
+      function: Watcher.observeToolCall
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: watchdog
+      function: Watcher.observeToolResult
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: watchdog
+      function: Watcher.observeTurnStarted
+      deps:
+        - clock
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: worker
+      function: Loop.heartbeat
+      deps:
+        - clock
+      role: decide
+      seam: ""
+      exempt: '**待补接缝**（不是永久豁免）：本包已有注册表时钟接缝（WithRegistryClock），但续期链走的是 Loop 自己的节奏（TTL 与存储的绝对刻度不可比，见 inflight.go 包头）⇒ 两个接缝不是同一刻度、不能互相顶替；给 Loop 补时钟接缝后删掉本条。'
+      reason: '**待补接缝**（不是永久豁免）：本包已有注册表时钟接缝（WithRegistryClock），但续期链走的是 Loop 自己的节奏（TTL 与存储的绝对刻度不可比，见 inflight.go 包头）⇒ 两个接缝不是同一刻度、不能互相顶替；给 Loop 补时钟接缝后删掉本条。'
+    - package: worker
+      function: MemRegistry.nowValue
+      deps:
+        - clock
+      role: stamp
+      seam: MemRegistry.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: worker
+      function: NewLeaseSession
+      deps:
+        - clock
+      role: stamp
+      seam: leaseSession.now
+      exempt: ""
+      reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
+    - package: worker
+      function: claimed.recordRenewLocked
+      deps:
+        - clock
+      role: decide
+      seam: ""
+      exempt: '**待补接缝**（不是永久豁免）：同 Loop.heartbeat——续期时刻的刻度是 Loop 的节奏，与注册表接缝不同源；给 Loop 补时钟接缝后删掉本条。'
+      reason: '**待补接缝**（不是永久豁免）：同 Loop.heartbeat——续期时刻的刻度是 Loop 的节奏，与注册表接缝不同源；给 Loop 补时钟接缝后删掉本条。'
+    - package: worker
+      function: claimed.scheduleRenew
+      deps:
+        - clock
+      role: decide
+      seam: ""
+      exempt: '**待补接缝**（不是永久豁免）：同 Loop.heartbeat——续期时刻的刻度是 Loop 的节奏，与注册表接缝不同源；给 Loop 补时钟接缝后删掉本条。'
+      reason: '**待补接缝**（不是永久豁免）：同 Loop.heartbeat——续期时刻的刻度是 Loop 的节奏，与注册表接缝不同源；给 Loop 补时钟接缝后删掉本条。'

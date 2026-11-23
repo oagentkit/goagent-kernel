@@ -97,6 +97,45 @@ func ruleSelfCheck(root string, pol *Policy, policyPath string) (map[string]bool
 			}
 		}
 
+		// ── 墙钟判定的分类登记：取值域封闭 + 理由必填（issue #481）──
+		//
+		// 三个失效形态都要掐掉：拼错的 form / class 会让登记**匹配不到任何判定点**
+		//（静默失效 ⇒ 门禁变绿）；空 reason 的登记等于「没判过」——它让这张表变成
+		// 一张没有判断的清单；登记挂在别的 check_kind 上则是装饰（没人读）。
+		for i, c := range r.RulerClassifications {
+			switch {
+			case strings.TrimSpace(c.Package) == "":
+				add(policyPath, 0, "规则 %q 的第 %d 条墙钟分类登记没有 package（定位不到是哪一处）", r.ID, i+1)
+			case strings.TrimSpace(c.Func) == "":
+				add(policyPath, 0, "规则 %q 的第 %d 条墙钟分类登记没有 func（定位不到是哪一处）", r.ID, i+1)
+			case strings.TrimSpace(c.Form) == "":
+				add(policyPath, 0, "规则 %q 的第 %d 条墙钟分类登记没有 form", r.ID, i+1)
+			case !wcKnownForm(c.Form):
+				add(policyPath, 0,
+					"规则 %q 的第 %d 条墙钟分类登记 form %q 不在已知取值域 %v 内：拼错的形态名会让这条登记"+
+						"匹配不到任何判定点（静默失效 ⇒ 门禁变绿）",
+					r.ID, i+1, c.Form, wcFormNames())
+			case strings.TrimSpace(c.Class) == "":
+				add(policyPath, 0, "规则 %q 的第 %d 条墙钟分类登记没有 class", r.ID, i+1)
+			case !wcKnownClass(c.Class):
+				add(policyPath, 0,
+					"规则 %q 的第 %d 条墙钟分类登记 class %q 不在已知取值域 %v 内：拼错的分类名会让这条登记"+
+						"静默失效（门禁变绿）",
+					r.ID, i+1, c.Class, wcClassNames())
+			case strings.TrimSpace(c.Reason) == "":
+				add(policyPath, 0,
+					"规则 %q 的第 %d 条墙钟分类登记没有写 reason：空理由的登记等于没判过——"+
+						"它让这一处继续随机器快慢漂，而没人知道它是哪一种",
+					r.ID, i+1)
+			}
+		}
+		if len(r.RulerClassifications) > 0 && r.CheckKind != checkKindWallclockRuler {
+			add(policyPath, 0,
+				"规则 %q 声明了 ruler_classifications，但它的 check_kind 是 %q：墙钟分类登记只对 %s 有意义，"+
+					"写在这里是装饰（登记了却没人读）",
+				r.ID, r.CheckKind, checkKindWallclockRuler)
+		}
+
 		// 有执行体却 scope 为空 ⇒ 一行都不判。
 		//
 		// ruleFiles 只遍历 Scope 里的目录，空清单返回空文件集；于是这条规则有正则、
