@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/oagentkit/guardx/sandbox"
+	"github.com/oekit/pkg/errors"
 	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
@@ -171,12 +172,16 @@ func TestSubprocessHonorsCtxCancellation(t *testing.T) {
 		if err == nil {
 			t.Fatal("子进程没回结果时不该成功")
 		}
-		elapsed := time.Since(start)
-		// 必须在墙钟预算（30s）之前很久就收场 ⇒ 只能是 ctx 取消。
-		if elapsed > 5*time.Second {
-			t.Errorf("收场耗时 %v，远超 ctx 取消的时刻（说明不是 ctx 取消起的作用）", elapsed)
+		// 尺子 = **可观测事实**，不是墙钟窗口（issue #481）：「收场是 ctx 取消
+		// 导致的」这件事由**错误类型**说（context.Canceled），不由「收场早于
+		// 5s」说——后者量的是「这台机器此刻有多快」，机器一忙就假红。
+		//
+		// 改写前这里是「elapsed > 5s 即红」：它承担了结论（30s 墙钟预算还没到
+		// ⇒ 只能是 ctx 取消），而结论本可以由一个读得出来的事实直接说。
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("父侧必须按 ctx 取消收场（错误应为 context.Canceled），实得 %v", err)
 		}
-		t.Logf("父侧按 ctx 取消收场（%v）: %v", elapsed, err)
+		t.Logf("父侧按 ctx 取消收场（%v）: %v", time.Since(start), err)
 	case <-time.After(20 * time.Second):
 		t.Fatal("父侧挂死了：ctx 取消时必须立即收场")
 	}

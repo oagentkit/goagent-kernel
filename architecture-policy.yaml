@@ -1250,7 +1250,7 @@ rules:
   # 判据走 **go/ast**（check_kind: wallclock_ruler），不走正则：import 别名、
   # 调用形态、循环形态都要按语法树认。
   - id: harness-test-wallclock-ruler
-    desc: 测试面不许拿裸 time.Sleep 当尺子（窗口长度单独决定结论即违规；轮询退避与 goroutine 体里的 sleep 除外）
+    desc: 测试面不许拿墙钟当尺子（裸 time.Sleep / 固定秒数断言 / 纯计时器窗口：窗口长度单独决定结论即违规；轮询退避、带事实分支的有界等与显式登记的超时上限除外）
     severity: error
     scope: [.]
     include: ["*.go"]
@@ -1268,6 +1268,57 @@ rules:
     managed_helpers:
       - pgstore.runChildE2E
       - pgstore.runChildSnapshotSave
+    # 墙钟判定的**逐条分类登记**（issue #481）。
+    #
+    # 键 = 目录 + 函数名 + 形态；同一键下多处判定点按出现顺序与登记项一一对应
+    #（登记少一条即「漏登记」，多一条即「僵尸登记」，两者都判红）。
+    #
+    # **三类形态、三种处置**（写在这里，也写进执行体的文件头与报告）：
+    #   - 退避类（sleep 落在 for/range 循环体内）⇒ **结构化豁免**，不进本表
+    #     （退出条件是循环条件本身，不是窗口长度）；
+    #   - 超时上限类（窗口只作等待上界，结论由等到的**事实**决定）⇒ 登记豁免 +
+    #     **写明理由**；
+    #   - 尺子类（结论由窗口长度单独决定）⇒ **必须改写**成可观测事实；
+    #     登记成尺子类**也不豁免**（登记只是记账，不是放行）。
+    #
+    # 为什么超时上限类要**显式登记**而不是让判据自己推：「阈值比机制自身的时限
+    # 宽 50 倍 ⇒ 窗口不决定结论」这件事**推不出来**——同一个形状（elapsed > 15s）
+    # 在一条用例里是宽松上限、在另一条里是紧阈值，差别只在「坏实现会耗时多久」，
+    # 那不在语法里 ⇒ 只能逐条判定并写下来，再由门禁盯着这张表。
+    ruler_classifications:
+      - package: handoff
+        func: TestConcurrentTake
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 ConcurrentTake 的第 5 个参数（50ms），这里的 5s 是它的
+          100 倍 ⇒ 判据问的是「挂死实现有没有被按时限收口」，结论由**机制的事实**
+          （返回了 timeout 错误）决定，窗口只是兜底上限 ⇒ 超时上限类。
+      - package: ptc
+        func: TestStressSubprocessImmediateExitReaps
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          好形态是「子进程启动即退出 ⇒ 父侧收场」，它比 15s 小两个数量级；坏形态
+          （父侧挂死）在 15s 与同一处 select 的 20s 两道窗口上都会红 ⇒ 结论由「父侧
+          返回了」这个事实决定，窗口只是兜底 ⇒ 超时上限类。
+      - package: ptc
+        func: TestDeadlineCancelsBlockedBinding
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 Options.Timeout（100ms），这里的 2s 是它的 20 倍；结论由
+          **事实**承担（res.OK 为假 + ErrorKind 属于 deadline/runtime）⇒ 这条上界
+          只负责把「阻塞绑定把 Run 拖成死锁」变成一条干净的断言失败（没有它，
+          坏实现会让用例超时——同样红，只是诊断更差）⇒ 超时上限类。
+      - package: cmd/raceprobe
+        func: TestDefaultSpawnerTimeoutKillsTree
+        form: fixed_seconds_assert
+        class: timeout_cap
+        reason: >-
+          机制自身的时限是 ctx 的 200ms，这里的 15s 是它的 75 倍 ⇒ 判据问的是「超时
+          后进程有没有被杀掉」（进程还在 ⇒ 15s 后必然红，与机器快慢无关），窗口只是
+          「不至于挂死在那里」的兜底 ⇒ 超时上限类。
     examples:
       # ① 违规形态：用例体里的裸 sleep——窗口长度单独决定结论。
       - text: |-
@@ -1308,6 +1359,63 @@ rules:
                   time.Sleep(30 * time.Millisecond)
                   close(done)
               }()
+          }
+        want: miss
+      # ④ 固定秒数断言（issue #481）：把已流逝时长与**固定时长常量**比较 ⇒
+      #    结论（「有没有超过那个秒数」）由墙钟单独决定 ⇒ 尺子。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestFixedSeconds(t *testing.T) {
+              start := time.Now()
+              doWork()
+              if time.Since(start) > 2*time.Second {
+                  t.Fatalf("太慢了")
+              }
+          }
+        want: hit
+      # ⑤ 阈值是**派生量**（limit/2）⇒ 不是「固定秒数」⇒ 不判。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestDerivedThreshold(t *testing.T) {
+              start := time.Now()
+              doWork()
+              if time.Since(start) > limit/2 {
+                  t.Fatalf("太慢了")
+              }
+          }
+        want: miss
+      # ⑥ 纯计时器窗口：select 里只有计时器分支 ⇒ 窗口到期本身就是结论 ⇒ 尺子。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestTimerOnlyWindow(t *testing.T) {
+              select {
+              case <-time.After(2 * time.Second):
+                  t.Fatal("这 2s 内什么都没发生")
+              }
+          }
+        want: hit
+      # ⑦ 带事实分支的 select ⇒ 窗口是「等事实的上限」，结论由事实决定 ⇒ 不判。
+      - text: |-
+          package sample
+
+          import "time"
+
+          func TestBoundedWait(t *testing.T) {
+              select {
+              case <-ch:
+                  t.Log("到了")
+              case <-time.After(2 * time.Second):
+                  t.Fatal("超时")
+              }
           }
         want: miss
 

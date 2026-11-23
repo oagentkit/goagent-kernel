@@ -46,12 +46,36 @@ import (
 )
 
 // wallclockRulerViolations 是本规则的执行体入口。
+//
+// **两层**（issue #481）：
+//
+//	① 检测层：裸 sleep 形态（wcJudgeFiles）+ 墙钟阈值形态（wcThresholdSites）；
+//	② 对账层：阈值形态与 policy 的分类登记对账（wcClassifySites）。
+//
+// 为什么阈值形态不直接判红而要对账：「超时上限类」（窗口只作等待上界）与
+// 「尺子类」（结论由窗口长度单独决定）在语法上**分不开**——同一条
+// `elapsed > 15s` 在一条用例里是宽松上限、在另一条里是紧阈值，差别只在
+// 「坏实现会耗时多久」，那不在语法里 ⇒ 只能逐条判定并写下来，再由门禁盯着
+// 那张表（漏登记即红 / 登记成尺子类即红 / 改完不删登记即红）。
 func wallclockRulerViolations(root string, r Rule) ([]Violation, error) {
 	files, err := gjScanFiles(root, r)
 	if err != nil {
 		return nil, err
 	}
-	return wcJudgeFiles(files, r), nil
+	out := wcJudgeFiles(files, r)
+	out = append(out, wcClassifySites(r, wcThresholdSites(files, r))...)
+	wcSortViolations(out)
+	return out, nil
+}
+
+// wcSortViolations 按「路径 → 行号」排违规清单（两层的输出合并后要重排）。
+func wcSortViolations(out []Violation) {
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path != out[j].Path {
+			return out[i].Path < out[j].Path
+		}
+		return out[i].Line < out[j].Line
+	})
 }
 
 // wcJudgeFiles 是本规则的**唯一判定核**（真判定与 policy 样例共用）。
@@ -185,7 +209,14 @@ func wcSampleViolations(r Rule, text string) ([]Violation, error) {
 	if err != nil {
 		return nil, err
 	}
-	return wcJudgeFiles(files, r), nil
+	out := wcJudgeFiles(files, r)
+	// 墙钟阈值形态：样例判的是**识别**（这个形状会不会被认成墙钟判定点），
+	// 不判分类对账——样例没有仓内登记可对，那一层由 Go 用例钉住。
+	for _, s := range wcThresholdSites(files, r) {
+		out = append(out, wcSiteViolation(r, s))
+	}
+	wcSortViolations(out)
+	return out, nil
 }
 
 // dcSampleViolations 用**同一个判定核**判一条 policy 样例（defer_cleanup 规则）。

@@ -102,12 +102,18 @@ func TestMemStoreSlowAuditorDoesNotBlockSnapshots(t *testing.T) {
 		t.Fatal("Auditor.Append 未被调用")
 	}
 
-	start := time.Now()
 	snapDone := make(chan error, 1)
 	go func() {
 		_, serr := m.SnapshotTask(ctx, "t1")
 		snapDone <- serr
 	}()
+	// 尺子 = **可观测事实**，不是墙钟上界（issue #481）：慢 Auditor 在
+	// close(release) 之前一直持着状态锁 ⇒ Snapshot 在它**仍持锁时**就返回了
+	// ⇒ 它没有等这把锁（被阻塞住的实现根本回不来，会落进下面的 2s 上限）。
+	//
+	// 改写前这里还有一句「耗时 > 100ms 即红」的墙钟上界：它量的是「这台机器
+	// 此刻有多快」（机器一忙就假红），而它想拦的形态——「被慢 Auditor 阻塞」——
+	// 已经由上面这个事实完全覆盖 ⇒ 删掉。
 	select {
 	case serr := <-snapDone:
 		if serr != nil {
@@ -115,9 +121,6 @@ func TestMemStoreSlowAuditorDoesNotBlockSnapshots(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Snapshot 被慢 Auditor 阻塞超过 2s——留痕仍在状态锁内")
-	}
-	if waited := time.Since(start); waited > 100*time.Millisecond {
-		t.Fatalf("Snapshot 被慢 Auditor 拖住 %v——留痕仍在状态锁内", waited)
 	}
 	close(release)
 	if err := <-commitDone; err != nil {
