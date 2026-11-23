@@ -55,34 +55,34 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 <div class="diagram">
 <svg viewBox="0 0 720 236" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="gs1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="gs1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="14" y="176" width="112" height="44" rx="9" fill="#161b26" stroke="#58a6ff"/>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="14" y="176" width="112" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="70" y="196" text-anchor="middle" font-size="11.5">1 契约面</text>
-    <text x="70" y="212" text-anchor="middle" font-size="8.5" fill="#9aa7b8">contract · statemachine</text>
-    <rect x="128" y="148" width="112" height="44" rx="9" fill="#161b26" stroke="#262e3d"/>
+    <text x="70" y="212" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">contract · statemachine</text>
+    <rect x="128" y="148" width="112" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="184" y="168" text-anchor="middle" font-size="11.5">2 报告协议</text>
-    <text x="184" y="184" text-anchor="middle" font-size="8.5" fill="#9aa7b8">protocol</text>
-    <rect x="242" y="120" width="112" height="44" rx="9" fill="#161b26" stroke="#262e3d"/>
+    <text x="184" y="184" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">protocol</text>
+    <rect x="242" y="120" width="112" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="298" y="140" text-anchor="middle" font-size="11.5">3 工具判定环</text>
-    <text x="298" y="156" text-anchor="middle" font-size="8.5" fill="#9aa7b8">tooldisclose + …</text>
-    <rect x="356" y="92" width="112" height="44" rx="9" fill="#161b26" stroke="#262e3d"/>
+    <text x="298" y="156" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">tooldisclose + …</text>
+    <rect x="356" y="92" width="112" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="412" y="112" text-anchor="middle" font-size="11.5">4 续跑契约</text>
-    <text x="412" y="128" text-anchor="middle" font-size="8.5" fill="#9aa7b8">checkpoint · commitgate</text>
-    <rect x="470" y="64" width="112" height="44" rx="9" fill="#161b26" stroke="#262e3d"/>
+    <text x="412" y="128" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">checkpoint · commitgate</text>
+    <rect x="470" y="64" width="112" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="526" y="84" text-anchor="middle" font-size="11.5">5 上下文三件套</text>
-    <text x="526" y="100" text-anchor="middle" font-size="8.5" fill="#9aa7b8">budget · spill · offload</text>
-    <rect x="584" y="36" width="122" height="44" rx="9" fill="#161b26" stroke="#262e3d"/>
+    <text x="526" y="100" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">budget · spill · offload</text>
+    <rect x="584" y="36" width="122" height="44" rx="9" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="645" y="56" text-anchor="middle" font-size="11.5">6 程序化编排</text>
-    <text x="645" y="72" text-anchor="middle" font-size="8.5" fill="#9aa7b8">ptc · sandbox</text>
+    <text x="645" y="72" text-anchor="middle" font-size="8.5" fill="var(--k-diagram-text-mute)">ptc · sandbox</text>
   </g>
-  <line x1="126" y1="176" x2="146" y2="160" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs1)"/>
-  <line x1="240" y1="148" x2="260" y2="132" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs1)"/>
-  <line x1="354" y1="120" x2="374" y2="104" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs1)"/>
-  <line x1="468" y1="92" x2="488" y2="76" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs1)"/>
-  <line x1="582" y1="64" x2="602" y2="50" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs1)"/>
-  <text x="14" y="232" font-size="10.5" fill="#9aa7b8">顺序是典型路径不是硬依赖——每步「解决什么 / 你要提供什么」见下方各节</text>
+  <line x1="126" y1="176" x2="146" y2="160" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs1)"/>
+  <line x1="240" y1="148" x2="260" y2="132" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs1)"/>
+  <line x1="354" y1="120" x2="374" y2="104" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs1)"/>
+  <line x1="468" y1="92" x2="488" y2="76" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs1)"/>
+  <line x1="582" y1="64" x2="602" y2="50" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs1)"/>
+  <text x="14" y="232" font-size="10.5" fill="var(--k-diagram-text-mute)">顺序是典型路径不是硬依赖——每步「解决什么 / 你要提供什么」见下方各节</text>
 </svg>
 </div>
 <p class="diagram-cap">六步阶梯：越往上越靠近「省往返」，前两步打地基，按需往上叠。</p>
@@ -95,24 +95,24 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 <div class="diagram">
 <svg viewBox="0 0 720 148" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="gs2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="gs2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <g font-size="11.5" fill="#e6edf3">
-    <rect x="30" y="36" width="150" height="52" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <g font-size="11.5" fill="var(--k-diagram-text)">
+    <rect x="30" y="36" width="150" height="52" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="105" y="58" text-anchor="middle">编排引擎</text>
-    <text x="105" y="76" text-anchor="middle" font-size="9" fill="#9aa7b8">（内核，不碰存储）</text>
-    <rect x="270" y="30" width="180" height="64" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="105" y="76" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">（内核，不碰存储）</text>
+    <rect x="270" y="30" width="180" height="64" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="360" y="56" text-anchor="middle">RunContext</text>
     <text x="360" y="74" text-anchor="middle">StepSink</text>
-    <rect x="540" y="36" width="150" height="52" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <rect x="540" y="36" width="150" height="52" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="615" y="58" text-anchor="middle">宿主状态</text>
-    <text x="615" y="76" text-anchor="middle" font-size="9" fill="#9aa7b8">（存储 / DB 由你实现）</text>
+    <text x="615" y="76" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">（存储 / DB 由你实现）</text>
   </g>
-  <line x1="180" y1="56" x2="266" y2="56" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs2)"/>
-  <line x1="450" y1="62" x2="536" y2="62" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs2)"/>
-  <text x="186" y="46" font-size="9" fill="#9aa7b8">开环节 / 收口</text>
-  <text x="456" y="52" font-size="9" fill="#9aa7b8">Open / Finish</text>
-  <text x="30" y="128" font-size="10.5" fill="#9aa7b8">编排语义字段定死（ID/Status/CurrentStep），领域状态走开放键 Field/SetField——内核不解释、不校验</text>
+  <line x1="180" y1="56" x2="266" y2="56" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs2)"/>
+  <line x1="450" y1="62" x2="536" y2="62" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs2)"/>
+  <text x="186" y="46" font-size="9" fill="var(--k-diagram-text-mute)">开环节 / 收口</text>
+  <text x="456" y="52" font-size="9" fill="var(--k-diagram-text-mute)">Open / Finish</text>
+  <text x="30" y="128" font-size="10.5" fill="var(--k-diagram-text-mute)">编排语义字段定死（ID/Status/CurrentStep），领域状态走开放键 Field/SetField——内核不解释、不校验</text>
 </svg>
 </div>
 
@@ -279,31 +279,31 @@ case dispatch.ClassOther:     // 不确定：仅同域重试
 <div class="diagram">
 <svg viewBox="0 0 760 240" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="gs9" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="gs9" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <g font-size="11.5" fill="#e6edf3">
-    <rect x="16" y="72" width="150" height="52" rx="10" fill="#1c2330" stroke="#a371f7"/>
+  <g font-size="11.5" fill="var(--k-diagram-text)">
+    <rect x="16" y="72" width="150" height="52" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-purple)"/>
     <text x="91" y="94" text-anchor="middle">模型产出</text>
-    <text x="91" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">一段 JSON</text>
-    <rect x="204" y="72" width="150" height="52" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="91" y="112" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">一段 JSON</text>
+    <rect x="204" y="72" width="150" height="52" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="279" y="94" text-anchor="middle">解析 + 校验</text>
-    <text x="279" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">protocol（信任级）</text>
-    <rect x="392" y="72" width="150" height="52" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="279" y="112" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">protocol（信任级）</text>
+    <rect x="392" y="72" width="150" height="52" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="467" y="94" text-anchor="middle">状态机纯谓词</text>
-    <text x="467" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">statemachine（合不合法）</text>
-    <rect x="580" y="72" width="164" height="52" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="467" y="112" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">statemachine（合不合法）</text>
+    <rect x="580" y="72" width="164" height="52" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="662" y="94" text-anchor="middle">落库（宿主）</text>
-    <text x="662" y="112" text-anchor="middle" font-size="10" fill="#9aa7b8">StepSink 开环节 / 收口</text>
+    <text x="662" y="112" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">StepSink 开环节 / 收口</text>
   </g>
-  <line x1="166" y1="98" x2="200" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
-  <line x1="354" y1="98" x2="388" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
-  <line x1="542" y1="98" x2="576" y2="98" stroke="#58a6ff" stroke-width="1.6" marker-end="url(#gs9)"/>
-  <path d="M662,124 C662,158 140,158 91,128" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gs9)"/>
-  <text x="300" y="152" font-size="10" fill="#9aa7b8">下一环节继续（不是重放）</text>
-  <g font-size="10.5" fill="#9aa7b8">
+  <line x1="166" y1="98" x2="200" y2="98" stroke="var(--k-diagram-blue)" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <line x1="354" y1="98" x2="388" y2="98" stroke="var(--k-diagram-blue)" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <line x1="542" y1="98" x2="576" y2="98" stroke="var(--k-diagram-blue)" stroke-width="1.6" marker-end="url(#gs9)"/>
+  <path d="M662,124 C662,158 140,158 91,128" fill="none" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gs9)"/>
+  <text x="300" y="152" font-size="10" fill="var(--k-diagram-text-mute)">下一环节继续（不是重放）</text>
+  <g font-size="10.5" fill="var(--k-diagram-text-mute)">
     <text x="16" y="188">宿主要提供的三样：RunContext（编排语义定死 / 领域字段开放）· StepSink（落库）· Clock（时间）。</text>
     <text x="16" y="208">内核给的是判据与纯函数：解析校验、状态迁移合法性、失败分档——动作都在宿主侧。</text>
-    <text x="16" y="228" fill="#f85149">编排引擎不碰存储、不碰数据库：所有环节状态的读写都经 StepSink 出口。</text>
+    <text x="16" y="228" fill="var(--k-diagram-red)">编排引擎不碰存储、不碰数据库：所有环节状态的读写都经 StepSink 出口。</text>
   </g>
 </svg>
 </div>
