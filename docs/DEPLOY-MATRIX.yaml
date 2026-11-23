@@ -228,8 +228,6 @@ capabilities:
     evidence:
       - kind: contract
         ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjobegress.go#K8sEgressProbe
-      - kind: gate
-        ref: k8s-e2e
       - kind: doc
         ref: docs/K8S-EGRESS-E2E-20261119.md
       - kind: issue
@@ -314,7 +312,7 @@ scenarios:
     worker: deployment
     required: [unified-lease, lease-renewal, reliable-events, quota-reclaim, job-idempotency, network-egress-enforcement, tenant-scoped-storage]
     readiness: available
-    notes: 出站禁网的真集群实测已落地（kind + Calico 真集群，#418，结论见 docs/K8S-EGRESS-E2E-20261119.md）；其余能力已落到契约 / 参考实现。
+    notes: 出站禁网的真集群实测已落地（kind + Calico 真集群，#418，结论见 docs/K8S-EGRESS-E2E-20261119.md）；**可复跑入口随判据体迁到 goagent-runtime 仓**（那边 `make k8s-e2e`，本仓已撤同名目标——悬空入口比没有入口更坏：它让人以为这条路径在本仓可跑），「跑过没跑过」的登记见 docs/acceptance-paths.yaml；其余能力已落到契约 / 参考实现。
 
   - id: multi-cluster-single-region
     title: 多集群单区域
