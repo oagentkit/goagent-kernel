@@ -48,13 +48,21 @@ const checkKindWallclockRuler = "wallclock_ruler"
 // 是宿主的知识，硬编码等于把宿主的事写进内核。
 const checkKindTestNoDirectCall = "test_no_direct_call"
 
+// CheckKindExternalSeam 是 check_kind 的取值域：判定「拿外部量做判定的函数
+// 必须登记接缝或显式豁免」（issue #482）。
+//
+// 它的判定面是**清单**（policy 的 registry 字段指过去的文件）与代码现状的对账：
+// 漏登记即红、陈旧登记即红、decide 角色既无接缝又无豁免理由即红。
+const CheckKindExternalSeam = "external_seam"
+
 // knownCheckKind 判 check_kind 的取值是否已知。
 //
 // 取值域必须封闭的理由见文件头：写错的类别名若被当成「不是已知类别」，这条
 // 登记就静默降级成「不判」——登记了一张表却没生效，且没有任何机器能发现。
 func knownCheckKind(kind string) bool {
 	switch kind {
-	case checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler, checkKindTestNoDirectCall:
+	case checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler,
+		checkKindTestNoDirectCall, CheckKindExternalSeam:
 		return true
 	}
 	return false
@@ -62,7 +70,8 @@ func knownCheckKind(kind string) bool {
 
 // knownCheckKindList 列出已知取值域（报错文案用）。
 func knownCheckKindList() []string {
-	return []string{checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler, checkKindTestNoDirectCall}
+	return []string{checkKindGoroutineJoin, checkKindDeferCleanup, checkKindWallclockRuler,
+		checkKindTestNoDirectCall, CheckKindExternalSeam}
 }
 
 // checkKindViolations 按 check_kind 分派到结构化执行体。
@@ -79,6 +88,8 @@ func checkKindViolations(root string, r Rule) ([]Violation, error) {
 		return wallclockRulerViolations(root, r)
 	case checkKindTestNoDirectCall:
 		return testNoDirectCallViolations(root, r)
+	case CheckKindExternalSeam:
+		return extViolations(root, r)
 	default:
 		return nil, fmt.Errorf("规则 %s 的 check_kind %q 未知（没有对应执行体）", r.ID, r.CheckKind)
 	}
@@ -96,6 +107,8 @@ func checkKindSampleViolations(r Rule, text string) ([]Violation, error) {
 		return wcSampleViolations(r, text)
 	case checkKindTestNoDirectCall:
 		return tncSampleViolations(r, text)
+	case CheckKindExternalSeam:
+		return extSampleViolations(r, text)
 	default:
 		return gjSampleViolations(r, text)
 	}

@@ -397,6 +397,11 @@ architecture-check: ## 架构治理门禁（域词污染红线 + 依赖方向）
 # 严格档是**可选档**（issue #103）：整仓类型检查慢一个量级，opt-in 不进 check。
 # 「可选」不等于「可静默」：类型解析失败显式报错（退出码 2），开着却没跑过
 # 会在报告里以包数凭据显形。
+# 刷新外部依赖清单的**骨架**（issue #482）：实测触达 + 保留人的判断字段。
+# 人只维护 role / seam / exempt / reason；新出现的条目 role 留空 ⇒ 门禁判红，等人判定。
+external-deps: ## 刷新外部依赖清单骨架（judgment 字段保留；新条目 role 留空 ⇒ 门禁判红）
+	$(EXPORT) $(GOENV) go run ./cmd/archcheck -update-external-deps
+
 architecture-check-types: ## 架构门禁严格档（go/types 类型感知：覆盖赋值形态盲区，慢，opt-in）
 	$(EXPORT) $(GOENV) go run ./cmd/archcheck -types $(if $(findstring --report,$(MAKECMDGOALS)),--report,)
 

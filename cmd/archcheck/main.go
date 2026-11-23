@@ -36,6 +36,8 @@ func main() {
 	report := flag.Bool("report", false, "输出全量违反（默认每条规则截断到 10 条）")
 	typeAware := flag.Bool("types", false, "开类型感知严格档（go/packages + go/types：覆盖赋值形态的静态不可溯盲区；整仓类型检查，比默认档慢一个量级）")
 	policyPath := flag.String("policy", "", "policy 文件路径（缺省为仓库根下的 architecture-policy.yaml）")
+	updateExternal := flag.Bool("update-external-deps", false,
+		"重新生成外部依赖清单骨架（issue #482；保留 role/seam/exempt/reason 判断字段，新出现的条目 role 留空 ⇒ 门禁判红）")
 	flag.Parse()
 
 	root, err := archcheck.FindRoot(".")
@@ -51,6 +53,14 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "archcheck:", err)
 		os.Exit(2)
+	}
+
+	if *updateExternal {
+		if err := archcheck.UpdateExternalDepsFromPolicy(root, pol); err != nil {
+			fmt.Fprintln(os.Stderr, "archcheck:", err)
+			os.Exit(2)
+		}
+		return
 	}
 
 	res, err := archcheck.RunWithOptions(root, pol, archcheck.RunOptions{TypeAware: *typeAware})

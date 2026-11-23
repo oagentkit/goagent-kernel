@@ -1420,6 +1420,62 @@ rules:
         want: miss
 
 
+  # 规则：问外部世界的生产函数必须登记角色与接缝（issue #482）。
+  #
+  # 「判定面要问外部世界」的函数（DNS / 拨号 / 时钟 / 环境变量 / 文件系统）
+  # 要么配一对**可注入的接缝**，要么显式登记豁免理由——与 exceptions 同款纪律。
+  #
+  # #412 补了 netguard 的另一半（链条面 CheckChainWithResolver），但
+  # 「判定面与拨号层的接缝清单」从没盘过：哪些函数在问外部世界、其中哪些已有
+  # 接缝、哪些还没有，**没有一张表** ⇒ 没有一张表就没有「漏了谁」的信号。
+  #
+  # 判定面是**清单**（docs/EXTERNAL-DEPS.yaml）与代码现状的对账，四个方向：
+  #   - **漏登记**（代码里有、清单里没有）⇒ 红；
+  #   - **陈旧/漂移**（清单里的函数没了，或依赖类变了）⇒ 红；
+  #   - **decide 角色**（拿外部量做判定）既无接缝又无豁免理由 ⇒ 红；
+  #   - **声明的接缝符号在包内不存在** ⇒ 红（接缝声明不能是一句空话）。
+  #
+  # 清单的**骨架**由工具生成（make external-deps -update），人只维护**判断**字段
+  # （role / seam / exempt / reason）⇒ 新出现的外部触达会以「role 留空」的形式
+  # 当场判红，等人判定；刷新不会覆盖已有人工判断。
+  #
+  # 样例面是**清单片段**（YAML）而不是源码：这条规则判的是「清单与代码现状的
+  # 对账」，样例必须能表达「这样一份清单会不会被判红」。
+  - id: harness-external-dep-seam
+    desc: 问外部世界的生产函数必须登记角色；decide 角色须有接缝或显式豁免理由
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    check_kind: external_seam
+    registry: docs/EXTERNAL-DEPS.yaml
+    examples:
+      # ① decide 角色却既无接缝也无豁免理由 ⇒ 红。
+      - text: |-
+          deps:
+            - package: demo
+              function: Decide
+              deps: [clock]
+              role: decide
+        want: hit
+      # ② decide 角色有接缝 ⇒ 绿（接缝存在性由 Go 用例钉住，样例里没有包）。
+      - text: |-
+          deps:
+            - package: demo
+              function: Decide
+              deps: [clock]
+              role: decide
+              seam: "Demo.now"
+        want: miss
+      # ③ tool 角色（执行外部动作本身就是目的）⇒ 不要求接缝 ⇒ 绿。
+      - text: |-
+          deps:
+            - package: demo
+              function: ReadManifest
+              deps: [fs]
+              role: tool
+        want: miss
+
   - id: harness-no-printf-log-callback
     desc: SDK 包不得把 printf 风格日志回调焊进公开 API 签名；留痕走 logx.Delegating
     severity: error

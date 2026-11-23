@@ -110,6 +110,19 @@ type Rule struct {
 	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
 	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
 	RulerClassifications []RulerClassification `yaml:"ruler_classifications"`
+	// Registry 是「外部依赖清单」的文件路径（check_kind: external_seam 用，issue #482）。
+	//
+	// 为什么清单单独一个文件而不是 policy 的一段：policy 是**手写的规则面**，
+	// 清单是**盘点结果**（由工具生成骨架、人维护判断字段）。两者各自有各自的
+	// 真相，混在一份文件里 ⇒ 刷新清单会重排整个 policy。
+	//
+	// 路径相对仓库根；宿主仓可以用自己的清单（archcheck 是跨宿主复用的库，
+	// 写死路径等于把宿主的事写进内核）。
+	//
+	// 兼容性：这是**源码级 additive 变更**——给导出的结构体加字段，会让下游
+	// 用**位置参数**（无字段名）写结构体字面量的代码编译不过（Go 要求位置参数
+	// 字面量写出全部字段）。用字段名写字面量的代码不受影响。
+	Registry string `yaml:"registry"`
 }
 
 // RulerClassification 一条「墙钟判定」的逐条分类登记（issue #481）。
