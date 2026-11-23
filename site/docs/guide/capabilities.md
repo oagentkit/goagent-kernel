@@ -14,47 +14,47 @@ title: 能力详解
 <svg viewBox="0 0 760 396" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
     <marker id="ar1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+      <path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/>
     </marker>
   </defs>
-  <rect x="140" y="8" width="200" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
-  <text x="240" y="31" text-anchor="middle" fill="#e6edf3" font-size="13">LLM 模型 / 程序</text>
-  <rect x="420" y="8" width="200" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
-  <text x="520" y="31" text-anchor="middle" fill="#e6edf3" font-size="13">宿主工具（MCP 等）</text>
-  <line x1="240" y1="44" x2="240" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar1)"/>
-  <line x1="520" y1="44" x2="520" y2="60" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar1)"/>
-  <g font-size="12.5" fill="#e6edf3">
-    <rect x="20" y="68" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <rect x="140" y="8" width="200" height="36" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
+  <text x="240" y="31" text-anchor="middle" fill="var(--k-diagram-text)" font-size="13">LLM 模型 / 程序</text>
+  <rect x="420" y="8" width="200" height="36" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
+  <text x="520" y="31" text-anchor="middle" fill="var(--k-diagram-text)" font-size="13">宿主工具（MCP 等）</text>
+  <line x1="240" y1="44" x2="240" y2="60" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <line x1="520" y1="44" x2="520" y2="60" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <g font-size="12.5" fill="var(--k-diagram-text)">
+    <rect x="20" y="68" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="130" y="94" text-anchor="middle">① 报告与协议</text>
-    <text x="130" y="118" text-anchor="middle" fill="#9aa7b8" font-size="10.5">protocol · 容错解析 · 白名单校验 · 渲染</text>
-    <rect x="270" y="68" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="130" y="118" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">protocol · 容错解析 · 白名单校验 · 渲染</text>
+    <rect x="270" y="68" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="380" y="94" text-anchor="middle">② 工具判定环</text>
-    <text x="380" y="118" text-anchor="middle" fill="#9aa7b8" font-size="10.5">tooldisclose · guardset · toolfail</text>
-    <rect x="520" y="68" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="380" y="118" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">tooldisclose · guardset · toolfail</text>
+    <rect x="520" y="68" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="630" y="94" text-anchor="middle">③ 编排契约与续跑</text>
-    <text x="630" y="118" text-anchor="middle" fill="#9aa7b8" font-size="10.5">contract · statemachine · checkpoint · commitgate</text>
-    <rect x="20" y="156" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="630" y="118" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">contract · statemachine · checkpoint · commitgate</text>
+    <rect x="20" y="156" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="130" y="182" text-anchor="middle">④ 上下文三件套</text>
-    <text x="130" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">budget · spill · offload</text>
-    <rect x="270" y="156" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="130" y="206" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">budget · spill · offload</text>
+    <rect x="270" y="156" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="380" y="182" text-anchor="middle">⑤ 程序化编排</text>
-    <text x="380" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">ptc · sandbox · egress</text>
-    <rect x="520" y="156" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="380" y="206" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">ptc · sandbox · egress</text>
+    <rect x="520" y="156" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="630" y="182" text-anchor="middle">⑥ 实时与流式</text>
-    <text x="630" y="206" text-anchor="middle" fill="#9aa7b8" font-size="10.5">eventbus · watchdog · delta · drain · pending</text>
-    <rect x="20" y="244" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="630" y="206" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">eventbus · watchdog · delta · drain · pending</text>
+    <rect x="20" y="244" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="130" y="270" text-anchor="middle">⑦ 安全面</text>
-    <text x="130" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">netguard · pii（已上移上游）</text>
-    <rect x="270" y="244" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="130" y="294" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">netguard · pii（已上移上游）</text>
+    <rect x="270" y="244" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="380" y="270" text-anchor="middle">⑧ 副作用只做一次</text>
-    <text x="380" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">retryplan · sideeffect · sidetest</text>
-    <rect x="520" y="244" width="220" height="72" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="380" y="294" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">retryplan · sideeffect · sidetest</text>
+    <rect x="520" y="244" width="220" height="72" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="630" y="270" text-anchor="middle">⑨ 协作与治理</text>
-    <text x="630" y="294" text-anchor="middle" fill="#9aa7b8" font-size="10.5">taskboard · skilldisclose · hookengine · memorypipe…</text>
+    <text x="630" y="294" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">taskboard · skilldisclose · hookengine · memorypipe…</text>
   </g>
-  <line x1="380" y1="316" x2="380" y2="338" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar1)"/>
-  <rect x="200" y="344" width="360" height="38" rx="10" fill="#1c2330" stroke="#262e3d"/>
-  <text x="380" y="368" text-anchor="middle" fill="#9aa7b8" font-size="12">宿主设施：存储 · 通道 · 拓扑 · 文案（经接口注入，内核只判定）</text>
+  <line x1="380" y1="316" x2="380" y2="338" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar1)"/>
+  <rect x="200" y="344" width="360" height="38" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
+  <text x="380" y="368" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="12">宿主设施：存储 · 通道 · 拓扑 · 文案（经接口注入，内核只判定）</text>
 </svg>
 </div>
 <p class="diagram-cap">能力全景：模型与工具的每一次交互都被中间三层机制管住，落点是宿主自己的设施。</p>
@@ -79,47 +79,47 @@ title: 能力详解
 <div class="diagram">
 <svg viewBox="0 0 760 360" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="chk1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
-    <marker id="chk2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#3fb950"/></marker>
-    <marker id="chk3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#f85149"/></marker>
+    <marker id="chk1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
+    <marker id="chk2" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-green)"/></marker>
+    <marker id="chk3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-red)"/></marker>
   </defs>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="14" y="76" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="14" y="76" width="150" height="36" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="89" y="99" text-anchor="middle">普通工具调用</text>
-    <rect x="14" y="124" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <rect x="14" y="124" width="150" height="36" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="89" y="147" text-anchor="middle">ptc 程序内调用</text>
-    <rect x="14" y="172" width="150" height="36" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <rect x="14" y="172" width="150" height="36" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="89" y="195" text-anchor="middle">子进程侧调用</text>
-    <rect x="200" y="40" width="256" height="200" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <rect x="200" y="40" width="256" height="200" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="328" y="64" text-anchor="middle" font-size="12">invoke.Chain（逐环短路 · 顺序即语义）</text>
-    <rect x="214" y="78" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <rect x="214" y="78" width="228" height="40" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="328" y="95" text-anchor="middle">policy.Stage · 审批门</text>
-    <text x="328" y="111" text-anchor="middle" font-size="9" fill="#9aa7b8">上游 toolgate/policy</text>
-    <rect x="214" y="124" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="328" y="111" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">上游 toolgate/policy</text>
+    <rect x="214" y="124" width="228" height="40" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="328" y="141" text-anchor="middle">tooldisclose.Stage · 披露门</text>
-    <text x="328" y="157" text-anchor="middle" font-size="9" fill="#9aa7b8">目录内 + schema 已取回</text>
-    <rect x="214" y="170" width="228" height="40" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <text x="328" y="157" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">目录内 + schema 已取回</text>
+    <rect x="214" y="170" width="228" height="40" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="328" y="187" text-anchor="middle">guardset.Stage · 一并求值</text>
-    <text x="328" y="203" text-anchor="middle" font-size="9" fill="#9aa7b8">多条拒绝合成一条</text>
-    <text x="328" y="230" text-anchor="middle" font-size="9" fill="#9aa7b8">每环都是链上的一环 · 先后由宿主管线决定</text>
-    <rect x="490" y="60" width="254" height="56" rx="10" fill="#161b26" stroke="#3fb950"/>
-    <text x="617" y="82" text-anchor="middle" fill="#3fb950">通过 → 宿主执行工具</text>
-    <text x="617" y="102" text-anchor="middle" font-size="9.5" fill="#9aa7b8">结果回灌模型；判定环不执行、不解释工具语义</text>
-    <rect x="490" y="140" width="254" height="88" rx="10" fill="#161b26" stroke="#f85149"/>
-    <text x="617" y="162" text-anchor="middle" fill="#f85149">拒绝 → 结构化 Verdict（不是 error）</text>
-    <text x="617" y="184" text-anchor="middle" font-size="9.5" fill="#9aa7b8">Reason：给模型看的是 Guidance（能照着做）</text>
-    <text x="617" y="202" text-anchor="middle" font-size="9.5" fill="#9aa7b8">留痕另取 Reason()（全且准，给人看）</text>
-    <text x="617" y="220" text-anchor="middle" font-size="9.5" fill="#9aa7b8">链上抛 error = 这一环自己坏了</text>
+    <text x="328" y="203" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">多条拒绝合成一条</text>
+    <text x="328" y="230" text-anchor="middle" font-size="9" fill="var(--k-diagram-text-mute)">每环都是链上的一环 · 先后由宿主管线决定</text>
+    <rect x="490" y="60" width="254" height="56" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-green)"/>
+    <text x="617" y="82" text-anchor="middle" fill="var(--k-diagram-green)">通过 → 宿主执行工具</text>
+    <text x="617" y="102" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">结果回灌模型；判定环不执行、不解释工具语义</text>
+    <rect x="490" y="140" width="254" height="88" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-red)"/>
+    <text x="617" y="162" text-anchor="middle" fill="var(--k-diagram-red)">拒绝 → 结构化 Verdict（不是 error）</text>
+    <text x="617" y="184" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">Reason：给模型看的是 Guidance（能照着做）</text>
+    <text x="617" y="202" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">留痕另取 Reason()（全且准，给人看）</text>
+    <text x="617" y="220" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">链上抛 error = 这一环自己坏了</text>
   </g>
-  <line x1="164" y1="94" x2="196" y2="86" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
-  <line x1="164" y1="142" x2="196" y2="134" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
-  <line x1="164" y1="190" x2="196" y2="182" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#chk1)"/>
-  <line x1="456" y1="110" x2="486" y2="88" stroke="#3fb950" stroke-width="1.5" marker-end="url(#chk2)"/>
-  <line x1="456" y1="170" x2="486" y2="180" stroke="#f85149" stroke-width="1.5" marker-end="url(#chk3)"/>
-  <g font-size="10.5" fill="#9aa7b8">
+  <line x1="164" y1="94" x2="196" y2="86" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="164" y1="142" x2="196" y2="134" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="164" y1="190" x2="196" y2="182" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#chk1)"/>
+  <line x1="456" y1="110" x2="486" y2="88" stroke="var(--k-diagram-green)" stroke-width="1.5" marker-end="url(#chk2)"/>
+  <line x1="456" y1="170" x2="486" y2="180" stroke="var(--k-diagram-red)" stroke-width="1.5" marker-end="url(#chk3)"/>
+  <g font-size="10.5" fill="var(--k-diagram-text-mute)">
     <text x="16" y="272">少接一段，那里就是整条链上唯一绕过所有门禁的路径——模型写的程序里的调用也不例外。</text>
     <text x="16" y="294">guardset 把自己接成链上的**一环**：链照旧短路，但这一环内部已经把该说的都说了。</text>
-    <text x="16" y="316" fill="#f85149">披露门也可以直接作为 guardset 的一条 guard 一并求值——两种装配都成立，关键是三处入口走同一条链。</text>
+    <text x="16" y="316" fill="var(--k-diagram-red)">披露门也可以直接作为 guardset 的一条 guard 一并求值——两种装配都成立，关键是三处入口走同一条链。</text>
     <text x="16" y="342">拒绝是「这一环不通过」，不是「程序出错」——模型据此改参数或换工具，不该看到异常。</text>
   </g>
 </svg>
@@ -145,36 +145,36 @@ title: 能力详解
 <svg viewBox="0 0 720 226" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
     <marker id="ar3" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+      <path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/>
     </marker>
   </defs>
-  <text x="20" y="22" font-size="13" fill="#e6edf3">checkpoint：续跑而非重放</text>
-  <text x="392" y="22" font-size="13" fill="#e6edf3">commitgate：终态独占</text>
-  <line x1="360" y1="34" x2="360" y2="210" stroke="#262e3d"/>
-  <g font-size="12" fill="#e6edf3">
-    <rect x="20" y="42" width="130" height="34" rx="8" fill="#1c2330" stroke="#262e3d"/>
+  <text x="20" y="22" font-size="13" fill="var(--k-diagram-text)">checkpoint：续跑而非重放</text>
+  <text x="392" y="22" font-size="13" fill="var(--k-diagram-text)">commitgate：终态独占</text>
+  <line x1="360" y1="34" x2="360" y2="210" stroke="var(--k-diagram-stroke)"/>
+  <g font-size="12" fill="var(--k-diagram-text)">
+    <rect x="20" y="42" width="130" height="34" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="85" y="63" text-anchor="middle">崩溃前快照</text>
-    <rect x="196" y="42" width="130" height="34" rx="8" fill="#161b26" stroke="#58a6ff"/>
+    <rect x="196" y="42" width="130" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="261" y="63" text-anchor="middle">BuildPlan（纯函数）</text>
-    <rect x="20" y="106" width="306" height="34" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="20" y="106" width="306" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="173" y="127" text-anchor="middle">跳过已终态 · 重跑缺口 · 并行按前驱采信</text>
   </g>
-  <line x1="150" y1="59" x2="192" y2="59" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
-  <line x1="261" y1="76" x2="261" y2="102" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
-  <text x="20" y="172" font-size="11" fill="#9aa7b8">可信边界按依赖判定（失序宁可多跑）· 终态不自动重开 · 序号单调闸</text>
-  <g font-size="12" fill="#e6edf3">
-    <rect x="392" y="42" width="112" height="34" rx="8" fill="#161b26" stroke="#58a6ff"/>
+  <line x1="150" y1="59" x2="192" y2="59" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <line x1="261" y1="76" x2="261" y2="102" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <text x="20" y="172" font-size="11" fill="var(--k-diagram-text-mute)">可信边界按依赖判定（失序宁可多跑）· 终态不自动重开 · 序号单调闸</text>
+  <g font-size="12" fill="var(--k-diagram-text)">
+    <rect x="392" y="42" width="112" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="448" y="63" text-anchor="middle">Acquire 令牌</text>
-    <rect x="528" y="42" width="92" height="34" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="528" y="42" width="92" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="574" y="63" text-anchor="middle">提交终态</text>
-    <rect x="644" y="42" width="66" height="34" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="644" y="42" width="66" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="677" y="63" text-anchor="middle">Release</text>
-    <rect x="392" y="106" width="318" height="34" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="392" y="106" width="318" height="34" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="551" y="127" text-anchor="middle">放闸凭令牌，不比对内容 —— 同名/同序也放不错</text>
   </g>
-  <line x1="504" y1="59" x2="524" y2="59" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
-  <line x1="620" y1="59" x2="640" y2="59" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar3)"/>
-  <text x="392" y="172" font-size="11" fill="#9aa7b8">同一 (run, 环节) 的终态只允许提交一次 —— 「两条分支都赢了」不可能</text>
+  <line x1="504" y1="59" x2="524" y2="59" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <line x1="620" y1="59" x2="640" y2="59" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar3)"/>
+  <text x="392" y="172" font-size="11" fill="var(--k-diagram-text-mute)">同一 (run, 环节) 的终态只允许提交一次 —— 「两条分支都赢了」不可能</text>
 </svg>
 </div>
 <p class="diagram-cap">左：恢复判定是纯函数，不是宿主的临场决定；右：终态独占权凭令牌，不靠内容比对认人。</p>
@@ -195,26 +195,26 @@ title: 能力详解
 <svg viewBox="0 0 720 242" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
     <marker id="ar4" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+      <path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/>
     </marker>
   </defs>
-  <rect x="270" y="92" width="200" height="52" rx="10" fill="#161b26" stroke="#58a6ff"/>
-  <text x="370" y="115" text-anchor="middle" fill="#e6edf3" font-size="13">上下文窗口</text>
-  <text x="370" y="133" text-anchor="middle" fill="#9aa7b8" font-size="10.5">有限预算，不是无限历史</text>
-  <g font-size="12" fill="#e6edf3">
-    <rect x="20" y="38" width="200" height="50" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <rect x="270" y="92" width="200" height="52" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
+  <text x="370" y="115" text-anchor="middle" fill="var(--k-diagram-text)" font-size="13">上下文窗口</text>
+  <text x="370" y="133" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">有限预算，不是无限历史</text>
+  <g font-size="12" fill="var(--k-diagram-text)">
+    <rect x="20" y="38" width="200" height="50" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="120" y="59" text-anchor="middle">budget 输入侧</text>
-    <text x="120" y="77" text-anchor="middle" fill="#9aa7b8" font-size="10.5">分段计量 · 压实计划 · 毛/净分列</text>
-    <rect x="500" y="38" width="200" height="50" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="120" y="77" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">分段计量 · 压实计划 · 毛/净分列</text>
+    <rect x="500" y="38" width="200" height="50" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="600" y="59" text-anchor="middle">spill 输出侧</text>
-    <text x="600" y="77" text-anchor="middle" fill="#9aa7b8" font-size="10.5">溢出存档 · 分页取回 · 按龄清理</text>
-    <rect x="270" y="182" width="200" height="50" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="600" y="77" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">溢出存档 · 分页取回 · 按龄清理</text>
+    <rect x="270" y="182" width="200" height="50" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="370" y="203" text-anchor="middle">offload 大对象</text>
-    <text x="370" y="221" text-anchor="middle" fill="#9aa7b8" font-size="10.5">两阶段外置：首次只标记不替换</text>
+    <text x="370" y="221" text-anchor="middle" fill="var(--k-diagram-text-mute)" font-size="10.5">两阶段外置：首次只标记不替换</text>
   </g>
-  <line x1="220" y1="72" x2="280" y2="100" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar4)"/>
-  <line x1="500" y1="72" x2="452" y2="100" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar4)"/>
-  <line x1="370" y1="182" x2="370" y2="148" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar4)"/>
+  <line x1="220" y1="72" x2="280" y2="100" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar4)"/>
+  <line x1="500" y1="72" x2="452" y2="100" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar4)"/>
+  <line x1="370" y1="182" x2="370" y2="148" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar4)"/>
 </svg>
 </div>
 <p class="diagram-cap">三件套各管一段：进来的计量与压实、出去的溢出与取回、躺在线里的大对象。</p>
@@ -233,40 +233,40 @@ title: 能力详解
 <svg viewBox="0 0 720 270" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
     <marker id="ar5" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/>
+      <path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/>
     </marker>
     <marker id="ar5b" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#f85149"/>
+      <path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-red)"/>
     </marker>
   </defs>
-  <text x="20" y="22" font-size="13" fill="#9aa7b8">N 轮 ReAct 往返 —— 每轮原始数据都过模型面</text>
-  <g font-size="12" fill="#e6edf3">
-    <rect x="30" y="36" width="110" height="34" rx="8" fill="#1c2330" stroke="#262e3d"/>
+  <text x="20" y="22" font-size="13" fill="var(--k-diagram-text-mute)">N 轮 ReAct 往返 —— 每轮原始数据都过模型面</text>
+  <g font-size="12" fill="var(--k-diagram-text)">
+    <rect x="30" y="36" width="110" height="34" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="85" y="57" text-anchor="middle">模型</text>
-    <rect x="260" y="36" width="110" height="34" rx="8" fill="#1c2330" stroke="#262e3d"/>
+    <rect x="260" y="36" width="110" height="34" rx="8" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="315" y="57" text-anchor="middle">工具</text>
   </g>
-  <line x1="140" y1="46" x2="256" y2="46" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
-  <line x1="260" y1="62" x2="144" y2="62" stroke="#f85149" stroke-width="1.5" marker-end="url(#ar5b)"/>
-  <text x="410" y="58" font-size="12" fill="#9aa7b8">× N 轮，上下文被撑爆</text>
-  <line x1="20" y1="96" x2="700" y2="96" stroke="#262e3d"/>
-  <text x="20" y="126" font-size="13" fill="#e6edf3">ptc —— 塌缩成 1 轮，原始数据不过模型面</text>
-  <g font-size="12" fill="#e6edf3">
-    <rect x="20" y="142" width="120" height="36" rx="8" fill="#161b26" stroke="#58a6ff"/>
+  <line x1="140" y1="46" x2="256" y2="46" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="260" y1="62" x2="144" y2="62" stroke="var(--k-diagram-red)" stroke-width="1.5" marker-end="url(#ar5b)"/>
+  <text x="410" y="58" font-size="12" fill="var(--k-diagram-text-mute)">× N 轮，上下文被撑爆</text>
+  <line x1="20" y1="96" x2="700" y2="96" stroke="var(--k-diagram-stroke)"/>
+  <text x="20" y="126" font-size="13" fill="var(--k-diagram-text)">ptc —— 塌缩成 1 轮，原始数据不过模型面</text>
+  <g font-size="12" fill="var(--k-diagram-text)">
+    <rect x="20" y="142" width="120" height="36" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="80" y="164" text-anchor="middle">模型写程序</text>
-    <rect x="182" y="142" width="110" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="182" y="142" width="110" height="36" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="237" y="164" text-anchor="middle">沙箱执行</text>
-    <rect x="334" y="142" width="130" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="334" y="142" width="130" height="36" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="399" y="164" text-anchor="middle">bindings 调工具 ×N</text>
-    <rect x="506" y="142" width="120" height="36" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="506" y="142" width="120" height="36" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="566" y="164" text-anchor="middle">归并小结果</text>
   </g>
-  <line x1="140" y1="160" x2="178" y2="160" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
-  <line x1="292" y1="160" x2="330" y2="160" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
-  <line x1="464" y1="160" x2="502" y2="160" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
-  <path d="M566,142 C566,118 120,118 88,138" fill="none" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar5)"/>
-  <text x="20" y="218" font-size="11" fill="#9aa7b8">三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘 · 纯 Go 零 CGO</text>
-  <text x="20" y="242" font-size="11" fill="#9aa7b8">程序内 host.&lt;tool&gt;() 走同一套判定环 · egress 管子进程出口 · 命令级判据在上游 tools</text>
+  <line x1="140" y1="160" x2="178" y2="160" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="292" y1="160" x2="330" y2="160" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <line x1="464" y1="160" x2="502" y2="160" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <path d="M566,142 C566,118 120,118 88,138" fill="none" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar5)"/>
+  <text x="20" y="218" font-size="11" fill="var(--k-diagram-text-mute)">三重预算（墙钟 / 调用数 / 字节数）替代 OS 沙盘 · 纯 Go 零 CGO</text>
+  <text x="20" y="242" font-size="11" fill="var(--k-diagram-text-mute)">程序内 host.&lt;tool&gt;() 走同一套判定环 · egress 管子进程出口 · 命令级判据在上游 tools</text>
 </svg>
 </div>
 <p class="diagram-cap">同一个任务：上面每一轮的原始数据都要挤进上下文；下面只有一次往返，原始数据留在沙箱里。</p>
@@ -292,44 +292,44 @@ title: 能力详解
 <div class="diagram">
 <svg viewBox="0 0 760 280" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="ar7" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="ar7" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <text x="16" y="24" font-size="12.5" fill="#e6edf3">netguard（上游 guardx）：出站请求的四道放行判据，逐层收紧</text>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="16" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+  <text x="16" y="24" font-size="12.5" fill="var(--k-diagram-text)">netguard（上游 guardx）：出站请求的四道放行判据，逐层收紧</text>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="16" y="40" width="164" height="58" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="98" y="62" text-anchor="middle">① 名字层</text>
-    <text x="98" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">指向内网 / 元数据的域名</text>
-    <rect x="206" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="98" y="80" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">指向内网 / 元数据的域名</text>
+    <rect x="206" y="40" width="164" height="58" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="288" y="62" text-anchor="middle">② 逐 IP 过出口策略</text>
-    <text x="288" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">解析出的每个 IP 都要判</text>
-    <rect x="396" y="40" width="164" height="58" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="288" y="80" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">解析出的每个 IP 都要判</text>
+    <rect x="396" y="40" width="164" height="58" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="478" y="62" text-anchor="middle">③ 重定向逐跳重验</text>
-    <text x="478" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">下一跳重新走一遍①②③</text>
-    <rect x="586" y="40" width="158" height="58" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="478" y="80" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">下一跳重新走一遍①②③</text>
+    <rect x="586" y="40" width="158" height="58" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="665" y="62" text-anchor="middle">④ 建连后核对</text>
-    <text x="665" y="80" text-anchor="middle" font-size="10" fill="#9aa7b8">核对真实 RemoteAddr</text>
+    <text x="665" y="80" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">核对真实 RemoteAddr</text>
   </g>
-  <line x1="180" y1="69" x2="202" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
-  <line x1="370" y1="69" x2="392" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
-  <line x1="560" y1="69" x2="582" y2="69" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
-  <text x="16" y="120" font-size="10.5" fill="#9aa7b8">④ 闭合的是 rebinding 窗口：名字判过之后，域名解析结果可能在建连前被换掉。</text>
-  <line x1="16" y1="140" x2="744" y2="140" stroke="#262e3d"/>
-  <text x="16" y="164" font-size="12.5" fill="#e6edf3">pii：内核只回报信号，阻断动作由宿主执行</text>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="16" y="180" width="196" height="48" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <line x1="180" y1="69" x2="202" y2="69" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="370" y1="69" x2="392" y2="69" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="560" y1="69" x2="582" y2="69" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <text x="16" y="120" font-size="10.5" fill="var(--k-diagram-text-mute)">④ 闭合的是 rebinding 窗口：名字判过之后，域名解析结果可能在建连前被换掉。</text>
+  <line x1="16" y1="140" x2="744" y2="140" stroke="var(--k-diagram-stroke)"/>
+  <text x="16" y="164" font-size="12.5" fill="var(--k-diagram-text)">pii：内核只回报信号，阻断动作由宿主执行</text>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="16" y="180" width="196" height="48" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="114" y="200" text-anchor="middle">待检文本</text>
-    <text x="114" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">上下文 / 报告 / 日志</text>
-    <rect x="248" y="180" width="196" height="48" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="114" y="218" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">上下文 / 报告 / 日志</text>
+    <rect x="248" y="180" width="196" height="48" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="346" y="200" text-anchor="middle">pii.Apply 检出</text>
-    <text x="346" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">手机号 / 身份证四重校验</text>
-    <rect x="480" y="180" width="264" height="48" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="346" y="218" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">手机号 / 身份证四重校验</text>
+    <rect x="480" y="180" width="264" height="48" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="612" y="200" text-anchor="middle">返回 (文本, true)</text>
-    <text x="612" y="218" text-anchor="middle" font-size="10" fill="#9aa7b8">true = 宿主应当阻断，动作由你执行</text>
+    <text x="612" y="218" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">true = 宿主应当阻断，动作由你执行</text>
   </g>
-  <line x1="212" y1="204" x2="244" y2="204" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
-  <line x1="444" y1="204" x2="476" y2="204" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#ar7)"/>
-  <text x="16" y="258" font-size="10.5" fill="#f85149">放行面具名且零值即严：不配置 = 全拒绝（静默放行是最贵的失效形态）。</text>
-  <text x="16" y="276" font-size="10.5" fill="#9aa7b8">内核不抛错、不中断控制流——它只说「该阻断」，怎么处置是你的事。</text>
+  <line x1="212" y1="204" x2="244" y2="204" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <line x1="444" y1="204" x2="476" y2="204" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#ar7)"/>
+  <text x="16" y="258" font-size="10.5" fill="var(--k-diagram-red)">放行面具名且零值即严：不配置 = 全拒绝（静默放行是最贵的失效形态）。</text>
+  <text x="16" y="276" font-size="10.5" fill="var(--k-diagram-text-mute)">内核不抛错、不中断控制流——它只说「该阻断」，怎么处置是你的事。</text>
 </svg>
 </div>
 <p class="diagram-cap">出站四道判据逐层收紧，最后一道在建连之后核对真实地址；脱敏只回报信号，处置在宿主。</p>
@@ -345,40 +345,40 @@ title: 能力详解
 <div class="diagram">
 <svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="ar8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="ar8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <text x="16" y="24" font-size="12.5" fill="#e6edf3">retryplan：两个正交维度决定处置，四个格子四种处置</text>
-  <text x="16" y="46" font-size="10.5" fill="#9aa7b8">纵轴＝可重发安全（重发会不会重复施加副作用）　横轴＝值得重试</text>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="16" y="58" width="186" height="62" rx="10" fill="#161b26" stroke="#3fb950"/>
+  <text x="16" y="24" font-size="12.5" fill="var(--k-diagram-text)">retryplan：两个正交维度决定处置，四个格子四种处置</text>
+  <text x="16" y="46" font-size="10.5" fill="var(--k-diagram-text-mute)">纵轴＝可重发安全（重发会不会重复施加副作用）　横轴＝值得重试</text>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="16" y="58" width="186" height="62" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-green)"/>
     <text x="109" y="80" text-anchor="middle">可重试 + 可重发</text>
-    <text x="109" y="100" text-anchor="middle" font-size="10" fill="#9aa7b8">放心重试</text>
-    <rect x="212" y="58" width="186" height="62" rx="10" fill="#161b26" stroke="#f85149"/>
+    <text x="109" y="100" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">放心重试</text>
+    <rect x="212" y="58" width="186" height="62" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-red)"/>
     <text x="305" y="80" text-anchor="middle">可重试 + 不可重发</text>
-    <text x="305" y="100" text-anchor="middle" font-size="10" fill="#9aa7b8">先确认上次是否已生效</text>
-    <rect x="16" y="130" width="186" height="62" rx="10" fill="#161b26" stroke="#262e3d"/>
+    <text x="305" y="100" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">先确认上次是否已生效</text>
+    <rect x="16" y="130" width="186" height="62" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="109" y="152" text-anchor="middle">不可重试 + 可重发</text>
-    <text x="109" y="172" text-anchor="middle" font-size="10" fill="#9aa7b8">重发也解决不了，别重试</text>
-    <rect x="212" y="130" width="186" height="62" rx="10" fill="#161b26" stroke="#f85149"/>
+    <text x="109" y="172" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">重发也解决不了，别重试</text>
+    <rect x="212" y="130" width="186" height="62" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-red)"/>
     <text x="305" y="152" text-anchor="middle">不可重试 + 不可重发</text>
-    <text x="305" y="172" text-anchor="middle" font-size="10" fill="#9aa7b8">终止，交人工</text>
+    <text x="305" y="172" text-anchor="middle" font-size="10" fill="var(--k-diagram-text-mute)">终止，交人工</text>
   </g>
-  <text x="16" y="212" font-size="10.5" fill="#f85149">只看「可重试」不看「可重发」——超时类最典型：值得重试，但服务端可能已执行。</text>
-  <line x1="424" y1="40" x2="424" y2="200" stroke="#262e3d"/>
-  <text x="444" y="60" font-size="12.5" fill="#e6edf3">sideeffect：一次原子操作顶三件事</text>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="444" y="72" width="300" height="40" rx="8" fill="#161b26" stroke="#262e3d"/>
+  <text x="16" y="212" font-size="10.5" fill="var(--k-diagram-red)">只看「可重试」不看「可重发」——超时类最典型：值得重试，但服务端可能已执行。</text>
+  <line x1="424" y1="40" x2="424" y2="200" stroke="var(--k-diagram-stroke)"/>
+  <text x="444" y="60" font-size="12.5" fill="var(--k-diagram-text)">sideeffect：一次原子操作顶三件事</text>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="444" y="72" width="300" height="40" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="594" y="97" text-anchor="middle">幂等键 · 同一逻辑动作重试不重复施加</text>
-    <rect x="444" y="120" width="300" height="40" rx="8" fill="#161b26" stroke="#262e3d"/>
+    <rect x="444" y="120" width="300" height="40" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-stroke)"/>
     <text x="594" y="145" text-anchor="middle">租约 · 同一资源独占，带 TTL</text>
-    <rect x="444" y="168" width="300" height="40" rx="8" fill="#161b26" stroke="#58a6ff"/>
+    <rect x="444" y="168" width="300" height="40" rx="8" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="594" y="193" text-anchor="middle">栅栏令牌 · 过期持有者的迟到写入被拒</text>
   </g>
-  <line x1="16" y1="226" x2="744" y2="226" stroke="#262e3d"/>
-  <g font-size="10.5" fill="#9aa7b8">
+  <line x1="16" y1="226" x2="744" y2="226" stroke="var(--k-diagram-stroke)"/>
+  <g font-size="10.5" fill="var(--k-diagram-text-mute)">
     <text x="16" y="250">拆成三份存储就会出现「租约过了但幂等没过」的夹缝，允许同一动作被施加两次。</text>
     <text x="16" y="270">承诺的是**至多一次**而非 exactly-once——后者要求下游也接受幂等键。</text>
-    <text x="16" y="290" fill="#f85149">施加失败且无法判定远端是否已生效 ⇒ 结果未知：该键禁止重试，必须先对账。</text>
+    <text x="16" y="290" fill="var(--k-diagram-red)">施加失败且无法判定远端是否已生效 ⇒ 结果未知：该键禁止重试，必须先对账。</text>
   </g>
 </svg>
 </div>

@@ -20,45 +20,45 @@ make docsync              # README ↔ 仓库事实一致
 <div class="diagram">
 <svg viewBox="0 0 760 300" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
   <defs>
-    <marker id="gt1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#58a6ff"/></marker>
+    <marker id="gt1" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--k-diagram-blue)"/></marker>
   </defs>
-  <g font-size="11" fill="#e6edf3">
-    <rect x="16" y="28" width="132" height="56" rx="10" fill="#1c2330" stroke="#262e3d"/>
+  <g font-size="11" fill="var(--k-diagram-text)">
+    <rect x="16" y="28" width="132" height="56" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="82" y="50" text-anchor="middle">fmt · vet · lint</text>
-    <text x="82" y="68" text-anchor="middle" font-size="9.5" fill="#9aa7b8">格式与静态检查</text>
-    <rect x="164" y="28" width="132" height="56" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="82" y="68" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">格式与静态检查</text>
+    <rect x="164" y="28" width="132" height="56" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="230" y="50" text-anchor="middle">test · cover-gate</text>
-    <text x="230" y="68" text-anchor="middle" font-size="9.5" fill="#9aa7b8">全量单测 + 覆盖率两条判据</text>
-    <rect x="312" y="28" width="132" height="56" rx="10" fill="#1c2330" stroke="#262e3d"/>
+    <text x="230" y="68" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">全量单测 + 覆盖率两条判据</text>
+    <rect x="312" y="28" width="132" height="56" rx="10" fill="var(--k-diagram-panel)" stroke="var(--k-diagram-stroke)"/>
     <text x="378" y="50" text-anchor="middle">vuln · race · crossbuild</text>
-    <text x="378" y="68" text-anchor="middle" font-size="9.5" fill="#9aa7b8">漏洞 / 竞态 / 交叉编译</text>
-    <rect x="460" y="28" width="132" height="56" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="378" y="68" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">漏洞 / 竞态 / 交叉编译</text>
+    <rect x="460" y="28" width="132" height="56" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="526" y="50" text-anchor="middle">architecture-check</text>
-    <text x="526" y="68" text-anchor="middle" font-size="9.5" fill="#9aa7b8">域词 · 依赖方向 · 门包</text>
-    <rect x="608" y="28" width="136" height="56" rx="10" fill="#161b26" stroke="#58a6ff"/>
+    <text x="526" y="68" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">域词 · 依赖方向 · 门包</text>
+    <rect x="608" y="28" width="136" height="56" rx="10" fill="var(--k-diagram-panel-alt)" stroke="var(--k-diagram-blue)"/>
     <text x="676" y="50" text-anchor="middle">docsync · ledgercheck</text>
-    <text x="676" y="68" text-anchor="middle" font-size="9.5" fill="#9aa7b8">文档与台账的一致性</text>
+    <text x="676" y="68" text-anchor="middle" font-size="9.5" fill="var(--k-diagram-text-mute)">文档与台账的一致性</text>
   </g>
-  <line x1="148" y1="56" x2="160" y2="56" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gt1)"/>
-  <line x1="296" y1="56" x2="308" y2="56" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gt1)"/>
-  <line x1="444" y1="56" x2="456" y2="56" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gt1)"/>
-  <line x1="592" y1="56" x2="604" y2="56" stroke="#58a6ff" stroke-width="1.5" marker-end="url(#gt1)"/>
-  <text x="16" y="112" font-size="12.5" fill="#e6edf3">红了先查哪一条：症状 → 门禁</text>
-  <g font-size="10.5" fill="#9aa7b8">
+  <line x1="148" y1="56" x2="160" y2="56" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gt1)"/>
+  <line x1="296" y1="56" x2="308" y2="56" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gt1)"/>
+  <line x1="444" y1="56" x2="456" y2="56" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gt1)"/>
+  <line x1="592" y1="56" x2="604" y2="56" stroke="var(--k-diagram-blue)" stroke-width="1.5" marker-end="url(#gt1)"/>
+  <text x="16" y="112" font-size="12.5" fill="var(--k-diagram-text)">红了先查哪一条：症状 → 门禁</text>
+  <g font-size="10.5" fill="var(--k-diagram-text-mute)">
     <text x="16" y="136">域词污染 / 依赖方向越界 / 门包长胖</text>
-    <text x="360" y="136" fill="#e6edf3">→ architecture-check</text>
+    <text x="360" y="136" fill="var(--k-diagram-text)">→ architecture-check</text>
     <text x="16" y="160">README 包表或工程底座行数漂了</text>
-    <text x="360" y="160" fill="#e6edf3">→ docsync</text>
+    <text x="360" y="160" fill="var(--k-diagram-text)">→ docsync</text>
     <text x="16" y="184">台账里同一个单号两个状态</text>
-    <text x="360" y="184" fill="#e6edf3">→ ledgercheck</text>
+    <text x="360" y="184" fill="var(--k-diagram-text)">→ ledgercheck</text>
     <text x="16" y="208">某个包覆盖率塌方 / 平台编不过</text>
-    <text x="360" y="208" fill="#e6edf3">→ cover-gate / crossbuild</text>
+    <text x="360" y="208" fill="var(--k-diagram-text)">→ cover-gate / crossbuild</text>
     <text x="16" y="232">疑似并发问题</text>
-    <text x="360" y="232" fill="#e6edf3">→ race（失败形态由 cmd/raceprobe 机器分类，不许人猜）</text>
+    <text x="360" y="232" fill="var(--k-diagram-text)">→ race（失败形态由 cmd/raceprobe 机器分类，不许人猜）</text>
   </g>
-  <line x1="16" y1="250" x2="744" y2="250" stroke="#262e3d"/>
-  <text x="16" y="274" font-size="10.5" fill="#9aa7b8">门禁本体全在 make check 里，CI 只执行这一条——只挂在工作流上的门禁，是「推送后门禁」。</text>
-  <text x="16" y="294" font-size="10.5" fill="#f85149">提交前必须绿：红了先判断是「代码错了」还是「规则该改」，后者先改 policy 再写代码。</text>
+  <line x1="16" y1="250" x2="744" y2="250" stroke="var(--k-diagram-stroke)"/>
+  <text x="16" y="274" font-size="10.5" fill="var(--k-diagram-text-mute)">门禁本体全在 make check 里，CI 只执行这一条——只挂在工作流上的门禁，是「推送后门禁」。</text>
+  <text x="16" y="294" font-size="10.5" fill="var(--k-diagram-red)">提交前必须绿：红了先判断是「代码错了」还是「规则该改」，后者先改 policy 再写代码。</text>
 </svg>
 </div>
 <p class="diagram-cap">全链挂在一条命令上；红了先按症状定位到具体门禁，而不是从头重跑一遍猜。</p>

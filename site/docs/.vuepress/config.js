@@ -2,6 +2,8 @@ import { viteBundler } from '@vuepress/bundler-vite'
 import { defaultTheme } from '@vuepress/theme-default'
 import { defineUserConfig } from 'vuepress'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 // ADR 清单由 site/gen.mjs 生成（页面本体也在生成物里）。
 //
@@ -19,6 +21,8 @@ try {
   throw e
 }
 
+const here = path.dirname(fileURLToPath(import.meta.url))
+
 // 站点配置。base 必须是 /goagent-kernel/——GitHub Pages 项目站挂在子路径下，
 // 写错根路径整站资源 404。
 export default defineUserConfig({
@@ -28,15 +32,40 @@ export default defineUserConfig({
   base: '/goagent-kernel/',
   head: [['link', { rel: 'icon', href: '/goagent-kernel/favicon.svg' }]],
   bundler: viteBundler(),
+  // 用别名覆盖把「白 / 暗 / 自动」三态开关换进顶栏。
+  //
+  // 为什么必须覆盖主题自带的那个按钮：VuePress 2 的原生开关只有两态
+  // （亮 ⇄ 暗），「自动」只是**首次访问**时的取值来源（prefers-color-scheme），
+  // 用户手动切过之后就再也回不到「跟随系统」。而主题内部的存储模型本来
+  // 就是三态（localStorage['vuepress-color-scheme'] ∈ auto|light|dark），
+  // 缺的只是一个能显式选中「自动」的界面入口 ⇒ 这里补的是**入口**，
+  // 不是另造一套配色逻辑。
+  //
+  // 为什么用别名覆盖而不是改主题源码：别名是 VuePress 的公开机制
+  // （app.pluginApi.hooks.alias）。用户插件在主题插件**之后**注册
+  // ⇒ 同名键后者覆盖前者；vite 侧按键长降序匹配 ⇒ 具体的
+  // '@theme/VPToggleColorModeButton.vue' 一定先于 '@theme' 前缀命中。
+  plugins: [
+    {
+      name: 'kernel-theme-mode-switch',
+      alias: {
+        '@theme/VPToggleColorModeButton.vue': path.resolve(here, './components/ThemeModeSwitch.vue'),
+      },
+    },
+  ],
   theme: defaultTheme({
     repo: 'yi-nology/goagent-kernel',
     repoLabel: 'GitHub',
     editLink: false,
     lastUpdated: false,
     contributors: false,
-    // 纯深色（旧站风格），不提供明暗切换
-    colorMode: 'dark',
-    colorModeSwitch: false,
+    // 白 / 暗 / 自动三态（2026-11-23 改）：此前是纯深色 + 关闭切换。
+    // colorMode: 'auto' ⇒ 首次访问按 prefers-color-scheme 定；用户手动切过后
+    // 走 localStorage。colorModeSwitch: true ⇒ 顶栏出切换按钮——但原生那个
+    // 只有两态，三态入口由上面 plugins 里的别名覆盖提供（见 ThemeModeSwitch.vue）。
+    // 亮色模式要有自己的配色板，否则亮色下沿用深色变量 ⇒ 浅色字压深色底，读不了。
+    colorMode: 'auto',
+    colorModeSwitch: true,
     // 关掉 changelog 挂件：它会在页面上浮出「commit/<hash>」胶囊（半截裁在
     // 边缘），对读者是噪声——版本史看仓内 CHANGELOG，入口在参考区。
     changelog: false,
