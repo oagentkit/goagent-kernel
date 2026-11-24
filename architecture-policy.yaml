@@ -2333,7 +2333,7 @@ word_tables:
   #
   # 锚点**按取值成对**：a 侧锚定的每个取值，b 侧必须有同名值的锚点。
   # 锚点是**可选的加固**——键是字面量、根本没有常量可锚的表不写锚点；
-    # 工具调用账本的状态词表（7 值：主人是 invocation）。
+    # 工具调用账本的状态词表（8 值：主人是 invocation）。
     #
     # 这张表的**载体形状**特殊：backing 是转移表本身（map[State][]State），
     # 它的**键**就是词表全集。词表与转移规则合成一张表 ⇒ 新增一个状态时
@@ -2346,7 +2346,7 @@ word_tables:
       predicate: Known
       # 族前缀：主人包里以 State 开头的字符串常量都属于这张表。
       family: State
-      desc: 工具调用账本状态词表（7 值）
+      desc: 工具调用账本状态词表（8 值）
     # 恢复处置词表（4 值：主人是 invocation）。
     #
     # 与状态词表是**两根轴**：状态答「这次调用走到哪一步」，处置答「恢复时
@@ -2475,6 +2475,23 @@ word_tables:
     # 后者答「没有额度被用尽」。
     - a: {pkg: invocation, enum: AllRecoveryActions}
       b: {pkg: roundguard, enum: AllLimits}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 账本状态「执行失败」≠ 回合理由「失败」：前者答「这次调用的副作用确定
+    # 未施加」，后者答「这一回合为什么停」。同形只是拼写巧合 ⇒ 手抄方必须
+    # **在本包命名**（否则「failed」这两个字会把人引到错误的表上）。
+    - a: {pkg: invocation, enum: AllStates}
+      b: {pkg: roundguard, enum: AllRoundReasons}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 同上（账本状态「执行失败」≠ 任务状态「失败」：前者答「这次调用确定没
+    # 施加副作用」，后者答「这个任务走到哪一步了」）。
+    - a: {pkg: invocation, enum: AllStates}
+      b: {pkg: taskboard, enum: AllStates}
       relation: distinct
       anchors:
         a: [{all: true}]

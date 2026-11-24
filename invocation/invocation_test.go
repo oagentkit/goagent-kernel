@@ -19,6 +19,7 @@ func TestCanTransition(t *testing.T) {
 		{invocation.StateApproved, invocation.StateRejected},
 		{invocation.StateExecuting, invocation.StateApplied},
 		{invocation.StateExecuting, invocation.StateUncertain},
+		{invocation.StateExecuting, invocation.StateFailed},
 		{invocation.StateUncertain, invocation.StateApplied},
 		{invocation.StateUncertain, invocation.StateExecuting},
 		{invocation.StateApplied, invocation.StateResultRecorded},
@@ -35,6 +36,7 @@ func TestCanTransition(t *testing.T) {
 		{invocation.StateApplied, invocation.StateExecuting},
 		{invocation.StateExecuting, invocation.StateResultRecorded},
 		{invocation.StateRejected, invocation.StateExecuting},
+		{invocation.StateFailed, invocation.StateExecuting},
 		{invocation.StateResultRecorded, invocation.StateApplied},
 		{invocation.StatePlanned, invocation.State("bogus")},
 		{invocation.State("bogus"), invocation.StateApplied},
@@ -51,7 +53,7 @@ func TestKnown(t *testing.T) {
 	for _, s := range []invocation.State{
 		invocation.StatePlanned, invocation.StateApproved, invocation.StateExecuting,
 		invocation.StateApplied, invocation.StateUncertain, invocation.StateRejected,
-		invocation.StateResultRecorded,
+		invocation.StateFailed, invocation.StateResultRecorded,
 	} {
 		if !invocation.Known(s) {
 			t.Fatalf("词表内状态被判未知: %s", s)
@@ -69,8 +71,8 @@ func TestKnown(t *testing.T) {
 // 而分叉的方向恰好是「宿主看不到内核新增的取值」。
 func TestAllStates(t *testing.T) {
 	all := invocation.AllStates()
-	if len(all) != 7 {
-		t.Fatalf("状态词表应为 7 值，got %d（%v）", len(all), all)
+	if len(all) != 8 {
+		t.Fatalf("状态词表应为 8 值，got %d（%v）", len(all), all)
 	}
 	for _, s := range all {
 		if !invocation.Known(s) {
@@ -80,7 +82,7 @@ func TestAllStates(t *testing.T) {
 	for _, s := range []invocation.State{
 		invocation.StatePlanned, invocation.StateApproved, invocation.StateExecuting,
 		invocation.StateApplied, invocation.StateUncertain, invocation.StateRejected,
-		invocation.StateResultRecorded,
+		invocation.StateFailed, invocation.StateResultRecorded,
 	} {
 		found := false
 		for _, a := range all {
@@ -98,7 +100,7 @@ func TestAllStates(t *testing.T) {
 // TestTerminal 终态判定（走不动了的状态）。
 func TestTerminal(t *testing.T) {
 	for _, s := range []invocation.State{
-		invocation.StateRejected, invocation.StateResultRecorded,
+		invocation.StateRejected, invocation.StateFailed, invocation.StateResultRecorded,
 	} {
 		if !invocation.Terminal(s) {
 			t.Fatalf("状态 %s 应判终态", s)
@@ -129,7 +131,7 @@ func TestUnfinished(t *testing.T) {
 		}
 	}
 	for _, s := range []invocation.State{
-		invocation.StateRejected, invocation.StateResultRecorded,
+		invocation.StateRejected, invocation.StateFailed, invocation.StateResultRecorded,
 	} {
 		if invocation.Unfinished(s) {
 			t.Fatalf("终态 %s 不应判未完成", s)
@@ -146,10 +148,11 @@ func TestPredecessors(t *testing.T) {
 	for from, nexts := range map[invocation.State][]invocation.State{
 		invocation.StatePlanned:        {invocation.StateApproved, invocation.StateExecuting, invocation.StateRejected},
 		invocation.StateApproved:       {invocation.StateExecuting, invocation.StateRejected},
-		invocation.StateExecuting:      {invocation.StateApplied, invocation.StateUncertain},
+		invocation.StateExecuting:      {invocation.StateApplied, invocation.StateUncertain, invocation.StateFailed},
 		invocation.StateApplied:        {invocation.StateResultRecorded},
 		invocation.StateUncertain:      {invocation.StateApplied, invocation.StateExecuting},
 		invocation.StateRejected:       nil,
+		invocation.StateFailed:         nil,
 		invocation.StateResultRecorded: nil,
 	} {
 		for _, to := range nexts {
@@ -194,6 +197,7 @@ func TestRecovery(t *testing.T) {
 		{invocation.StateUncertain, invocation.ActionReconcile},
 		{invocation.StateApplied, invocation.ActionRecord},
 		{invocation.StateRejected, invocation.ActionNone},
+		{invocation.StateFailed, invocation.ActionNone},
 		{invocation.StateResultRecorded, invocation.ActionNone},
 	}
 	for _, c := range cases {
