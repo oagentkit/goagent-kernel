@@ -210,6 +210,22 @@ modules:
       下游拒收契约（FencedSink：比较与写入须同一次原子操作）。
       零内部依赖——它是叶子层。宿主实现 Store 接口落库，判据归内核。
 
+  - id: invocation
+    roots: [invocation, invocation/invocationtest]
+    requires: ["ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
+    owner: harness
+    managed: true
+    notes: |
+      工具调用账本（Tool Invocation Journal）的跨进程契约：调用身份
+      （callID + 工具名 + 参数摘要）一经落账不可变 + 状态机
+      （planned → approved → executing → applied → result_recorded，
+      另有 rejected / uncertain）+ 「未完成是合法形态」的恢复处置判据。
+      补的是 sideeffect 补不了的那一半：闸能保「同一逻辑动作至多施加一次」，
+      但前提是调用方**记得住那个键**——进程崩溃后模型会重新生成调用 ⇒ 键变
+      ⇒ 同一业务动作再施加一遍。账本把调用身份在执行外部工具之前持久化，
+      恢复时按账本续跑，而不是重新问模型要那次调用。
+      零内部依赖——它是叶子层。宿主实现 Store 接口落库，判据归内核。
+
   - id: sidetest
     roots: [sidetest]
     requires: [sideeffect, "ext:github.com/oekit/concurrency", "ext:github.com/oekit/pkg"]
@@ -2317,6 +2333,31 @@ word_tables:
   #
   # 锚点**按取值成对**：a 侧锚定的每个取值，b 侧必须有同名值的锚点。
   # 锚点是**可选的加固**——键是字面量、根本没有常量可锚的表不写锚点；
+    # 工具调用账本的状态词表（7 值：主人是 invocation）。
+    #
+    # 这张表的**载体形状**特殊：backing 是转移表本身（map[State][]State），
+    # 它的**键**就是词表全集。词表与转移规则合成一张表 ⇒ 新增一个状态时
+    # 两件事同时发生或同时不发生（分两张表就会「加了状态忘了加转移规则」，
+    # 那个状态走不动却看着合法）。
+    - pkg: invocation
+      backing: transitions
+      enum: AllStates
+      # 判定面（Known 读 transitions，与枚举出口同一张表）。
+      predicate: Known
+      # 族前缀：主人包里以 State 开头的字符串常量都属于这张表。
+      family: State
+      desc: 工具调用账本状态词表（7 值）
+    # 恢复处置词表（4 值：主人是 invocation）。
+    #
+    # 与状态词表是**两根轴**：状态答「这次调用走到哪一步」，处置答「恢复时
+    # 该做什么」。两张表同包 ⇒ 族前缀各管各的常量（State* / Action*）。
+    - pkg: invocation
+      backing: recoveryActionAll
+      enum: AllRecoveryActions
+      predicate: KnownRecoveryAction
+      family: Action
+      desc: 恢复处置词表（4 值）
+
   # 但**半边锚点没有配对语义** ⇒ 要写就两端都写（自校验当天即红）。
   relations:
     # statemachine 的环节状态常量是 contract 会话状态的**别名**
@@ -2394,6 +2435,52 @@ word_tables:
     # 「未命中任何形态」——同形只是拼写巧合，手抄方必须**在本包命名**
     # （引用别家的常量会把语义装错：额度判定 ≠ 形态判定）。
     - a: {pkg: roundguard, enum: AllLimits}
+      b: {pkg: roundguard, enum: AllShapes}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 账本状态「已批准 / 已拒绝」≠ 会话状态「已批准 / 已拒绝」：
+    # 前者答「这次调用的审批闸放没放」，后者答「这一轮会话走到哪一步」。
+    # 同形只是拼写巧合 ⇒ 手抄方必须**在本包命名**。
+    - a: {pkg: invocation, enum: AllStates}
+      b: {pkg: contract, enum: AllStatuses}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 同上（statemachine 的环节轴与 contract 同族）。
+    - a: {pkg: invocation, enum: AllStates}
+      b: {pkg: statemachine, enum: AllStepStatuses}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 同上（protocol 的报告决策轴）。
+    - a: {pkg: invocation, enum: AllStates}
+      b: {pkg: protocol, enum: AllDecisions}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 恢复处置「执行」≠ 环节类别「执行」：前者答「恢复时要不要跑这次调用」，
+    # 后者答「这一环节属于哪一类」。
+    - a: {pkg: invocation, enum: AllRecoveryActions}
+      b: {pkg: statemachine, enum: AllStepTypes}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 恢复处置「无需动作」≠ 额度类别「无」：前者答「这条账目已经收口」，
+    # 后者答「没有额度被用尽」。
+    - a: {pkg: invocation, enum: AllRecoveryActions}
+      b: {pkg: roundguard, enum: AllLimits}
+      relation: distinct
+      anchors:
+        a: [{all: true}]
+        b: [{all: true}]
+    # 同上（形态类别里的「none」是「未命中任何形态」）。
+    - a: {pkg: invocation, enum: AllRecoveryActions}
       b: {pkg: roundguard, enum: AllShapes}
       relation: distinct
       anchors:
@@ -2481,7 +2568,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, invocation, invocation/invocationtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

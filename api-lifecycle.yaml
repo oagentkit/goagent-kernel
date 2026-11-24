@@ -58,6 +58,14 @@ packages:
     level: Stable
     since: v0.33.0
     reason: 环节终态独占提交闸。判据（凭证放闸/令牌释放）已定型，2026-10-19 后仅注释级改动。
+  - pkg: invocation
+    level: Experimental
+    since: v0.75.0
+    reason: 工具调用账本契约：新机制，判据面（状态机 / 存储契约 / 恢复处置）还会随宿主实现的需求反向调整，先按 Experimental 定级——不定 Stable 是因为一旦宿主按 Stable 接了，改状态机就是 breaking。
+  - pkg: invocation/invocationtest
+    level: Experimental
+    since: v0.75.0
+    reason: invocation.Store 共享契约套件：场景集随判据面演进，套件本身不承诺兼容（与 boardtest 同级）。
   - pkg: sidetest
     level: Stable
     since: v0.33.0

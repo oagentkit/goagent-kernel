@@ -348,17 +348,31 @@ const (
 	OutcomeUncertain
 )
 
+// Outcome 的**词形**（String() 的输出）——在本包有名字，不写裸字面量。
+//
+// 为什么要有名字：这些词与别的包的判定词表**同形**（账本侧的 applied /
+// uncertain），而它们是**不同概念**（副作用闸的结局 vs 账本的进度）。门禁的
+// 手抄判据按字面量判（它分不出「这是结局词」还是「那是状态值」）⇒ 同形
+// 不同义时**在本包命名**才是正解（引用别家的常量会把语义装错）。
+const (
+	outcomeAppliedWord   = "applied"
+	outcomeReplayedWord  = "replayed"
+	outcomeContendedWord = "contended"
+	outcomeUncertainWord = "uncertain"
+	outcomeUnknownWord   = "unknown"
+)
+
 func (o Outcome) String() string {
 	switch o {
 	case OutcomeApplied:
-		return "applied"
+		return outcomeAppliedWord
 	case OutcomeReplayed:
-		return "replayed"
+		return outcomeReplayedWord
 	case OutcomeContended:
-		return "contended"
+		return outcomeContendedWord
 	case OutcomeUncertain:
-		return "uncertain"
+		return outcomeUncertainWord
 	default:
-		return "unknown"
+		return outcomeUnknownWord
 	}
 }

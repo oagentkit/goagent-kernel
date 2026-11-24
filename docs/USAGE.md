@@ -36,15 +36,15 @@
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
-> | 仓里有什么 | **49** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **53** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **53** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | 仓里有什么 | **50** 个包 | README 包表口径（机器校验，`make docsync` 判）|
+> | policy 登记 | **54** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **55** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **49** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **53** 个 module id（53 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **54** 个——`taskboard`
-> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：53 数 module id，54 数
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **50** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **54** 个 module id（54 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **56** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`），`invocation` 也有两个（`invocation/invocationtest`）。**两个数不是同一种量**：54 数 module id，56 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
