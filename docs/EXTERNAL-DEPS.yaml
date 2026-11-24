@@ -576,6 +576,14 @@ deps:
       seam: ""
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/routecheck
+      function: loadRegistry
+      deps:
+        - fs
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 读路线登记面并交给判据层：判定不在本层（结论全在 internal/routeledger.Judge，且它吃的是台账派生事实，不是外部读）
     - package: cmd/seamcheck
       function: loadBaseline
       deps:
