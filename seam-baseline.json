@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 91,
-  "callsites": 428,
+  "declarations": 93,
+  "callsites": 464,
   "fully_written": 5,
   "seams": [
     {
@@ -295,6 +295,24 @@
       "id": "hookengine.Runner",
       "kind": "interface",
       "callsites": 2
+    },
+    {
+      "id": "invocation.Store",
+      "kind": "interface",
+      "callsites": 22,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
+    },
+    {
+      "id": "invocation/invocationtest.Factory",
+      "kind": "func",
+      "callsites": 14,
+      "written": [
+        "reentry",
+        "blocking"
+      ]
     },
     {
       "id": "metrics.Recorder",

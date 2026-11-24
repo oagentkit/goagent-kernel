@@ -115,7 +115,7 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **53** 个包（Stable 18 / Experimental 35 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe，v0.73.0 删 netguard/ticket/cmdpolicy（三包上移上游），v0.74.0 新增 internal/acceptancepath 与 internal/routeledger）。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
+api-lifecycle.yaml 登记 **55** 个包（Stable 18 / Experimental 37 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe，v0.73.0 删 netguard/ticket/cmdpolicy（三包上移上游），v0.74.0 新增 internal/acceptancepath 与 internal/routeledger）。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /
   `checkpoint` / `commitgate` / `statemachine` / `sidetest`——宿主实现这些

@@ -444,8 +444,8 @@ unit: fmt-check vet lint
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
 contract:
-	$(EXPORT) $(GOENV) go test ./sidetest/... ./taskboard/boardtest/... -count=1
-	@echo "契约套件自测 ✓（sidetest + boardtest）"
+	$(EXPORT) $(GOENV) go test ./sidetest/... ./taskboard/boardtest/... ./invocation/invocationtest/... -count=1
+	@echo "契约套件自测 ✓（sidetest + boardtest + invocationtest）"
 
 # fault-injection：故障注入层（checkpoint 的注入矩阵 + ptc 的注入场景 +
 # worker/faultmatrix 的跨部署模式故障矩阵，issue #193）。

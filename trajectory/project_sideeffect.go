@@ -145,13 +145,20 @@ func openReconcile(p *Projector, ev eventbus.Event, key, resource, safety string
 	p.reconciles[key] = idx
 }
 
+// sideEffectAppliedKey 事件载荷里「这次是否已施加」的**键名**。
+//
+// 为什么要有名字：载荷键与判定词表的取值同形（"applied"），而门禁的手抄
+// 判据只认字面量（它分不出「这是载荷键」还是「这是状态取值」）⇒ 同形不同义
+// 时**在本包命名**是唯一正解。
+const sideEffectAppliedKey = "applied"
+
 // resolveSideEffect 对账裁决落定：收口对账段（resolved_applied / resolved_cleared）。
 //
 // 没有打开中的对账段时落成孤儿行（对账发生在别的进程 / 事件流只有尾部）。
 func resolveSideEffect(p *Projector, ev eventbus.Event) {
 	key, resource, safety, fence := sideEffectPayload(p, ev)
 	phase := SideEffectResolvedCleared
-	if payloadBool(ev, "applied") {
+	if payloadBool(ev, sideEffectAppliedKey) {
 		phase = SideEffectResolvedApplied
 	}
 	if idx, ok := p.reconciles[key]; ok && key != "" {

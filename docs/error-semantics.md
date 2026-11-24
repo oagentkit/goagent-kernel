@@ -253,6 +253,14 @@
 | `ErrLeaseStillHeld` | 关联任务的租约仍有效，回收被拒 | 放弃回收：旧任务可能还在真跑；确认任务租约失效后再走 Reclaim |
 | `ErrNoLeaseOracle` | 预占带任务归属但未注入任务租约判定面（TaskLeaseOracle） | 修装配：注入任务租约存活判定；判不了就不回收（fail-closed） |
 
+### invocation
+
+| 哨兵 | 触发条件 | 调用方处置 |
+|---|---|---|
+| `ErrNotFound` | 取一条不存在的账目（会话/调用 ID 对不上） | 修声明：核对会话与调用 ID；不要当成「已完成」放行（读不懂的账目不是空账目） |
+| `ErrIdentityConflict` | 同一 (会话, 调用) 的工具名或参数摘要与首次登记不一致 | 修声明：那是**另一个动作**（同款口径见 sideeffect.ErrActionConflict）；不要改参数硬塞，按新调用落账 |
+| `ErrIllegalTransition` | 状态转移不合法（跳态 / 从终态再动 / 目标状态不在词表内） | 修声明：按账本状态机推进（planned → executing → applied → result_recorded）；终态不可再动 |
+
 ### sideeffect
 
 | 哨兵 | 触发条件 | 调用方处置 |
