@@ -2,6 +2,24 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.75.1] — 2026-11-25
+
+### 新增(invocation)：补 failed 终态——执行失败（确定未施加）独立成档
+
+宿主接线时暴露的契约缺口：词表原先端点只有 rejected（**审批闸**判的
+「确定未施加」）与 result_recorded（结果已回填），「获批了但执行失败」
+无处安放 ⇒ 宿主只能在「把它记成 rejected」（混淆两个决策来源：读者分不清
+「没获批」与「获批但跑失败」，两者的补偿口径完全不同）与「让它停在
+executing」（谎称还在执行）之间二选一。
+- 词表 7 值 → 8 值（policy 的 word_tables desc 同步）
+- transitions 补 executing → failed；failed 是终态（无出边）
+- Recovery(failed) = none（确定没做，不需要恢复动作）
+- 共享契约套件补一条判据：failed 可从 executing 到达且为终态
+- 新增同形撞车声明：invocation×roundguard、invocation×taskboard 的
+  「failed」显式声明 distinct（词表登记面要求同形必须显式声明关系）
+零既有导出符号消失、零既有签名变更、依赖地板零变化。
+Co-authored-by: zhangyi01 <zhangyi01@kylinos.cn>
+
 ## [v0.75.0] — 2026-11-24
 
 ### 新增(invocation)：工具调用账本（Tool Invocation Journal）契约——调用身份跨进程存活
