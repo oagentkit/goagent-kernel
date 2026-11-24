@@ -2,6 +2,34 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.75.0] — 2026-11-24
+
+### 新增(invocation)：工具调用账本（Tool Invocation Journal）契约——调用身份跨进程存活
+
+P0-09/P0-10 的共同底座：sideeffect 能保「同一逻辑动作至多施加一次」，但前提是
+调用方**记得住那个键**。进程崩溃后模型会重新生成调用 ⇒ 键变 ⇒ 同一业务动作
+再施加一遍。本包补的是「调用身份在进程死亡之后仍然存在」这一段。
+**给什么**
+- invocation 包（契约面）：调用身份（callID + 工具名 + 参数摘要）**一经落账
+  不可变** + 状态机（planned → approved → executing → applied →
+  result_recorded，另有 rejected / uncertain）+ 恢复处置判据（executing ⇒
+  对账、applied ⇒ 回填结果而不是重做）+ 存储中立的 Store 接口。
+- 两张**判定词表**（状态 7 值 / 恢复处置 4 值）登记进 policy 的 word_tables
+  段 ⇒ 消费方必须引用常量而不是手抄字面量。
+- Predecessors：能合法转移到某状态的前驱集——存储侧「一条带条件的 UPDATE」
+  原子推进的地基（前驱集若由宿主自己反推转移表，就是第二份真相）。
+- invocation/invocationtest：共享契约套件（14 条子测试 + 恢复族两条），
+  接入 make contract ⇒ CI 的 contract job 会跑。
+**不给什么**
+存储实现。表结构、事务边界、持久化形态是宿主资产（与 taskboard / sideeffect
+同一条分工）——参考实现落在 goagent-runtime（pgstore / sqliteadapter）。
+**顺带清偿（登记词表的连带面）**
+- sideeffect：Outcome 的词形（applied / uncertain 等）在本包命名，不再写裸
+  字面量——它们与账本状态同形但**不同概念**。
+- trajectory：副作用载荷里的 "applied" 键名在本包命名（同款理由）。
+**门禁**
+architecture-check / docsync / apilifecheck / test / cover-gate / contract 全绿。
+
 ## [v0.74.0] — 2026-11-24
 
 ### 新增(gates)：总纲单 #279 的判据形态兑现——路线达成对账落地
