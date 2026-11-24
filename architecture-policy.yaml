@@ -605,6 +605,33 @@ modules:
       requires 为空：只依赖 stdlib（yaml 解析在 cmd 侧做，判据层只吃已解析的
       结构体）——判据层不引第三方解析器，是为了让它能被别的仓直接复用。
 
+  # 2026-11-24 新增（issue #279）：路线达成的**对账器**。
+  #
+  # 为什么进内核而不是留在 cmd 里：总纲单声明的路线要「达成与否持续可证」，
+  # 判据（cmd/routecheck）与登记面（docs/ROUTE-LEDGER.yaml）各读一遍事实，
+  # 结论必然分叉——而分叉的方向恰好是「门禁判的和登记写的不是一套」。
+  # 派生器下沉为可导入包，判据与数据源分离（台账派生事实由调用方注入）。
+  #
+  # 为什么是机制面而不是资产：它不认识任何宿主领域——输入是一份阶段登记结构体 +
+  # 台账派生事实，输出是「这条路线达成了没」。三阶段叫什么、出口条件是什么，
+  # 全在登记面里，不在判据代码里。
+  - id: routeledger
+    roots: [internal/routeledger]
+    # 依赖 internal/ledgerstatus（单号 → 状态的唯一派生器）：**不自解析台账**——
+    # 两处各解析一遍台账，结论必然漂移，而漂移的方向是「门禁判的和台账写的不是
+    # 一套」（#455 立的那条纪律）。
+    requires: [ledgerstatus]
+    owner: harness
+    managed: true
+    notes: |
+      路线达成对账：登记面（阶段 → 成员单号 + 出口条件）↔ 台账派生事实。
+      三条判据：登记面自身形状 / 成员逐条已合入（带关闭 PR 号）/ 总纲单在册。
+      **已知边界（如实登记）**：机器判得了「已登记的成员是否都达成」，判不了
+      「什么算一个路线阶段」——那是人的判断；新增阶段须人维护登记面，
+      漏登记的后果是「新阶段成员不被本门禁核」，由 review 与台账纪律兜住。
+      GitHub 侧的「已关闭」**不在本判据**（由 ledgercheck 判据 5 全量对账）——
+      同一事实判两次就是漂移源。
+
   - id: backend
     roots: [backend]
     requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
@@ -1746,8 +1773,15 @@ dependency_direction:
 #                                            不形成机制依赖。它与 cmd/deploymatrix 共读
 #                                            internal/acceptancepath（证据对账的唯一派生器），
 #                                            两处各判一套必然漂移。
+#   cmd/routecheck                      路线达成对账门禁（2026-11-24，issue #279）：
+#                                            判 docs/ROUTE-LEDGER.yaml ↔ 台账：路线成员
+#                                            逐条已合入（带关闭 PR 号）+ 登记面自身形状；
+#                                            读 yaml 与台账派生事实是工具职责，不形成
+#                                            机制依赖。它与 cmd/ledgercheck 共读
+#                                            internal/ledgerstatus（单号 → 状态的唯一
+#                                            派生器），两处各解析一遍必然漂移。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -2447,7 +2481,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

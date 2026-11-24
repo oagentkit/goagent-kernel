@@ -37,14 +37,14 @@
 > |---|---|---|
 > | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **49** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **52** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **52** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **53** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **53** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **49** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **52** 个 module id（52 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **53** 个——`taskboard`
-> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：52 数 module id，53 数
+> `architecture-policy.yaml` 的 `modules` 段登记 **53** 个 module id（53 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **54** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`）。**两个数不是同一种量**：53 数 module id，54 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
@@ -3394,6 +3394,7 @@ CI 执行的是 Makefile 的**分层 target**（`unit` / `race` / `contract` /
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符——见 `docs/DEPLOY-MATRIX.yaml` |
 | `storagecheck` | 存储选型判据：场景的 storage 不在允许集内 / storage 不提供场景必需的能力 / 能力断言在代码里找不到落点 / 存储 `kind` 不在封闭值域内 / 写者数与写者上限交叉校验（W1 存储侧 + W2 场景侧 + W3 陈旧形态键）/ 两侧门面的面访问器集合相等（F3）+ 门面清单与代码派生集双向相等（F1）+ 清单形状（F2）+ 每个面访问器都有能力落点或已登记（F4）+ 有方法级落点的存储必须登记门面段（F5）——见 `docs/STORAGE-SELECTION.yaml` |
 | `acceptancecheck` | 验收路径「被执行过」证据对账（issue #483）：登记面 `docs/acceptance-paths.yaml` ↔ 证据文件的三行机器可读字段（`acceptance-path-id` / `-ran-at` / `-conclusion`）↔ Makefile 入口标记，**双向对账**——登记了却没证据 ⇒ **显形点名并即红**（「从未跑过」不许靠人记得）；证据与登记对不上 / 入口目标不存在 / 入口没打标记 / Makefile 声明过的路径漏登记，一律即红；**时效过期只回显不判红**（跑过一次即算数，与 `issue-state` 快照同口径）；跨仓路径（`owner` 非空）入口存在性本仓无从核实 ⇒ 只回显。判据是纯函数（`internal/acceptancepath`，时钟与文件读取均可注入）⇒ 用例可离线钉住；读不到 Makefile ⇒ **退出码 2「给不出结论」**而不是「没有违反」 |
+| `routecheck` | 路线达成对账（issue #279 的判据形态兑现）：登记面 `docs/ROUTE-LEDGER.yaml` 的**阶段 → 成员单号 + 出口条件** ↔ 台账派生事实——路线成员逐条必须在台账里**已合入**（带关闭 PR 号），否则红并**点名**（哪个阶段、哪个单号、台账里它实际是什么状态）；登记面自身形状歪了（阶段 id 重复 / 成员为空 / 出口条件为空 / 同阶段成员重复 / 未声明总纲单）同样即红；总纲单在台账里消失即红。**已知边界**：机器判得了「已登记的成员是否都达成」，判不了「什么算一个路线阶段」——新增阶段须人维护登记面（漏登记 ⇒ 新阶段成员不被本门禁核，由 review 与台账纪律兜住）；GitHub 侧的「已关闭」**不在本判据**（由 `ledgercheck` 判据 5 全量对账，同一事实判两次就是漂移源）。判据是纯函数（`internal/routeledger`），台账的「单号 → 状态」由 `internal/ledgerstatus` 派生（唯一派生器）；读不到登记面 / 台账 ⇒ **退出码 2「给不出结论」**而不是「没有违反」 |
 | `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交**显式跳过**（打 tag 后必判）|
 | `modreplace` | go.mod 不得含 `replace` |
 | `modwork` | go.work / go.work.sum 不得入库 |
