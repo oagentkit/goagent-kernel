@@ -45,7 +45,8 @@
 //
 //  1. **身份不可变**：一经落账，工具名与参数摘要不得改（改了 = 另一个动作）。
 //  2. **状态机**：planned → approved → executing → applied → result_recorded，
-//     另有 rejected（审批拒绝，副作用确定未施加）与 uncertain（结果未知）。
+//     另有 rejected（审批拒绝，副作用确定未施加）、failed（执行失败，副作用
+//     确定未施加）与 uncertain（结果未知）。
 //  3. **未完成是合法形态**：executing 的条目是**合法的未完成调用**——恢复时
 //     据此续跑或对账，**不是**「历史损坏」。
 //
@@ -98,6 +99,20 @@ const (
 	StateUncertain State = "uncertain"
 	// StateRejected 审批拒绝：副作用**确定未施加**（终态）。
 	StateRejected State = "rejected"
+	// StateFailed 执行失败：副作用**确定未施加**（终态）。
+	//
+	// ★ 为什么单列一个取值，而不是复用 rejected：两者都落在「确定未施加」这
+	//   一事实上，但**决策来源不同**——rejected 是**审批闸**的判决（没获批），
+	//   failed 是**执行面**的判决（获批了，但执行体报错 / 闸判失败）。
+	//   两个决策塞进一个取值 ⇒ 账目读者分不清「没获批」与「获批但跑失败」，
+	//   而这两者对宿主的复盘与补偿口径完全不同（前者不欠执行，后者欠一次
+	//   重做机会）。
+	//
+	// 这个取值是**宿主接线时暴露出来的缺口**：词表原先端点只有 rejected
+	// （审批拒绝）与 result_recorded（结果已回填），「获批但执行失败」无处
+	// 安放 ⇒ 宿主只能在「记成 rejected」（混淆两个决策来源）与「停在
+	// executing」（谎称还在执行）之间二选一。
+	StateFailed State = "failed"
 	// StateResultRecorded 结果已回填进会话历史（终态）。
 	StateResultRecorded State = "result_recorded"
 )
@@ -111,6 +126,8 @@ const (
 //   - planned → executing：无审批要求的工具直接进执行（有审批的先过 approved）；
 //   - approved → rejected：审批可以在执行前撤回（拒绝 ⇒ 副作用确定未施加）；
 //   - executing → uncertain：施加过程中失联（不知道远端做没做）；
+//   - executing → failed：执行面**明确判失败**（执行体报错 / 闸判失败）——
+//     副作用**确定未施加**，与 uncertain 的「不知道」是两种结论；
 //   - uncertain → applied：对账裁决「确实已生效」；
 //   - uncertain → executing：对账裁决「未生效」后重做——**必须先有裁决**，
 //     盲重试由 sideeffect 闸挡（未知态下 Acquire 转 uncertain，不授予执行权）。
@@ -123,10 +140,11 @@ const (
 var transitions = map[State][]State{
 	StatePlanned:        {StateApproved, StateExecuting, StateRejected},
 	StateApproved:       {StateExecuting, StateRejected},
-	StateExecuting:      {StateApplied, StateUncertain},
+	StateExecuting:      {StateApplied, StateUncertain, StateFailed},
 	StateApplied:        {StateResultRecorded},
 	StateUncertain:      {StateApplied, StateExecuting},
 	StateRejected:       nil,
+	StateFailed:         nil,
 	StateResultRecorded: nil,
 }
 
@@ -255,7 +273,7 @@ func Recovery(e Entry) RecoveryAction {
 		return ActionReconcile
 	case StateApplied:
 		return ActionRecord
-	case StateRejected, StateResultRecorded:
+	case StateRejected, StateFailed, StateResultRecorded:
 		return ActionNone
 	}
 	// 词表外 ⇒ 显式对账（不猜）：读不懂的状态不许当「已完成」放行。

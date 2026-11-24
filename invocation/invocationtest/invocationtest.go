@@ -54,6 +54,7 @@ func Run(t *testing.T, factory Factory) {
 	t.Run("合法转移放行", func(t *testing.T) { runLegalTransition(t, factory) })
 	t.Run("跳态被拒", func(t *testing.T) { runIllegalTransition(t, factory) })
 	t.Run("终态不可再转移", func(t *testing.T) { runTerminalFrozen(t, factory) })
+	t.Run("执行失败态可从执行中到达且为终态", func(t *testing.T) { runFailedReachable(t, factory) })
 	t.Run("推进到当前状态幂等", func(t *testing.T) { runAdvanceIdempotent(t, factory) })
 	t.Run("applied 记结果可取回", func(t *testing.T) { runAppliedKeepsResult(t, factory) })
 	t.Run("结果未知态经裁决后可重做", func(t *testing.T) { runUncertainCanResume(t, factory) })
@@ -234,6 +235,38 @@ func runTerminalFrozen(t *testing.T, factory Factory) {
 	if _, err := st.Advance(context.Background(), e.SessionID, e.CallID, invocation.StateRejected, invocation.Update{}); err != nil {
 		t.Fatalf("推进到 rejected 失败: %v", err)
 	}
+	if _, err := st.Advance(context.Background(), e.SessionID, e.CallID, invocation.StateExecuting, invocation.Update{}); !errors.Is(err, invocation.ErrIllegalTransition) {
+		t.Fatalf("终态再推进应判 ErrIllegalTransition，got %v", err)
+	}
+}
+
+// runFailedReachable 执行失败态：可从「执行中」到达，且是终态。
+//
+// 这一条是**宿主接线时暴露出来的契约缺口**：执行体报错时副作用**确定未施加**
+// （不是「不知道」），但词表原先端点只有 rejected（**审批**拒绝）与
+// result_recorded（结果已回填）——「获批了但跑失败」无处安放 ⇒ 宿主只能在
+// 「记成 rejected」（混淆两个决策来源）与「停在 executing」（谎称还在执行）
+// 之间二选一。补上 failed 之后，宿主不必再二选一。
+//
+// ★ 这条判据是「失败形态是变红」：存储实现若把 failed 当成中间态放行后续转移，
+// 恢复路径就会把一次**已确定失败**的调用重做一遍。
+func runFailedReachable(t *testing.T, factory Factory) {
+	t.Helper()
+	st := factory(t)
+	e := entry("sess-a", "call-1", "tool-x", "{\"k\":1}")
+	planOne(t, st, e)
+
+	if _, err := st.Advance(context.Background(), e.SessionID, e.CallID, invocation.StateExecuting, invocation.Update{}); err != nil {
+		t.Fatalf("推进到 executing 失败: %v", err)
+	}
+	got, err := st.Advance(context.Background(), e.SessionID, e.CallID, invocation.StateFailed, invocation.Update{})
+	if err != nil {
+		t.Fatalf("推进到 failed 失败: %v", err)
+	}
+	if got.State != invocation.StateFailed {
+		t.Fatalf("状态应为 failed，got %s", got.State)
+	}
+	// 终态：失败的调用不再重做（重做由宿主另起一次调用，身份也就另起）。
 	if _, err := st.Advance(context.Background(), e.SessionID, e.CallID, invocation.StateExecuting, invocation.Update{}); !errors.Is(err, invocation.ErrIllegalTransition) {
 		t.Fatalf("终态再推进应判 ErrIllegalTransition，got %v", err)
 	}
