@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "declarations": 93,
-  "callsites": 464,
+  "declarations": 90,
+  "callsites": 470,
   "fully_written": 5,
   "seams": [
     {
@@ -22,16 +22,6 @@
     {
       "id": "backend.Handler",
       "kind": "func",
-      "callsites": 1
-    },
-    {
-      "id": "budget.Archive",
-      "kind": "interface",
-      "callsites": 1
-    },
-    {
-      "id": "budget.Summarizer",
-      "kind": "interface",
       "callsites": 1
     },
     {
@@ -299,7 +289,7 @@
     {
       "id": "invocation.Store",
       "kind": "interface",
-      "callsites": 22,
+      "callsites": 25,
       "written": [
         "reentry",
         "blocking"
@@ -308,7 +298,7 @@
     {
       "id": "invocation/invocationtest.Factory",
       "kind": "func",
-      "callsites": 14,
+      "callsites": 15,
       "written": [
         "reentry",
         "blocking"
@@ -318,11 +308,6 @@
       "id": "metrics.Recorder",
       "kind": "interface",
       "callsites": 3
-    },
-    {
-      "id": "offload.Store",
-      "kind": "interface",
-      "callsites": 1
     },
     {
       "id": "ownership.Authority",
@@ -440,7 +425,7 @@
     {
       "id": "taskboard.Board",
       "kind": "interface",
-      "callsites": 73
+      "callsites": 78
     },
     {
       "id": "taskboard.ReadyBoard",
