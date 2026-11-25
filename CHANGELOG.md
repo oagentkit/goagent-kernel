@@ -2,15 +2,21 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.79.0] — 2026-11-26
+
+- 构建：依赖地板追到最新（v0.78.0 的地板改动实际未入提交——重施）
+
+v0.78.0 的合并提交只带了 CHANGELOG（bump 工具失败回滚 + 工作树时序踩踏，
+地板改动丢失未察觉）。本提交真正施作八项地板：
+guardx v0.30.0 / runtime v0.14.0 / toolgate v0.17.5 / toolname v0.2.1 /
+mcpkit v0.15.0 / concurrency v0.40.0 / logx v0.12.1 / pkg v0.61.5（含
+oekit/pkg#613 procx Windows 编译修复）。egress/e2e_test.go 随 runtime
+v0.14.0 Close(ctx) 契约同步。三平台 crossbuild 实测绿。
+
+
 ## [v0.78.0] — 2026-11-26
 
-- 构建：依赖地板追到最新——全矩阵收口（guardx v0.30.0 / runtime v0.14.0 / toolgate v0.17.5 / toolname v0.2.1 / mcpkit v0.15.0 / concurrency v0.40.0 / logx v0.12.1 / pkg v0.61.5）
-
-kernel 入驻 oagentkit 矩阵后的地板时效对齐；pkg v0.61.5 带着本仓
-crossbuild 揪出的 procx Windows 编译修复（oekit/pkg#613）。
-egress/e2e_test.go 随 runtime v0.14.0 的 Close(ctx) 契约同步（该测试是
-本仓唯一触达上游 procx 的调用面）。
-
+- 与 v0.77.0 相比无代码差异（版本号/打包变更）
 
 ## [v0.77.0] — 2026-11-26
 
