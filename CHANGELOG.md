@@ -2,6 +2,45 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.76.0] — 2026-11-25
+
+### 修复(taskboard)：Complete 的凭据面补上「租约未过期」——与 Renew 同一口径
+
+宿主接线时暴露的契约缺口：`Renew` 的契约明写「租约已过期 ⇒ ErrLeaseLost，
+**资格在到期时刻终止**」，而 `Complete` 的契约面与参考实现都只判
+「令牌匹配 + 处于 claimed 态」，**不判租约是否已过期**——两处口径不一致，
+于是存在一个真实窗口：**租约已过期、但还没有别的持有者接管**时，旧持有者
+仍能把任务标记完成。
+后果：终态内容取决于**谁先提交**（竞态），而不是取决于谁有资格提交——而两者
+在同一任务上往往给出不同结论。runtime 的 cluster 模板里这会放大成：旧
+Worker 在租约失效后仍发布结果事件，等待方可能拿到过期执行者的结论。
+**BREAKING（破坏性 minor；taskboard 是 Stable 包，走 api-compat.md 五步流程）**
+- 动机：见上。旧新对照与迁移路径三件齐：
+- 旧：`Complete(ctx, id, token)` 只认「状态 == claimed && 令牌匹配」——
+  过期持有者（尚未被接管）仍能提交终态。
+- 新：凭据面 = **令牌 + 租约未过期**（与 `Renew` 同一口径，判据走
+  `taskboard.LeaseHeld`，不各写一份）：过期 ⇒ `ErrLeaseLost` 且**不做任何
+  修改**（拒绝后任务仍是认领态，可被接管）。
+- 迁移路径：实现 `taskboard.Board` 的宿主在 `Complete` 的判定里补一条
+  「租约未过期」（存储侧同一次原子操作里判完，别拆成「读→判→写」三步）；
+  `Release` **不判有效期**（归还是自愿放弃、不写终态）⇒ 不需要改。接
+  `taskboard/boardtest` 共享套件的宿主升级内核后跑一遍即知是否合规——
+  新增子判据「租约过期后完成被拒」会把未跟上的实现判红。
+本批（契约 / 套件 / 参考实现同批落库）：
+- 契约面（`taskboard`）：`Board` 契约写明 `Complete` 的凭据面；
+  `Complete` 方法注释与 `ErrLeaseLost` 文档同步（过期也是「租约已失」的
+  一种形态）；包文档新增「资格在到期时刻终止」一节。
+- 共享契约套件（`taskboard/boardtest`）：新增子判据「租约过期后完成被拒」
+  （拒绝 + **不改状态** + 接管者能接手，三件齐），并配变异实现
+  （`expiryBlindCompleteBoard`：只认状态与令牌、不判有效期）做反向验证
+  ——摘掉判据必红。
+- 参考实现：`coord.BoardAdapter.Complete` 与 `controlplane.MemStore.Complete`
+  按新契约实现（都走 `taskboard.LeaseHeld`）；两处 `Release` 保持只认令牌。
+- 文档：`docs/error-semantics.md`（ErrLeaseLost 行）、`docs/USAGE.md`
+  （宿主接线坑位）、README 包表与「下游升级须知」。
+零既有导出符号消失、零既有签名变更、依赖地板零变化。
+Co-authored-by: zhangyi01 <zhangyi01@kylinos.cn>
+
 ## [v0.75.1] — 2026-11-25
 
 ### 新增(invocation)：补 failed 终态——执行失败（确定未施加）独立成档
