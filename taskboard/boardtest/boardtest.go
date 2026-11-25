@@ -137,6 +137,7 @@ func RunConfig(t *testing.T, factory Factory, cfg Config) {
 	t.Run("失败的任务可重新认领", func(t *testing.T) { runFailedTaskReclaimable(t, factory) })
 	t.Run("租约过期可被接管", func(t *testing.T) { runExpiredTakeover(t, factory) })
 	t.Run("过期接管后旧持有者提交被拒", func(t *testing.T) { runTakeoverRejectsStaleSubmit(t, factory) })
+	t.Run("租约过期后完成被拒", func(t *testing.T) { runCompleteRejectsExpiredLease(t, factory) })
 	t.Run("接管代次严格递增", func(t *testing.T) { runTakeoverFenceIncrements(t, factory) })
 	t.Run("长任务续期后可继续持有", func(t *testing.T) { runRenewKeepsLongTask(t, factory) })
 	t.Run("旧令牌续期被拒", func(t *testing.T) { runRenewRejectsStaleToken(t, factory) })

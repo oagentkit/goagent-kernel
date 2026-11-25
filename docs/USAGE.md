@@ -2870,6 +2870,12 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 
 - **不给存储实现**是刻意的：给一份参考实现你就会照着改它，最后两份真相并存（与 `checkpoint.StoreCAS` 同一分工）。
 - **释放 / 完成凭令牌不凭内容**：同名 agent 与「失败 → 释放 → 重试」都会让内容比对认错人。
+- **完成还要判「租约未过期」**（issue #497）：`Complete` 的凭据面是「令牌 + 租约未过期」，
+  与 `Renew` 同一口径——**资格在到期时刻终止**。租约过期后、还没有人接管的窗口里，
+  旧持有者若仍能提交终态，终态内容就取决于「谁先提交」而不是「谁有资格提交」。
+  `Release` 不判有效期：归还是自愿放弃、不写终态，过期持有者归还不产生错误结论。
+  共享套件 `boardtest.Run` 钉住这条（「租约过期后完成被拒」），实现侧请调
+  `taskboard.LeaseHeld` 取判据，不要各写一份。
 - **v0.33.0 起：令牌由存储铸造**。`Claim` 改收「要多长的租约」的 `ClaimRequest`，
   令牌随返回的 `Task` 给出（`task.Lease.Token`）：
 

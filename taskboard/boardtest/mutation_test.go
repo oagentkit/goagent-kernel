@@ -154,6 +154,34 @@ func (b *fencelessBoard) Claim(ctx context.Context, id taskboard.TaskID, agent t
 	return tk, nil
 }
 
+// expiryBlindCompleteBoard 完成**不判租约有效期**：只认「状态 + 令牌」。
+// 这是 issue #497 的缺口形态——租约过期、尚未被接管时，旧持有者仍能提交终态，
+// 于是终态内容取决于「谁先提交」而不是「谁有资格提交」。
+type expiryBlindCompleteBoard struct {
+	*memBoard
+}
+
+func newExpiryBlindCompleteBoard(_ *testing.T, _ *FakeClock) ClockedBoard {
+	return &expiryBlindCompleteBoard{memBoard: rawMemBoard()}
+}
+
+func (b *expiryBlindCompleteBoard) Complete(_ context.Context, id taskboard.TaskID, token string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t, ok := b.tasks[id]
+	if !ok {
+		return taskboard.ErrNotFound
+	}
+	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
+		return taskboard.ErrLeaseLost
+	}
+	t.State = taskboard.StateDone
+	t.Owner = ""
+	t.Lease = taskboard.Lease{}
+	t.Seq++
+	return nil
+}
+
 // ── 牙齿验证：每条新增判据，摘掉它必红 ─────────────────────────────────
 
 // TestSuiteCatchesSplitCompleteCheck 重复令牌判据的牙齿：
@@ -190,6 +218,16 @@ func TestSuiteCatchesFakeRenew(t *testing.T) {
 	b, clock := newBoard(t, newFakeRenewBoard)
 	if err := checkRenewRejectsStaleToken(context.Background(), b, clock); err == nil {
 		t.Fatal("不校验令牌的假续期也通过了「旧令牌续期被拒」：判据没有牙齿")
+	}
+}
+
+// TestSuiteCatchesExpiryBlindComplete 「租约过期后完成被拒」的牙齿：
+// 不判有效期的实现必须红——否则这条判据只是「好实现绿」的那一半，
+// 坏实现照样全绿。
+func TestSuiteCatchesExpiryBlindComplete(t *testing.T) {
+	b, clock := newBoard(t, newExpiryBlindCompleteBoard)
+	if err := checkCompleteRejectsExpiredLease(context.Background(), b, clock); err == nil {
+		t.Fatal("不判租约有效期的实现也通过了「租约过期后完成被拒」：判据没有牙齿")
 	}
 }
 
