@@ -10,7 +10,7 @@ import (
 )
 
 // log 接管收尾留痕（logx.Delegating 懒解析宿主后端）。
-var log = logx.Delegating("steer")
+var log = logx.Delegating("oagentkit-steer")
 
 // Store 接管收尾的存储面（宿主实现——gorm/model 不下沉）。
 //
