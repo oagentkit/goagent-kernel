@@ -28,7 +28,7 @@ package controlplane
 import (
 	"context"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // ForceReleaseAtomic 权威任务板可选的原子强释接缝。

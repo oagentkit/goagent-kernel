@@ -7,8 +7,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // RecoverBootOrphans 启动孤儿对账（一次性扫描；宿主在进程启动时调一次）。

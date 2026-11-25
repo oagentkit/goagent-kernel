@@ -3,7 +3,7 @@ package steer
 import (
 	"strings"
 
-	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/contract"
 )
 
 // 摘要正文的机械骨架（文案头由宿主注入，正文不带任何领域词）。

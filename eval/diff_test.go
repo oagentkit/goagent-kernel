@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
-	"github.com/yi-nology/goagent-kernel/trajectory"
+	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/trajectory"
 )
 
 var diffT0 = time.Date(2026, 2, 3, 4, 5, 6, 0, time.UTC)

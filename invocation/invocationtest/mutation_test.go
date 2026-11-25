@@ -15,7 +15,7 @@ import (
 
 	"github.com/oekit/concurrency/async"
 
-	"github.com/yi-nology/goagent-kernel/invocation"
+	"github.com/oagentkit/goagent-kernel/invocation"
 )
 
 // nonAtomicStore 把 Advance 拆成「读 → 判 → 写」三段（校验与写入分离）。

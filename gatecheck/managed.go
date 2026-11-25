@@ -7,7 +7,7 @@ import (
 	"github.com/oagentkit/toolgate/policy"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/oagentkit/goagent-kernel/egress"
 )
 
 // errNoInner 受管后端没有内层真后端。

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/contract"
 )
 
 func recGraph() []StepDef {

@@ -13,7 +13,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/tenant"
+	"github.com/oagentkit/goagent-kernel/tenant"
 )
 
 // TestMemPlaneReadsFailClosedWithoutTenant 参考实现的读路径直接拒无租户

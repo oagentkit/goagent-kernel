@@ -33,7 +33,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/internal/acceptancepath"
+	"github.com/oagentkit/goagent-kernel/internal/acceptancepath"
 	"gopkg.in/yaml.v3"
 )
 

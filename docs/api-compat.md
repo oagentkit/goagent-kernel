@@ -57,7 +57,7 @@
    `cmd/` 下的命令除外——命令是交付产物不是 import 面）。漏登记与
    幽灵登记都红；
 3. **Deprecated 必须给替代**：`replacement` 必须是完整符号路径
-   （`github.com/yi-nology/goagent-kernel/<pkg>.<Symbol>`），且该导出符号
+   （`github.com/oagentkit/goagent-kernel/<pkg>.<Symbol>`），且该导出符号
    真实存在——替代指向指到不存在的符号等于把调用方引向悬崖；
 4. **门面跟随**：`follows_upstream` 声明的上游 module 必须真的出现在
    该包 import 面里；
@@ -99,7 +99,7 @@ packages:
     since: v0.33.0           # 定级版本
     reason: ...              # 定级理由，每条必填（没有理由的承诺无从复核）
     # follows_upstream: github.com/oagentkit/toolgate   # 门面包专用
-    # replacement: github.com/yi-nology/goagent-kernel/newpkg.NewThing  # Deprecated 专用
+    # replacement: github.com/oagentkit/goagent-kernel/newpkg.NewThing  # Deprecated 专用
 ```
 
 包注释标记（与清单 level 一致，门禁判等）：
@@ -115,7 +115,7 @@ packages:
 
 ## 当前定级一览
 
-api-lifecycle.yaml 登记 **55** 个包（Stable 18 / Experimental 37 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe，v0.73.0 删 netguard/ticket/cmdpolicy（三包上移上游），v0.74.0 新增 internal/acceptancepath 与 internal/routeledger）。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
+api-lifecycle.yaml 登记 **48** 个包（Stable 18 / Experimental 37 / Deprecated 0；v0.35.0 删五个 Stable 门面包后口径，v0.47.0 新增 internal/ledgerstatus，v0.50.0 新增 examples/sqliteadapter，v0.50.0 删 examples/sqlitestore，v0.60.0 新增 roundguard，v0.69.0 删 toolname（上移 oekit/pkg，v0.70.0 归位 oagentkit），v0.72.0 新增 raceprobe，v0.73.0 删 netguard/ticket/cmdpolicy（三包上移上游），v0.74.0 新增 internal/acceptancepath 与 internal/routeledger）。逐包理由看清单 `reason` 字段；本节只说分组的**依据**：
 
 - **核心契约面 Stable**：`contract` / `protocol` / `sideeffect` / `taskboard` /
   `checkpoint` / `commitgate` / `statemachine` / `sidetest`——宿主实现这些

@@ -6,7 +6,7 @@
 package trajectory
 
 import (
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // currentTurn 当前轮次序号（尚未开轮时为 0）。

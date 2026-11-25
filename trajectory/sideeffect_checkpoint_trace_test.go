@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // seEv 一条副作用事件（载荷键面与 eventbus 词表注释一致）。

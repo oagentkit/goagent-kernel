@@ -3,7 +3,7 @@ package finalize_test
 import (
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/finalize"
+	"github.com/oagentkit/goagent-kernel/finalize"
 )
 
 // TestAdjudicateRetry 失败臂排队重试裁决（P1-2）四态全覆盖：

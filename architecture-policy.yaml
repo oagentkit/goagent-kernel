@@ -83,14 +83,6 @@ modules:
     managed: true
     notes: 进程内有损广播（缓冲 chan）；持久化在发布点由宿主负责；durable 发布面（#160 写侧）与 event-tail 补灌面（#166 读侧）各为可选接缝，包仍零 DB 依赖
 
-  - id: spill
-    roots: [spill]
-    requires: ["ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: 输出预算溢出：提示契约/取回/按龄清理，宿主与前端共用判据
-
-
   - id: contract
     roots: [contract]
     requires: ["ext:github.com/oekit/pkg"] # 哨兵用 pkg/errors（ErrSessionDeadline 单源，#333）
@@ -114,28 +106,6 @@ modules:
       「这一步执行到哪了、重启后该从哪继续」。本包把这个选择做成可机械判定的纯函数，
       而不是留给宿主在崩溃那一刻临场决定（临场决定必然选最坏）。
       领域字段走开放键，与 contract 同口径。
-
-  - id: budget
-    roots: [budget]
-    requires: ["ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      上下文预算：分段计量 + 窗口钳位 + 「压实而非丢弃」的压实计划骨架。
-      本仓原有 spill 只管**输出**超预算；输入侧的上下文计量此前完全缺位。
-      摘要生成与原文落盘各留一个接口由宿主实现（内核不自己调 LLM、不碰存储）——
-      与「LLM 只做单环节」「编排只认接口」同一条纪律。
-
-  - id: offload
-    roots: [offload]
-    requires: ["ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      内联大对象外置：把 base64 二进制从每轮重发的历史里换成占位文本。
-      与 spill 是姊妹机制但语义不同——spill 管文本输出溢出，offload 管
-      「二进制本体躺在消息里」。两阶段（首次标记、后续轮才替换）是正确性关键：
-      首次就替换会让模型永远看不到该对象。
 
   - id: tooldisclose
     roots: [tooldisclose]
@@ -191,13 +161,6 @@ modules:
     owner: harness
     managed: true
     notes: 增量节流：(kind,iteration) 键控 + 权威整段优先 + 确定性收口扫序
-
-  - id: pending
-    roots: [pending]
-    requires: []
-    owner: harness
-    managed: true
-    notes: 多轮挂起态载体：单一编码入口 + 宽容解码
 
   - id: sideeffect
     roots: [sideeffect]
@@ -364,23 +327,6 @@ modules:
       超时的裁决必须显式声明（缺省 deny），否则超时会被 ctx 取消掩盖成「这次没拒绝」。
       非阻塞 hook 不参与裁决但失败必须留痕——它一旦能影响裁决，就只是「慢的阻塞 hook」。
 
-  - id: memorypipe
-    roots: [memorypipe]
-    requires: ["ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      记忆注入的三段：**注入 / 引用 / 打标**（读写时机归宿主，与 budget 的 Summarizer
-      同一条边界——内核不替宿主决定「这次值不值得记住」）。
-
-      注入侧有三件事与策略无关、各宿主各写一遍又必然各判一套：① **来源是前提**
-      （没有来源的记忆与模型的猜测在文本上无法分辨 ⇒ 不注入、显式丢弃并说明）；
-      ② **逐条打标**（id/source/at 三样缺一就少一条追溯路径）；③ **裁剪显式**。
-
-      scope 精确匹配、**不做父级兜底**：按 project 查却回退到 global 看起来更友好，
-      代价是作用域失去意义——只该在某个项目里生效的记忆会在任何会话里生效，
-      而报告完全正常。
-
   - id: delegate
     roots: [delegate]
     requires: ["ext:github.com/oekit/pkg"]
@@ -411,36 +357,6 @@ modules:
 
       **不支持通配**（写明的局限）：* 与 ** 的语义各实现不同，进契约就会出现
       「按 A 的理解写、按 B 的理解判」。需要更强表达力时宿主自己展开成多条精确声明。
-
-  - id: sessionref
-    roots: [sessionref]
-    requires: ["ext:github.com/oagentkit/guardx", "ext:github.com/oekit/pkg"]
-    owner: harness
-    managed: true
-    notes: |
-      跨会话引用快照：把「另一个会话的结论」以**有界、带来源、带失效点**的片段
-      注入当前上下文，并把「新鲜度」变成可机械判定的一维。
-
-      它补的是 budget / spill / offload 都不管的那一段：三者回答的都是「**同一份
-      上下文**里内容放不下怎么办」，而「引用另一个会话的结论」是另一件事——那份
-      内容不在当前上下文里，它的边界与保鲜度没有任何机制面管。不管的后果不是
-      「引用得不好」，是把**当时的**结论当成**现在的**结论用，而这类错误在报告里
-      读起来完全正常（那段话当时确实是真的）。
-
-      三条判据都走结构而非约定：① 裁剪上限在采集时给定，且裁剪了必须显式标出
-      （@Truncated@ + @OriginalBytes@，外加注入面的 @truncated=true@）——静默截断
-      会让模型以为看到的是全文；② @Source@ / @SourceVersion@ / @CapturedAt@ /
-      @ExpiresAt@ 随快照走，失效判定只需「现在几点 + 源现在第几版」；③ 渲染时
-      把 @state=fresh|expired|stale@ 写进包裹体。
-
-      版本这一维不可省：TTL 是**采集者猜的**，源是否前进是**事实**，长 TTL + 高频
-      源更新是最常见的失效形态，只靠时间会一路判有效。版本**回退**同样判 stale
-      （同一个 id 指向的已不是同一段历史）。两者同时成立时报 expired：时间已过是
-      宿主必须无条件重采的那条。
-
-      渲染**不拒绝、只标注**：拒不渲染会让「引用过期」变成「引用消失」，宿主无从
-      区分「本来就没引用」与「引用了但过期」。防伪不另写一套——走 @injectband.Wrap@
-      统一包裹（防伪实现只允许一份）。
 
   - id: drain
     roots: [drain]
@@ -532,10 +448,6 @@ modules:
       配对，缺口进 Issues 显式可见；增量投影支持「先喂一半再喂后半，行被更新
       而非重复」。依赖 eventbus 是为了吃本仓自己的事件词表，不另立事件模型。
 
-
-
-
-
   - id: archcheck
     roots: [archcheck]
     requires: []
@@ -566,7 +478,6 @@ modules:
       ptc 子进程后端的被测入口（测试夹具，不发布为独立二进制）。
       requires 只有 ptc：它调 `ptc.MaybeRunChild()` 进子进程协议。
       **不含裸执行入口 ptc.Run** ⇒ 执行路径门禁对它是绿的，且是**真的判过**的绿。
-
 
   # 2026-11-18 新增（台账 §15 第七阶段建议 1）：单号状态的**派生器**。
   #
@@ -824,7 +735,6 @@ modules:
       消费 contract.StatusTimedOut 词表与 contract.ErrUserCancelled 哨兵；
       与 drain.ErrDeadline 是两个 Cause。
 
-
   # ── 2026-11-15 新增（issue #167 #168，收尾域下沉提案；登记先于代码）──
   #
   # 两个收尾域机制包，都是「contract 词表的消费算法」——词表在内核，
@@ -881,16 +791,6 @@ modules:
       「怎么收与怎么续」。与 handoff（跨进程负责人字段改写）/ taskboard 的
       「接管」（租约过期被动重跑）/ drain（进程要死了的排水）三处同词不同域，
       包头互指。
-  - id: roundguard
-    roots: [roundguard]
-    requires: ["ext:github.com/oekit/pkg"] # 零内部依赖：哨兵/错误用 pkg/errors；budget/cost/deadline/watchdog 是平级的不同量纲，互相不引
-    owner: harness
-    managed: true
-    notes: |
-      回合守卫：模型侧循环的回合结局分类 + 次数预算 + 无进展检测 + 组合结论 Decide。
-      零内部依赖是刻意的——budget/cost/deadline/watchdog 是**平级的不同量纲**，
-      互相不引（引了就成环，且两处口径会漂）。回合结局是**第三根轴**，
-      不复用 contract 会话状态 / statemachine 环节状态。
   - id: raceprobe
     roots: [raceprobe]
     requires: [] # 零内部依赖：判定层只用 stdlib（regexp/sort/strings）
@@ -1066,7 +966,6 @@ rules:
       - text: 'github.com/oekit/pkg/errors'
         want: miss
 
-
   # 规则三：harness 包不得依赖宿主的运行时原语库。
   # 2026-10-18 起**不再允许门面 agentkit**（上游私有旧门面仓）：
   # 该门面已发至 v1.0.0 并进入退役期，agent 原语统一走 github.com/oagentkit/<mod>。
@@ -1099,9 +998,8 @@ rules:
         want: hit
       - text: 'github.com/yi-nology/ekit'
         want: hit
-      - text: 'github.com/yi-nology/goagent-kernel/protocol'
+      - text: 'github.com/oagentkit/goagent-kernel/protocol'
         want: miss
-
 
   # ── oekit 家规（矩阵一致性）──
   #
@@ -1140,7 +1038,6 @@ rules:
         want: hit
       - text: "\tgoFunc := 1"
         want: miss
-
 
   # 规则（issue #428）：用例内起的 goroutine 必须在用例返回前被等待。
   #
@@ -1483,7 +1380,6 @@ rules:
           }
         want: miss
 
-
   # 规则：问外部世界的生产函数必须登记角色与接缝（issue #482）。
   #
   # 「判定面要问外部世界」的函数（DNS / 拨号 / 时钟 / 环境变量 / 文件系统）
@@ -1569,7 +1465,6 @@ rules:
       - text: 'func New(log func(string) error) *X {'
         want: miss
 
-
   # 规则六：类型同一性红线——一个进程只允许一套 errors 包。
   # **2026-10-18 已清偿**：oekit/pkg ≥ v0.12.0 起 New/As/Is/Unwrap 与 stdlib 同型透传
   # （`errors.New` 就是 `stderrors.New` 的 shim，见 pkg/errors/std.go），哨兵与 As 判定
@@ -1603,7 +1498,6 @@ rules:
       # 同一套 errors 在 oekit 里是**允许**的那一套（路径不同即类型不同）。
       - text: 'github.com/oekit/pkg/errors'
         want: miss
-
 
   # 规则八（2026-10-21）：外部程序执行的入口必须唯一。
   #
@@ -1662,7 +1556,6 @@ rules:
         want: hit
       - text: 'callID := eventbus.ToolCallID(ev)'
         want: miss
-
 
 # ── 门面包不可变 ──
 #
@@ -2262,45 +2155,6 @@ word_tables:
       predicate: IsKnownInterventionAction
       family: Action
       desc: 介入动作词表（3 值：force_release/adjudicate/terminate）
-    # 回合结局：模型侧**一次往返**的结局分类（第三根轴——既不是会话状态，
-    # 也不是环节状态）。判定面（Reason.Valid）与枚举出口（AllRoundReasons）
-    # 读同一张表；失败型收敛与温和叫停由 Reason.IsFailure 分开判。
-    - pkg: roundguard
-      backing: roundReasonAll
-      enum: AllRoundReasons
-      predicate: Reason.Valid
-      family: Reason
-      desc: 回合结局词表（10 值）
-    # 额度类别：额度用尽在哪一维上（回合数 / 工具调用总数 / 单工具 / 无进展）。
-    # 与 roundReasonAll 同形但**不同概念**：Reason 判「这一回合以什么结束」，
-    # Limit 判「哪一维额度被用尽」——同一串字面量在两处含义不同，故 relations
-    # 段按 distinct 显式登记。
-    - pkg: roundguard
-      backing: roundLimitAll
-      enum: AllLimits
-      predicate: Limit.Valid
-      family: Limit
-      desc: 额度类别词表（5 值）
-    # 处置口径：额度用尽之后怎么办（强制收尾 / 直接失败）。**策略**而非事实——
-    # 各家没有共识，故单列一张表，且口径**不按额度维度分别配置**（一个口径管
-    # 全部额度 ⇒ 跨宿主口径一致）。
-    - pkg: roundguard
-      backing: stopPolicyAll
-      enum: AllStopPolicies
-      predicate: StopPolicy.Valid
-      family: Policy
-      desc: 额度用尽后的处置口径词表（2 值）
-    # 无进展形态：模型侧循环的五种形态（重复 / 震荡 / 漂移 / 错误螺旋 / 空转）
-    # 加「未命中」。判定面（Shape.Valid）与枚举出口（AllShapes）读同一张表。
-    # 与 roundReasonAll / roundLimitAll 同形但**概念不同**：Shape 答「这一段
-    # 循环有没有在原地打转」，不答「这一回合以什么结束」也不答「哪一维额度用尽」
-    # ⇒ relations 段按 distinct 显式登记（下面那条 AllLimits ↔ AllShapes）。
-    - pkg: roundguard
-      backing: roundShapeAll
-      enum: AllShapes
-      predicate: Shape.Valid
-      family: Shape
-      desc: 无进展形态词表（6 值）
   # relations：**同形取值的两张表之间的关系**声明（中心清单）。
   #
   # 为什么需要它：同一个拼写可能是**多张判定词表**的取值，而它们的**含义**
@@ -2397,52 +2251,6 @@ word_tables:
       anchors:
         a: [{all: true}]
         b: [{all: true}]
-    # 会话失败 ≠ 回合失败：一个是会话终态，一个是某一回合的结局。
-    - a: {pkg: contract, enum: AllStatuses}
-      b: {pkg: roundguard, enum: AllRoundReasons}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 同上（statemachine 的环节状态与 contract 同族）。
-    - a: {pkg: statemachine, enum: AllStepStatuses}
-      b: {pkg: roundguard, enum: AllRoundReasons}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 任务失败 ≠ 回合失败（taskboard 的 failed 允许重新认领，非终态）。
-    - a: {pkg: taskboard, enum: AllStates}
-      b: {pkg: roundguard, enum: AllRoundReasons}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 回合结局 ≠ 额度类别：同包两张表，**同形异义**。
-    #   - "tool_calls"：回合结局里是「模型要工具」（控制流事实），
-    #     额度类别里是「工具调用总额度用尽」（额度判定）；
-    #   - "stalled"：回合结局里是「本回合无进展、温和叫停」（结局分类），
-    #     额度类别里是「无进展这一维额度被命中」（额度判定）。
-    # 前者答「这一回合以什么结束」，后者答「哪一维额度被用尽」⇒ 不同概念，
-    # 手抄任一家都可能是语义损坏（引用别人的常量会把语义装错）。
-    - a: {pkg: roundguard, enum: AllRoundReasons}
-      b: {pkg: roundguard, enum: AllLimits}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 额度类别「none」≠ 形态类别「none」：一个是「未因额度叫停」，一个是
-    # 「未命中任何形态」——同形只是拼写巧合，手抄方必须**在本包命名**
-    # （引用别家的常量会把语义装错：额度判定 ≠ 形态判定）。
-    - a: {pkg: roundguard, enum: AllLimits}
-      b: {pkg: roundguard, enum: AllShapes}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 账本状态「已批准 / 已拒绝」≠ 会话状态「已批准 / 已拒绝」：
-    # 前者答「这次调用的审批闸放没放」，后者答「这一轮会话走到哪一步」。
-    # 同形只是拼写巧合 ⇒ 手抄方必须**在本包命名**。
     - a: {pkg: invocation, enum: AllStates}
       b: {pkg: contract, enum: AllStatuses}
       relation: distinct
@@ -2471,34 +2279,8 @@ word_tables:
       anchors:
         a: [{all: true}]
         b: [{all: true}]
-    # 恢复处置「无需动作」≠ 额度类别「无」：前者答「这条账目已经收口」，
-    # 后者答「没有额度被用尽」。
-    - a: {pkg: invocation, enum: AllRecoveryActions}
-      b: {pkg: roundguard, enum: AllLimits}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 账本状态「执行失败」≠ 回合理由「失败」：前者答「这次调用的副作用确定
-    # 未施加」，后者答「这一回合为什么停」。同形只是拼写巧合 ⇒ 手抄方必须
-    # **在本包命名**（否则「failed」这两个字会把人引到错误的表上）。
-    - a: {pkg: invocation, enum: AllStates}
-      b: {pkg: roundguard, enum: AllRoundReasons}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 同上（账本状态「执行失败」≠ 任务状态「失败」：前者答「这次调用确定没
-    # 施加副作用」，后者答「这个任务走到哪一步了」）。
     - a: {pkg: invocation, enum: AllStates}
       b: {pkg: taskboard, enum: AllStates}
-      relation: distinct
-      anchors:
-        a: [{all: true}]
-        b: [{all: true}]
-    # 同上（形态类别里的「none」是「未命中任何形态」）。
-    - a: {pkg: invocation, enum: AllRecoveryActions}
-      b: {pkg: roundguard, enum: AllShapes}
       relation: distinct
       anchors:
         a: [{all: true}]
@@ -2585,7 +2367,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, spill, ptc, watchdog, delta, pending, drain, reconcile, contract, checkpoint, commitgate, budget, offload, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, sessionref, taskboard, taskboard/boardtest, invocation, invocation/invocationtest, skilldisclose, hookengine, memorypipe, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, roundguard, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, ptc, watchdog, delta, drain, reconcile, contract, checkpoint, commitgate, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, taskboard, taskboard/boardtest, invocation, invocation/invocationtest, skilldisclose, hookengine, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

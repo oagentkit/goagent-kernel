@@ -825,31 +825,6 @@ deps:
       seam: MemQuotaStore.clock
       exempt: ""
       reason: 把外部量写进记录；结论不在本层产生（判定在读到该记录的那一层）
-    - package: spill
-      function: List
-      deps:
-        - fs
-      role: tool
-      seam: ""
-      exempt: ""
-      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
-    - package: spill
-      function: Prune
-      deps:
-        - clock
-        - fs
-      role: decide
-      seam: ""
-      exempt: TTL 的刻度与存档 mtime 同源（都是墙钟）；注入「现在」只会造出两套刻度并存（按墙钟删 vs 按注入时钟删），比不注入更糟。
-      reason: TTL 的刻度与存档 mtime 同源（都是墙钟）；注入「现在」只会造出两套刻度并存（按墙钟删 vs 按注入时钟删），比不注入更糟。
-    - package: spill
-      function: ReadPage
-      deps:
-        - fs
-      role: tool
-      seam: ""
-      exempt: ""
-      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
     - package: watchdog
       function: Watcher.maybeSweep
       deps:

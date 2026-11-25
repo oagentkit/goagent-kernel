@@ -41,7 +41,7 @@ func TestLooksLikeModulePathAcceptsModules(t *testing.T) {
 	isModule := []string{
 		"github.com/oekit/pkg",
 		"github.com/oekit/pkg/errors",
-		"github.com/yi-nology/goagent-kernel-fork/x", // 前缀近似自身，但不能当自身
+		"github.com/oagentkit/goagent-kernel-fork/x", // 前缀近似自身，但不能当自身
 		"github.com/Azure/azure-sdk/v2",              // 含大写：Go 允许，漏判方向反了
 		"gopkg.in/yaml.v3",
 		"mvdan.cc/sh/v3",
@@ -60,9 +60,9 @@ func TestLooksLikeModulePathAcceptsModules(t *testing.T) {
 func TestSelfModuleExclusionNeedsSlashBoundary(t *testing.T) {
 	// 自身与其子包：排除
 	for _, p := range []string{
-		"github.com/yi-nology/goagent-kernel",
-		"github.com/yi-nology/goagent-kernel/contract",
-		"github.com/yi-nology/goagent-kernel/checkpoint",
+		"github.com/oagentkit/goagent-kernel",
+		"github.com/oagentkit/goagent-kernel/contract",
+		"github.com/oagentkit/goagent-kernel/checkpoint",
 	} {
 		if !isSelfPath(p) {
 			t.Errorf("%q 应判为自身并排除", p)
@@ -71,9 +71,9 @@ func TestSelfModuleExclusionNeedsSlashBoundary(t *testing.T) {
 
 	// 前缀相近但**不是**自身：必须当外部依赖
 	for _, p := range []string{
-		"github.com/yi-nology/goagent-kernel-fork/x",
-		"github.com/yi-nology/goagent-kernelx",
-		"github.com/yi-nology/goagent-kernel2/tools",
+		"github.com/oagentkit/goagent-kernel-fork/x",
+		"github.com/oagentkit/goagent-kernelx",
+		"github.com/oagentkit/goagent-kernel2/tools",
 	} {
 		if isSelfPath(p) {
 			t.Errorf("%q 不是自身却被排除了——纯 HasPrefix 正是这个 bug", p)

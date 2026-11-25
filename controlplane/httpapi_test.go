@@ -11,8 +11,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/tenant"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/tenant"
 )
 
 // fakeAuth 鉴权钩子夹具：注入固定的租户上下文，或按动词拒绝。

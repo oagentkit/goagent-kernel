@@ -8,8 +8,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/finalize"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/finalize"
 )
 
 // fakeStore 合成存储面：条件迁移按「现状态 ∈ from」判，记录每次调用的

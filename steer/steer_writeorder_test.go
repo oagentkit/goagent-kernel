@@ -12,8 +12,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/steer"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/steer"
 )
 
 // TestRunSingleWinnerConcurrent 单协程迁移无双跑：并发投喂 N 次接管收尾，

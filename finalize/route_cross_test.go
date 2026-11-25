@@ -17,10 +17,10 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/deadline"
-	"github.com/yi-nology/goagent-kernel/finalize"
-	"github.com/yi-nology/goagent-kernel/steer"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/deadline"
+	"github.com/oagentkit/goagent-kernel/finalize"
+	"github.com/oagentkit/goagent-kernel/steer"
 )
 
 // outcomeOf 收尾动作 → deadline 结论的**唯一映射**（两包同属一根收尾轴）。

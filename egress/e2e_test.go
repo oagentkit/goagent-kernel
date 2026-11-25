@@ -28,7 +28,7 @@ import (
 
 	"github.com/oagentkit/guardx/egressproxy"
 
-	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/oagentkit/goagent-kernel/egress"
 )
 
 // backend 一个健康的后端：直连与经代理都能通。于是「经没经代理」必须由代理的

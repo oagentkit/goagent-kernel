@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/trajectory"
+	"github.com/oagentkit/goagent-kernel/trajectory"
 )
 
 var t0 = time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)

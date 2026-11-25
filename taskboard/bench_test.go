@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // benchTasks 200 任务的 DAG 夹具：open / failed 任务依赖 i-1..i-3（截断到 0）；

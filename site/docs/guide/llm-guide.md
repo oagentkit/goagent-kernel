@@ -4,7 +4,7 @@ title: 模型接入
 
 # 给大模型的接入指南
 
-> 🤖 本页要点已收录进 [llms.txt](https://yi-nology.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
+> 🤖 本页要点已收录进 [llms.txt](https://oagentkit.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
 
 这一页只回答一个问题：**把模型接进来之后，模型到底看到什么、要吐出什么、被拒了会怎样、
 上下文从哪来。**
@@ -803,6 +803,6 @@ title: 模型接入
 - [能力详解](./capabilities.md)——九组能力逐组拆开（含每组「什么时候用」）。
 - [怎么用](./getting-started.md)——从零接入的六步路线与最小闭环。
 - [坑速查](../reference/pitfalls.md)——症状 → 真因，接完线自查一遍。
-- 仓内 [docs/USAGE.md](https://github.com/yi-nology/goagent-kernel/blob/main/docs/USAGE.md)
+- 仓内 [docs/USAGE.md](https://github.com/oagentkit/goagent-kernel/blob/main/docs/USAGE.md)
   ——逐包的「职责 → 集成片段 → 关键符号 → 坑」。
-- [llms.txt](https://yi-nology.github.io/goagent-kernel/llms.txt)——给 AI 代理直接读的紧凑事实页。
+- [llms.txt](https://oagentkit.github.io/goagent-kernel/llms.txt)——给 AI 代理直接读的紧凑事实页。

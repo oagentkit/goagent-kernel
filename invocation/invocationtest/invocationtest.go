@@ -26,7 +26,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/invocation"
+	"github.com/oagentkit/goagent-kernel/invocation"
 )
 
 // Factory 构造被测存储实现.

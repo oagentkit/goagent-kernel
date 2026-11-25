@@ -59,7 +59,7 @@ func TestValidateProblems(t *testing.T) {
 		{
 			"非 Deprecated 带替代",
 			strings.Replace(miniManifest, "    reason: 夹具——契约面示例\n",
-				"    reason: 夹具\n    replacement: github.com/yi-nology/goagent-kernel/x.Y\n", 1),
+				"    reason: 夹具\n    replacement: github.com/oagentkit/goagent-kernel/x.Y\n", 1),
 			"只有 Deprecated 条目",
 		},
 		{

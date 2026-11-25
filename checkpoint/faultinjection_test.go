@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/goagent-kernel/checkpoint"
-	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // flakyStore 注入「第 N 次写失败」的存储（写库故障的最小形态）。

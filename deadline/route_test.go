@@ -7,8 +7,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/steer"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/steer"
 )
 
 // 收尾三分路由的契约判据（issue #170）：超时 / 用户取消 / 进程停机可区分，

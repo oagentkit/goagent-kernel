@@ -25,7 +25,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // checkCompleteRejectsExpiredLease 租约过期后旧持有者提交终态被拒（issue #497）。

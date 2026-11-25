@@ -7,7 +7,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // ckRaw 一条快照事件（seq 用原始载荷值，便于喂病态数值）。

@@ -18,7 +18,7 @@ import (
 )
 
 func TestRouteHasProductionConsumer(t *testing.T) {
-	const want = "github.com/yi-nology/goagent-kernel/deadline"
+	const want = "github.com/oagentkit/goagent-kernel/deadline"
 	fset := token.NewFileSet()
 	n := 0
 	err := filepath.WalkDir("..", func(path string, d os.DirEntry, err error) error {

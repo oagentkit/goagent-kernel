@@ -72,24 +72,12 @@ packages:
     reason: sideeffect.Store 共享契约套件。场景集只增不减（additive），契约面 Stable 则套件判定口径随之稳定。
 
   # ── 零依赖小判据（Stable：已冻结的单一真相）──
-  - pkg: pending
-    level: Stable
-    since: v0.33.0
-    reason: 多轮挂起态载体，73 行零依赖，编码/宽容解码口径冻结。
   - pkg: watchdog
     level: Stable
     since: v0.33.0
     reason: 被动配对不变量监视，只依赖 eventbus/contract 两个内部包、无外部依赖，只告警不裁决——没有可变的裁决语义。
 
   # ── 判据已定型的机制包（Stable）──
-  - pkg: spill
-    level: Stable
-    since: v0.33.0
-    reason: 输出预算溢出三判据（提示契约/取回/按龄清理）已定型，2026-10-25 后未动。
-  - pkg: offload
-    level: Stable
-    since: v0.33.0
-    reason: 外置两阶段（先标记后替换）+ fail-soft 判据已定型。
   - pkg: guardset
     level: Stable
     since: v0.33.0
@@ -115,10 +103,6 @@ packages:
     since: v0.33.0
     reason: 优雅排水（轮取消脱钩/在途收敛/预算强制收刀）已定型。
   # ── 仍在演进的包（Experimental：理由必填，升级风险自负）──
-  - pkg: budget
-    level: Experimental
-    since: v0.33.0
-    reason: 压实计划三重守卫刚落地，摘要生成与原文落盘仍是宿主接口——接口形状还会随宿主反馈调整。
   - pkg: trajectory
     level: Experimental
     since: v0.33.0
@@ -147,10 +131,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 判定面三件事已定义，但传输形态在上游（Codex/DSH）仍在分叉，匹配语义可能随之调整。
-  - pkg: memorypipe
-    level: Experimental
-    since: v0.33.0
-    reason: 记忆注入三段的边界刚划出，摘要策略与宿主磨合未完。
   - pkg: delegate
     level: Experimental
     since: v0.33.0
@@ -159,10 +139,6 @@ packages:
     level: Experimental
     since: v0.33.0
     reason: 冲突判据刚落（重叠即冲突），挂载/隔离的宿主侧语义还会补。
-  - pkg: sessionref
-    level: Experimental
-    since: v0.33.0
-    reason: 跨会话引用的保鲜/失效判据 2026-11-06 立包，注入边界还在补。
   - pkg: metrics
     level: Experimental
     since: v0.34.1
@@ -221,7 +197,6 @@ packages:
 
   # ── 2026-11-19 新增（issue #424）──
 
-
   # ── 2026-11-13 新增（issue #106 #107 #108）──
   - pkg: coord
     level: Experimental
@@ -263,7 +238,3 @@ packages:
     level: Experimental
     since: v0.72.0
     reason: race 门禁失败形态的判定层从 cmd/raceprobe 下沉为可导入包（台账 §26 建议 1）——判定面本身随 race 门禁口径演进会增删（形态取值、判据措辞），不适合 Stable 扩诺；且下沉后尚未被第二个消费方验证（比照 archcheck 的定级理由）。
-  - pkg: roundguard
-    level: Experimental
-    since: v0.60.0
-    reason: 回合守卫四件套（回合结局分类 / 回合次数预算 / 无进展检测 / 组合结论 Decide）刚下沉——判据面已带导出面上限门禁与反向验证矩阵，但结局分类的取值集合与「不得续跑」的判据边界仍待第二个宿主验证（比照 steer 的定级理由）。

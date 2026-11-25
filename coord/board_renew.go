@@ -9,7 +9,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // Renew 续期并确认持有资格（taskboard.RenewingBoard）：令牌不匹配或已过期

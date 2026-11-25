@@ -13,7 +13,7 @@ package worker
 import (
 	"github.com/oekit/concurrency/async"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // LeaseLostCause 在途租约失去资格的原因（@@Config.OnLeaseLost@@ 的判别面）。

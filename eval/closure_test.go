@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
-	"github.com/yi-nology/goagent-kernel/trajectory"
+	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/trajectory"
 )
 
 // TestAssessClosureAcceptsSideEffectPointRows 健康轨迹含副作用点观察行 ⇒ 通过。

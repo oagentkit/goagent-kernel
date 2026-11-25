@@ -7,7 +7,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/cost"
+	"github.com/oagentkit/goagent-kernel/cost"
 )
 
 // 示例 scope 词表（合成数据：词面是机制侧通用表述，词表本体归宿主）。

@@ -37,7 +37,7 @@ import (
 
 	"github.com/oagentkit/runtime/procx"
 
-	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
 )
 
 // ghIssue 一条 issue 的开关状态（`gh issue list --json number,state` 的形状）。

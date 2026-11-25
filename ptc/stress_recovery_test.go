@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/ptc"
+	"github.com/oagentkit/goagent-kernel/ptc"
 )
 
 func stressTolerance() int {

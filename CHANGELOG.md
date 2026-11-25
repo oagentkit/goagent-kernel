@@ -3718,7 +3718,7 @@ windows / integration），unit 层日志里 `releasecheck: v0.49.0 发版纪律
 ⇒ 三条纪律已立进 AGENTS.md：**形态判定必须机器判定**（不许靠人读日志推断）；
 **三段预算互相咬合，改一处必须改三处**；**外层闹钟必须宽于内层**（本轮顺手补的 CI
 race 作业超时那条——与工具看门狗等宽 ⇒ 结论来不及落盘就被 CI 取消）。
-Release: https://github.com/yi-nology/goagent-kernel/releases/tag/v0.49.0
+Release: https://github.com/oagentkit/goagent-kernel/releases/tag/v0.49.0
 
 
 ## [v0.49.0] — 2026-11-19
@@ -7172,7 +7172,7 @@ taskboard 子车道两单（基线 59b7e31，含三个提交：契约 / 套件 /
 sideeffect 车道禁区，不修则本仓参考实现跑不过扩严后的套件。
 门禁：make check 本地全绿；taskboard 包覆盖率 61.5% → 98.5%；
 taskboard 61 条测试（20 个测试函数 + 41 条子测试）。依赖地板无变化。
-PR: https://github.com/yi-nology/goagent-kernel/pull/122
+PR: https://github.com/oagentkit/goagent-kernel/pull/122
 
 - 杂务(deps)：v0.33.0 依赖地板——oagentkit 系全线追平 + pkg 钉回 v0.44.0（#126）
 

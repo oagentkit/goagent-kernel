@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // TestAttributionConstantsAreEventbusVocabulary 归因常量必须引用 eventbus 词表。

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // journalStore 事件落库替身：Insert 铸造单调游标，TailStore 读侧同源。
