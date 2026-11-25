@@ -29,8 +29,8 @@ package watchdog
 import (
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // 闭合归因（closed_by）缺省词表。宿主可在 Config.ClosedBy 里扩充，

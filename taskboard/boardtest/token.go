@@ -14,7 +14,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // runTokenMintedByStorage 令牌由存储铸造。

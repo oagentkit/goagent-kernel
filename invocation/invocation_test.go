@@ -3,7 +3,7 @@ package invocation_test
 import (
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/invocation"
+	"github.com/oagentkit/goagent-kernel/invocation"
 )
 
 // TestCanTransition 合法转移表逐条钉住。

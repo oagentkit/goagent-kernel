@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 func turnStarted(sid string) eventbus.Event {

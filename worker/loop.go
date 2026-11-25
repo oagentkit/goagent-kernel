@@ -39,7 +39,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // DefaultPollInterval 领取轮询的缺省间隔。

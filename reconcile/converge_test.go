@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // ── 收敛体与错误语义 ────────────────────────────────────────────────────

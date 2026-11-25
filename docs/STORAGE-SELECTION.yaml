@@ -169,39 +169,39 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/board.go#Store.Board
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/board.go#Store.Board
       - id: startup-recovery
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/store.go#Open
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/store.go#Open
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/schema.go#Store.EnsureSchema
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/schema.go#Store.EnsureSchema
       - id: single-store-full-state
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/apply.go#Store.Apply
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/apply.go#Store.Apply
       - id: progress-reconciliation
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/snapshot.go#Store.Snapshots
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/snapshot.go#Store.Snapshots
       - id: tenant-scoped-storage
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#Store.TenantEffects
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#Store.TenantEffects
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#Store.TenantEvents
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#Store.TenantEvents
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantEffectStore
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantEffectStore
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantEventStore
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantEventStore
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantDownstream
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantDownstream
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantTailCursorStore
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/tenant.go#NewTenantTailCursorStore
 
   # ── PostgreSQL：共享库，多副本 / 跨机 ─────────────────────────────────
   - id: PostgreSQL
@@ -241,7 +241,7 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Board
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Board
       - id: startup-recovery
         source: storage
         # ⚠ **无门面等价物**：PG 的 Store 没有公开的建表入口（SQLite 侧有，
@@ -249,41 +249,41 @@ storages:
         # 包级函数。这是**事实差异**，不是漏写。
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/schema.go#EnsureSchema
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/schema.go#EnsureSchema
       - id: single-store-full-state
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Apply
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Apply
       - id: progress-reconciliation
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Snapshots
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Snapshots
       - id: multi-process-claim
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Board
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Board
       - id: cross-process-token
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Board
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Board
       - id: database-clock
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Effects
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Effects
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Board
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Board
       - id: tenant-scoped-storage
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEffects
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEffects
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEvents
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEvents
       - id: reliable-events
         source: storage
         # 尾随游标面**同属**可靠事件面：它是 eventbus.CursorStore 的落点
@@ -291,11 +291,11 @@ storages:
         # 的面访问器（声明面覆盖不全）。
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Events
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Events
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TailCursors
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TailCursors
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TenantTailCursors
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TenantTailCursors
       - id: unified-lease
         source: kernel
         evidence:
@@ -315,12 +315,12 @@ storages:
         source: kernel
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjob.go#K8sJob
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/containerbackend/k8sjob.go#K8sJob
       - id: network-egress-enforcement
         source: kernel
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/containerbackend/k8sjobegress.go#K8sEgressProbe
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/containerbackend/k8sjobegress.go#K8sEgressProbe
 
   # ── shared-authority-pg：多集群共享同一份权威库（部署形态）──────────
   - id: shared-authority-pg
@@ -360,7 +360,7 @@ storages:
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Control
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Control
       - id: reliable-events
         source: storage
         # 尾随游标面**同属**可靠事件面：它是 eventbus.CursorStore 的落点
@@ -368,16 +368,16 @@ storages:
         # 的面访问器（声明面覆盖不全）。
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Events
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Events
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TailCursors
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TailCursors
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TenantTailCursors
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TenantTailCursors
       - id: tenant-scoped-storage
         source: storage
         evidence:
           - kind: contract
-            ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEffects
+            ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.TenantEffects
       - id: reliable-handoff
         source: kernel
         evidence:
@@ -438,7 +438,7 @@ known_unbacked_accessors:
       下游栅栏面在部署矩阵的能力表里没有对应条目（矩阵的能力表里没有
       「下游栅栏」这一项）⇒ 该面访问器没有能力落点。声明面里没有任何能力证据
       指向它：known_asymmetries 的 batch-cursor-write 引用的落点是
-      https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/cursor.go#rejectBatchCursorWrite（批内游标写的拒绝逻辑），
+      https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/cursor.go#rejectBatchCursorWrite（批内游标写的拒绝逻辑），
       不是这个面访问器。
   - storage: PostgreSQL
     accessor: TenantDownstream
@@ -498,9 +498,9 @@ known_asymmetries:
       机制不同、语义同构——不是能力缺失（两侧都没承诺「批内读自己刚写的值」）。
     evidence:
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/exec.go#exec.reader
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/exec.go#exec.reader
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/store.go#Store.Apply
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/store.go#Store.Apply
 
   - id: batch-cursor-write
     storages: [goagent-runtime/sqliteadapter, PostgreSQL]
@@ -511,9 +511,9 @@ known_asymmetries:
       都响亮，但形态不一样——跨后端迁移时不能假设「报错长得一样」。
     evidence:
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/cursor.go#rejectBatchCursorWrite
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/cursor.go#rejectBatchCursorWrite
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/cursor.go#TailCursorStore
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/cursor.go#TailCursorStore
 
   - id: same-store-identity
     storages: [goagent-runtime/sqliteadapter, PostgreSQL]
@@ -524,9 +524,9 @@ known_asymmetries:
       「同一份库的两个别名」），不是一长一短。
     evidence:
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/store.go#Store.sourceID
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/store.go#Store.sourceID
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/control.go#poolSourceID
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/control.go#poolSourceID
 
   - id: control-version-anchor
     storages: [goagent-runtime/sqliteadapter, PostgreSQL]
@@ -537,9 +537,9 @@ known_asymmetries:
       路径上；建表 DDL 在 pgstore/schema.go，不推进版本）。
     evidence:
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/control.go#ControlStore
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/control.go#ControlStore
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/control.go#ControlStore
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/control.go#ControlStore
 
   - id: facade-schema-bootstrap
     storages: [goagent-runtime/sqliteadapter, PostgreSQL]
@@ -552,6 +552,6 @@ known_asymmetries:
       （startup-recovery 这条能力的落点因此落在包级函数上）。
     evidence:
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/sqliteadapter/schema.go#Store.EnsureSchema
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/sqliteadapter/schema.go#Store.EnsureSchema
       - kind: contract
-        ref: https://github.com/yi-nology/goagent-runtime/blob/main/pgstore/schema.go#EnsureSchema
+        ref: https://github.com/oagentkit/goagent-runtime/blob/main/pgstore/schema.go#EnsureSchema

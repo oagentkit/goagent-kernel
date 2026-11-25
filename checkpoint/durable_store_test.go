@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/checkpoint"
-	"github.com/yi-nology/goagent-kernel/commitgate"
-	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/oagentkit/goagent-kernel/commitgate"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
 )
 
 type durable struct {

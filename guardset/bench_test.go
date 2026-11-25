@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/oagentkit/goagent-kernel/guardset"
 	"github.com/oagentkit/guardx/invoke"
-	"github.com/yi-nology/goagent-kernel/guardset"
 )
 
 // benchGuards n 条恒放行守卫（Rank 0..n-1，判定立即返回）。

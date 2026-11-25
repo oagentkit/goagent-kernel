@@ -15,8 +15,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
-	"github.com/yi-nology/goagent-kernel/trajectory"
+	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/trajectory"
 )
 
 // ErrBadRecord 录制文件不合法（不是合法的 JSONL 事件流）。

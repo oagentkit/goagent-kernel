@@ -57,7 +57,7 @@
    `cmd/` 下的命令除外——命令是交付产物不是 import 面）。漏登记与
    幽灵登记都红；
 3. **Deprecated 必须给替代**：`replacement` 必须是完整符号路径
-   （`github.com/yi-nology/goagent-kernel/<pkg>.<Symbol>`），且该导出符号
+   （`github.com/oagentkit/goagent-kernel/<pkg>.<Symbol>`），且该导出符号
    真实存在——替代指向指到不存在的符号等于把调用方引向悬崖；
 4. **门面跟随**：`follows_upstream` 声明的上游 module 必须真的出现在
    该包 import 面里；
@@ -99,7 +99,7 @@ packages:
     since: v0.33.0           # 定级版本
     reason: ...              # 定级理由，每条必填（没有理由的承诺无从复核）
     # follows_upstream: github.com/oagentkit/toolgate   # 门面包专用
-    # replacement: github.com/yi-nology/goagent-kernel/newpkg.NewThing  # Deprecated 专用
+    # replacement: github.com/oagentkit/goagent-kernel/newpkg.NewThing  # Deprecated 专用
 ```
 
 包注释标记（与清单 level 一致，门禁判等）：

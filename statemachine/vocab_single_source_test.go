@@ -15,7 +15,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/contract"
 )
 
 // stepVocabulary 12 个环节状态（顺序按状态机生命周期排列）。

@@ -8,7 +8,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
 )
 
 // 本文件是「重试安全三档」的契约场景（v0.33.0 新增）。

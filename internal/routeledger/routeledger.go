@@ -46,7 +46,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
 )
 
 // Registry 是路线登记面（docs/ROUTE-LEDGER.yaml）的形状。

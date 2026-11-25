@@ -14,10 +14,10 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/checkpoint"
-	"github.com/yi-nology/goagent-kernel/coord"
-	"github.com/yi-nology/goagent-kernel/sideeffect"
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // newRealtimeBoard 真实时间的任务板（不注入时钟）：续期防接管 / Close 后

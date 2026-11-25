@@ -37,7 +37,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // FakeClock 套件提供的假时钟（并发安全；测试内手动推进）。

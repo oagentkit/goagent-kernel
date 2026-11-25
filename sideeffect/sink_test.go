@@ -10,8 +10,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sideeffect"
-	"github.com/yi-nology/goagent-kernel/sidetest"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/sidetest"
 )
 
 // memSink 测试替身：一份按 FencedSink 契约实现的内存下游。

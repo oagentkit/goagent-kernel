@@ -8,7 +8,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
 )
 
 // 本文件是「执行意图」一族的契约场景（v0.33.0 新增）。

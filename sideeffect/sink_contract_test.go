@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/sideeffect"
-	"github.com/yi-nology/goagent-kernel/sidetest"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/sidetest"
 )
 
 // TestSinkContract 内存替身接**共享栅栏契约套件**。

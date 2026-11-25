@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
 )
 
 // validMatrix 最小合法清单：一项 available（contract 证据）、一项 partial

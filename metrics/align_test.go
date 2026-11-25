@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
 )
 
 // TestExecStatusAlignsWithTrajectorySpanStatus 执行状态取值域与

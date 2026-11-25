@@ -17,8 +17,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/coord"
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // flakyRegistry 心跳可注入持续故障的注册表替身（其余方法走 MemRegistry）。

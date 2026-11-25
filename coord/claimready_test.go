@@ -16,7 +16,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // newReadyBoard 构造带存储时钟的适配器（批量领取的过期场景要能确定性触发）。

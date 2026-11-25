@@ -12,8 +12,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
-	"github.com/yi-nology/goagent-kernel/worker"
+	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/worker"
 )
 
 func runLongTaskLeaseExpiry(t *testing.T) {

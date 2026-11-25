@@ -1735,7 +1735,7 @@ goroutine 体里的 sleep（那是被测机制自己的节奏）、policy `manag
 
 ## 发版纪律（2026-10-20 补齐）
 
-本仓是**按版本引入**的下游依赖（`go get github.com/yi-nology/goagent-kernel@vX.Y.Z`），
+本仓是**按版本引入**的下游依赖（`go get github.com/oagentkit/goagent-kernel@vX.Y.Z`），
 所以「发版」本身就是给下游的一份契约。三条纪律：
 
 1. **发版顺序：改代码并提交 → 生成 CHANGELOG 并提交 → 打 tag → 推 tag → 发 GitHub Release。**

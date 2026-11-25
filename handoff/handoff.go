@@ -64,7 +64,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/delegate"
+	"github.com/oagentkit/goagent-kernel/delegate"
 )
 
 // Key 交接单的幂等键（宿主按业务给；同一键的重复挂出是重放不是新单）。

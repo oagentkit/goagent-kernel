@@ -23,12 +23,12 @@ features:
     details: 可重试性 / 退避 / 重发安全做成数据表；不可归类一律不可重试。
   - title: 边界不是文档，是门禁
     details: 域词、依赖方向、结构判定全由机器判，挂在 make check 上。
-footer: MIT License · github.com/yi-nology/goagent-kernel
+footer: MIT License · github.com/oagentkit/goagent-kernel
 ---
 
 <div class="home-punch"><strong>「这个包需要知道自己在给谁干活吗？」</strong>需要 → 属于宿主。</div>
 
-<div class="home-install"><span class="prompt">▸</span>go get github.com/yi-nology/goagent-kernel@latest</div>
+<div class="home-install"><span class="prompt">▸</span>go get github.com/oagentkit/goagent-kernel@latest</div>
 
 <div class="home-links">
   <a class="chip" href="./guide/introduction.html">介绍</a>
@@ -38,7 +38,7 @@ footer: MIT License · github.com/yi-nology/goagent-kernel
   <a class="chip" href="./reference/pitfalls.html">坑速查</a>
   <a class="chip" href="./reference/packages.html">机器事实</a>
   <a class="chip chip-ai" href="/goagent-kernel/llms.txt">AI 直读 llms.txt</a>
-  <a class="chip" href="https://github.com/yi-nology/goagent-kernel">GitHub &#8599;</a>
+  <a class="chip" href="https://github.com/oagentkit/goagent-kernel">GitHub &#8599;</a>
 </div>
 
 <div class="diagram">

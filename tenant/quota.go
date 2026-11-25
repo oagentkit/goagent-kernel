@@ -14,7 +14,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/cost"
+	"github.com/oagentkit/goagent-kernel/cost"
 )
 
 // Quota 配额声明（宿主编排侧给出；内核只判不存）。

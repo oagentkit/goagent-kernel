@@ -273,7 +273,7 @@
 > **状态（2026-11-17 收口）**：#261–#278 共 18 条**全部已合入并关闭**；
 > #279 是路线总览，**按设计保持 open**（它不是待办项，是持续增补的路线载体）。
 > 逐条落地位置见第 4 节「落地位置」列，收口核对见第 12 节。
-> 单号链接：`https://github.com/yi-nology/goagent-kernel/issues/<单号>`。
+> 单号链接：`https://github.com/oagentkit/goagent-kernel/issues/<单号>`。
 >
 > **增补（2026-11-20，第十九轮）**：本轮新增两条登记行（#424 / #425）。两条的**当前状态
 > 以本表状态列为准**：#424 的实现已在本分支落地，合入单尚未开出；#425 是本轮实测坐实的
@@ -1698,7 +1698,7 @@ race 门禁此前只回答「绿 / 红」。红的**形态**要靠人读日志�
 方向完全相反（改代码 vs 查机器面）。2026-11-18 实录的一次误归因就是这个缺口的
 账单：
 
-- 现象：`FAIL github.com/yi-nology/goagent-kernel/statemachine 660.101s` +
+- 现象：`FAIL github.com/oagentkit/goagent-kernel/statemachine 660.101s` +
   `*** Test killed with quit: ran too long (11m0s).` + `signal: quit`，**一行
   goroutine 栈都没有**。
 - 当时的归因：「statemachine 的用例挂死了」。

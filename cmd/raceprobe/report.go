@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/yi-nology/goagent-kernel/raceprobe"
+	"github.com/oagentkit/goagent-kernel/raceprobe"
 )
 
 // runReport 一轮门禁的完整结论。

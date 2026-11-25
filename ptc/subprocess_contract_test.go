@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	ptc "github.com/oagentkit/goagent-kernel/ptc"
 	"github.com/oagentkit/guardx/sandbox"
-	ptc "github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // issue #46：单程序后端收到与配置不匹配的请求程序必须 fail closed——

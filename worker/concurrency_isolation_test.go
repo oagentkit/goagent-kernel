@@ -11,7 +11,7 @@ import (
 
 	"github.com/oekit/concurrency/async"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // TestLoopConcurrencyDrainKeepsInFlight 停机排空：外层取消后驱动必须等待

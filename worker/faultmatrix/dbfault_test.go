@@ -8,8 +8,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/coord"
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // runDBOutageRecovery 数据库整体不可用期间：

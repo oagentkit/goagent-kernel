@@ -11,7 +11,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // TestMemStoreVersionConflict 钉版本锚：旧快照的提交必须 ErrStoreConflict，

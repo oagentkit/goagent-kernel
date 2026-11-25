@@ -54,7 +54,7 @@ export default defineUserConfig({
     },
   ],
   theme: defaultTheme({
-    repo: 'yi-nology/goagent-kernel',
+    repo: 'oagentkit/goagent-kernel',
     repoLabel: 'GitHub',
     editLink: false,
     lastUpdated: false,
@@ -79,8 +79,8 @@ export default defineUserConfig({
       {
         text: 'AI 直读',
         children: [
-          { text: '本站 llms.txt', link: 'https://yi-nology.github.io/goagent-kernel/llms.txt' },
-          { text: 'goagent-runtime llms.txt', link: 'https://yi-nology.github.io/goagent-runtime/llms.txt' },
+          { text: '本站 llms.txt', link: 'https://oagentkit.github.io/goagent-kernel/llms.txt' },
+          { text: 'goagent-runtime llms.txt', link: 'https://oagentkit.github.io/goagent-runtime/llms.txt' },
           { text: 'oekit llms.txt', link: 'https://oekit.github.io/llms.txt' },
           { text: 'oagentkit llms.txt', link: 'https://oagentkit.github.io/llms.txt' },
         ],
@@ -95,7 +95,7 @@ export default defineUserConfig({
         ],
       },
     ],
-    footer: 'MIT License · github.com/yi-nology/goagent-kernel · <a href="https://yi-nology.github.io/goagent-kernel/llms.txt">AI 直读 llms.txt</a>',
+    footer: 'MIT License · github.com/oagentkit/goagent-kernel · <a href="https://oagentkit.github.io/goagent-kernel/llms.txt">AI 直读 llms.txt</a>',
     sidebar: {
       '/guide/': [
         {

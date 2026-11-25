@@ -41,7 +41,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
 )
 
 func main() {

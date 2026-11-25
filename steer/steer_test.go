@@ -8,9 +8,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/contract"
-	"github.com/yi-nology/goagent-kernel/finalize"
-	"github.com/yi-nology/goagent-kernel/steer"
+	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/finalize"
+	"github.com/oagentkit/goagent-kernel/steer"
 )
 
 // TestSignalCauseDistinguishable 接管 Cause 与用户取消 / 停机三分可辨：

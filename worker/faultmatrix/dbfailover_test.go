@@ -19,8 +19,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/coord"
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // failoverBackend 主备切换的协调后端替身：active 指向当前主库；down 时

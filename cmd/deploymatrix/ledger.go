@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
 )
 
 // ledgerView 台账视图：把 issue 证据翻译成「还算不算缺口」。

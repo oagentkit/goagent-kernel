@@ -16,7 +16,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/eventbus"
 )
 
 // PayloadError 载荷数值字段的显式拒绝记录（issue #305）。

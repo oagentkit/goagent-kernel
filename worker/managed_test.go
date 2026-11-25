@@ -12,10 +12,10 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/checkpoint"
-	"github.com/yi-nology/goagent-kernel/coord"
-	"github.com/yi-nology/goagent-kernel/sideeffect"
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // eventLog 记录编排四步的顺序（判据：执行 → 记账 → 收口，不能重排）。

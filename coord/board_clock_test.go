@@ -13,7 +13,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard"
 )
 
 // clockedStorage 测试用 ClockSource：存储时钟可注入推进（真实后端的形态

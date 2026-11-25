@@ -24,10 +24,10 @@ import (
 // wedgeOut 取自 2026-11-18 实录的失败日志（11m0s / signal: quit / 无栈）。
 const (
 	// wedgeOut 启动期楔死：cmd/go 兜底闹钟杀了测试二进制，**没有 goroutine 栈**。
-	wedgeOut = "ok  	github.com/yi-nology/goagent-kernel/contract	0.006s\n" +
+	wedgeOut = "ok  	github.com/oagentkit/goagent-kernel/contract	0.006s\n" +
 		"*** Test killed with quit: ran too long (11m0s).\n" +
 		"signal: quit\n" +
-		"FAIL	github.com/yi-nology/goagent-kernel/statemachine	660.101s\n" +
+		"FAIL	github.com/oagentkit/goagent-kernel/statemachine	660.101s\n" +
 		"FAIL\n"
 
 	// hangOut 用例挂死：Go 运行时活着，打出了 goroutine 栈。
@@ -35,19 +35,19 @@ const (
 		"goroutine 1 [chan receive]:\n" +
 		"main.main()\n" +
 		"	/usr/local/go/src/testing/testing.go:2032\n" +
-		"FAIL	github.com/yi-nology/goagent-kernel/statemachine	600.123s\n"
+		"FAIL	github.com/oagentkit/goagent-kernel/statemachine	600.123s\n"
 
 	// raceOut 数据竞争：竞态检测器自己报的。
 	raceOut = "==================\n" +
 		"WARNING: DATA RACE\n" +
 		"Write at 0x00c0000b4010 by goroutine 12:\n" +
 		"  foo.bar()\n" +
-		"FAIL	github.com/yi-nology/goagent-kernel/ptc	1.234s\n"
+		"FAIL	github.com/oagentkit/goagent-kernel/ptc	1.234s\n"
 
 	// failOut 普通用例失败（断言失败）。
 	failOut = "--- FAIL: TestFoo (0.00s)\n" +
 		"    foo_test.go:10: want 1, got 2\n" +
-		"FAIL	github.com/yi-nology/goagent-kernel/statemachine	0.012s\n" +
+		"FAIL	github.com/oagentkit/goagent-kernel/statemachine	0.012s\n" +
 		"FAIL\n"
 )
 
@@ -60,7 +60,7 @@ func TestClassifyStartupWedge(t *testing.T) {
 	if v.Timeout != "11m0s" {
 		t.Fatalf("兜底闹钟时限没取到：得到 %q，期望 11m0s", v.Timeout)
 	}
-	if v.Package != "github.com/yi-nology/goagent-kernel/statemachine" {
+	if v.Package != "github.com/oagentkit/goagent-kernel/statemachine" {
 		t.Fatalf("受害包没取到：得到 %q", v.Package)
 	}
 }
@@ -101,7 +101,7 @@ func TestClassifyTestFailure(t *testing.T) {
 	if v.Kind != KindTestFailure {
 		t.Fatalf("普通用例失败判错：得到 %q，期望 %q", v.Kind, KindTestFailure)
 	}
-	if v.Package != "github.com/yi-nology/goagent-kernel/statemachine" {
+	if v.Package != "github.com/oagentkit/goagent-kernel/statemachine" {
 		t.Fatalf("失败包没取到：得到 %q", v.Package)
 	}
 }
@@ -116,7 +116,7 @@ func TestClassifyUnknown(t *testing.T) {
 
 // TestClassifyNone 钉住绿路径。
 func TestClassifyNone(t *testing.T) {
-	v := Classify("ok  	github.com/yi-nology/goagent-kernel/contract	0.006s\n")
+	v := Classify("ok  	github.com/oagentkit/goagent-kernel/contract	0.006s\n")
 	if v.Kind != KindNone {
 		t.Fatalf("绿路径判错：得到 %q", v.Kind)
 	}
@@ -125,11 +125,11 @@ func TestClassifyNone(t *testing.T) {
 // TestPackageBookkeeping 钉住包行解析（含「不带包名的收尾 FAIL 行」）。
 func TestPackageBookkeeping(t *testing.T) {
 	passed := PassedPackages(wedgeOut)
-	if len(passed) != 1 || passed[0] != "github.com/yi-nology/goagent-kernel/contract" {
+	if len(passed) != 1 || passed[0] != "github.com/oagentkit/goagent-kernel/contract" {
 		t.Fatalf("通过包解析错：%v", passed)
 	}
 	failed := FailedPackages(wedgeOut)
-	if len(failed) != 1 || failed[0] != "github.com/yi-nology/goagent-kernel/statemachine" {
+	if len(failed) != 1 || failed[0] != "github.com/oagentkit/goagent-kernel/statemachine" {
 		t.Fatalf("失败包解析错：%v", failed)
 	}
 	if strings.Contains(strings.Join(failed, ","), "FAIL") {
@@ -140,7 +140,7 @@ func TestPackageBookkeeping(t *testing.T) {
 // TestRecheckTargets 钉住复核集合 = 跑过但没跑通的包。
 func TestRecheckTargets(t *testing.T) {
 	targets := RecheckTargets(wedgeOut)
-	if len(targets) != 1 || targets[0] != "github.com/yi-nology/goagent-kernel/statemachine" {
+	if len(targets) != 1 || targets[0] != "github.com/oagentkit/goagent-kernel/statemachine" {
 		t.Fatalf("复核集合错：%v", targets)
 	}
 	if len(RecheckTargets("ok  \tpkg\t1.0s\n")) != 0 {

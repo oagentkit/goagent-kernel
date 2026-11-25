@@ -22,7 +22,7 @@
 ④ 续跑契约      checkpoint + commitgate    ← 崩了怎么接着跑（强烈建议）
 ⑤ 上下文三件套  budget + spill + offload   ← 上下文怎么不被撑爆（建议）
 ⑥ 实时事件      eventbus + watchdog        ← 进度怎么给前端（可选）
-⑦ 流式与退出    delta + drain + pending    ← 流式输出与优雅停机（可选）
+⑦ 流式与退出    delta + drain    ← 流式输出与优雅停机（可选；pending 已上抛 promptx）
 ⑧ 安全面        上游 netguard + pii        ← 出站与个人信息（按需，**两包已上移上游**）
 ⑨ 程序化编排    ptc                        ← 多工具聚合场景（进阶）
 ⑩ 判定与改派    dispatch + roundguard + 上游 toolfail / policy / sandbox / injectband ← 失败与循环怎么判（上游四件的核心在 oagentkit，宿主直连上游）
@@ -35,16 +35,16 @@
 >
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
-> | 本文覆盖 | 25 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 本文覆盖 | 21 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **50** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **54** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **55** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **47** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **48** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
-> **包数口径（机器校验，`make docsync` 判）**：本仓共 **50** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **54** 个 module id（54 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **56** 个——`taskboard`
-> 有两个 root（含子包 `taskboard/boardtest`），`invocation` 也有两个（`invocation/invocationtest`）。**两个数不是同一种量**：54 数 module id，56 数
+> **包数口径（机器校验，`make docsync` 判）**：本仓共 **43** 个包（README 包表口径）；
+> `architecture-policy.yaml` 的 `modules` 段登记 **47** 个 module id（47 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **49** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`），`invocation` 也有两个（`invocation/invocationtest`）。**两个数不是同一种量**：47 数 module id，49 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
@@ -74,7 +74,7 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 模型输出怎么变成可信结构 | `protocol` | agent 名注册（可选）、报告标题（可选） |
 | 工具怎么被限制 | `tooldisclose` + `guardset` + 上游 `toolgate/policy` | 工具目录、宿主守卫 |
 | 崩了怎么接着跑 | `checkpoint` + `commitgate` | `StoreCAS` 实现、终态词表注入 |
-| 上下文怎么不被撑爆 | `budget` + `spill` + `offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
+| 上下文怎么不被撑爆 | 上游 `textx/budget` + `textx/spill` + `textx/offload` | `Summarizer` / `Archive` / `Store` 三个接口 |
 | 进度怎么推给前端 | `eventbus` + `watchdog` | 落库 + 广播、告警发布出口 |
 | 出站请求怎么防 SSRF | 上游 `guardx/netguard` | 挂在自己的 `DialContext` 上 |
 | 个人信息怎么脱敏 | 上游 `oekit/pkg/pii` | 阻断决策（内核只回报信号） |
@@ -83,7 +83,7 @@ harness 提供的是确定性编排的**机制面**：环节状态怎么流转�
 | 执行的隔离强度怎么声明与保证 | 上游 `guardx/sandbox` | 执行后端（可选）、每次执行的档位要求 |
 | 副作用怎么保证只做一次 | `sideeffect` + `retryplan` | `Store` 实现（跨进程原子）、幂等键、下游拒收契约 |
 | 我的存储实现守没守住契约 | `sidetest` | 让实现支持注入时钟，然后跑一次套件 |
-| 模型侧循环还能不能转 / 是不是在空转 | `roundguard` | 回合事实（结局 / 用量 / 指纹）——模型与工具仍归宿主 |
+| 模型侧循环还能不能转 / 是不是在空转 | 上游 `agent/roundguard` | 回合事实（结局 / 用量 / 指纹）——模型与工具仍归宿主 |
 
 ### 0.3 三个必须先知道的约束
 
@@ -134,15 +134,15 @@ v0.35.0 起本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox`
 
 ```bash
 # 模块路径
-module github.com/yi-nology/goagent-kernel
+module github.com/oagentkit/goagent-kernel
 ```
 
 ```bash
 # 按最新发布版引入
-go get github.com/yi-nology/goagent-kernel@latest
+go get github.com/oagentkit/goagent-kernel@latest
 
 # 或钉到具体版本（查已发布版本：git ls-remote --tags origin）
-go get github.com/yi-nology/goagent-kernel@latest
+go get github.com/oagentkit/goagent-kernel@latest
 ```
 
 > **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.62.0，
@@ -158,8 +158,8 @@ go get github.com/yi-nology/goagent-kernel@latest
 只想拿状态机不需要拖进 goja、jsonschema 这些。
 
 ```go
-import "github.com/yi-nology/goagent-kernel/contract"
-import "github.com/yi-nology/goagent-kernel/statemachine"
+import "github.com/oagentkit/goagent-kernel/contract"
+import "github.com/oagentkit/goagent-kernel/statemachine"
 ```
 
 ---
@@ -261,7 +261,7 @@ import "github.com/yi-nology/goagent-kernel/statemachine"
 <polygon points="625,112 620,108.5 620,115.5" fill="#58a6ff"/>
 <rect x="28" y="180" width="704" height="54" rx="8" fill="#161b26" stroke="#262e3d"/>
 <text x="44" y="202" font-size="10.5" fill="#e6edf3">不变量：内核只判定，不处置——判定依据由宿主给，处置动作由宿主执行</text>
-<text x="44" y="221" font-size="9" fill="#9aa7b8">旁挂（可后接）：eventbus/watchdog 进度 · delta/drain/pending 流式与退出 · netguard/pii 安全 · dispatch 改派 · roundguard 回合守卫</text>
+<text x="44" y="221" font-size="9" fill="#9aa7b8">旁挂（可后接）：eventbus/watchdog 进度 · delta/drain 流式与退出 · 上游安全面（netguard/pii） · dispatch 改派 · 上游 agent/roundguard 回合守卫</text>
 </svg>
 </div>
 
@@ -285,7 +285,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/oagentkit/goagent-kernel/contract"
 )
 
 // ① 会话运行上下文：编排语义字段定死，领域状态走开放键。
@@ -422,7 +422,7 @@ package myapp
 
 import (
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/goagent-kernel/protocol"
+	"github.com/oagentkit/goagent-kernel/protocol"
 )
 
 func toReport(raw string) (*protocol.Report, error) {
@@ -639,8 +639,8 @@ package myapp
 import (
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
-	"github.com/yi-nology/goagent-kernel/guardset"
-	"github.com/yi-nology/goagent-kernel/tooldisclose"
+	"github.com/oagentkit/goagent-kernel/guardset"
+	"github.com/oagentkit/goagent-kernel/tooldisclose"
 )
 
 func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
@@ -843,7 +843,7 @@ func advise(err error) string {
 
 ```go
 import (
-	"github.com/yi-nology/goagent-kernel/guardset"
+	"github.com/oagentkit/goagent-kernel/guardset"
 	"github.com/oagentkit/toolgate/policy"
 )
 
@@ -888,7 +888,7 @@ stages := []invoke.Stage{
 ```go
 import (
 	"github.com/oagentkit/guardx/invoke"
-	"github.com/yi-nology/goagent-kernel/guardset"
+	"github.com/oagentkit/goagent-kernel/guardset"
 )
 
 // 装配面：持有「当前这一份」，并提供整份换掉的能力。
@@ -989,7 +989,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/ptc"
+	"github.com/oagentkit/goagent-kernel/ptc"
 )
 
 func runProgram(ctx context.Context, stages []invoke.Stage) ptc.Result {
@@ -1166,7 +1166,7 @@ out, err := sandbox.Execute(ctx, reg, sandbox.LevelProcess, sandbox.Request{
 （不必各写一遍——各写一遍必然各判一套，漂移到没人发现为止）：
 
 ```go
-import "github.com/yi-nology/goagent-kernel/archcheck"
+import "github.com/oagentkit/goagent-kernel/archcheck"
 
 pol, err := archcheck.Load("architecture-policy.yaml")
 res, err := archcheck.Run(root, pol)
@@ -1188,259 +1188,19 @@ if res.HasBlocking() { os.Exit(1) }
 
 ---
 
-### 3.5 上下文三件套：`budget` + `spill` + `offload`
+### 3.5 上下文三件套：`budget` + `spill` + `offload`（**三包已上抛上游**，v0.77.0）
 
-三者的分工泾渭分明，接线时别混：
+三包是**对话域上下文工程面**（输入分段计量 / 输出溢出存档 / 内联大对象外置），
+判据主语不是编排，2026-11-26 归属评测后按概念域分派上抛（API 逐字未变）：
 
-| 包 | 管什么 | 时机 | 方向 |
-|---|---|---|---|
-| `budget` | 输入面计量与压实 | 每轮前 | 输入侧 |
-| `offload` | 二进制本体躺在消息里 | 每轮装配 | 输入侧 |
-| `spill` | 输出超预算被截断 | 产出时 | 输出侧 |
+| 包 | 新家 |
+|---|---|
+| `budget` | `github.com/oagentkit/textx/budget` |
+| `spill` | `github.com/oagentkit/textx/spill` |
+| `offload` | `github.com/oagentkit/textx/offload` |
 
-<div align="center">
-<svg width="760" viewBox="0 0 760 320" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system,'PingFang SC','Microsoft YaHei',sans-serif">
-<rect x="0" y="0" width="760" height="320" rx="10" fill="#1c2330" stroke="#262e3d"/>
-<text x="16" y="26" font-size="13" fill="#e6edf3">上下文三件套：三段各自的边界</text>
-<text x="16" y="48" font-size="10" fill="#9aa7b8">三段各管一件事，边界互不重叠；记账各归各，不可互相顶替</text>
-<rect x="16" y="76" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
-<text x="32" y="102" font-size="11.5" fill="#58a6ff">budget</text>
-<text x="32" y="122" font-size="8.5" fill="#9aa7b8">输入侧 · 每轮前</text>
-<line x1="170" y1="88" x2="170" y2="128" stroke="#262e3d"/>
-<text x="186" y="98" font-size="8" fill="#9aa7b8">管什么</text>
-<text x="186" y="118" font-size="9.5" fill="#e6edf3">分段计量 + 压实计划（纯计算，无 I/O）</text>
-<line x1="460" y1="88" x2="460" y2="128" stroke="#262e3d"/>
-<text x="476" y="98" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
-<text x="476" y="118" font-size="9.5" fill="#e6edf3">不做摘要——摘要是一次 LLM 调用，归宿主</text>
-<rect x="16" y="152" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
-<text x="32" y="178" font-size="11.5" fill="#a371f7">offload</text>
-<text x="32" y="198" font-size="8.5" fill="#9aa7b8">输入侧 · 每轮装配</text>
-<line x1="170" y1="164" x2="170" y2="204" stroke="#262e3d"/>
-<text x="186" y="174" font-size="8" fill="#9aa7b8">管什么</text>
-<text x="186" y="194" font-size="9.5" fill="#e6edf3">二进制本体外置为占位文本</text>
-<line x1="460" y1="164" x2="460" y2="204" stroke="#262e3d"/>
-<text x="476" y="174" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
-<text x="476" y="194" font-size="9.5" fill="#f85149">首次只标记不替换：内容原地保留</text>
-<rect x="16" y="228" width="728" height="64" rx="8" fill="#161b26" stroke="#262e3d"/>
-<text x="32" y="254" font-size="11.5" fill="#3fb950">spill</text>
-<text x="32" y="274" font-size="8.5" fill="#9aa7b8">输出侧 · 产出时</text>
-<line x1="170" y1="240" x2="170" y2="280" stroke="#262e3d"/>
-<text x="186" y="250" font-size="8" fill="#9aa7b8">管什么</text>
-<text x="186" y="270" font-size="9.5" fill="#e6edf3">溢出存档的清单与分页取回</text>
-<line x1="460" y1="240" x2="460" y2="280" stroke="#262e3d"/>
-<text x="476" y="250" font-size="8" fill="#9aa7b8">边界：它不做什么</text>
-<text x="476" y="270" font-size="9.5" fill="#e6edf3">不写盘：写侧与清理归宿主</text>
-<text x="16" y="308" font-size="9" fill="#9aa7b8">压实要显式 Shrink 改账；占位替换按轮提交；截断提示是双侧钉档契约——三件事各记各的账</text>
-</svg>
-</div>
-
-*图 6：budget 管输入侧的量，offload 管输入侧的大对象，spill 管输出侧的截断。三者的边界互不重叠，记账也不能互相顶替。*
-
-#### 3.5.1 `budget`：分段计量 + 压实计划
-
-分段计量不是为了好看——**只给总数无法区分「工具面膨胀」与「历史膨胀」**，
-而两者的处置完全不同。
-
-```go
-package myapp
-
-import (
-	"context"
-	"strings"
-
-	"github.com/yi-nology/goagent-kernel/budget"
-)
-
-// ① 宿主实现：摘要是一次 LLM 调用，属模型面不属编排面
-type llmSummarizer struct{}
-
-func (llmSummarizer) Summarize(ctx context.Context, leading []budget.Item) (budget.Summary, error) {
-	var sb strings.Builder
-	for _, it := range leading {
-		sb.WriteString(it.ID + "；")
-	}
-	text := sb.String()
-	return budget.Summary{Text: text, Tokens: len([]rune(text)) / 2}, nil
-}
-
-// ② 宿主实现：原文落盘，返回取回句柄
-type blobArchive struct{}
-
-func (blobArchive) Archive(ctx context.Context, items []budget.Item) (budget.Locator, error) {
-	return budget.Locator("s3://audit/conv-42/compaction-3.json"), nil
-}
-
-func maybeCompact(ctx context.Context, m *budget.Meter, limit int,
-	items []budget.Item) error {
-	// ③ 压力档：tight 75% / critical 90%（到达即进档，宁可早一档提示）
-	if budget.Classify(m.Total(), limit) != budget.PressureCritical {
-		return nil
-	}
-
-	// ④ 计划是纯计算，无 I/O；三条空操作守卫返回「原因」而非 bool。
-	// 条目逐条带 Item.Tokens，Apply 按逐条之和记毛移除量；PlanInput.ItemTokens
-	// 只是宿主没提供逐条量时的兜底估算。
-	plan, err := budget.BuildPlan(budget.PlanInput{Items: len(items), KeepTail: 4})
-	if err != nil {
-		return nil // 条数不够等，本轮不压
-	}
-
-	// 尾部从 plan.Cutoff 起切（= plan.SummarizeItems），不是从
-	// plan.KeepTailItems 起切：后者是「保留几条」，前者才是「从哪里开始」。
-	res, err := budget.Apply(ctx, plan,
-		items[:plan.Cutoff], items[plan.Cutoff:],
-		blobArchive{}, llmSummarizer{})
-	if err != nil {
-		return err
-	}
-
-	// ⑤ 压实不产生模型调用，所以必须显式把账改回来
-	m.Shrink(budget.SegmentConversation,
-		budget.NetRemovedTokens(res.GrossRemovedTokens, res.Summary.Tokens))
-	return nil
-}
-```
-
-**坑**
-
-- **`Apply` 的尾部从 `plan.Cutoff` 起切，不是从 `plan.KeepTailItems` 起切**。
-  `Cutoff` 是「截断下标」（尾部起点），`KeepTailItems` 是「保留几条」——两者
-  数值相近、含义不同，抄错会让入参条数与计划不符并撞 `ErrPlanMismatch`。
-- **毛/净移除量必须分开取**。`GrossRemovedTokens` 是扣摘要**之前**的毛量；
-  按名字对齐参考实现的同名字段会**静默错账**，方向恰好是「看起来更省了」。
-  要「减掉多少」请直接用 `NetRemovedTokens`（钳位在 0）。`GrossRemovedTokens`
-  优先取被归档条目的逐条 `Tokens` 之和，计划的 `ItemTokens` 只是兜底估算——
-  条目逐条带量时不要指望计划估算兜住。
-- **`Apply` 的毛移除量以逐条 `Item.Tokens` 为准**。只填 `PlanInput.ItemTokens`
-  而条目不带 `Tokens` 时，账会停在兜底估算上；估算与真实量不符（例如计划按
-  25/条、实际 900/条）会让账上少减，而压实是不可逆的逐字丢弃。
-- **分段估算永不回填 provider 报数**。provider 报的是总数，回填到分段等于让
-  tokenizer 误差披上分段精确度的外衣，而压实计划恰按段分配裁剪——喂残差等于喂假账。
-- **`MaxInput` 无预留或窗口未知时原样返回 `baseInput`**——扣减纯属内核自作主张。
-- **`Classify` 与 `Display.Overflow` 在 `capacity<=0` 时同向**：Classify 返回
-  `PressureCritical`，Overflow 返回 `true`——「不知道会不会溢出」与「不会溢出」
-  行为完全相反，不得声称余量充足。两者共用同一份「上限是否已知」派生。
-- **归档必须先于摘要**：摘要失败时原文已落盘可直接重试（重跑归档幂等）；
-  反序可能出现「摘要已丢弃原文、摘要本身又没拿到」的净损失。
-- **`Apply` 的三条计划校验全在任何副作用之前**——被拒的调用不得留下任何副作用。
-
-**什么时候不该用**
-
-- **你的上下文窗口由模型侧固定、你根本不打算压**——接 `budget` 只是多一层账。
-- **想让内核替你摘要**——摘要是一次 LLM 调用，属模型面；`budget` 只给计划不给摘要
-  （`Summarizer` 由宿主实现）。
-- **需要删内容**——`budget` 只计量与计划，逐字丢弃是宿主在 `Apply` 这一侧的动作。
-
-#### 3.5.2 `spill`：输出溢出存档
-
-**本包不做写入**，只提供清单、分页取回与写侧清理。
-
-```go
-package myapp
-
-import (
-	"github.com/yi-nology/goagent-kernel/spill"
-)
-
-func onTruncated(root, sessionID string, omitted, total int) string {
-	name := "out-0007.bin"
-	if err := writeSpillFile(root, sessionID, name, fullOutput); err != nil {
-		return "（输出过长且存档失败）" // fail-soft：不让存档失败阻断主流程
-	}
-	// 提示文案是双侧钉档契约：前端按同一契约解析，改文案须同步前端与其单测
-	return spill.TruncHint(spill.TruncNote{
-		Omit: omitted, Total: total, Retrievable: true, Name: name,
-	})
-}
-
-// 模型侧分页取回，防「分页取回」退化成「全文重塞」
-func retrieve(root, sessionID, hint string) {
-	locator, truncated := spill.ParseHint(hint)
-	if !truncated {
-		return
-	}
-	pg, err := spill.ReadPage(root, sessionID, locator, 0, spill.DefaultLimit)
-	_ = pg, err
-}
-```
-
-**坑**
-
-- **会话隔离三重守卫，fail-closed**：`sanitizeName`（只允许单段裸文件名）→
-  `sessionDir`（`root` 空报「未装配」、`sessionID` 空报「无法归属会话」）→ 前缀校验。
-  任一不过即 `ErrBadName` 或显式 error，**不回退到宽松读**。
-- **`List` 无存档返回 `[]Item{}, nil`**，不是错误——宿主不必判空。
-- **`Prune` 是 best-effort**：无返回值、清理失败不影响本次存档。
-- `ReadPage` 边界钳位：`off<0` 视作 0、`off>total` 收到 `total`、`limit<=0` 用 `DefaultLimit`。
-- **`List` 返回 mtime 降序**，`spill` 侧有 `Prune` 而 `offload` 侧没有（回收由宿主决定）。
-
-**什么时候不该用**
-
-- **输出从不超长**——`spill` 只在超预算时才产生价值。
-- **你不打算给模型分页取回的能力**——`TruncHint` 是**双侧钉档契约**：前端按同一契约解析，
-  文案一改，模型侧的取回指引与前端就脱节。
-- **想要一个带写入的存档服务**——本包**不做写入**，只给清单、分页取回与写侧清理。
-
-#### 3.5.3 `offload`：内联大对象外置
-
-把躺在消息历史里的二进制本体（base64 图片/音频/归档）换成占位文本。
-
-**两阶段**：首次见到时落盘 + 标记，但**内容原地保留**（`Replaced` 恒为 false）；
-后续轮才替换为占位。理由是若首次就替换，模型这一轮从未真正看到过该对象，
-后续轮的占位文本又把它指向「模型没看过的东西」——等于凭空丢失输入。
-
-```go
-package myapp
-
-import (
-	"github.com/yi-nology/goagent-kernel/offload"
-)
-
-// 唯一接缝：Store（Put 必须对同一 relPath 幂等）
-type fsStore struct{ root string }
-
-func (s fsStore) Put(relPath string, data []byte) error {
-	// relPath 是**逻辑键**（blobs/<前两位>/<摘要><扩展名>），不是本机路径
-	return writeFile(s.root, relPath, data)
-}
-
-func applyOffload(st *offload.State, msg []byte) offload.Report {
-	return offload.Apply(offload.Request{
-		Blobs:        scanBlobs(msg),
-		State:        st, // 归调用方持有，须跨轮存活
-		Store:        fsStore{root: "/var/lib/harness/blobs"},
-		MinBytes:     0,  // <=0 取缺省 offload.MinBytes（4 KiB）
-		RetrieveHint: "需要时用 read_blob 工具按 path 取回（id 相同即字节相同）。",
-	})
-}
-```
-
-**坑**
-
-- **`Apply` 刻意不返回 error**：条目级失败在机制上无法中断本轮，调用方不存在
-  「忘处理 err 整轮报废」的可能。失败一律落到 `Item.Reason` 与 `Report.Inline`，
-  内容原样保留。
-- **落盘失败不得标记**：否则下一轮会放出指向从未写入的路径的占位文本（悬空引用），
-  比不外置更糟。
-- **标记按轮提交，不按条目提交**。否则同一消息里两份相同图片，第二份会被自己刚写的
-  标记判成「后续轮」而当场替换——那一轮模型从未完整看到过其中任何一份。
-  **宿主若自行调用 `State.Mark` 破坏这条，会打掉正确性保证。**
-- **`State` 归调用方，`nil` 是保守方向**：`nil` 视作「什么都没见过」，每轮都按首次处理
-  ——内容永远完整可见、只是省不下上下文。**永不丢输入。**
-- **`Ext` 由调用方给，内核不猜**（不给时用 `ExtForMimeType(m.MimeType)`）。
-  宿主各写一套映射会让同一份内容在不同宿主落进不同的键，去重与占位复用**同时失效**。
-- **占位文本必须逐字节稳定**（不含时间戳/序号/随机数），`Ref.Path` 必须与真实落盘键逐字
-  一致，否则模型按图索骥必然落空。摘要**只暴露 12 位前缀**——全量摘要进消息等于给内容
-  做跨库比对指纹。
-- **`Item.Reason` 仅供留痕，不可据以重试。**
-
----
-
-**什么时候不该用**
-
-- **消息里没有大对象**（纯文本）——占位替换会白白增加 token。
-- **只是想「顺手压缩一下」**——`offload` 是**外置**不是压缩：本体还在磁盘上，模型靠 `read_blob` 取回。
-- **想在一轮内就替换掉**——本包**首次只标记不替换**，强行替换等于让模型凭空失去输入。
+判据口径与包文档随包走（textx 与 compact/conversation 同层姊妹包）；
+本仓不再维护第二份。宿主若曾 import 这三个包，改指上表路径即可。
 
 ### 3.6 断点续跑：`checkpoint` + `commitgate`
 
@@ -1528,7 +1288,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/yi-nology/goagent-kernel/checkpoint"
+	"github.com/oagentkit/goagent-kernel/checkpoint"
 )
 
 // 宿主提供：跨进程单调写 + 读取
@@ -1623,7 +1383,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/yi-nology/goagent-kernel/commitgate"
+	"github.com/oagentkit/goagent-kernel/commitgate"
 )
 
 // 终态词表由宿主注入——本包只管「独占」，不认任何状态取值
@@ -1697,8 +1457,8 @@ func commitStep(ctx context.Context, g *commitgate.Guard, ref commitgate.Ref,
 package myapp
 
 import (
-	"github.com/yi-nology/goagent-kernel/eventbus"
-	"github.com/yi-nology/goagent-kernel/watchdog"
+	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/watchdog"
 )
 
 // ① 发布路径：先落库拿自增 ID，再广播——保证 SSE 游标是唯一的单调空间
@@ -1775,7 +1535,7 @@ func runWatchdog(ctx context.Context, bus *eventbus.Bus) {
 - **需要「事件必达」**——总线**有损**（每订阅者 64 缓冲，满即丢），
   补达责任在宿主的 DB 回放游标，不在本包。
 
-### 3.8 流式与退出：`delta` + `drain` + `pending`
+### 3.8 流式与退出：`delta` + `drain`（`pending` 已上抛上游）
 
 #### 3.8.1 `delta`：增量节流
 
@@ -1831,7 +1591,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/drain"
+	"github.com/oagentkit/goagent-kernel/drain"
 )
 
 // ① 每轮派发：轮 ctx 从根 ctx 脱钩，轮内取消/超时/接管语义原样保留
@@ -1902,34 +1662,10 @@ func shutdownFromConfig(ctx context.Context, turns drain.Turns, cfgDrain time.Du
 - 日志走 `logx.Delegating`，**不收回调**——留痕一律经包级 Delegating logger，
   宿主用 `logx.SetDefault` 换后端即可。
 
-#### 3.8.3 `pending`：多轮挂起态载体
+#### 3.8.3 `pending`：多轮挂起态载体（**已上抛上游**，v0.77.0）
 
-```go
-package myapp
-
-import "github.com/yi-nology/goagent-kernel/pending"
-
-// ① 写入：唯一入口，保证列内容恒 JSON
-func storePending(clarify string) string {
-	return pending.ColumnValue(clarify, "disambig")
-}
-
-// ② 读路径只认 Encode 产物；非法/损坏一律降级为「无挂起」
-func readPending(col string) (pending.State, bool) {
-	s := pending.Parse(col)
-	return s, s.Kind != ""
-}
-```
-
-**坑**
-
-- **必须走 `ColumnValue` 落列**。守卫原先只有 `strings.HasPrefix(clarify, "{")`，
-  于是 `"{节点A}和{节点B}"`、`"{"` 这类串原样落列，`Parse` 解不出返回零值，
-  **挂起态被静默丢掉**（不是降级，是消失）。透传条件已改成「真能 `Parse` 出带 `Kind`
-  的 `State`」，坏串被当作 `Word` 保留，至少内容不丢。
-- **读路径只认 JSON**，不留历史协议兼容——挂起态是瞬态，跨版本存量行早已结算完毕。
-
----
+对话域状态载体，按概念域分派上抛：`github.com/oagentkit/promptx/pending`
+（API 逐字未变）。挂起态的写入/解析判据随包走。
 
 ### 3.9 安全面：出站守卫与脱敏（**两包已上移上游**）
 
@@ -2215,7 +1951,7 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 `retryplan` 把两问合成一条可执行结论：
 
 ```go
-import "github.com/yi-nology/goagent-kernel/retryplan"
+import "github.com/oagentkit/goagent-kernel/retryplan"
 
 d := retryplan.Decide(err, retryplan.Options{})
 switch d.Path {
@@ -2251,7 +1987,7 @@ case retryplan.PathReplayed:
 你实现 `Store` 接口（落库），内核给判据。
 
 ```go
-import "github.com/yi-nology/goagent-kernel/sideeffect"
+import "github.com/oagentkit/goagent-kernel/sideeffect"
 
 runner := sideeffect.NewRunner(myStore, 30*time.Second)
 
@@ -2357,7 +2093,7 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
 `sidetest.RunSinkContract` 的 **6 条**栅栏契约子测试：
 
 ```go
-import "github.com/yi-nology/goagent-kernel/sidetest"
+import "github.com/oagentkit/goagent-kernel/sidetest"
 
 func TestMyStore(t *testing.T) {
     sidetest.Run(t, func(t *testing.T, clock *sidetest.FakeClock) sidetest.ClockedStore {
@@ -2478,7 +2214,7 @@ case retryplan.PathReplayed:
 
 ```go
 import (
-	"github.com/yi-nology/goagent-kernel/gatecheck"
+	"github.com/oagentkit/goagent-kernel/gatecheck"
 	"github.com/oagentkit/toolgate/policy"
 	"github.com/oagentkit/guardx/sandbox"
 )
@@ -2593,7 +2329,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/yi-nology/goagent-kernel/dispatch"
+	"github.com/oagentkit/goagent-kernel/dispatch"
 )
 
 // 候选枚举接缝：候选怎么来是宿主的事（注册表 / 能力画像 / 启用开关全在宿主侧）
@@ -2693,8 +2429,8 @@ msg := injectband.Wrap("alert", injectband.SanitizeBody(webhookText))
 ```go
 import (
 	"github.com/oagentkit/guardx/egressproxy"
-	"github.com/yi-nology/goagent-kernel/egress"
-	"github.com/yi-nology/goagent-kernel/ptc"
+	"github.com/oagentkit/goagent-kernel/egress"
+	"github.com/oagentkit/goagent-kernel/ptc"
 )
 
 spec := egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:7897"}
@@ -2774,9 +2510,9 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 
 ```go
 import (
-	"github.com/yi-nology/goagent-kernel/egress"
-	"github.com/yi-nology/goagent-kernel/gatecheck"
-	"github.com/yi-nology/goagent-kernel/preset"
+	"github.com/oagentkit/goagent-kernel/egress"
+	"github.com/oagentkit/goagent-kernel/gatecheck"
+	"github.com/oagentkit/goagent-kernel/preset"
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 )
@@ -2854,8 +2590,8 @@ for _, one := range cmdpolicy.SplitCommands(cmdline) {   // ← 关键：先切�
 
 ```go
 import (
-	"github.com/yi-nology/goagent-kernel/taskboard"
-	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
+	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/oagentkit/goagent-kernel/taskboard/boardtest"
 )
 
 // 1) 你的存储实现 Board 四个方法（原子性由存储保证，本仓只判结果）
@@ -2897,10 +2633,10 @@ winners, err := taskboard.ConcurrentClaim(ctx, board, "t-1", []taskboard.AgentID
 
 | 包 | 你需要它的信号 | 最容易接错的一点 |
 |---|---|---|
-| `sessionref` | 要把**另一个会话的结论**注入当前上下文 | 只判 TTL 不判版本。长 TTL + 源高频更新是最常见的失效形态；版本**回退**同样要判 stale |
+| 上游 `promptx/sessionref` | 要把**另一个会话的结论**注入当前上下文 | 只判 TTL 不判版本。长 TTL + 源高频更新是最常见的失效形态；版本**回退**同样要判 stale |
 | `skilldisclose` | 技能数量多到不能全塞进 prompt | 把「相关度」和「点名」混成一个分数——用户已明确表达的意图会被相关度压过去 |
 | `hookengine` | 要支持 hooks，但不想被某一种传输（外部进程 / 插件包）焊死 | 让非阻塞 hook 参与裁决。它一旦能影响裁决就只是「慢的阻塞 hook」，而你会以为它是旁路的 |
-| `memorypipe` | 要把长期记忆注入 prompt | `scope` 做父级兜底。按 `project` 查却回退到 `global`，作用域就失去了意义，而报告完全正常 |
+| 上游 `promptx/memorypipe` | 要把长期记忆注入 prompt | `scope` 做父级兜底。按 `project` 查却回退到 `global`，作用域就失去了意义，而报告完全正常 |
 | `delegate` | 要把任务交给异构执行方（ACP 一类） | 按配置书写顺序取第一个执行方。一次无关重排就会换掉执行方——应取能力**最少**者 |
 | `worktree` | 多个 agent 各在自己的工作区里跑 | 以为只读区重叠也算冲突，或指望通配。**不支持通配**是写明的局限：`*` 与 `**` 各实现语义不同 |
 
@@ -2947,7 +2683,7 @@ Worker 写，而你需要在网络分区时保证「旧区域不能继续提交�
 #### 最小集成片段
 
 ```go
-import "github.com/yi-nology/goagent-kernel/ownership"
+import "github.com/oagentkit/goagent-kernel/ownership"
 
 // 单区域：本区域即权威（任意任务域 epoch 1；转移显式 ErrSingleRegion）。
 auth, err := ownership.NewLocal("region-a")
@@ -3058,7 +2794,7 @@ if err != nil {
 查不到记录 ⇒ `ErrOverRelease` 且**不扣账**（不二次归还、不出负余额）。
 
 ```go
-import "github.com/yi-nology/goagent-kernel/scheduling"
+import "github.com/oagentkit/goagent-kernel/scheduling"
 
 store, err := scheduling.NewMemQuotaStore(
 	map[string]int64{"model:opus": 4},
@@ -3195,174 +2931,12 @@ goagent-runtime/sqliteadapter；`multi-process-same-host` / `k8s-single-cluster`
 - **拿 SQLite 当「不用起 PG」的免维护方案**。它省掉的是**服务进程**，不是
   **运维**：WAL 文件、备份、跨机共享都得自己安排。
 
-### 3.18 回合守卫：模型侧循环还能不能转：`roundguard`
+### 3.18 回合守卫：模型侧循环还能不能转：`roundguard`（**已上抛上游**，v0.77.0）
 
-#### 什么时候需要它
-
-你在宿主里写**模型侧循环**（模型请求工具 → 执行 → 回灌 → 继续；模型给终答 → 停）。
-循环本体早已收敛成同一段代码，各宿主真正不一致的是**循环周边**的三问：
-
-1. **这次还能不能转**（回合数 / 工具调用总数 / 单工具额度还剩多少）？
-2. **这一回合以什么结束**（终答 / 要工具 / 交接 / 报错 / 中止）？
-3. **这一圈是不是白转**（精确重复 / 震荡 / 缓慢漂移 / 错误螺旋 / 只规划不动手）？
-
-放在宿主侧的后果是**每个宿主各判一套**：同一段循环在 A 宿主算「第 12 圈超了」、
-在 B 宿主算「第 8 圈还能转」，且没有任何机器能发现。
-
-`roundguard` 是**判据层**：它**不调模型、不执行工具**，只回答这三问，并把三张判据
-合成**一条可执行结论**。**判据归内核，模型侧归宿主**——本包只给结论，不写产物、
-不解释工具语义。
-
-#### 最小集成片段
-
-```go
-import "github.com/yi-nology/goagent-kernel/roundguard"
-
-// —— 装配期：声明额度与处置口径（负值 / 空工具标识 / 未知口径 ⇒ Validate 报错）——
-b := roundguard.Budget{
-    MaxRounds:    40,                              // 回合数上限
-    MaxToolCalls: 20,                              // 工具调用总数上限
-    MaxPerTool:   map[string]int{"send_email": 2}, // 单工具上限
-    Policy:       roundguard.PolicyForceFinal,     // 缺省即此；改 FailFast 即失败即止
-}
-if err := b.Validate(); err != nil {
-    return err // 非法声明在装配期红，不静默降级成「不限」
-}
-cfg := roundguard.Config{} // 零值 = 缺省：窗口 8 / 重复阈值 3
-meter := roundguard.NewMeter()
-var obs []roundguard.Observation
-
-for {
-    // ① 模型调用：这一回合**能不能开始**由上一回合末的 Decide 说了算（见 ③）
-    //    —— 额度判定只做一次、就在 Decide 里，宿主侧不再另开一套 Check* 分支
-    resp := model.Call(ctx, msgs, tools)
-    meter.Round()
-
-    // ② 工具执行前：单工具额度 ⇒ 否决这一次，但**配对不破**
-    //    （单工具额度没有内部对应面，只能宿主在工具执行前自己判）
-    var results []toolResult
-    for _, tc := range resp.ToolCalls {
-        if v := roundguard.CheckTool(b, meter.Used(), tc.Name); !v.Allowed {
-            results = append(results, toolResult{ID: tc.ID, Err: errors.New(v.Detail)}) // 回灌失败结果
-            continue
-        }
-        res := execTool(ctx, tc)
-        meter.Tool(tc.Name)
-        results = append(results, res)
-    }
-
-    // ③ 回合末：**每回合一条** Observation（工具调用折叠进本回合的计数与指纹）
-    obs = append(obs, hostRoundObservation(resp, results))
-    d := roundguard.Decide(roundguard.Snapshot{
-        Outcome: hostOutcome(resp, results), // 宿主把本回合的模型回复映射成 Outcome
-        Used:    meter.Used(),
-        Obs:     obs,
-    }, b, cfg)
-
-    if !d.Continue {
-        if d.Reason == roundguard.ReasonForcedFinal {
-            // 软：额度用尽但按「强制收尾」口径处置 ⇒ 再给模型一次**不带工具**的
-            // 收尾机会，让它用已收集的证据给出终答（产物仍可用，不是失败）
-            final := model.Call(ctx, msgs, noTools())
-            meter.Round()
-            out := hostOutcome(final, nil)
-            out.ForcedFinal = true // 标记这是「额度耗尽后的强制收尾步」
-            return finish(roundguard.Decide(roundguard.Snapshot{
-                Outcome: out,
-                Used:    meter.Used(),
-                Obs:     obs,
-            }, b, cfg))
-        }
-        // 其余停法按 Reason 处置：budget_exhausted / failed / aborted / no_outcome
-        // 是失败型（IsFailure()==true）；stalled 是温和叫停（产物仍可用）
-        return finish(d)
-    }
-    msgs = append(msgs, assistantMsg(resp), toolResultsMsg(results))
-    if d.Warn {
-        // 首档：把警告回灌给模型（**文案归宿主**），给它一次自我修正的机会。
-        // ⚠️ 必须排在 assistantMsg / toolResultsMsg **之后**：警告是针对**这一回合**的
-        //    判据 ⇒ 排在它前面 = 模型先看到警告、后看到触发警告的那一回合
-        //    （**语义倒置**；而配对不破 ⇒ 没有编译错误、没有断言能抓到它）。
-        // ⚠️ 这个位置**不会**漏掉警告：Warn=true ⇒ Continue=true（首档只警告不停止，
-        //    见 decide.go 的 tierFinding：Stalled 与 Warn 互斥）⇒ 上面那个
-        //    !d.Continue 分支在 Warn=true 时根本不会进。
-        msgs = append(msgs, hostWarnMessage(d.Shape))
-    }
-}
-```
-
-#### 关键符号
-
-| 符号 | 作用 |
-|---|---|
-| `Classify(Outcome) Route` | 回合结局分类。判定次序「先具体后笼统，取证据最硬的那条」：中止 > 报错 > 交接 > 要工具 > 强制收尾 > 终答 > 原样再问 > 零值形态（保守收敛，不让空循环空转到超时）|
-| `Outcome` | 宿主注入的**回合级**事实：`ToolCalls`（本回合工具调用数）/ `Completed`（给出了终答）/ `Handoff` / `Paused`（服务端要求原样再问 ⇒ `Continue=true`）/ `Failed` / `Aborted` / `ForcedFinal`。**一条 Outcome = 一个回合**（不是一次工具调用）。⚠️ 零工具 + 未收敛 + 非 `Paused` ⇒ `ReasonNoOutcome` ⇒ **当场收敛**（保守侧，不让空循环空转到超时）|
-| `Reason`（10 值）| 结局判定词表：`Reason.Valid()` 与 `AllRoundReasons()` 读**同一张表**（别处不得手抄取值）。`Reason.IsFailure()` 把**失败型收敛**与**温和叫停**分开 |
-| `Budget` / `Used` / `Meter` | 额度声明 / 当前用量 / 进程内回合账（带锁，**只数不判**；跨进程累计归宿主）|
-| `CheckRounds` / `CheckToolCalls` | 回合数额度 / 工具调用总额度的判据。**`Decide` 内部调用的就是这两条**（判「下一回合能不能开始」，发生在下一次模型调用之前）⇒ **宿主侧不要再另开一套额度分支**——那套分支在 `Decide` 给出终局结论之后就永远执行不到（死代码）|
-| `CheckTool` | 单工具额度。**没有内部对应面**，须宿主在**工具执行前**自己判；被拒时**仍要回灌一条失败结果**给模型（配对不破）|
-| `StopPolicy`（2 值）| 额度用尽后的处置口径（**策略**）：`PolicyForceFinal` / `PolicyFailFast`。**额度维度（事实）与处置口径（策略）分开**，且一个口径管全部额度 |
-| `Budget.EffectivePolicy()` | 取生效口径（零值缺省 = 强制收尾）。**别直接读 `Budget.Policy` 判口径**——零值是合法缺省，不是第三种口径 |
-| `Detect([]Observation, Config) Finding` | 无进展检测：**五形态 + 三档处置**（不判 / 首档 `Warn` 警告回灌 / 停止档 `Stalled` 温和叫停）。窗口是**回合**窗口，向上钳位到 `2×Repeat+2`（否则震荡形态的停止档**永不可达**——判据不可达等于判据不存在）|
-| `Observation` | **一条 Observation = 一个回合**（不是一次工具调用）：`Tools` 是本回合的工具调用数、`Fingerprint` / `Normalized` 是本回合动作的**聚合指纹**、`Settled` 是本回合是否已收敛。**指纹与归一指纹都由宿主算**（内核不猜「什么是易变部分」）；`ResultChanged` = 本轮有进展；`Exempt` = 本回合不参与判定（轮询 / 查状态类动作、刻意的规划步）|
-| `Decide(Snapshot, Budget, Config) Decision` | **额度判定只此一处**：结局终局优先 → 额度按处置口径分流 → 无进展兜底。`Decision.Continue=false` 有**三种含义**（失败型 / 强制收尾 / 温和叫停），靠 `Reason` 区分 |
-
-#### 三条接线纪律
-
-1. **失败要回灌、也要记账**：工具失败既作为 `tool_result` 回灌给模型（模型自行修正），
-   又作为 `Observation.Failed` 记一条——只回灌不记账 ⇒ 无进展检测永远看不到错误螺旋。
-2. **指纹要稳定，且要带上「结果变了」**：同一逻辑动作必须给同一指纹；归一指纹要抹掉
-   易变部分（页码 / 时间戳 / 行号），否则漂移检测永远不命中。「相同调用但输出变了」
-   必须显式记为 `ResultChanged: true`——那是**进展**，不记就会把有意义的重试误判成
-   循环。轮询 / 查状态类动作、以及刻意的规划步，要记 `Exempt: true`。
-3. **「停止」与「失败」分开处置**：`Decision.Reason` 区分失败型收敛
-   （`IsFailure()==true`）与温和叫停 / 强制收尾——把「被上限温和收停」当故障上报
-   就是假红。
-
-#### 坑
-
-- **每个工具调用记一条 Observation**（观测粒度比实现细）。`Detect` 的窗口是**回合**
-  窗口、空转形态按「连续回合 `Tools==0 && !Settled`」判 ⇒ 调用级观测下**空转形态
-  永不可达**，且重复形态的连续长度按**调用数**算、直接越过阈值 ⇒ **首档（自我修正
-  机会）被跳过**。**一条 Observation = 一个回合**：工具调用折叠进该回合的 `Tools`
-  计数与聚合指纹。
-- **宿主侧再判一遍额度**。额度判定只在 `Decide` 一处（它内部用的就是 `CheckRounds` /
-  `CheckToolCalls` 同一份判据），分流按 `Budget.Policy`；宿主自己那套 `Check*` 分支
-  在 `Decide` 给出终局结论之后**永远执行不到**（死代码），连带地 `forceFinal` 恒为
-  false、「软：不再给工具」那条路径根本走不到 ⇒ **强制收尾永远收不起来**。
-- **额度判定挪到模型调用之后**。最后一次昂贵调用已经发生，判定就晚了——`Decide` 在
-  **上一回合末**给结论，正好赶在下一次模型调用之前。
-- **不跑 `Budget.Validate` 就上线**。未校验的负值上限在 `Check*` 里是 **fail-open**
-  （上限 ≤ 0 一律判成「不限」）⇒ 非法声明必须在**装配期**被拒。
-- **用 `Budget.Policy` 直接判口径**。零值是**合法缺省**（= 强制收尾），拿它跟
-  `PolicyForceFinal` 比会把「没设」判成「不是强制收尾」⇒ 要生效口径用
-  `EffectivePolicy()`，要校验声明用 `Validate()`。
-- **`Decision.Continue == false` 一律当失败**。`ReasonForcedFinal`（强制收尾，产物
-  仍可用）与 `ReasonStalled`（温和叫停）都不是失败——一律当故障上报就是假红。
-- **无进展一命中就停**。首档（`Warn`）只该**警告回灌**，给模型一次自我修正的机会；
-  停止档才温和叫停——一命中就停 = 模型永远没有自我修正的机会。
-- **警告回灌排在被评判回合之前**。首档的警告针对的是**这一回合**的判据 ⇒ 必须排在
-  本回合的 `assistantMsg` / `toolResultsMsg` **之后**回灌；排在它前面 = 模型先看到
-  警告、后看到触发警告的那一回合（**语义倒置**）。而这类错**配对不破**：没有编译
-  错误、没有断言会红 ⇒ spec §11 的接线示例由机器判据钉住这个顺序。
-- **零工具回合也要给指纹**。多个零工具回合若指纹全等（例如都留空），会先被「精确重复」
-  判走（重复的判定次序在空转之前）⇒ **空转形态永远轮不到**。指纹取本回合的产出
-  （如规划文本）即可。
-- **零工具回合默认被「无产出」收敛掉**。`Outcome` 零值形态 ⇒ `ReasonNoOutcome` ⇒ `Decide`
-  当场收口 ⇒ 空转 streak 攒不起来。要让这类回合继续跑（刻意的规划步）：① 标
-  `Exempt: true`（豁免，不计任何形态）；② 或把 `Outcome` 映射成 `Paused`（`Continue=true`）。
-- **把指纹当内核的事**。指纹 / 归一指纹**由宿主算**：内核若自己决定「什么是易变部分」，
-  就成了领域解释者（形状判定归宿主、集合判定归本包）。**聚合指纹的聚合规则也是宿主的
-  事**（本回合多次调用怎么合成一个指纹）。
-- **拿 `Meter` 当跨进程回合账**。它是**进程内**的（带锁、只数不判）；跨进程续跑时回合数
-  不随之累计，要跨进程累计的宿主须自行落库并把 `Used` 灌回本包。
-
----
-**什么时候不该用**
-
-- **你的循环不会空转**（模型每次都给出新信息）——无进展检测只会误报。
-- **想要它替你调模型或执行工具**——本包**只给结论**：不调模型、不执行工具、不写产物、不解释工具语义。
-- **想做跨进程的回合累计**——`Meter` 是**进程内**的；跨进程累计要宿主自己落库并把 `Used` 灌回本包。
+roundguard 是**单 agent 模型侧循环**的结局分类/次数预算/无进展检测判据——
+循环本体已收敛、差异在循环周边，与多智能体编排无关。2026-11-26 归属评测后
+按概念域分派上抛：`github.com/oagentkit/agent/roundguard`（API 逐字未变；
+设计 spec 与变异矩阵随包迁入 agent 仓 docs/superpowers/specs/）。
 
 ## 4. 门禁与提交前检查
 
@@ -3936,7 +3510,7 @@ tag 被删后条目仍留着直到缓存过期，而拿它当采购单会得到�
 | 模型从未见过某张图片，之后却在引用它 | `offload` 首轮就替换了，或落盘失败仍被标记 |
 | 会话一长跑内存就涨、收口卡住 | `delta.Pacer` 被做成了长生命周期对象，应每环节新建 |
 | 一个卡死会话把所有会话陪葬 | 用了 `Drain` 而非 `DrainSession` |
-| 挂起态莫名其妙消失 | 落列绕过了 `pending.ColumnValue` |
+| 挂起态莫名其妙消失 | 落列绕过了 `promptx/pending.ColumnValue` |
 | 超大模型输出居然「解析成功」且置信度不低 | 命中过截断式上限失效的坑，现已 fail-closed；若你 fork 了本仓请确认走的是 `ErrNotReport` 分支 |
 | SSE 进度条停在中间态 | 正常——总线有损，靠 DB 回放游标补达；先确认发布路径是「先落库再广播」 |
 | 判定环拒绝后 host.<tool>() 仍然执行 | `ptc.Options.Stages` 没传 |

@@ -29,8 +29,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/yi-nology/goagent-kernel/eventbus"
-	"github.com/yi-nology/goagent-kernel/trajectory"
+	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/oagentkit/goagent-kernel/trajectory"
 )
 
 // Pub 告警发布（与调度器 pub 同一落库广播路径：repo.InsertEvent + Bus.Broadcast）。
