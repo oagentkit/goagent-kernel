@@ -544,6 +544,7 @@ Job 声明的完整校验不写进本示例，但**不是缺判据**：上游 `s
 | [ADR-0007](docs/adr/ADR-0007-执行意图.md) | 意图的存在本身就是一条判据——没结论不是「没做过」，而是一次**尚未裁决**的尝试。 |
 | [ADR-0008](docs/adr/ADR-0008-跨进程任务交接契约.md) | 跨进程交接的契约不是队列，是**负责人字段的原子改写**——交接点、幂等键、回执地址、时限四问各有一条可机械判定的答案。 |
 | [ADR-0009](docs/adr/ADR-0009-调度判据归属.md) | 调度判据的归属靠证据：上游 dispatch 的判定面只有可达性/深度/自派发三条，优先级/公平/配额/背压落本仓 `scheduling`，可达性仍归门面。 |
+| [ADR-0010](docs/adr/ADR-0010-对话域上抛与org归属.md) | 概念域分派第三轮：对话域七包（roundguard/budget/spill/offload/pending/sessionref/memorypipe）判据主语不是编排，全部上抛；kernel/runtime 归 oagentkit org。 |
 
 ## 通用化判据
 
