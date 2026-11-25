@@ -17,6 +17,8 @@
 package egress_test
 
 import (
+	"context"
+
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -53,7 +55,7 @@ func startProxy(t *testing.T, p egressproxy.Policy) string {
 	if err != nil {
 		t.Fatalf("启动代理失败: %v", err)
 	}
-	t.Cleanup(func() { _ = px.Close() })
+	t.Cleanup(func() { _ = px.Close(context.Background()) })
 	return addr
 }
 
