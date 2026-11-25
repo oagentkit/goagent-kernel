@@ -313,7 +313,7 @@
 | `ErrTaken` | 任务已被他人活着持有 | 不重试：走协调（或等租约过期后接管） |
 | `ErrBlocked` | 依赖未完成 | 等：依赖完成后再来认领（可稍后重试） |
 | `ErrTerminal` | 任务已是终态 | 放弃：读既有结论，不重开 |
-| `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过） | 对账：本次操作作废，重新 `Claim` |
+| `ErrLeaseLost` | 令牌不匹配（租约已易主或被释放过），或**租约已过期**（`Complete` 侧，issue #497：资格在到期时刻终止） | 对账：本次操作作废，重新 `Claim`（过期 ⇒ 任务已可被接管，先看它归了谁） |
 | `ErrInvalidBatch` | 批量领取数量非正（`ClaimReady` 的 n <= 0） | 修声明：给正整数；零/负数不是「暂时没有活」，不得静默当空结果 |
 | `ErrUnknownState` | 任务状态不在词表内（open/claimed/done/failed），写路径拒绝认领 | 修数据：查状态来源（写库 bug / 跨版本 schema / 截断写）；与体检面 `CodeUnknownState` 同向，不得当成可领任务 |
 

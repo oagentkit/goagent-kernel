@@ -55,6 +55,17 @@
 // 同一任务上严格递增；旧持有者迟到的提交凭「令牌不匹配 ⇒ @@ErrLeaseLost@@」
 // 必然被拒，且不波及新持有者。
 //
+// # 资格在到期时刻终止（issue #497）
+//
+// 续期契约写明「租约已过期 ⇒ ErrLeaseLost，**资格在到期时刻终止**」——
+// @@Complete@@ 必须与它**同一口径**：租约过期后、尚未被别人接管的那个窗口里，
+// 旧持有者若仍能提交终态，终态内容就取决于「谁先提交」而不是「谁有资格
+// 提交」；而两者在同一任务上往往给出不同结论。
+//
+// 故 @@Complete@@ 的凭据面是「token + 租约未过期」，实现应调用 @@LeaseHeld@@
+// 取这份判据，不要各写一份（第二份判据必然漂移）。@@Release@@ 不受此限：
+// 归还是自愿放弃、不写终态，过期持有者归还不产生错误结论。
+//
 // # 多租户（issue #195）
 //
 // 任务身份是 @@(Tenant, ID)@@：同一 ID 在不同租户下是两条互不相干的任务。
@@ -283,6 +294,13 @@ func (t Task) Clone() Task {
 //   - @@Claim@@ **原子**：读-判-写不可分割（并发认领同一任务只能有一个赢家）；
 //   - @@Release@@ / @@Complete@@ **只认 token**，且 token 不匹配时报
 //     @@ErrLeaseLost@@（不许静默成功——静默成功会让输家以为自己的释放生效了）；
+//   - @@Complete@@ 的凭据面是「token + **租约未过期**」（与 @@Renew@@ 同一口径，
+//     issue #497）：**资格在到期时刻终止**——租约过期后、尚未被别人接管的
+//     那个窗口里，旧持有者若仍能提交终态，终态内容就取决于「谁先提交」而
+//     不是「谁有资格提交」。故过期持有者的 Complete 报 @@ErrLeaseLost@@ 且
+//     **不做任何修改**（拒绝后任务仍是原状态，可被接管）；
+//   - @@Release@@ **只认 token、不判有效期**：归还是自愿放弃、不写终态，
+//     过期持有者归还不产生错误结论（它至多让任务回到 open 让别人来领）；
 //   - @@List@@ 返回**一致快照**（不是边改边读的流）；
 //   - @@List@@ / @@Claim@@ 返回的 @@Task@@ **不得与实现内部共享 Deps 的
 //     底层数组**（与 checkpoint.Snapshot.Clone 同款拷贝义务）：Task 含
@@ -313,7 +331,11 @@ type Board interface {
 	Claim(ctx context.Context, id TaskID, agent AgentID, req ClaimRequest) (Task, error)
 	// Release 归还认领（凭 token）。
 	Release(ctx context.Context, id TaskID, token string) error
-	// Complete 标记完成（凭 token）。
+	// Complete 标记完成（凭 token；且租约未过期）。
+	//
+	// 凭据面 = token + **租约未过期**（与 Renew 同一口径，issue #497）：
+	// 租约已过期 ⇒ ErrLeaseLost 且**不做任何修改**——资格在到期时刻终止，
+	// 过期持有者不得提交终态。判据走 taskboard.LeaseHeld，不要各写一份。
 	Complete(ctx context.Context, id TaskID, token string) error
 }
 
@@ -332,10 +354,15 @@ var (
 	// 与 Check 的 CodeUnknownState 同一事实、同一方向：体检说「这状态非法」，
 	// 认领也必须拒绝——否则一条脏状态行会让副作用照常施加。
 	ErrUnknownState = errors.New("taskboard: 任务状态不在词表内")
-	// ErrLeaseLost 令牌不匹配（租约已易主或被释放过）。
+	// ErrLeaseLost 令牌不匹配（租约已易主或被释放过），或**租约已过期**
+	// （Complete 侧，issue #497）。
 	//
-	// 旧持有者迟到的一切动作——Release / Complete / Renew——都用它拒收：
-	// 接管必然铸造新令牌，令牌不匹配即说明你不是现任持有者。
+	// 令牌不匹配时，旧持有者迟到的一切动作——Release / Complete / Renew——
+	// 都用它拒收：接管必然铸造新令牌，令牌不匹配即说明你不是现任持有者。
+	//
+	// 过期是同一件事的另一个面：**资格在到期时刻终止**。故 Complete 在
+	// 「已过期但尚未被接管」的窗口里也报它——那时令牌仍然匹配，但持有者早已
+	// 没有资格提交终态（终态内容不该取决于谁先提交）。
 	ErrLeaseLost = errors.New("taskboard: 租约已易主")
 )
 

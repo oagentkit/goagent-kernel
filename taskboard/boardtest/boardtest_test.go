@@ -137,6 +137,11 @@ func (m *memBoard) Complete(_ context.Context, id taskboard.TaskID, token string
 	if t.State != taskboard.StateClaimed || t.Lease.Token != token {
 		return taskboard.ErrLeaseLost
 	}
+	// 资格在到期时刻终止（issue #497）：租约已过期时旧持有者不得提交终态
+	// ——否则终态内容取决于「谁先提交」而不是「谁有资格提交」。
+	if leaseExpired(t.Lease, m.clockLocked()) {
+		return taskboard.ErrLeaseLost
+	}
 	t.State = taskboard.StateDone
 	t.Owner = ""
 	t.Lease = taskboard.Lease{}

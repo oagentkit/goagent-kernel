@@ -227,18 +227,16 @@ func (m *MemStore) Renew(_ context.Context, id taskboard.TaskID, token string, r
 	return cloneTask(mt.task), nil
 }
 
-// Complete 运行时侧：凭 token 完成（旧令牌 / 非认领态 → taskboard.ErrLeaseLost）。
+// Complete 运行时侧：凭 token 完成（旧令牌 / 非认领态 / **租约已过期**
+// → taskboard.ErrLeaseLost）。
+//
+// 租约有效期与 Renew 同一口径（issue #497）：**资格在到期时刻终止**——租约
+// 过期后、尚未被别人接管的窗口里，旧持有者提交终态会让终态内容取决于「谁先
+// 提交」而不是「谁有资格提交」。故这里判 taskboard.LeaseHeld，过期即
+// ErrLeaseLost 且**不做任何修改**（拒绝后任务仍是原状态，可被接管）。
 func (m *MemStore) Complete(_ context.Context, id taskboard.TaskID, token string) error {
-	return m.finish(id, token, taskboard.StateDone)
-}
-
-// Release 运行时侧：凭 token 归还认领（旧令牌 → taskboard.ErrLeaseLost）。
-func (m *MemStore) Release(_ context.Context, id taskboard.TaskID, token string) error {
-	return m.finish(id, token, taskboard.StateOpen)
-}
-
-// finish 凭令牌的租约变更（Complete / Release 共用判据）。
-func (m *MemStore) finish(id taskboard.TaskID, token string, to taskboard.State) error {
+	// 宿主时钟在双锁之外取值（issue #367）：回调回查 SnapshotTask 不会互锁。
+	now := m.now()
 	m.commitMu.Lock()
 	defer m.commitMu.Unlock()
 	m.mu.Lock()
@@ -252,6 +250,35 @@ func (m *MemStore) finish(id taskboard.TaskID, token string, to taskboard.State)
 		// 迟到持有者不被告知「任务其实已经易主到什么状态」。
 		return errors.Wrap(taskboard.ErrLeaseLost, "令牌不匹配或租约已不在")
 	}
+	if !taskboard.LeaseHeld(mt.task, now) {
+		// 过期即资格终止：存储不能既承诺「过期随时可接管」又让死者提交终态。
+		return errors.Wrap(taskboard.ErrLeaseLost, "租约已过期，资格终止（请重新认领）")
+	}
+	return m.finishLocked(mt, taskboard.StateDone)
+}
+
+// Release 运行时侧：凭 token 归还认领（旧令牌 → taskboard.ErrLeaseLost）。
+//
+// Release **不判租约有效期**：归还是自愿放弃、不写终态，过期持有者归还不
+// 产生错误结论（它至多让任务回到 open 让别人来领）——与 taskboard.Board
+// 契约同口径（issue #497）。
+func (m *MemStore) Release(_ context.Context, id taskboard.TaskID, token string) error {
+	m.commitMu.Lock()
+	defer m.commitMu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mt, ok := m.tasks[id]
+	if !ok {
+		return errors.Wrap(taskboard.ErrNotFound, "任务不存在: "+string(id))
+	}
+	if mt.task.State != taskboard.StateClaimed || token == "" || token != mt.task.Lease.Token {
+		return errors.Wrap(taskboard.ErrLeaseLost, "令牌不匹配或租约已不在")
+	}
+	return m.finishLocked(mt, taskboard.StateOpen)
+}
+
+// finishLocked 收尾写入（调用方已持双锁并完成凭据判定）。
+func (m *MemStore) finishLocked(mt *memTask, to taskboard.State) error {
 	mt.task.State = to
 	mt.task.Owner = ""
 	mt.task.Lease = taskboard.Lease{}

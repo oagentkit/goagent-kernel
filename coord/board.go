@@ -329,8 +329,19 @@ func (a *BoardAdapter) Release(ctx context.Context, id taskboard.TaskID, token s
 	return err
 }
 
-// Complete 标记完成（凭令牌；终态不带 owner，避免「谁做完的」与
-// 「谁还占着」混在一起）。
+// Complete 标记完成（凭令牌；**且租约未过期**；终态不带 owner，避免
+// 「谁做完的」与「谁还占着」混在一起）。
+//
+// 租约有效期与 Renew 同一口径（issue #497）：**资格在到期时刻终止**——租约
+// 过期后、尚未被别人接管的窗口里，旧持有者提交终态会让终态内容取决于「谁先
+// 提交」而不是「谁有资格提交」。故这里判 taskboard.LeaseHeld，过期即
+// ErrLeaseLost 且**不做任何修改**（拒绝后任务仍是原状态，可被接管）。
+//
+// Release 不判有效期：归还是自愿放弃、不写终态，过期持有者归还不产生错误
+// 结论（见 taskboard.Board 契约）。
+//
+// 判定与提交之间的窗口与 Claim 的「可被接管」判定同款（原子性由后端保证）；
+// 这里只补「过期持有者不得提交终态」这一条资格判据，不承诺窗口为零。
 func (a *BoardAdapter) Complete(ctx context.Context, id taskboard.TaskID, token string) error {
 	scope, err := a.scope(ctx)
 	if err != nil {
@@ -342,6 +353,16 @@ func (a *BoardAdapter) Complete(ctx context.Context, id taskboard.TaskID, token 
 			cur, err := requireClaimed(snap[tk], scope, id, token)
 			if err != nil {
 				return taskboard.Task{}, nil, nil, err
+			}
+			// 判定时刻取存储时钟（issue #194）：过期是跨进程共享的事实，
+			// 不能由调用方所在节点的本地时钟说了算。每次重判重取时刻。
+			now, nerr := a.nowAt(ctx)
+			if nerr != nil {
+				return taskboard.Task{}, nil, nil, errors.Wrap(nerr, "coord: Complete 取存储时钟失败")
+			}
+			if !taskboard.LeaseHeld(cur, now) {
+				return taskboard.Task{}, nil, nil, errors.Wrap(taskboard.ErrLeaseLost,
+					"租约已过期，资格终止（请重新认领）", "task", string(id))
 			}
 			cur.Tenant = scope
 			cur.State = taskboard.StateDone
