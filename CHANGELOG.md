@@ -1,6 +1,32 @@
-# kernel CHANGELOG
+# goagent-kernel CHANGELOG
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
+
+## [v0.77.0] — 2026-11-26
+
+### 重构(boundary)!：org 归属迁移 + 对话域七包上抛（v0.77.0）
+
+* refactor(boundary)!: org 归属迁移 + 对话域七包上抛（v0.77.0 破窗）
+两层边界调整，一个 breaking wave，消费方只改一轮：
+① module path：github.com/yi-nology/goagent-kernel → github.com/oagentkit/goagent-kernel
+（仓随 goagent-runtime 一起迁入 oagentkit org，2026-11-26 迁移；旧 URL 经
+GitHub 重定向可继续访问，旧 tag 永久可解析）。全仓 import/文档/site 引用
+同步改写；docsync 安装行正则同步。
+② 对话域七包上抛（导出面逐字未变，ADR-0010）：
+- roundguard → github.com/oagentkit/agent/roundguard（单 agent 循环判据，
+  设计 spec 与变异矩阵随包迁入 agent 仓）
+- budget/spill/offload → github.com/oagentkit/textx/*（对话域上下文工程）
+- pending/sessionref/memorypipe → github.com/oagentkit/promptx/*（对话状态与注入）
+③ 声明面同步：architecture-policy 54→47 module id（词表 4 张 roundguard 表 +
+relations 配对随之摘除）、api-lifecycle 55→48、EXTERNAL-DEPS 摘 spill 三登记、
+README 包表/边界表/机制段（图 5 改指上游）、USAGE §3.5/§3.8/§3.18 指针化、
+error-semantics 四节摘除、工程底座三数重算（65304/344/406）。
+承接仓 PR：oagentkit/textx#116、oagentkit/promptx#126、oagentkit/agent#170。
+迁移宣告与消费方迁移清单：#504。
+* docs: README ADR 速览表补 ADR-0010
+* docs: ADR 索引表补 ADR-0010
+* chore(gates): seamcheck 基线随七包上抛刷新——budget.Archive/Summarizer、offload.Store 接缝随包迁走，调用点 464→470（ratchet 只升不降）
+* docs: api-compat.md 生命周期登记数 55→48（随七包上抛重算）
 
 ## [v0.76.0] — 2026-11-25
 
@@ -41,6 +67,8 @@ Worker 在租约失效后仍发布结果事件，等待方可能拿到过期执�
 零既有导出符号消失、零既有签名变更、依赖地板零变化。
 Co-authored-by: zhangyi01 <zhangyi01@kylinos.cn>
 
+- 文档(release)：v0.76.0 回执——README 版本身份（新增 v0.76.0 行：Complete 凭据面补「租约未过期」）
+
 ## [v0.75.1] — 2026-11-25
 
 ### 新增(invocation)：补 failed 终态——执行失败（确定未施加）独立成档
@@ -59,6 +87,8 @@ executing」（谎称还在执行）之间二选一。
 零既有导出符号消失、零既有签名变更、依赖地板零变化。
 Co-authored-by: zhangyi01 <zhangyi01@kylinos.cn>
 
+- 文档(release)：v0.75.1 回执——README 版本身份（新增 v0.75.1 行）
+
 ## [v0.75.0] — 2026-11-24
 
 ### 新增(invocation)：工具调用账本（Tool Invocation Journal）契约——调用身份跨进程存活
@@ -66,7 +96,7 @@ Co-authored-by: zhangyi01 <zhangyi01@kylinos.cn>
 P0-09/P0-10 的共同底座：sideeffect 能保「同一逻辑动作至多施加一次」，但前提是
 调用方**记得住那个键**。进程崩溃后模型会重新生成调用 ⇒ 键变 ⇒ 同一业务动作
 再施加一遍。本包补的是「调用身份在进程死亡之后仍然存在」这一段。
-**给什么**
+# 给什么
 - invocation 包（契约面）：调用身份（callID + 工具名 + 参数摘要）**一经落账
   不可变** + 状态机（planned → approved → executing → applied →
   result_recorded，另有 rejected / uncertain）+ 恢复处置判据（executing ⇒
@@ -77,15 +107,17 @@ P0-09/P0-10 的共同底座：sideeffect 能保「同一逻辑动作至多施加
   原子推进的地基（前驱集若由宿主自己反推转移表，就是第二份真相）。
 - invocation/invocationtest：共享契约套件（14 条子测试 + 恢复族两条），
   接入 make contract ⇒ CI 的 contract job 会跑。
-**不给什么**
+# 不给什么
 存储实现。表结构、事务边界、持久化形态是宿主资产（与 taskboard / sideeffect
 同一条分工）——参考实现落在 goagent-runtime（pgstore / sqliteadapter）。
-**顺带清偿（登记词表的连带面）**
+# 顺带清偿（登记词表的连带面）
 - sideeffect：Outcome 的词形（applied / uncertain 等）在本包命名，不再写裸
   字面量——它们与账本状态同形但**不同概念**。
 - trajectory：副作用载荷里的 "applied" 键名在本包命名（同款理由）。
-**门禁**
+# 门禁
 architecture-check / docsync / apilifecheck / test / cover-gate / contract 全绿。
+
+- 文档(release)：v0.75.0 回执——README 版本身份翻成「已发版」（并补翻 v0.74.0 的漏记）
 
 ## [v0.74.0] — 2026-11-24
 
@@ -3718,7 +3750,7 @@ windows / integration），unit 层日志里 `releasecheck: v0.49.0 发版纪律
 ⇒ 三条纪律已立进 AGENTS.md：**形态判定必须机器判定**（不许靠人读日志推断）；
 **三段预算互相咬合，改一处必须改三处**；**外层闹钟必须宽于内层**（本轮顺手补的 CI
 race 作业超时那条——与工具看门狗等宽 ⇒ 结论来不及落盘就被 CI 取消）。
-Release: https://github.com/oagentkit/goagent-kernel/releases/tag/v0.49.0
+Release: https://github.com/yi-nology/goagent-kernel/releases/tag/v0.49.0
 
 
 ## [v0.49.0] — 2026-11-19
@@ -7172,7 +7204,7 @@ taskboard 子车道两单（基线 59b7e31，含三个提交：契约 / 套件 /
 sideeffect 车道禁区，不修则本仓参考实现跑不过扩严后的套件。
 门禁：make check 本地全绿；taskboard 包覆盖率 61.5% → 98.5%；
 taskboard 61 条测试（20 个测试函数 + 41 条子测试）。依赖地板无变化。
-PR: https://github.com/oagentkit/goagent-kernel/pull/122
+PR: https://github.com/yi-nology/goagent-kernel/pull/122
 
 - 杂务(deps)：v0.33.0 依赖地板——oagentkit 系全线追平 + pkg 钉回 v0.44.0（#126）
 
@@ -10277,7 +10309,7 @@ golangci-lint ✅ 0 issues
 
 - 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
 
-上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一个上下文窗口在两处算出两个
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一���上下文窗口在两处算出两个
 阈值」。**实测评数值后该断言不成立**，本轮更正。
 ## 断言错在哪
 1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
@@ -11113,7 +11145,7 @@ requires 改成真实依赖 [eventbus]，删除那句自我合理化。
 ### 新增(tooldisclose)：SignatureOf 从 schema 派生调用形态，消除第二份描述
 
 对标 OpenCode codemode/src/tool-schema.ts 的 inputProperties：他们从工具声明的 schema
-自动派生签名与必填/可选标注，schema 是唯一事实源。
+自动派��签名与必填/可选标注，schema 是唯一事实源。
 我们的 Signature 此前要宿主手写，等于同一组参数有两份描述。加了参数忘了改签名，
 模型就按旧签名调用——传不进去的、或多传的，两种都表现为「工具明明支持，模型却
 调不对」，而排查时极容易先怀疑模型。派生把「靠人记得同步」变成「不可能忘记」。
