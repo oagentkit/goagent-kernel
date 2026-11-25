@@ -43,7 +43,7 @@ import (
 )
 
 // log 排水留痕。Delegating 懒解析：宿主 SetDefault 之前也能用，之后自动跟随。
-var log = logx.Delegating("drain")
+var log = logx.Delegating("oagentkit-drain")
 
 // ErrDeadline 排水预算耗尽的强制取消原因（宿主按此与普通停机区分留痕来源）。
 var ErrDeadline = errors.New("停机排水超时，轮次强制中断")

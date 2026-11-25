@@ -85,7 +85,7 @@ import (
 )
 
 // log 回灌留痕。Delegating 懒解析：宿主 SetDefault 之前也能用，之后自动跟随。
-var log = logx.Delegating("commitgate")
+var log = logx.Delegating("oagentkit-commitgate")
 
 // Ref 环节引用：一次编排运行里的一个环节。
 //

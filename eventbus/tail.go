@@ -67,7 +67,7 @@ import (
 )
 
 // log event-tail 留痕。Delegating 懒解析：宿主 SetDefault 之前也能用，之后自动跟随。
-var log = logx.Delegating("eventbus")
+var log = logx.Delegating("oagentkit-eventbus")
 
 // 尾随缺省参数（与宿主原实现同参：每秒一拍、单拍 1000 条）。
 const (

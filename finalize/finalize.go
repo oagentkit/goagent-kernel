@@ -64,7 +64,7 @@ import (
 )
 
 // log 收尾留痕（logx.Delegating 懒解析宿主后端）。
-var log = logx.Delegating("finalize")
+var log = logx.Delegating("oagentkit-finalize")
 
 // ErrUserCancelled 用户经取消 API 触发的取消 Cause（WithCancelCause 携带）：
 // 与进程停机的裸 ctx 取消**可区分**——取消落 cancelled 终态，停机不落终态
