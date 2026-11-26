@@ -2,6 +2,73 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.80.0] — 2026-11-26
+
+### 新增(releasecheck)：第五条纪律——CHANGELOG 段覆盖全部 tag（Fixes #495）
+
+* feat(releasecheck): 第五条纪律——CHANGELOG 段必须覆盖全部 tag（Fixes #495）
+缺口：releasecheck 只判本版段在不在，不判历史段——一次合并把 CHANGELOG
+从 85 段压到 6 段（ce2aa38），78 段历史发布说明消失且延续 10 个版本无人发现。
+- 判据体 missingSections（纯函数：tag 列表 + CHANGELOG 文本 → 缺哪些段），
+  与前四条纪律同层可测；
+- run() 取 git tag --list 全量对账，缺段即红并逐个点名；
+- 反向验证四用例：段都在绿 / 删段点名 / 改段头点名 / 整批消失逐个点名；
+- 真实数据验证：本仓 104 tag = 104 段，missing=0。
+Fixes #495
+* docs: 工程底座行数重算（releasecheck +40 行）65,304→65,344
+* chore(hygiene): 移除误入库的 releasecheck 编译产物——go build 的输出被 git add -A 带入
+
+### 修复(logs)：组件 logger 名加 oagentkit- 前缀——矩阵 loggingRule 门禁对齐（queue/llm 同口径）
+
+矩阵 verify_logging_rules 要求组件名 oagentkit-<module>（下游按规则做日志
+过滤/路由的契约）。本仓 5 处 logx.Delegating 裸包名：commitgate/drain/
+eventbus/finalize/steer → oagentkit-*。可观测语义变更（宿主日志过滤的
+组件名变化），随下次发版带出；无测试断言组件名。
+
+### 重构(boundary)!：org 归属回迁——module path 变回 yi-nology（v0.80.0 破窗）
+
+仓库已迁回 yi-nology（kernel#520 公告）。module path：
+github.com/oagentkit/goagent-kernel → github.com/yi-nology/goagent-kernel。
+- 全仓自身路径重写（代码/配置/文档/生成器，236 处）；依赖的 oagentkit/* 不动
+  （依赖方向与自身位置无关）；
+- cmd/docsync 安装行正则同步回 yi-nology；
+- ADR-0010 追加勘误段（org 归属部分撤销；七包上抛/分层口径仍有效；
+  v0.77-79 的 oagentkit tag 只能经 oagentkit 路径消费）；
+- gofmt 全量重排（import 路径变长）。
+make check 全绿（fmt/vet/lint/test/archcheck/docsync/apilifecheck/ledgercheck/
+hygiene/releasecheck 跳过非 tag）。v0.80.0 起回 yi-nology 路径。
+
+- 文档(boundary)：worker/taskboard 对称分界声明（#507 #509 裁决结案）
+
+* docs(boundary): worker/taskboard 包头对称分界声明——双源裁决结案（#507 #509）
+- worker：与 oagentkit/queue/worker.Pool 的分界（编排任务驱动 vs DB 即队列
+  数据面驱动；交集仅薄骨架，底座 loop/async 已单源；依赖方向互禁不抽共享）；
+- taskboard：与 queue.LeaseStore 的租约分界（fence 规则同源同义，差异在
+  作用域与铸造位置；登记 TaskQueue 任务面无 fence 的第三形态；distlock
+  候选实测无 fencing 能力，关闭）。
+裁决依据：双源取证报告（2026-11-26）。Fixes #507 Fixes #509
+* docs: 工程底座行数重算（分界声明 +33 行）65,344→65,377
+* docs(boundary): #508 hookengine 分界声明 + #510 两包留任注记 + #495 台账清偿
+- hookengine 包头：与 runtime/hookx 的对称分界（判定面 vs 传输协议；
+  fail-closed 缺省相反是刻意的不得对齐；互不 import；重审触发条件）；
+- architecture-policy notes：tooldisclose 留 kernel（invoke 缝已缝好/Stable/
+  零消费，mcpkit 拒下沉裁定有效）；skilldisclose 留 kernel 不与 skillkit
+  合并（挑选判定 vs 投递面不同层，接线单向）——结清 ADR-0010 挂账项；
+- DISTRIBUTED-EVOLUTION 台账 #495 行「仍开着」→「已合入 (#518)」（ledgercheck）。
+取证：双源裁决报告（2026-11-26）。Fixes #508 Fixes #510
+* docs: 台账 #495 散文行同步清偿 + 工程底座行数重算（hookengine 注释 +19）65,377→65,396
+* docs(ledger): #495 状态列 #N 形态 + 散文引用 PR #518 前缀——ledgercheck 双判据口径对齐（146 单号对账通过）
+* fix(apilifecheck): hookengine 包注释空行切断 doc 块——decl 与 package 间空行使 File.Doc 丢标记行
+* docs: 工程底座行数重算（删 doc 块空行 -1）65,396→65,395
+
+- 文档：补「本仓依赖的矩阵内仓」声明——矩阵 README↔go.mod 对账门禁（4 个直接矩阵内依赖）
+- 文档：矩阵层位声明行——tier 4（编排判据层）
+
+矩阵 verify_repo_tiers 门禁要求每仓 AGENTS.md 有「矩阵分层：**tier N（层名）**」
+规范行、README.md 有「—— oagentkit 模块矩阵 **tier N**（层名…）」定位行，
+否则认不出声明（黄 → --fail-on-yellow 红）。modules.json tiers 映射同步补 4/5。
+
+
 ## [v0.79.0] — 2026-11-26
 
 - 构建：依赖地板追到最新（v0.78.0 的地板改动实际未入提交——重施）
