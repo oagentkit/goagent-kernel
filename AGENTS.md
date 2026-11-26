@@ -1,6 +1,7 @@
 # AGENTS.md — AI 编码代理工作纪律（goagent-kernel）
 
 > 矩阵分层：**tier 4（编排判据层）**
+> 本仓依赖的矩阵内仓：`guardx` `runtime` `toolgate` `toolname`
 
 本仓是**内核**：只放编排机制，不放领域知识。这条边界靠纪律 + 门禁双保险，
 AI 代理在本仓干活时最容易犯的错是「顺手把宿主的需求写进来」。
