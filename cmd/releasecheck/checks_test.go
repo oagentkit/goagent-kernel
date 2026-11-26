@@ -98,3 +98,36 @@ func TestFirstReplacementChar(t *testing.T) {
 		t.Fatalf("应报第 2 行，实得 line=%d bad=%v", line, bad)
 	}
 }
+
+// TestMissingSections 纪律 5（issue #495 的反向验证要求）：
+// 「段都在」必须绿；删一个历史段 / 改一个段头必须红并点名缺的 tag。
+func TestMissingSections(t *testing.T) {
+	full := "# CHANGELOG\n\n## [v0.41.0] — 2026-11-16\n\n正文\n\n## [v0.40.0] — 2026-11-15\n\n正文\n"
+	tags := []string{"v0.41.0", "v0.40.0"}
+
+	// 段都在 ⇒ 绿（空列表）
+	if got := missingSections(tags, full); len(got) != 0 {
+		t.Fatalf("段都在时应为空，实得 %v", got)
+	}
+
+	// 删掉一个历史段 ⇒ 红并点名缺的 tag
+	deleted := "# CHANGELOG\n\n## [v0.41.0] — 2026-11-16\n\n正文\n"
+	got := missingSections(tags, deleted)
+	if len(got) != 1 || got[0] != "v0.40.0" {
+		t.Fatalf("删段必须点名 v0.40.0，实得 %v", got)
+	}
+
+	// 改一个段头（v0.40.0 → v0.40.1）⇒ 旧 tag 的段即缺
+	retitled := "# CHANGELOG\n\n## [v0.41.0] — 2026-11-16\n\n正文\n\n## [v0.40.1] — 2026-11-15\n\n正文\n"
+	got = missingSections(tags, retitled)
+	if len(got) != 1 || got[0] != "v0.40.0" {
+		t.Fatalf("改段头必须点名 v0.40.0，实得 %v", got)
+	}
+
+	// 历史整批消失（v0.64.2 事故形态：只剩最新段）⇒ 每个缺的都点名
+	onlyNewest := "# CHANGELOG\n\n## [v0.41.0] — 2026-11-16\n\n正文\n"
+	got = missingSections([]string{"v0.41.0", "v0.40.0", "v0.39.0", "v0.2.0"}, onlyNewest)
+	if len(got) != 3 {
+		t.Fatalf("整批消失必须逐个点名（缺 3 个），实得 %v", got)
+	}
+}
