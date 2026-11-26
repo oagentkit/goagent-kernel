@@ -117,6 +117,7 @@ modules:
       故先只暴露「名字+描述」占位，按关键词检索换完整 schema。
       门禁的核心是把两类失败严格区分开：未加载（可重试，顺手激活）与
       不在目录（不可重试，明确禁止绕过）。目录与打分均为确定性，编排才可复现。
+      #510 复核（2026-11-26）留 kernel：invoke 缝（Stage 接 guardx/invoke.Chain）已缝好、Stable 已承诺、仓外零生产消费，迁 tools/guardx 无受益；mcpkit DisclosureGate 拒下沉裁定（2026-10-21）继续有效。
 
   # L2 第二批机制包（随包下沉登记）。requires 反映**真实**依赖方向，不是「理想形态」：
   # watchdog 确实读 eventbus，就写 eventbus。此前这里写的是 requires: [] 并附一句
@@ -310,6 +311,7 @@ modules:
       三条判据：点名权重必须高于任何相关度信号；同分按名字（不依赖 map 顺序）；
       预算裁剪必须显式（静默截断会让宿主以为「就这几个相关」）。空结果必须
       写明原因——「没有检查」与「检查通过」在调用方看起来一样。
+      #510 复核（2026-11-26）留 kernel 不与 skillkit 合并：判据不同层（本包=挑选判定三信号打分+显式裁剪；skillkit decision=投递面预算渲染+eino 工具封装）；边界=本包管「选哪些+是否裁剪」、skillkit 管「渲染与全文上限」，未来接线单向（本包输出喂 skillkit 渲染）不反向依赖。
 
   - id: hookengine
     roots: [hookengine]
