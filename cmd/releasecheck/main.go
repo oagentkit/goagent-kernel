@@ -1,6 +1,6 @@
 // Command releasecheck —— 发版纪律的机器判据（把散文变成门禁）。
 //
-// 四条纪律此前只写在 AGENTS.md「发版纪律」与 docs/AI-GUIDE.md §3.6 里，
+// 五条纪律此前只写在 AGENTS.md「发版纪律」与 docs/AI-GUIDE.md §3.6 里，
 // 全靠人手工核对。它们各自对应一种**只有下游才会发现**的残缺：
 //
 //  1. **tag 快照里的 CHANGELOG 必须已含该 tag 自己那一段**。顺序反了（先打 tag
@@ -10,6 +10,9 @@
 //  3. **一个提交只装一类内容**。「依赖文件 + 非依赖文件」混装会让行为变更落进
 //     「依赖地板」段——下游扫 breaking 时根本看不见（2026-10-25 v0.13.0 实例）。
 //  4. **tag 必须是 annotated**。轻量 tag 承载不了发布说明，只剩一个指向。
+//  5. **CHANGELOG 的版本段必须覆盖本仓全部 tag**。一次合并就能把历史段整批
+//     换成近段（v0.64.2 吞 78 段延续 10 个版本无人发现，issue #495）——
+//     本版段判据只看本版，历史段消失时它照样绿。
 //
 // # 判定面：只在 tag 快照上判
 //
@@ -130,6 +133,23 @@ func run() error {
 		fmt.Printf("releasecheck: 找不到 %s 的前一个 tag ⇒ 跳过混装提交判定（首版场景）\n", version)
 	}
 
+	// 5. CHANGELOG 段覆盖全部 tag（历史段整批消失 = 下游读不到旧版发布说明）
+	rawTags, err := gitOut("tag", "--list")
+	if err != nil {
+		return err
+	}
+	var tags []string
+	for _, t := range strings.Split(rawTags, "\n") {
+		if t = strings.TrimSpace(t); t != "" {
+			tags = append(tags, t)
+		}
+	}
+	for _, t := range missingSections(tags, md) {
+		problems = append(problems, fmt.Sprintf(
+			"%s 缺历史段「## [%s]」——CHANGELOG 必须覆盖本仓全部 tag（%d 个 tag 只剩少数段的事故见 issue #495）；跑 gen_changelogs.py 全量重生成",
+			changelogPath, t, len(tags)))
+	}
+
 	if len(problems) > 0 {
 		fmt.Printf("releasecheck: %s 违反发版纪律 %d 处：\n", version, len(problems))
 		for _, p := range problems {
@@ -139,7 +159,7 @@ func run() error {
 		return fmt.Errorf("发版纪律未满足")
 	}
 
-	fmt.Printf("releasecheck: %s 发版纪律 ✓（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间内无混装提交）\n", version)
+	fmt.Printf("releasecheck: %s 发版纪律 ✓（annotated tag / CHANGELOG 含本版段 / 无编码损坏 / 区间内无混装提交 / 段覆盖全部 %d 个 tag）\n", version, len(tags))
 	return nil
 }
 

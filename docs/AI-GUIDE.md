@@ -817,7 +817,7 @@ make check
 | `deploycheck` | 部署配方能力清单的证据不可解析 / 状态与证据不符 / USAGE 逐行不一致（issue #277）| 见 `docs/DEPLOY-MATRIX.yaml`；**issue 证据只有在对应单号仍开着时才算缺口**（单号状态由台账派生） |
 | `storagecheck` | 存储选型判据：场景声明的 storage 必须在选型声明面的允许集内 + 该 storage 必须实际提供场景必需的全部能力 + 「该 storage 提供该能力」的断言必须能在代码里找到落点（issue #424）| 见 `docs/STORAGE-SELECTION.yaml`；**第三条是它与「写份文档让人读」的分界**——没有它，「SQLite 提供租户隔离」就成了一句没人验证的话 |
 | `ledgercheck` | 演进台账自身的纪律：同一单号各处状态矛盾 / 已合入却没给关闭 PR 号 / 关闭 PR 号形态不对 / 正文引用的单号没进登记面（单号漂浮 = 无主）| 台账 `docs/DISTRIBUTED-EVOLUTION-20261117.md`；单号 → 状态的派生器是 `internal/ledgerstatus`（登记列 / 状态列 / 散文标记三处约定）；PR 号要写成 `PR #N` 才不进单号视图 |
-| `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
+| `releasecheck` | 发版纪律：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交 / **段覆盖全部 tag**（历史段整批消失即红，issue #495） | 非 tag 提交**显式跳过**（打 tag 后必判）；口径见 §3.6 |
 | `modreplace` | go.mod 含 `replace` | 改用 `make devlink` |
 | `modwork` | go.work / go.work.sum 被跟踪 | `git rm --cached` |
 | `hygiene` | 仓库**跟踪**了编译产物二进制，**或**跟踪了命中 `.gitignore` 的文件（force-add 的文本产物 / 陈旧跟踪）| `git rm --cached <路径>` + 删掉工作树副本 + 确认路径已在 `.gitignore`；构建产物请用 `make` 目标或 `go build -o bin/` 产出 |

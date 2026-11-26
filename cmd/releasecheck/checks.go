@@ -117,6 +117,26 @@ func hasSection(md, version string) bool {
 	return re.MatchString(md)
 }
 
+// missingSections 判 CHANGELOG 的版本段是否覆盖全部 tag（纪律 5）。
+//
+// 每个 tag 都必须有同名段「## [tag]」——段缺失即返回该 tag（点名缺谁）。
+// 只判 tag→段方向（覆盖）：段比 tag 多的「幽灵段」由生成器全量渲染保证不出现
+// （gen_changelogs 按全部 tag 切段），出现即说明生成器被绕过，另有产物对账兜。
+//
+// 为什么必须有这条：v0.74.0 实测——一次合并把 CHANGELOG 从 85 段压到 6 段
+// （ce2aa38 只裁决了新旧三段的顺序，没注意到并入分支只剩近段），78 段历史
+// 发布说明消失且延续了 10 个版本无人发现（issue #495）。本版段判据（纪律 1）
+// 只看本版，历史段整批消失时它照样绿。
+func missingSections(tags []string, md string) []string {
+	var missing []string
+	for _, t := range tags {
+		if !hasSection(md, t) {
+			missing = append(missing, t)
+		}
+	}
+	return missing
+}
+
 // firstReplacementChar 返回首个 U+FFFD 所在行号（1 起）；没有则 bad=false。
 func firstReplacementChar(s string) (line int, bad bool) {
 	const replacement = "\uFFFD"
