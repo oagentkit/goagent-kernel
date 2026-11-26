@@ -35,8 +35,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
 	"github.com/oagentkit/guardx/sandbox"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // buildChildProgramVari 编译一个自定义子进程程序（source 为其 main.go 全文）。
@@ -65,7 +65,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 func main() {

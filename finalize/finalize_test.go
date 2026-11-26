@@ -7,9 +7,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/finalize"
-	"github.com/oagentkit/goagent-kernel/steer"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/finalize"
+	"github.com/yi-nology/goagent-kernel/steer"
 )
 
 // withCause 造一个已按 cause 取消的编排 ctx（宿主 WithCancelCause 的形态）。

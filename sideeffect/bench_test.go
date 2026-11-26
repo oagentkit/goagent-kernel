@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // benchStore sideeffect.Store 的最小内存实现：Acquire 的判定顺序按契约写

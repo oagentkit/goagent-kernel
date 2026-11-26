@@ -14,7 +14,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/coord"
 )
 
 // fakeClock 可推进的假时钟（并发安全）。

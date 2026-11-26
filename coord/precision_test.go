@@ -21,8 +21,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 var precisionBase = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)

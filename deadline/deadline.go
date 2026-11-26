@@ -65,7 +65,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // ErrSessionDeadline 会话级墙钟超时的原因值（轮内 ctx 经 WithTimeoutCause 携带）。

@@ -106,7 +106,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // 归因标识（Cause.By；宿主 turn 括号的 closed_by 与事件载荷按此分辨收敛路径）。

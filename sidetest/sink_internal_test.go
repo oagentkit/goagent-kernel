@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 栅栏套件的**负对照**：判据必须有分辨力——故意写坏的实现必须被跑红，

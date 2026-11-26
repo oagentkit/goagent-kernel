@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // runConcurrentClaimUniqueness 100 个执行者同时认领同一任务：成功者必须

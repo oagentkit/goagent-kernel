@@ -19,7 +19,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // runExpiredTakeover 租约过期可被接管（持有着崩了，不接管会留下永久占用）。

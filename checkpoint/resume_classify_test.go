@@ -5,7 +5,7 @@ package checkpoint
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // TestBuildPlanClassifiesEveryStatus 三态边界对**全词表 + 词表外取值**逐字

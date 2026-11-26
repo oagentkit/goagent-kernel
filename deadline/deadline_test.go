@@ -7,7 +7,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // 会话墙钟的契约判据（issue #170）：shared 锚点跨续跑轮不刷新、过期锚点认领后

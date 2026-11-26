@@ -7,7 +7,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // TestTerminateClassifiesEveryStatus 三态边界对**全词表 + 词表外取值**逐字

@@ -18,7 +18,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/checkpoint"
 )
 
 // benchStore checkpoint.StoreCAS 的最小内存实现（SaveIfNewer 严格递增语义）。

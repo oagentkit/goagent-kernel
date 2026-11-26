@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 本文件是套件的**负对照**：证明「结果未知」一族的场景真的有分辨力。

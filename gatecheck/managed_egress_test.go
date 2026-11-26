@@ -13,7 +13,7 @@ import (
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 
-	"github.com/oagentkit/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/egress"
 )
 
 // TestManagedCheckRequestEgressNotDropped（验收原案）：Managed + 请求级

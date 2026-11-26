@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // TestRowIDsUniqueWithinTurnIncludingMultiSegment 行标识在**轮内**唯一——

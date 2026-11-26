@@ -24,7 +24,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // 编译期契约断言：适配器同时满足单条认领与批量领取两面。

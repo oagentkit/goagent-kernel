@@ -34,7 +34,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // taskKeyPrefix 任务键前缀（Board 适配器的单租户键空间，与其余适配器隔离）。

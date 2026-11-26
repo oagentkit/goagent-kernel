@@ -28,7 +28,7 @@ func fixtureRoot(t *testing.T, polYAML, code string) string {
 // 例外登记按 rule+path+line 三元组精确匹配，测试要能算准这个行号。
 const escapeCode = "package x\n" +
 	"\n" +
-	"import \"github.com/oagentkit/goagent-kernel/ptc\"\n" +
+	"import \"github.com/yi-nology/goagent-kernel/ptc\"\n" +
 	"\n" +
 	"func F() ptc.Options {\n" +
 	"\treturn ptc.Options{\n" +

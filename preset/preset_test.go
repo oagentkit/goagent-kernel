@@ -7,9 +7,9 @@ import (
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 
-	"github.com/oagentkit/goagent-kernel/egress"
-	"github.com/oagentkit/goagent-kernel/gatecheck"
-	"github.com/oagentkit/goagent-kernel/preset"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/preset"
 )
 
 func strict() preset.Preset {

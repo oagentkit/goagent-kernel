@@ -14,8 +14,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/reconcile"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/reconcile"
 )
 
 // TestDefaultClosedByAlignsWithReconcile 消费方缺省集合 ⊇ 生产方全部归因值。

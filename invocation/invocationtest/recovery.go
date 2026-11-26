@@ -11,7 +11,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/invocation"
+	"github.com/yi-nology/goagent-kernel/invocation"
 )
 
 // runUncertainCanResume 结果未知态经裁决后可以重做（uncertain → executing）。

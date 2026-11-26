@@ -55,7 +55,7 @@ const hostPolicy = `version: 1
 modules:
   - id: service
     roots: [internal/service]
-    requires: [base, "ext:github.com/oagentkit/goagent-kernel/netguard"]
+    requires: [base, "ext:github.com/yi-nology/goagent-kernel/netguard"]
   - id: base
     roots: [internal/base]
     requires: []
@@ -64,7 +64,7 @@ dependency_direction:
   severity: error
   ignore_dirs: [cmd]
   # 受管外部包面（policy 级）：外仓的哪些包纳入本门禁的判定面。
-  ext_prefixes: ["github.com/oagentkit/goagent-kernel"]
+  ext_prefixes: ["github.com/yi-nology/goagent-kernel"]
 `
 
 // TestHostReuseEndToEnd 宿主仓复用：走完整条链，只该报「未登记包」这一条。
@@ -74,7 +74,7 @@ dependency_direction:
 func TestHostReuseEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	writeHostRepo(t, root, hostPolicy, map[string]string{
-		"internal/service/svc.go": "package service\n\nimport (\n\t_ \"example.test/host/internal/base\"\n\t_ \"github.com/oagentkit/goagent-kernel/netguard\"\n)\n",
+		"internal/service/svc.go": "package service\n\nimport (\n\t_ \"example.test/host/internal/base\"\n\t_ \"github.com/yi-nology/goagent-kernel/netguard\"\n)\n",
 		"internal/base/base.go":   "package base\n",
 		"internal/legacy/old.go":  "package legacy\n",
 		"cmd/tool/main.go":        "package main\n",
@@ -113,10 +113,10 @@ func TestHostReuseEndToEnd(t *testing.T) {
 func TestHostReuseUndeclaredExternalIsViolation(t *testing.T) {
 	root := t.TempDir()
 	policy := strings.Replace(hostPolicy,
-		`requires: [base, "ext:github.com/oagentkit/goagent-kernel/netguard"]`,
+		`requires: [base, "ext:github.com/yi-nology/goagent-kernel/netguard"]`,
 		`requires: [base]`, 1)
 	writeHostRepo(t, root, policy, map[string]string{
-		"internal/service/svc.go": "package service\n\nimport (\n\t_ \"example.test/host/internal/base\"\n\t_ \"github.com/oagentkit/goagent-kernel/netguard\"\n)\n",
+		"internal/service/svc.go": "package service\n\nimport (\n\t_ \"example.test/host/internal/base\"\n\t_ \"github.com/yi-nology/goagent-kernel/netguard\"\n)\n",
 		"internal/base/base.go":   "package base\n",
 		// policy 的 ignore_dirs 写了 cmd ⇒ 这个目录必须真的存在，否则豁免是
 		// 陈旧声明（自校验会红，见 selfcheck.go 的「目录级豁免必须指向真实存在

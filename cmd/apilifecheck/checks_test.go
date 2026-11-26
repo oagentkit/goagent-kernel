@@ -80,21 +80,21 @@ func TestCheckMarkers(t *testing.T) {
 func TestCheckReplacements(t *testing.T) {
 	root := writeMiniRepo(t)
 	m := &Manifest{Packages: []Entry{
-		{Pkg: "old", Level: LevelDeprecated, Reason: "r", Replacement: "github.com/oagentkit/goagent-kernel/alpha.ErrBoom"},
+		{Pkg: "old", Level: LevelDeprecated, Reason: "r", Replacement: "github.com/yi-nology/goagent-kernel/alpha.ErrBoom"},
 	}}
 	if probs, err := checkReplacements(root, m); err != nil || len(probs) != 0 {
 		t.Fatalf("指向真实符号不该红: %v %v", probs, err)
 	}
 
 	// 指向不存在的符号。
-	m.Packages[0].Replacement = "github.com/oagentkit/goagent-kernel/alpha.ErrGhost"
+	m.Packages[0].Replacement = "github.com/yi-nology/goagent-kernel/alpha.ErrGhost"
 	probs, err := checkReplacements(root, m)
 	if err != nil || len(probs) != 1 || !strings.Contains(probs[0], "不存在") {
 		t.Fatalf("幽灵替代指向判定错: %v %v", probs, err)
 	}
 
 	// 形态错（不含 selfModule / 缺点号）。
-	for _, bad := range []string{"alpha.ErrBoom", "github.com/oagentkit/goagent-kernel/alpha", "github.com/oagentkit/goagent-kernel/alpha.notExp"} {
+	for _, bad := range []string{"alpha.ErrBoom", "github.com/yi-nology/goagent-kernel/alpha", "github.com/yi-nology/goagent-kernel/alpha.notExp"} {
 		m.Packages[0].Replacement = bad
 		probs, err = checkReplacements(root, m)
 		if err != nil || len(probs) != 1 || !strings.Contains(probs[0], "形态") {
@@ -105,7 +105,7 @@ func TestCheckReplacements(t *testing.T) {
 	// 解析失败给不出结论（返回 error，不是当「不存在」）。
 	// 用只有坏文件的独立包：若目录里有可解析文件且先命中符号，会提前返回。
 	m.Packages[0] = Entry{Pkg: "sym", Level: LevelDeprecated, Reason: "r",
-		Replacement: "github.com/oagentkit/goagent-kernel/sym.Thing"}
+		Replacement: "github.com/yi-nology/goagent-kernel/sym.Thing"}
 	writeFile(t, root, "sym/broken.go", "package sym\nfunc {{{\n")
 	if _, err := checkReplacements(root, m); err == nil {
 		t.Fatal("解析失败未报错")
@@ -143,11 +143,11 @@ func TestSplitReplacement(t *testing.T) {
 		pkg  string
 		name string
 	}{
-		{"github.com/oagentkit/goagent-kernel/a.B", true, "github.com/oagentkit/goagent-kernel/a", "B"},
-		{"github.com/oagentkit/goagent-kernel/a/b.C", true, "github.com/oagentkit/goagent-kernel/a/b", "C"},
+		{"github.com/yi-nology/goagent-kernel/a.B", true, "github.com/yi-nology/goagent-kernel/a", "B"},
+		{"github.com/yi-nology/goagent-kernel/a/b.C", true, "github.com/yi-nology/goagent-kernel/a/b", "C"},
 		{"other.module/a.B", false, "", ""},
 		{"nosymbol", false, "", ""},
-		{"github.com/oagentkit/goagent-kernel/a.b", false, "", ""}, // 未导出符号
+		{"github.com/yi-nology/goagent-kernel/a.b", false, "", ""}, // 未导出符号
 	}
 	for _, tc := range cases {
 		sym, ok := splitReplacement(tc.in)

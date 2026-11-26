@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 本文件是「持有者身份」一族的**负对照**：证明这些场景真的有分辨力。

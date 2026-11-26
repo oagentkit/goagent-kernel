@@ -13,7 +13,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/scheduling"
+	"github.com/yi-nology/goagent-kernel/scheduling"
 )
 
 // quotaOracle 任务租约存活判定替身（回收判据的依赖面）。

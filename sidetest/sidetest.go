@@ -115,7 +115,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // FakeClock 套件提供的假时钟（并发安全；测试内手动推进）。

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // splitCheckBoard 把 Complete 的**校验**与**写入**拆成两段（不原子）：

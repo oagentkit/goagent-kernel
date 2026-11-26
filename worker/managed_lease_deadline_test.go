@@ -14,7 +14,7 @@ import (
 
 	kerrors "github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // startFlakySession 认领任务后起会话，并立刻注入「存储持续不可达」。

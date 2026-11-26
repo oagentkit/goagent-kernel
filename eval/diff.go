@@ -12,7 +12,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/trajectory"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // Divergence 一处轨迹差异。

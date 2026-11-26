@@ -6,7 +6,7 @@ import (
 	"github.com/oekit/logx"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // log 接管收尾留痕（logx.Delegating 懒解析宿主后端）。

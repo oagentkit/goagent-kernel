@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // TestSummarizeHookMayCallProjector 钩子里回查投影器（Len / Rows）必须正常

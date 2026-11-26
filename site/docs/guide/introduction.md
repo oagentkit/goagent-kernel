@@ -154,5 +154,5 @@ injectband）、审计门在 `oagentkit/toolgate`、进程原语在 `oagentkit/r
 | [坑速查](../reference/pitfalls.md) | 接完线自查：症状 → 真因（从仓内 USAGE §6 生成） |
 | [包清单与机器事实](../reference/packages.md) | 包表、依赖版本、规则清单、阈值（机器生成） |
 | [门禁体系](../reference/gates.md) | make check 全链、规则与结构判定、数字纪律 |
-| 仓内 [docs/USAGE.md](https://github.com/oagentkit/goagent-kernel/blob/main/docs/USAGE.md) | 完整接入指南（逐包：职责 → 集成片段 → 关键符号 → 坑） |
-| 仓内 [README](https://github.com/oagentkit/goagent-kernel#readme) | 定位、边界纪律、下游升级须知（破坏性变更表） |
+| 仓内 [docs/USAGE.md](https://github.com/yi-nology/goagent-kernel/blob/main/docs/USAGE.md) | 完整接入指南（逐包：职责 → 集成片段 → 关键符号 → 坑） |
+| 仓内 [README](https://github.com/yi-nology/goagent-kernel#readme) | 定位、边界纪律、下游升级须知（破坏性变更表） |

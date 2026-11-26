@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
 	"github.com/oagentkit/guardx/invoke"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // benchAllowStage 一条恒放行的判定环（排除判定自身耗时之外的因素；

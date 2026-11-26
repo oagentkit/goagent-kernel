@@ -15,7 +15,7 @@ import (
 )
 
 // selfModule 本仓 module 路径（replacement 指向的符号必须在本仓内）。
-const selfModule = "github.com/oagentkit/goagent-kernel"
+const selfModule = "github.com/yi-nology/goagent-kernel"
 
 // checkCoverage 清单 ↔ 生产包集合，双向判差。
 //

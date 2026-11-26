@@ -8,8 +8,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // runPodForceDeleteReconcile 旧 Pod 抢到闸、对外部世界施加了副作用，然后

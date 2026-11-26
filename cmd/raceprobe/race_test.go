@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/raceprobe"
+	"github.com/yi-nology/goagent-kernel/raceprobe"
 )
 
 // fakeResult 一次假执行的预设结果。
@@ -100,7 +100,7 @@ func TestRunRaceDataRaceIsRed(t *testing.T) {
 func TestRunRaceStartupWedgeRecheckRecovers(t *testing.T) {
 	sp, calls := fakeSpawner(
 		fakeResult{code: 1, stderr: wedgeOut},
-		fakeResult{code: 0, stdout: "ok  \tgithub.com/oagentkit/goagent-kernel/statemachine\t1.2s\n"},
+		fakeResult{code: 0, stdout: "ok  \tgithub.com/yi-nology/goagent-kernel/statemachine\t1.2s\n"},
 	)
 	o := testOptions(t, sp)
 	code, msg := runRace(context.Background(), o)

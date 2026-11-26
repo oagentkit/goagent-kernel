@@ -37,7 +37,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // Version 控制面记录的版本锚：每次成功提交推进（不复用、不回退）。

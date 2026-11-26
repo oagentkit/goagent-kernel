@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/protocol"
+	"github.com/yi-nology/goagent-kernel/protocol"
 )
 
 func TestValidateStructuredConcurrent(t *testing.T) {

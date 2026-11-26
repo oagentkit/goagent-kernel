@@ -24,7 +24,7 @@ func TestUnmanagedEscapeCatchesProductionUse(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func New() ptc.Options { return ptc.Options{AllowUnmanaged: true} }
 `,
@@ -47,7 +47,7 @@ func TestUnmanagedEscapeIgnoresAlias(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import alias "github.com/oagentkit/goagent-kernel/ptc"
+import alias "github.com/yi-nology/goagent-kernel/ptc"
 
 func New() alias.Options { return alias.Options{AllowUnmanaged: true} }
 `,
@@ -70,7 +70,7 @@ func TestUnmanagedEscapeIgnoresTestFiles(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app_test.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func New() ptc.Options { return ptc.Options{AllowUnmanaged: true} }
 `,
@@ -120,7 +120,7 @@ func TestUnmanagedEscapeCatchesConfigDrivenValue(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 var flag bool
 
@@ -149,7 +149,7 @@ func TestUnmanagedEscapeCatchesAssignment(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 var opts ptc.Options
 
@@ -174,7 +174,7 @@ func TestUnmanagedEscapeCatchesConfigDrivenAssignment(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 type Cfg struct{ Unmanaged bool }
 
@@ -200,7 +200,7 @@ func TestUnmanagedEscapeCatchesStructFieldAndEmbedding(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 type ServerConfig struct {
 	PTC ptc.Options
@@ -232,7 +232,7 @@ func TestUnmanagedEscapeCatchesContainerElement(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func Setup() []ptc.Options {
 	opts := []ptc.Options{{}}
@@ -257,7 +257,7 @@ func TestUnmanagedEscapeCatchesCrossFileAssignment(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/a.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 var opts ptc.Options
 `,
@@ -308,7 +308,7 @@ func TestUnmanagedEscapeBlindSpotIsDocumented(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func newOpts() *ptc.Options { return &ptc.Options{} }
 
@@ -337,7 +337,7 @@ func TestUnmanagedEscapeAssignmentBlocksRun(t *testing.T) {
 	writeFixture(t, root, map[string]string{
 		"app/app.go": `package app
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 var opts ptc.Options
 

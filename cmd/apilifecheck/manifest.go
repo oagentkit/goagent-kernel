@@ -45,7 +45,7 @@ type Entry struct {
 	// 无从复核，半年后也没人敢动它。
 	Reason string `yaml:"reason"`
 	// Replacement Deprecated 条目的替代指向，完整符号路径
-	// （`github.com/oagentkit/goagent-kernel/<pkg>.<Symbol>`）。
+	// （`github.com/yi-nology/goagent-kernel/<pkg>.<Symbol>`）。
 	// 门禁会解析该符号并确认真实存在——指到不存在的符号等于没有迁移路径。
 	Replacement string `yaml:"replacement"`
 	// FollowsUpstream 门面包跟随的上游 module。非空时门禁校验该包真的

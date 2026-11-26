@@ -49,7 +49,7 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // heartbeat 跑心跳/续期循环，直到外层 ctx 取消、stopping 关闭或注册身份

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 本文件是「标记失败」一族的**负对照**：证明这个场景真的有分辨力。
