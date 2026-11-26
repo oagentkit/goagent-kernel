@@ -52,7 +52,6 @@
 // =漏配置 ⇒ 缺省闭），hookx 面向扩展点（扩展故障不阻断业务 ⇒ 缺省开、
 // 安全事件经 FailClosedEvents 选配收紧）。重审触发：任一侧出现第二个生产
 // 消费方，或 hookx 被要求支持工具维匹配。
-
 package hookengine
 
 import (
