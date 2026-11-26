@@ -19,8 +19,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // SeedRun 运行时侧：建一个运行及其任务（taskID 全局唯一）。

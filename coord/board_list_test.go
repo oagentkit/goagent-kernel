@@ -17,7 +17,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // scanRecordingBackend 记录调用序列的替身（转发 MemoryBackend）。

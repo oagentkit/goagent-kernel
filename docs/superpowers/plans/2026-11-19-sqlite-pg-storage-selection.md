@@ -685,8 +685,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/taskboard/boardtest"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
 )
 
 // TestBoardContract 跑任务板的共享契约套件（boardtest 全套，含 10 与 100
@@ -763,7 +763,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // boardCols 任务行的列（与 pgstore 同序）。
@@ -1209,7 +1209,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/sidetest"
+	"github.com/yi-nology/goagent-kernel/sidetest"
 )
 
 // TestEffectContract 跑副作用闸的共享契约套件（sidetest 全套 33 条）。
@@ -1374,7 +1374,7 @@ package sqliteadapter
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/checkpoint"
 )
 
 func newTestStore(t *testing.T) *Store {
@@ -1421,7 +1421,7 @@ package sqliteadapter
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // TestEventIDsContiguousNoGap 事件 ID 连续（铸造序 == 提交序）。
@@ -1593,8 +1593,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // TestApplyCommitsAllFacesAtomically 四个面的变更落进同一次提交。
@@ -1810,7 +1810,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // resolveTenant 取本次调用的租户。
@@ -1907,7 +1907,7 @@ package sqliteadapter
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/sidetest"
+	"github.com/yi-nology/goagent-kernel/sidetest"
 )
 
 // TestSinkContract 跑下游栅栏的共享契约套件（6 条）。
@@ -1927,8 +1927,8 @@ package sqliteadapter
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/controlplane"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/controlplane"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // TestControlStoreVersionAnchor 控制面的版本锚：快照后目标被改过 ⇒ 提交必失败。
@@ -2068,8 +2068,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // TestApplyCommitsAllFacesAtomically 跨面变更落在同一次提交里。

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // reorderStore Outbox 形态的水位线替身：

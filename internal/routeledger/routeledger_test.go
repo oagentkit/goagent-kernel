@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
+	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
 )
 
 // goodLedger 一份合规的台账视图：#261 / #262 已合入，#279（总纲单）仍开着。

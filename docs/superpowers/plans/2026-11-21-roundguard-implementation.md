@@ -114,7 +114,7 @@ package roundguard_test
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/roundguard"
+	"github.com/yi-nology/goagent-kernel/roundguard"
 )
 
 // 合成数据：用中性词面构造事实，不带任何领域味。
@@ -581,7 +581,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/roundguard"
+	"github.com/yi-nology/goagent-kernel/roundguard"
 )
 
 // TestCheckRoundsBoundary 钉住边界：已用 2、上限 3 ⇒ 放行；已用 3 ⇒ 拒绝。
@@ -1032,7 +1032,7 @@ package roundguard_test
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/roundguard"
+	"github.com/yi-nology/goagent-kernel/roundguard"
 )
 
 // 合成数据：指纹用中性字母串，不带任何领域味。
@@ -1536,7 +1536,7 @@ package roundguard_test
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/roundguard"
+	"github.com/yi-nology/goagent-kernel/roundguard"
 )
 
 // TestDecideTerminalOutcomeBeatsBudget 钉住**结局终局优先**：模型给了终答，哪怕
@@ -1890,7 +1890,7 @@ package roundguard_test
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/roundguard"
+	"github.com/yi-nology/goagent-kernel/roundguard"
 )
 
 // 本文件是**反向验证矩阵**：每条用例都钉在「坏实现会红」的边界上。

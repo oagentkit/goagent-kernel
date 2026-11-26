@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
 	"github.com/oagentkit/guardx/sandbox"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 // 本文件是**管道往返延迟**的实测（设计档 §九 第 3 条：「管道往返有延迟……

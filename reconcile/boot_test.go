@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // ── 启动锚点路 ──────────────────────────────────────────────────────────

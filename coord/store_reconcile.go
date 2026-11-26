@@ -10,7 +10,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // resolveOut ResolveUncertain 的复合结论：业务错误随事务一起落地——

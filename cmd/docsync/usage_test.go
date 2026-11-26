@@ -44,7 +44,7 @@ func usageDocFixture(pkgCount, modulesCount int, version string) string {
 	lines := []string{
 		"# 用法",
 		"",
-		"    go get github.com/oagentkit/goagent-kernel@" + version,
+		"    go get github.com/yi-nology/goagent-kernel@" + version,
 		"",
 		"本仓共 **" + strconv.Itoa(pkgCount) + "** 个包（README 包表口径）。",
 		// 反引号包住 modules 是真实 USAGE 的写法（判据正则按这个形态匹配）。

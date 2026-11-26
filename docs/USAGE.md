@@ -134,15 +134,15 @@ v0.35.0 起本仓**不再提供** `policy` / `reminder` / `toolfail` / `sandbox`
 
 ```bash
 # 模块路径
-module github.com/oagentkit/goagent-kernel
+module github.com/yi-nology/goagent-kernel
 ```
 
 ```bash
 # 按最新发布版引入
-go get github.com/oagentkit/goagent-kernel@latest
+go get github.com/yi-nology/goagent-kernel@latest
 
 # 或钉到具体版本（查已发布版本：git ls-remote --tags origin）
-go get github.com/oagentkit/goagent-kernel@latest
+go get github.com/yi-nology/goagent-kernel@latest
 ```
 
 > **版本号为什么写 `@latest` 而不是钉死一个数字**：本文写稿时是 v0.62.0，
@@ -158,8 +158,8 @@ go get github.com/oagentkit/goagent-kernel@latest
 只想拿状态机不需要拖进 goja、jsonschema 这些。
 
 ```go
-import "github.com/oagentkit/goagent-kernel/contract"
-import "github.com/oagentkit/goagent-kernel/statemachine"
+import "github.com/yi-nology/goagent-kernel/contract"
+import "github.com/yi-nology/goagent-kernel/statemachine"
 ```
 
 ---
@@ -285,7 +285,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // ① 会话运行上下文：编排语义字段定死，领域状态走开放键。
@@ -422,7 +422,7 @@ package myapp
 
 import (
 	"github.com/oekit/pkg/errors"
-	"github.com/oagentkit/goagent-kernel/protocol"
+	"github.com/yi-nology/goagent-kernel/protocol"
 )
 
 func toReport(raw string) (*protocol.Report, error) {
@@ -639,8 +639,8 @@ package myapp
 import (
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oekit/pkg/errors"
-	"github.com/oagentkit/goagent-kernel/guardset"
-	"github.com/oagentkit/goagent-kernel/tooldisclose"
+	"github.com/yi-nology/goagent-kernel/guardset"
+	"github.com/yi-nology/goagent-kernel/tooldisclose"
 )
 
 func buildGate() (invoke.Stage, *tooldisclose.Catalog) {
@@ -843,7 +843,7 @@ func advise(err error) string {
 
 ```go
 import (
-	"github.com/oagentkit/goagent-kernel/guardset"
+	"github.com/yi-nology/goagent-kernel/guardset"
 	"github.com/oagentkit/toolgate/policy"
 )
 
@@ -888,7 +888,7 @@ stages := []invoke.Stage{
 ```go
 import (
 	"github.com/oagentkit/guardx/invoke"
-	"github.com/oagentkit/goagent-kernel/guardset"
+	"github.com/yi-nology/goagent-kernel/guardset"
 )
 
 // 装配面：持有「当前这一份」，并提供整份换掉的能力。
@@ -989,7 +989,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 func runProgram(ctx context.Context, stages []invoke.Stage) ptc.Result {
@@ -1166,7 +1166,7 @@ out, err := sandbox.Execute(ctx, reg, sandbox.LevelProcess, sandbox.Request{
 （不必各写一遍——各写一遍必然各判一套，漂移到没人发现为止）：
 
 ```go
-import "github.com/oagentkit/goagent-kernel/archcheck"
+import "github.com/yi-nology/goagent-kernel/archcheck"
 
 pol, err := archcheck.Load("architecture-policy.yaml")
 res, err := archcheck.Run(root, pol)
@@ -1288,7 +1288,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/oagentkit/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/checkpoint"
 )
 
 // 宿主提供：跨进程单调写 + 读取
@@ -1383,7 +1383,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/oagentkit/goagent-kernel/commitgate"
+	"github.com/yi-nology/goagent-kernel/commitgate"
 )
 
 // 终态词表由宿主注入——本包只管「独占」，不认任何状态取值
@@ -1457,8 +1457,8 @@ func commitStep(ctx context.Context, g *commitgate.Guard, ref commitgate.Ref,
 package myapp
 
 import (
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/watchdog"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/watchdog"
 )
 
 // ① 发布路径：先落库拿自增 ID，再广播——保证 SSE 游标是唯一的单调空间
@@ -1591,7 +1591,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/drain"
+	"github.com/yi-nology/goagent-kernel/drain"
 )
 
 // ① 每轮派发：轮 ctx 从根 ctx 脱钩，轮内取消/超时/接管语义原样保留
@@ -1951,7 +1951,7 @@ func guardOutflow(userMsg, modelAns string, toolResult any) error {
 `retryplan` 把两问合成一条可执行结论：
 
 ```go
-import "github.com/oagentkit/goagent-kernel/retryplan"
+import "github.com/yi-nology/goagent-kernel/retryplan"
 
 d := retryplan.Decide(err, retryplan.Options{})
 switch d.Path {
@@ -1987,7 +1987,7 @@ case retryplan.PathReplayed:
 你实现 `Store` 接口（落库），内核给判据。
 
 ```go
-import "github.com/oagentkit/goagent-kernel/sideeffect"
+import "github.com/yi-nology/goagent-kernel/sideeffect"
 
 runner := sideeffect.NewRunner(myStore, 30*time.Second)
 
@@ -2093,7 +2093,7 @@ outcome, res, err := runner.ExecuteWith(ctx, act, sideeffect.Effect{
 `sidetest.RunSinkContract` 的 **6 条**栅栏契约子测试：
 
 ```go
-import "github.com/oagentkit/goagent-kernel/sidetest"
+import "github.com/yi-nology/goagent-kernel/sidetest"
 
 func TestMyStore(t *testing.T) {
     sidetest.Run(t, func(t *testing.T, clock *sidetest.FakeClock) sidetest.ClockedStore {
@@ -2214,7 +2214,7 @@ case retryplan.PathReplayed:
 
 ```go
 import (
-	"github.com/oagentkit/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
 	"github.com/oagentkit/toolgate/policy"
 	"github.com/oagentkit/guardx/sandbox"
 )
@@ -2329,7 +2329,7 @@ package myapp
 import (
 	"context"
 
-	"github.com/oagentkit/goagent-kernel/dispatch"
+	"github.com/yi-nology/goagent-kernel/dispatch"
 )
 
 // 候选枚举接缝：候选怎么来是宿主的事（注册表 / 能力画像 / 启用开关全在宿主侧）
@@ -2429,8 +2429,8 @@ msg := injectband.Wrap("alert", injectband.SanitizeBody(webhookText))
 ```go
 import (
 	"github.com/oagentkit/guardx/egressproxy"
-	"github.com/oagentkit/goagent-kernel/egress"
-	"github.com/oagentkit/goagent-kernel/ptc"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/ptc"
 )
 
 spec := egress.Spec{Mode: egress.ModeProxy, Proxy: "http://127.0.0.1:7897"}
@@ -2510,9 +2510,9 @@ prov := ptc.NewSubprocessProvider(ptc.SubprocessOptions{
 
 ```go
 import (
-	"github.com/oagentkit/goagent-kernel/egress"
-	"github.com/oagentkit/goagent-kernel/gatecheck"
-	"github.com/oagentkit/goagent-kernel/preset"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/preset"
 	"github.com/oagentkit/guardx/sandbox"
 	"github.com/oagentkit/toolgate/policy"
 )
@@ -2590,8 +2590,8 @@ for _, one := range cmdpolicy.SplitCommands(cmdline) {   // ← 关键：先切�
 
 ```go
 import (
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/taskboard/boardtest"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
 )
 
 // 1) 你的存储实现 Board 四个方法（原子性由存储保证，本仓只判结果）
@@ -2683,7 +2683,7 @@ Worker 写，而你需要在网络分区时保证「旧区域不能继续提交�
 #### 最小集成片段
 
 ```go
-import "github.com/oagentkit/goagent-kernel/ownership"
+import "github.com/yi-nology/goagent-kernel/ownership"
 
 // 单区域：本区域即权威（任意任务域 epoch 1；转移显式 ErrSingleRegion）。
 auth, err := ownership.NewLocal("region-a")
@@ -2794,7 +2794,7 @@ if err != nil {
 查不到记录 ⇒ `ErrOverRelease` 且**不扣账**（不二次归还、不出负余额）。
 
 ```go
-import "github.com/oagentkit/goagent-kernel/scheduling"
+import "github.com/yi-nology/goagent-kernel/scheduling"
 
 store, err := scheduling.NewMemQuotaStore(
 	map[string]int64{"model:opus": 4},

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/trajectory"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 func TestAssess(t *testing.T) {

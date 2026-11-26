@@ -5,8 +5,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/steer"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/steer"
 )
 
 // Outcome 收尾路由的结论（接管 / 超时 / 取消 / 停机，见包头表）。

@@ -9,8 +9,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // 测试夹具全部合成数据（AGENTS.md 红线）。任务板用 coord 的适配器 +

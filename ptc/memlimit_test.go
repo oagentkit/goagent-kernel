@@ -199,7 +199,7 @@ func buildChildProgramInPkg(t *testing.T) string {
 	src := filepath.Join(dir, "main.go")
 	prog := `package main
 
-import "github.com/oagentkit/goagent-kernel/ptc"
+import "github.com/yi-nology/goagent-kernel/ptc"
 
 func main() {
 	ptc.MaybeRunChild()

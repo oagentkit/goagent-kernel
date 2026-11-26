@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"regexp"
 
-	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
+	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
 )
 
 // closingRefRe 合法的关闭 PR 号形态：#N。

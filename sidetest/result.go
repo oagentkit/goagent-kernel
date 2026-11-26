@@ -7,7 +7,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // payloadDone 裁决结果里的载荷内容（本套件的共享夹具值）。

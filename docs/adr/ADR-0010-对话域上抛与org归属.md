@@ -5,13 +5,30 @@
 | **状态** | 已采纳（Accepted） |
 | **日期** | 2026-11-26 |
 | **背景** | 跨 org 归属深度评测（2026-11-26，四路深挖：kernel 52 包逐包判定 / runtime 接口双源 / 上游现状 / 消费面）复核 v0.70 确立的分层口径——**纯基础设施→oekit；工具/沙箱/执行安全→oagentkit；编排判据→kernel；装配/参考实现→runtime**。该口径按「概念域」分派，不按「实现依赖」分派；本轮把它应用到两个 v0.70 没有枚举的面上：对话域（上下文工程 / 对话状态）与仓本身（org 归属）。 |
-| **决策** | ① **七包上抛**（导出面逐字未变，v0.77.0）：`roundguard`→`oagentkit/agent/roundguard`（单 agent 循环判据——循环本体已收敛、差异在循环周边，与多智能体编排无关）；`budget`/`spill`/`offload`→`oagentkit/textx`（对话域上下文工程：输入分段计量 / 输出溢出存档 / 大对象外置）；`pending`/`sessionref`/`memorypipe`→`oagentkit/promptx`（对话域状态与注入：反问挂起态 / 跨会话引用 / 记忆注入）。② **仓归属**：本仓与 goagent-runtime 迁入 `oagentkit` org（module path `github.com/oagentkit/goagent-kernel`）——本仓是框架层（编排判据），真实消费者是框架产品（argus-service），建仓时「宿主业务不公开」的理由已过期（两仓 public、bianque 零引用）；依赖方向早已指向 oagentkit/* + oekit/*。③ **不动面**：`tooldisclose`/`skilldisclose`（有在案裁定，待复核再议）；`trajectory`/`eval`（吃本仓 eventbus 类型，移动成环）；`eventbus`/`worker`/`hookengine` 与上游的邻接面（双源挂账另行裁决）。 |
+| **决策** | ① **七包上抛**（导出面逐字未变，v0.77.0）：`roundguard`→`oagentkit/agent/roundguard`（单 agent 循环判据——循环本体已收敛、差异在循环周边，与多智能体编排无关）；`budget`/`spill`/`offload`→`oagentkit/textx`（对话域上下文工程：输入分段计量 / 输出溢出存档 / 大对象外置）；`pending`/`sessionref`/`memorypipe`→`oagentkit/promptx`（对话域状态与注入：反问挂起态 / 跨会话引用 / 记忆注入）。② **仓归属**：本仓与 goagent-runtime 迁入 `oagentkit` org（module path `github.com/yi-nology/goagent-kernel`）——本仓是框架层（编排判据），真实消费者是框架产品（argus-service），建仓时「宿主业务不公开」的理由已过期（两仓 public、bianque 零引用）；依赖方向早已指向 oagentkit/* + oekit/*。③ **不动面**：`tooldisclose`/`skilldisclose`（有在案裁定，待复核再议）；`trajectory`/`eval`（吃本仓 eventbus 类型，移动成环）；`eventbus`/`worker`/`hookengine` 与上游的邻接面（双源挂账另行裁决）。 |
 | **后果** | kernel 收敛为 **43 包纯编排判据层**（契约面 / 状态机 / 副作用闸 / 介入面 / 执行安全合成）；消费方同 wave 迁移（goagent-runtime v0.7.0 / argus-service / code-review-service）。module path 变更后旧 tag 永久可解析（GitHub 重定向），新版本要求消费方改 import。七包上抛后本仓对它们的判据**只剩引用没有实现**——后续若上游判据漂移，本仓的 README 表会过期，由 docsync/门禁兜一致性。 |
 | **依据** | 下文「证据」节；`docs/OAGENTKIT-OVERLAP.md`（2026-10-21 快照中「budget 不下沉」的结论在本轮被复核推翻——该结论判的是「不与 textx/compact 合并」，本轮上抛是**平移为姊妹包**而非合并，职责面不重叠的原判定依然成立）；v0.70 的 toolname 两跳先例（先 oekit 后 oagentkit——概念域复核纠偏的既定模式）。 |
 
 > **一句话结论**：分层口径按概念域分派，不按实现依赖——对话域七包（循环判据 +
 > 上下文工程 + 对话状态）判据主语不是编排，全部上抛；仓归属与依赖方向对齐，
 > kernel/runtime 归 oagentkit org；kernel 收敛为纯编排判据层。
+
+---
+
+## 勘误（2026-11-26 晚）：org 归属部分已回迁
+
+本 ADR 第②项决策（kernel/runtime 归 oagentkit org）**已于同日回迁撤销**：
+两仓迁回 `yi-nology`（用户裁定），module path 在 kernel v0.80.0 / runtime v0.8.0
+变回 `github.com/yi-nology/goagent-*`。
+
+- **仍然有效的部分**：七包上抛（对话域概念域分派）、分层口径四层栈、B 档空的判定——
+  这些与 org 位置无关；
+- **已撤销的部分**：「仓归属与依赖方向对齐 ⇒归 oagentkit」的推论——org 归属以
+  yi-nology 为正主（与产品栈同 org），oagentkit 保持纯框架矩阵；
+- **消费口径**：v0.77–v0.79 / v0.7.0–v0.7.1 的 oagentkit tag **只能经 oagentkit
+  路径消费**（go.mod 声明即事实），≥ v0.80.0 / v0.8.0 回 yi-nology 路径。
+
+回迁公告：yi-nology/goagent-kernel#520、yi-nology/goagent-runtime#34。
 
 ---
 

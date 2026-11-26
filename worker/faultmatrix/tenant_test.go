@@ -12,9 +12,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // runCrossTenantTaskCollision 同 ID 跨租户：

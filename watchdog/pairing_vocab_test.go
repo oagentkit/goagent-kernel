@@ -20,8 +20,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/trajectory"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // TestPairingReasonsAlignWithTrajectory 词表逐值对齐（含别名归一）。

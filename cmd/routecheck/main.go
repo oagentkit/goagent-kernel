@@ -32,8 +32,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/oagentkit/goagent-kernel/internal/ledgerstatus"
-	"github.com/oagentkit/goagent-kernel/internal/routeledger"
+	"github.com/yi-nology/goagent-kernel/internal/ledgerstatus"
+	"github.com/yi-nology/goagent-kernel/internal/routeledger"
 	"gopkg.in/yaml.v3"
 )
 

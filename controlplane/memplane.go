@@ -23,7 +23,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // ErrAlreadyExists 目标已存在（Seed* 的重复登记；介入类动作不会报它——

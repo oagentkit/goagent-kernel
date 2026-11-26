@@ -6,9 +6,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // tenantCtx 介入写路径的租户上下文夹具（scope 词面是合成数据，词表归宿主）。

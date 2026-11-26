@@ -42,7 +42,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/trajectory"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // Check 评估判项词表（每个判项对应一类结构事实）。

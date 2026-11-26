@@ -13,8 +13,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // TestLoopConcurrencyTwoLongTasksRunInParallel 两个慢任务在 Concurrency=2

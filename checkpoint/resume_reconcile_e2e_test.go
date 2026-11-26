@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/checkpoint"
-	"github.com/oagentkit/goagent-kernel/sideeffect"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/goagent-kernel/checkpoint"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // reconcileProbe 宿主的闸侧试探：对「快照说已完成且有副作用」的步骤，

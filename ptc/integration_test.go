@@ -15,10 +15,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/ptc"
-	"github.com/oagentkit/goagent-kernel/tooldisclose"
 	"github.com/oagentkit/guardx/invoke"
 	"github.com/oagentkit/toolgate/policy"
+	"github.com/yi-nology/goagent-kernel/ptc"
+	"github.com/yi-nology/goagent-kernel/tooldisclose"
 )
 
 // TestDerivedSignatureRunsInPTC 派生 → 装配 → 执行，一条龙走通。

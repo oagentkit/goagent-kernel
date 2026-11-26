@@ -51,7 +51,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // RunID 运行标识（一轮编排；宿主生成，与 contract.RunContext.ID 同源）。

@@ -11,7 +11,7 @@
 package trajectory
 
 import (
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // ── 副作用行（v0.33.0，issue #99）────────────────────────────────────

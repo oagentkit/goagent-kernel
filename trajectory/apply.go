@@ -6,7 +6,7 @@
 package trajectory
 
 import (
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // Apply 投一条事件（增量投影）。

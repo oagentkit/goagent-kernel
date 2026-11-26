@@ -10,10 +10,10 @@ package main
 const (
 	// wedgeOut 启动期楔死：cmd/go 兜底闹钟杀了测试二进制，**没有 goroutine 栈**。
 	//（取自 2026-11-18 实录的失败日志：11m0s / signal: quit / 无栈）
-	wedgeOut = "ok \tgithub.com/oagentkit/goagent-kernel/contract\t0.006s\n" +
+	wedgeOut = "ok \tgithub.com/yi-nology/goagent-kernel/contract\t0.006s\n" +
 		"*** Test killed with quit: ran too long (11m0s).\n" +
 		"signal: quit\n" +
-		"FAIL\tgithub.com/oagentkit/goagent-kernel/statemachine\t660.101s\n" +
+		"FAIL\tgithub.com/yi-nology/goagent-kernel/statemachine\t660.101s\n" +
 		"FAIL\n"
 
 	// raceOut 数据竞争：竞态检测器自己报的。
@@ -21,11 +21,11 @@ const (
 		"WARNING: DATA RACE\n" +
 		"Write at 0x00c0000b4010 by goroutine 12:\n" +
 		"  foo.bar()\n" +
-		"FAIL\tgithub.com/oagentkit/goagent-kernel/ptc\t1.234s\n"
+		"FAIL\tgithub.com/yi-nology/goagent-kernel/ptc\t1.234s\n"
 
 	// failOut 普通用例失败（断言失败）。
 	failOut = "--- FAIL: TestFoo (0.00s)\n" +
 		"    foo_test.go:10: want 1, got 2\n" +
-		"FAIL\tgithub.com/oagentkit/goagent-kernel/statemachine\t0.012s\n" +
+		"FAIL\tgithub.com/yi-nology/goagent-kernel/statemachine\t0.012s\n" +
 		"FAIL\n"
 )

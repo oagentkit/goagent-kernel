@@ -14,7 +14,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // claimed 一次在途认领（领取环、执行协程与心跳协程的共享面）。

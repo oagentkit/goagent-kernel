@@ -11,8 +11,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // memBoard 一份最小的内存实现（仅供套件自证；生产实现归宿主）。

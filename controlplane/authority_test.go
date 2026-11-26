@@ -17,9 +17,9 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/sideeffect"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // fakeEffects 副作用闸替身：states[key] = 是否已生效（闸自己的状态）。

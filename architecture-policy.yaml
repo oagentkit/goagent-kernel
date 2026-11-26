@@ -1000,7 +1000,7 @@ rules:
         want: hit
       - text: 'github.com/yi-nology/ekit'
         want: hit
-      - text: 'github.com/oagentkit/goagent-kernel/protocol'
+      - text: 'github.com/yi-nology/goagent-kernel/protocol'
         want: miss
 
   # ── oekit 家规（矩阵一致性）──

@@ -13,10 +13,10 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/controlplane"
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/controlplane"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 func runControlPlaneConcurrentIntervention(t *testing.T) {

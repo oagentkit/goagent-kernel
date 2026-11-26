@@ -7,8 +7,8 @@ import (
 
 	kerrors "github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // atomicTaskBoard 实现 ForceReleaseAtomic 的任务权威替身：

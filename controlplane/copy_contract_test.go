@@ -3,7 +3,7 @@ package controlplane
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // TestCloneTaskDoesNotAliasDeps 钉住「账面切片不外借」的契约（issue #396）。

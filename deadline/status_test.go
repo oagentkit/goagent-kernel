@@ -3,7 +3,7 @@ package deadline
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // TestStatusMappingInjection 钉住 issue #237 的接缝：默认映射 = contract 词表

@@ -14,7 +14,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/contract"
 )
 
 // StepStatus 环节状态。

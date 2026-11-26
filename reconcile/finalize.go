@@ -30,8 +30,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/eventbus"
 )
 
 // finalizeOutboxBatch 一次补做的最大行数（宿主周期调用 FlushFinalizeOutbox；

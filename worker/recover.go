@@ -16,7 +16,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // Recover 接管任务板上「认领已过期」的任务（崩溃恢复入口）。

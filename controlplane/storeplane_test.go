@@ -14,10 +14,10 @@ import (
 	"github.com/oekit/concurrency/async"
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/sideeffect"
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // seededStore 场景夹具：run r1 挂两个任务（t1 可认领，t2 依赖 t1），

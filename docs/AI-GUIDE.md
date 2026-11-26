@@ -235,10 +235,10 @@ make ledgercheck          # ④ 演进台账纪律
 
 ```
 # ① make test —— 每行一个包，结尾无 FAIL，退出码 0
-ok  	github.com/oagentkit/goagent-kernel/protocol	0.482s
-ok  	github.com/oagentkit/goagent-kernel/ptc	2.913s
-ok  	github.com/oagentkit/goagent-kernel/worker	3.859s
-ok  	github.com/oagentkit/goagent-kernel/worker/faultmatrix	0.436s
+ok  	github.com/yi-nology/goagent-kernel/protocol	0.482s
+ok  	github.com/yi-nology/goagent-kernel/ptc	2.913s
+ok  	github.com/yi-nology/goagent-kernel/worker	3.859s
+ok  	github.com/yi-nology/goagent-kernel/worker/faultmatrix	0.436s
 
 # ② make architecture-check
 架构门禁通过（12 条规则 + 0 个门面包 + 51 个包的依赖方向，policy version 1；无阻断级违反）
@@ -1086,7 +1086,7 @@ make devlink                          # 接入本地 workspace（不改 go.mod�
 make devunlink                        # 断开
 
 # ── 宿主侧复用本仓门禁（示例）─────────────
-# import "github.com/oagentkit/goagent-kernel/archcheck"
+# import "github.com/yi-nology/goagent-kernel/archcheck"
 # root, err := archcheck.FindRoot(".")                                  # 向上找 policy
 # pol, err := archcheck.Load(filepath.Join(root, "architecture-policy.yaml"))
 # res, err := archcheck.Run(root, pol)

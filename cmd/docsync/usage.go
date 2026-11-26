@@ -43,7 +43,7 @@ var (
 	// usageModulesCountRe 抓 USAGE 里的 policy 登记数声明。
 	usageModulesCountRe = regexp.MustCompile(`modules\x60 段登记\s*\*\*(\d+)\*\*\s*个\s*module\s*id`)
 	// usageInstallRe 抓安装行及其版本。
-	usageInstallRe = regexp.MustCompile(`go get github\.com/oagentkit/goagent-kernel@(\S+)`)
+	usageInstallRe = regexp.MustCompile(`go get github\.com/yi-nology/goagent-kernel@(\S+)`)
 )
 
 // checkUsage 校验 USAGE.md 的机器口径块。
@@ -133,7 +133,7 @@ func checkUsage(pkgCount int) (problems []string, checked bool, err error) {
 	m = usageInstallRe.FindStringSubmatch(text)
 	if m == nil {
 		problems = append(problems, fmt.Sprintf(
-			"%s: 找不到安装行（go get github.com/oagentkit/goagent-kernel@...）",
+			"%s: 找不到安装行（go get github.com/yi-nology/goagent-kernel@...）",
 			usagePath))
 	} else if m[1] != "latest" {
 		problems = append(problems, fmt.Sprintf(

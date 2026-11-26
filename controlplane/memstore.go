@@ -29,7 +29,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // MemStore Store 的进程内参考实现。经 NewMemStore 构造；零值可用；

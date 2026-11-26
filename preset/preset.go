@@ -62,8 +62,8 @@ import (
 	"github.com/oekit/pkg/errors"
 	"github.com/oekit/pkg/slicex"
 
-	"github.com/oagentkit/goagent-kernel/egress"
-	"github.com/oagentkit/goagent-kernel/gatecheck"
+	"github.com/yi-nology/goagent-kernel/egress"
+	"github.com/yi-nology/goagent-kernel/gatecheck"
 )
 
 // Preset 一份具名权限预设。

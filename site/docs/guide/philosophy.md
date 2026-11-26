@@ -220,5 +220,5 @@ title: 设计初衷
 | `netguard`（上游 guardx）代次单一真相 | 两个独立计数器记录同一代次，非原子读改写下 64 次并发交换只推进 54 代——「换过没有」给不出答案 |
 
 想看完整的形态库，见仓内
-[AGENTS.md](https://github.com/oagentkit/goagent-kernel/blob/main/AGENTS.md) 与
+[AGENTS.md](https://github.com/yi-nology/goagent-kernel/blob/main/AGENTS.md) 与
 [docs/USAGE.md 的坑速查表](../reference/pitfalls.md)。

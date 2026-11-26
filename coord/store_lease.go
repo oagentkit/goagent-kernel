@@ -12,7 +12,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // Complete 标记完成并留存结果（幂等：先到者的结果不被后到者覆盖；

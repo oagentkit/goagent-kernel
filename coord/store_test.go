@@ -3,7 +3,7 @@ package coord
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/sidetest"
+	"github.com/yi-nology/goagent-kernel/sidetest"
 )
 
 // StoreAdapter 接入共享契约套件（硬失败不跳过——接入即声明满足契约）。

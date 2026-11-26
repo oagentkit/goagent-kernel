@@ -11,8 +11,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 func (e *ManagedExecutor) Resolve(ctx context.Context, act sideeffect.Action, res sideeffect.Resolution) (sideeffect.Outcome, sideeffect.Result, error) {

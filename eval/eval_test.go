@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/eventbus"
-	"github.com/oagentkit/goagent-kernel/trajectory"
+	"github.com/yi-nology/goagent-kernel/eventbus"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // 合成事件流：一轮 + 一步 + 一次配对完整的工具调用（夹具只带中性词面）。

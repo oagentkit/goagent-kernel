@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // mustNotDeadlockCP 在 3s 内没返回即判死锁（goroutine 泄漏由测试进程收场）。

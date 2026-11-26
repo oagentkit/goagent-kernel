@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/invocation"
+	"github.com/yi-nology/goagent-kernel/invocation"
 )
 
 // memStore 一份最小的内存实现（仅供套件自证；生产实现归宿主）。

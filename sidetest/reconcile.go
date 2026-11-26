@@ -8,7 +8,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 本文件是「对账占用」一族的契约场景（v0.33.0 新增）。

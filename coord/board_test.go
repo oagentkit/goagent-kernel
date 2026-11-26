@@ -6,8 +6,8 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/taskboard/boardtest"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
 )
 
 // BoardAdapter 接入共享契约套件（硬失败不跳过——接入即声明满足契约）。

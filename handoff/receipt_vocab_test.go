@@ -10,7 +10,7 @@ package handoff
 import (
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/delegate"
+	"github.com/yi-nology/goagent-kernel/delegate"
 )
 
 // TestReceiptVocabularySharedWithDelegate 三值逐条相等 + 完成态字面量相同。

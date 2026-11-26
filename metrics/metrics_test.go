@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/oagentkit/goagent-kernel/retryplan"
-	"github.com/oagentkit/goagent-kernel/trajectory"
 	"github.com/oekit/pkg/errors"
+	"github.com/yi-nology/goagent-kernel/retryplan"
+	"github.com/yi-nology/goagent-kernel/trajectory"
 )
 
 // TestSpecsSelfCheck 登记表自洽：名称唯一、前缀统一、类型与单位合法、

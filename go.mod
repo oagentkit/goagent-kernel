@@ -1,4 +1,4 @@
-module github.com/oagentkit/goagent-kernel
+module github.com/yi-nology/goagent-kernel
 
 // 最低工具链 1.27.4：不是风格选择，是安全地板。
 //

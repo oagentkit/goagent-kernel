@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/taskboard"
-	"github.com/oagentkit/goagent-kernel/taskboard/boardtest"
-	"github.com/oagentkit/goagent-kernel/tenant"
+	"github.com/yi-nology/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/taskboard/boardtest"
+	"github.com/yi-nology/goagent-kernel/tenant"
 )
 
 // TestTenantBoardAdapterContractSuite 租户作用域适配器接入共享契约套件。

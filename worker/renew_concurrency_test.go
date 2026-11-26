@@ -39,8 +39,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oagentkit/goagent-kernel/coord"
-	"github.com/oagentkit/goagent-kernel/taskboard"
+	"github.com/yi-nology/goagent-kernel/coord"
+	"github.com/yi-nology/goagent-kernel/taskboard"
 )
 
 // slowRenewBoard 让每次续期花 delay，并记录**在途续期数**、峰值并发、

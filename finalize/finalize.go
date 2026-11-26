@@ -59,8 +59,8 @@ import (
 
 	"github.com/oekit/logx"
 
-	"github.com/oagentkit/goagent-kernel/contract"
-	"github.com/oagentkit/goagent-kernel/deadline"
+	"github.com/yi-nology/goagent-kernel/contract"
+	"github.com/yi-nology/goagent-kernel/deadline"
 )
 
 // log 收尾留痕（logx.Delegating 懒解析宿主后端）。

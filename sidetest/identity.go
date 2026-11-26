@@ -8,7 +8,7 @@ import (
 
 	"github.com/oekit/pkg/errors"
 
-	"github.com/oagentkit/goagent-kernel/sideeffect"
+	"github.com/yi-nology/goagent-kernel/sideeffect"
 )
 
 // 本文件是「动作身份不可变」一族的契约场景（评审第三轮 P0）。
