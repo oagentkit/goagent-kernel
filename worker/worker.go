@@ -21,6 +21,20 @@
 //     续期走 taskboard.RenewingBoard（issue #87 的能力，心跳不是摆设：
 //     它续的就是那条契约的租约），退出走排水语义。
 //
+// # 与 oagentkit/queue/worker.Pool 的分界（kernel#507 裁决，2026-11-26）
+//
+// 矩阵里有两套**同形**的 worker 驱动，语义不同源、依赖方向互禁，**不抽共享骨架**：
+//
+//   - 本包（编排任务驱动）：领取走 taskboard.Board（DAG 依赖 / 挑选钩子 /
+//     凭据租约——token+fence 资格检查），身份由 Registry 铸造，恢复=凭据接管；
+//   - oagentkit/queue/worker.Pool（DB 即队列数据面驱动）：ClaimNextPending
+//     单语句原子抢占，handler 无凭据，安全=心跳存活 + 失联复位（复位重跑）。
+//
+// 两者的交集只有薄骨架（ctx 轮询节拍、心跳与续期分离、排水次序、panic 隔离），
+// 而底座已单源：节拍 @oekit/concurrency/loop@@、panic 隔离 @oekit/concurrency/async@@。
+// 依赖方向禁掉一半组合（矩阵内仓不得依赖 kernel；kernel 不落库故不依赖 queue），
+// 抽「共享循环」只会制造第三份真相——裁决为**各自成文、互指本单**。
+//
 // # 心跳与续期是两个心跳（都接上了既有契约）
 //
 //   - **worker 心跳**（@@Registry.Heartbeat@@）：「这个 worker 还活着」——
