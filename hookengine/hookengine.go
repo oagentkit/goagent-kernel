@@ -34,6 +34,24 @@
 //
 // 无匹配时裁决为 allow，但 @@Result.Notes@@ 里必须写明「没有匹配的 hook」：
 // 「没有检查」与「检查通过」在日志里长得一样，而前者是配置漏了的形态。
+//
+// # 与 oagentkit/runtime/hookx 的分界（kernel#508 裁决，2026-11-26）
+//
+// 矩阵里两套 hook 机制**互不 import**、各留原位：
+//
+//   - hookx 拥有：ZCode 传输协议（子进程 stdin/stdout JSON、决策抢救、
+//     procx 白名单）、七事件词表（pre_tool_use/stop/…）、该协议下的归并
+//     语义（权限单调合并、Stop 的 block 反转、UpdatedInput 重走许可链）；
+//   - 本包拥有：**跨形态判定判据**——什么算拒绝（ExitCode≠0⇒deny、阻塞
+//     执行失败恒 deny、超时按 OnTimeout 显式裁决缺省 deny、第一个拒绝即
+//     收口、无匹配必须留痕）；宿主自带传输（插件/HTTP）时的唯一判定入口。
+//
+// 接线约定：hookx **不是**本包 Runner 的开箱实现（粒度不同：前者整事件归并、
+// 后者逐 hook Outcome）——宿主两边都用时在宿主侧做 RunResult→Verdict 适配。
+// **fail-closed 缺省相反是刻意的、不得对齐**：本包面向宿主自装检查（缺检查
+// =漏配置 ⇒ 缺省闭），hookx 面向扩展点（扩展故障不阻断业务 ⇒ 缺省开、
+// 安全事件经 FailClosedEvents 选配收紧）。重审触发：任一侧出现第二个生产
+// 消费方，或 hookx 被要求支持工具维匹配。
 package hookengine
 
 import (

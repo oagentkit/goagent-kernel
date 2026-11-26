@@ -19,6 +19,25 @@
 // 参考实现，宿主就会照着改它，最后两份真相并存。这与 @checkpoint.StoreCAS@
 // 的分工完全同构：契约与判据归内核，落库归宿主。
 //
+// # 与 oagentkit/queue.LeaseStore 的租约分界（kernel#509 裁决，2026-11-26）
+//
+// 矩阵里有两套「租约 + 围栏」判据，**fence 递增规则同源同义**（同主体续约不变、
+// 易主/接管严格 +1、续期不递增——各自测试已钉死），差异在作用域与铸造位置：
+//
+//   - 本包（编排任务租约）：每任务一租约，token 由存储在**同一次原子 Claim**
+//     里与 fence 一起铸造，过期判定走进程内纯谓词 @@LeaseHeld@@，凭据是
+//     Release/Complete/Renew 的唯一资格（boardtest 20 条子套件钉住）；
+//   - oagentkit/queue.LeaseStore / TokenLeaseStore（队列选主租约）：每 key
+//     单一 leader，holder 内容比对 + UPSERT 铸造，fence 是可选加强，过期判
+//     DB 时钟（禁应用时钟），参考实现 pglease/sqllease 各自自测。
+//
+// 另有**第三形态**要一并分清：queue 的任务面（TaskQueue）只有心跳/复位、
+// handler 无 token/fence——它不是租约判据，别把三套混为一谈。
+// 接口不可互换（状态机/Deps/租户 vs 单 key UPSERT），依赖方向互禁，
+// 故裁决为**对称交叉声明**（本段 + queue/worker/leader.go 包头），不收敛单源。
+// 附带结论：oekit/pkg/distlock 是锁接口（TryLock/Lock/Unlock + ownerID），
+// 无 fencing、无资格续期语义，**不是**本判据的收敛候选。
+//
 // # 为什么「认领」必须是原子的
 //
 // 认领是**读-判-写**：读当前状态、判依赖是否完成、写 owner。三段分开做，
