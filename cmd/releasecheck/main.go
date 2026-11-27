@@ -42,6 +42,11 @@ const changelogPath = "CHANGELOG.md"
 // 判据不变：新提交一旦混装就红。这张表存在只因为「已发布的历史不可重写」——
 // 不登记它们，本门禁在 v0.41.0 上会永远红，而红理由是既成事实、修不了。
 var legacyMixed = map[string]string{
+	"265befc": "v0.80.0：org 归属回迁主提交（PR #521）的 go.mod module 声明改名与" +
+		"全仓自身路径重写混装；已随 v0.80.0 发布不可重写。其依赖部分是 module " +
+		"路径 github.com/oagentkit/goagent-kernel → github.com/yi-nology/goagent-kernel，" +
+		"与 236 处自身引用重写互为因果（不同步改编译不过）；行为变更已在 v0.80.0 " +
+		"CHANGELOG 段写明（module path 破窗），未藏进依赖段",
 	"ece11ad": "v0.73.0：三包上抛上游提交的 go.mod/go.sum 与删包/import 重指混装；" +
 		"PR #486 已合并发布不可重写。其依赖部分是 oagentkit/tools 从依赖图移除" +
 		"（rogpeppe/go-internal 随之降 indirect、mvdan.cc/sh/v3 退出），与被删的" +
