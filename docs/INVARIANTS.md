@@ -42,32 +42,31 @@ updated: 2026-11-27
 
 | 间隙 | F1 崩溃 | F2 双副本 | F3 响应丢失 | F4 租约过期+旧恢复 | F5 事件丢失 | F6 双终态 | 豁免/备注 |
 |---|---|---|---|---|---|---|---|
-| G1 创建→领取 | `reconcile.TestBootOrphanReclaimedBeforeAnchor` | `taskboard.TestConcurrentClaimExactlyOneWinner` | 缺口 | — | — | — | 创建回执丢失后重试不重复的用例待补（矩阵缺口，见 §三） |
-| G2 领取→执行 | 缺口 | — | — | `worker.TestManagedExecutorRenewalPreventsTakeover` | — | — | 死在领取后、执行前的正向崩溃注入待补（矩阵缺口，见 §三）；租约过期+旧恢复由 F4 列覆盖 |
+| G1 创建→领取 | `reconcile.TestBootOrphanReclaimedBeforeAnchor` | `taskboard.TestConcurrentClaimExactlyOneWinner` | `controlplane.TestFaultCreateReceiptLostRetryNoDuplicate` | — | — | — | — |
+| G2 领取→执行 | `worker.TestFaultClaimedWorkerDiesBeforeExecuteReclaim` | — | — | `worker.TestManagedExecutorRenewalPreventsTakeover` | — | — | 租约过期+旧恢复由 F4 列覆盖 |
 | G3 执行→副作用 | `sideeffect.TestExpiredIntentRequiresReconcile` | `sideeffect.TestInFlightBlocksSameKey` | `sideeffect.TestUnknownOutcomeFailsLoudly` | `worker.TestManagedExecutorLateCheckpointRejectedAfterTakeover` | — | — | 已知偶发红 `ptc.TestStressSubprocessKillMidRunReaps`（#465）不作判据登记——挂红的测试守不住任何东西 |
 | G4 副作用→事件 | `eventbus.TestDurablePublishInsertPanicIsolated` | `worker/faultmatrix.TestFaultDeploymentMatrix` | `worker/faultmatrix.TestFaultDeploymentMatrix` | — | `worker/faultmatrix.TestFaultDeploymentMatrix` | — | faultmatrix 场景 `durable-write-then-publish-failure`（F1/F5 同源：写成而发布失败） |
-| G5 事件→checkpoint | `checkpoint.TestFaultResumeInterruptedBeforeSnapshot` | `worker/faultmatrix.TestFaultDeploymentMatrix`<br>`eventbus.TestTailerOutOfOrderCommitNotSkipped` | — | 缺口 | `eventbus.TestOutboxWatermarkAdvancesOnlyWithCommit` | — | faultmatrix 场景 `event-out-of-order-commit`（乱序提交不丢帧）；租约过期+旧恢复插在本间隙的正向用例待补（矩阵缺口，见 §三） |
+| G5 事件→checkpoint | `checkpoint.TestFaultResumeInterruptedBeforeSnapshot` | `worker/faultmatrix.TestFaultDeploymentMatrix`<br>`eventbus.TestTailerOutOfOrderCommitNotSkipped` | — | `worker.TestFaultLeaseExpiredOldHolderResumeBetweenEventAndCheckpoint` | `eventbus.TestOutboxWatermarkAdvancesOnlyWithCommit` | — | faultmatrix 场景 `event-out-of-order-commit`（乱序提交不丢帧） |
 | G6 checkpoint→终态 | `checkpoint.TestFaultResumeInterruptedThenResumes` | `checkpoint.TestFaultTwoWorkersResumeSameTask` | `checkpoint.TestFaultSaveFailsGateRollsBackSameSeqRetryable` | `worker.TestManagedExecutorFencedCommitRejectsLateHolder` | — | `checkpoint.TestFaultConcurrentSameSeqExactlyOneWinner`<br>`commitgate.TestConcurrentTerminalCommitHasExactlyOneWinner` | — |
 | G7 终态→终态事件 | `reconcile.TestFinalizeOutboxMarkFailureReplays` | `reconcile.TestFinalizeAtomicFailureNoSplit` | — | — | `reconcile.TestFinalizeOutboxNoLossNoDuplicate` | `controlplane.TestForceReleaseVsWorkerCompleteSingleWinner` | — |
 
-## 三、缺口与补测计划（三个矩阵缺口 = 下一批三条插点用例的靶子）
+## 三、三个插点用例的补测记录（2026-11-28 清偿）
 
-矩阵里标 `缺口` 的三格是**已知零覆盖**（行级有场景兜底，故门禁绿——绿的是
-「没有静默空隙」，不是「每一格都有场景」）。三条靶子按评审点名的故障形态选：
+首批矩阵缺口三条已全部补为 `TestFault*` 用例（fault-injection 层执行，注入时钟、
+零墙钟尺子、defer 收尾），指针已落上表：
 
-1. **G1/F3 创建回执丢失**：存储提交成功但响应没回来，客户端重试创建 ⇒ 不得出现
-   重复任务。评审点名「数据库提交成功但响应丢失」在创建段的形态——仓内现有
-   判据只到领取段（`taskboard.TestConcurrentClaimExactlyOneWinner`）。
-2. **G2/F1 死在领取后、执行前**：正向崩溃注入（领取完成 → 进程死 → 重启后经
-   租约过期重新可领）。现由 F4 列的租约过期接管**侧写**覆盖，缺正向注入——
-   checkpoint `TestFault*` 的形态往链条前推一格即是。
-3. **G5/F4 租约过期 + 旧恢复插在事件与 checkpoint 之间**：旧持有者在事件已发布、
-   快照未保存时恢复执行 ⇒ 快照不得回退、事件不得重放。G6/F4 有
-   `TestManagedExecutorFencedCommitRejectsLateHolder`，但插在 G5 的形态无正向用例。
-
-补测纪律：新用例先在本矩阵落指针（`make invariantcheck` 当场核存在），再进
-`fault-injection` 层或对应包——**指针先行，测试随后**会让门禁红，这是故意的：
-登记了没补上比不登记更坏。
+1. **G1/F3 创建回执丢失** → `controlplane.TestFaultCreateReceiptLostRetryNoDuplicate`：
+   首次 SeedRun 落库（回执丢失）⇒ 重试同 run 报 `ErrAlreadyExists`、换 run 同任务也拒
+   ⇒ 板上恰好一行、被拒重试不留半截 run、原任务仍可领。
+   （查证记录：taskboard 契约无创建入口——任务拓扑是宿主资产，`coord/board.go` 的
+   `Seed` 是套件接缝非生产 API ⇒ 用例落在内核内真实带重复判定的 `controlplane.MemStore.SeedRun`。）
+2. **G2/F1 死在领取后、执行前** → `worker.TestFaultClaimedWorkerDiesBeforeExecuteReclaim`：
+   A 领取后零续期，注入时钟推过 TTL ⇒ 过期窗口内与被接管后 A 的 Complete/Renew 一律
+   `ErrLeaseLost` 且任务原状不动；B 重新可领（代次严格递增）凭自己令牌恰好一次收场。
+3. **G5/F4 租约过期 + 旧恢复插在事件与 checkpoint 之间** →
+   `worker.TestFaultLeaseExpiredOldHolderResumeBetweenEventAndCheckpoint`：
+   A 施加（事件已发布）后卡在快照提交入口 ⇒ 推钟过期 ⇒ B 接管完整收场（快照代次 2 落库）
+   ⇒ 放行 A ⇒ A 迟到快照被 `ErrStaleFence` 拒、序号不回退、跨执行器施加恰好 1 次（事件不重放）。
 
 ## 四、判据边界（如实登记）
 
