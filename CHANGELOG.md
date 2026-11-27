@@ -10392,7 +10392,7 @@ golangci-lint ✅ 0 issues
 
 - 文档(overlap)：复核并更正 §四 的结论——补完整映射表，删掉一句不实断言
 
-上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一���上下文窗口在两处算出两个
+上一轮下沉 toolfail/sandbox 时，我在 §四 写了「同一个上下文窗口在两处算出两个
 阈值」。**实测评数值后该断言不成立**，本轮更正。
 ## 断言错在哪
 1. **对照方式本身错了**：拿上游 `EffectiveWindow()`（纯窗口口径：窗口−预留）与
@@ -11228,7 +11228,7 @@ requires 改成真实依赖 [eventbus]，删除那句自我合理化。
 ### 新增(tooldisclose)：SignatureOf 从 schema 派生调用形态，消除第二份描述
 
 对标 OpenCode codemode/src/tool-schema.ts 的 inputProperties：他们从工具声明的 schema
-自动派��签名与必填/可选标注，schema 是唯一事实源。
+自动派生签名与必填/可选标注，schema 是唯一事实源。
 我们的 Signature 此前要宿主手写，等于同一组参数有两份描述。加了参数忘了改签名，
 模型就按旧签名调用——传不进去的、或多传的，两种都表现为「工具明明支持，模型却
 调不对」，而排查时极容易先怀疑模型。派生把「靠人记得同步」变成「不可能忘记」。
