@@ -558,6 +558,29 @@ modules:
       **已知边界（如实登记）**：机器判得了「已登记的成员是否都达成」，判不了
       「什么算一个路线阶段」——那是人的判断；新增阶段须人维护登记面，
       漏登记的后果是「新阶段成员不被本门禁核」，由 review 与台账纪律兜住。
+
+  # 2026-11-27 新增（issue #523）：执行不变量与插点矩阵的**绑定对账器**。
+  #
+  # 为什么进内核而不是留在 cmd 里：评审（§3.3 问题二）要的「执行正确性证明体系」
+  # 最低形态是「每条不变量有测试守着、每个步骤间隙有场景或豁免」——这句话要持续
+  # 可证，判据就不能是散文。登记面（docs/INVARIANTS.md）与仓内测试事实各读一遍
+  # 结论必然分叉，故判据下沉为可导入包，cmd 只做扫描与注入。
+  #
+  # 为什么是机制面而不是资产：它不认识任何宿主领域——输入是一份不变量登记结构体 +
+  # 仓内测试名集合，输出是「绑定在不在、空隙有没有」。七类不变量叫什么、间隙是哪
+  # 七个，全在登记面与验收口径（issue #523）里，不在判据代码里。
+  - id: invariantledger
+    roots: [internal/invariantledger]
+    requires: []
+    owner: harness
+    managed: true
+    notes: |
+      不变量绑定对账：登记面（七类不变量的必红判据 + 插点矩阵 G1–G7 的场景/豁免）
+      ↔ 仓内 *_test.go 的测试名事实。三条判据：登记面自身形状 / 指针真实存在 /
+      零静默空隙。requires 为空：判据层只吃已解析的结构体与注入的测试集合，
+      不引第三方解析器（md 表解析在包内、测试扫描在 cmd 侧）。
+      **已知边界（如实登记）**：机器判得了「登记的测试存在」，判不了「它真的在 CI
+      跑 / 没被 t.Skip」——那由 make unit 与 fault-injection 分层口径及测试质量面兜住。
       GitHub 侧的「已关闭」**不在本判据**（由 ledgercheck 判据 5 全量对账）——
       同一事实判两次就是漂移源。
 
@@ -1691,8 +1714,14 @@ dependency_direction:
 #                                            机制依赖。它与 cmd/ledgercheck 共读
 #                                            internal/ledgerstatus（单号 → 状态的唯一
 #                                            派生器），两处各解析一遍必然漂移。
+#   cmd/invariantcheck                   不变量绑定对账门禁（2026-11-27，issue #523）：
+#                                            判 docs/INVARIANTS.md 两张表 ↔ 仓内测试名
+#                                            事实（指针存在 + 零静默空隙）；读登记面与
+#                                            扫测试文件是工具职责，不形成机制依赖。它与
+#                                            判据层分家：结论全在 internal/invariantledger
+#                                            （纯函数），本命令只做 I/O 与注入。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, cmd/invariantcheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
@@ -2369,7 +2398,7 @@ thresholds:
   # 耦合提醒（删包时必须同做）：modules 段与 scan_roots 段必须**同步**——
   # 只摘一边，policy 自校验当天即红（「登记在 modules 段却不在 thresholds.scan_roots
   # 段」/「thresholds.scan_roots 项 %q 不存在或无法读取」）。
-  scan_roots: [protocol, statemachine, eventbus, ptc, watchdog, delta, drain, reconcile, contract, checkpoint, commitgate, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, taskboard, taskboard/boardtest, invocation, invocation/invocationtest, skilldisclose, hookengine, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, raceprobe]
+  scan_roots: [protocol, statemachine, eventbus, ptc, watchdog, delta, drain, reconcile, contract, checkpoint, commitgate, tooldisclose, guardset, sideeffect, sidetest, retryplan, egress, preset, taskboard, taskboard/boardtest, invocation, invocation/invocationtest, skilldisclose, hookengine, delegate, worktree, gatecheck, trajectory, archcheck, internal/ledgerstatus, internal/acceptancepath, internal/routeledger, internal/invariantledger, cmd, backend, handoff, ownership, eval, coord, worker, scheduling, cost, tenant, controlplane, metrics, finalize, steer, dispatch, deadline, raceprobe]
   enforce: true
   # enforce=true 时超阈值即非零退出。切换条件（两条均已满足，2026-10-18 切换）：
   #   1) 现存超限项清零或显式登记为债；

@@ -189,7 +189,7 @@ GOVULNCHECK_VERSION := v1.7.0
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck issue-state releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck issue-state releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -439,7 +439,7 @@ architecture-check-types: ## 架构门禁严格档（go/types 类型感知：覆
 # 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault' -timeout $(TEST_GO_TIMEOUT)
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck releasecheck modreplace modwork hygiene cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -552,6 +552,14 @@ routecheck: ## 路线达成对账（登记面 ↔ 台账：路线成员逐条已
 	@# internal/ledgerstatus 派生（唯一派生器，两处各解析一遍必然漂移）。
 	$(EXPORT) $(GOENV) go run ./cmd/routecheck
 
+invariantcheck: ## 不变量绑定对账（登记面 ↔ 仓内测试：每类有判据守、每间隙有场景或豁免，issue #523）
+	@# 评审（2026-11-27 §3.3 问题二）：机制正确不代表系统正确——七类不变量散在各包注释
+	@# 与台账散文里，「哪条测试在守」没人核；插点矩阵是点名式的，某个步骤间隙零场景
+	@# 不显形。本目标是 docs/INVARIANTS.md 两张表的执行体：登记的指针指向不存在的测试
+	@# ⇒ 红并点名；间隙既无场景也无书面豁免 ⇒ 红（零静默空隙）。
+	@# 判据本体在 internal/invariantledger（纯函数），仓内测试事实由 cmd 扫描注入。
+	$(EXPORT) $(GOENV) go run ./cmd/invariantcheck
+
 # ── issue 状态快照的数据源（issue #455）─────────────────────────────
 # 台账是**声明面**、GitHub 是**事实面**，两者会漂：2026-11-21 实录——台账把
 # #427/#428/#430 记成「已合入 (#436)」、代码也逐条核实落地，而 gh issue list 里
@@ -653,7 +661,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck releasecheck modreplace modwork hygiene
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy
