@@ -576,6 +576,24 @@ deps:
       seam: ""
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/invariantcheck
+      function: loadDoc
+      deps:
+        - fs
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 读不变量登记面并交给解析层（internal/invariantledger.ParseDoc）：判定不在本层（结论全在 Judge，它吃的是注入的仓内测试事实，不是外部读）
+
+    - package: cmd/invariantcheck
+      function: buildTestIndex
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 扫仓内 *_test.go 产出测试名集合——扫真文件本身就是门禁职责（注入了就能绕过「指针是否真实存在」这条判据）
+
     - package: cmd/routecheck
       function: loadRegistry
       deps:
