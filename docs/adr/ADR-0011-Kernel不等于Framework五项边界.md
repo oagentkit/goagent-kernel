@@ -38,7 +38,7 @@
    go/ast 判定，单行/块/别名/空白导入一视同仁）：
    - 判定面：生产 **与测试** 代码（`ignore_test: false`——测试里起真模型调用
      比生产代码更危险）；`scope_exclude: [cmd]`；
-   - 反向验证（2026-11-28 实测）：任一文件注入 `import _ "github.com/oagentkit/llm/client"`
+   - 反向验证（2026-11-28 实测）：任一文件注入 `import _ "github.com/oagentkit/llm/port"`
      ⇒ 当场红；移除即绿。
 
 ## 判据边界（如实登记）
