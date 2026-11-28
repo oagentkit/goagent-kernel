@@ -2,6 +2,9 @@
 package main
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -199,5 +202,129 @@ func TestParseDocMissingTable(t *testing.T) {
 	if _, err := parseDoc("updated: 2026-11-28\n\n只有白名单没主表\n"); err == nil ||
 		!strings.Contains(err.Error(), "能力面表") {
 		t.Fatalf("缺表应报错并点名，实得：%v", err)
+	}
+}
+
+// ── run() 级 fixture（覆盖 I/O 装配面：loadDoc/loadLifecycle/扫描/索引）──
+
+// writeFixture 铺一座最小临时仓。
+func writeFixture(t *testing.T, extraDoc string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc := "# t\n\nupdated: 2026-11-28\n\n" +
+		"| 能力面 | 包 | 承诺档位 | 判定机制 | 现有判据 |\n|---|---|---|---|---|\n" +
+		"| 事件发布 | eventbus | at-least-once | 水位线 | `eventbus.TestA` |\n" +
+		"| 副作用施加 | sideeffect | at-most-once | 原子操作 | `sideeffect.TestB` |\n" +
+		"| 终态写 | commitgate | at-most-once | 闸 | `commitgate.TestC` |\n" +
+		"| 快照 | checkpoint | idempotent-execution | CAS | `checkpoint.TestD` |\n" +
+		"| 认领 | taskboard | at-most-once | 条件认领 | `taskboard.TestE` |\n" +
+		"| 重试裁决 | retryplan | idempotent-execution | 三档路径 | `retryplan.TestF` |\n" +
+		"| 编排契约 | contract | 不适用（非交付面） | 接口框架 | — |\n" +
+		"\n| 文件 | 理由 |\n|---|---|\n| docs/DELIVERY.md | 本表 |\n"
+	if err := os.WriteFile(filepath.Join(root, "docs", "DELIVERY.md"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := "packages:\n" +
+		"  - pkg: eventbus\n    level: Stable\n" +
+		"  - pkg: sideeffect\n    level: Stable\n" +
+		"  - pkg: commitgate\n    level: Stable\n" +
+		"  - pkg: checkpoint\n    level: Stable\n" +
+		"  - pkg: taskboard\n    level: Stable\n" +
+		"  - pkg: retryplan\n    level: Stable\n" +
+		"  - pkg: contract\n    level: Stable\n"
+	if err := os.WriteFile(filepath.Join(root, "api-lifecycle.yaml"), []byte(lifecycle), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	readme := "# r\n" + extraDoc
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("# a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for pkg, name := range map[string]string{
+		"eventbus": "TestA", "sideeffect": "TestB", "commitgate": "TestC",
+		"checkpoint": "TestD", "taskboard": "TestE", "retryplan": "TestF",
+	} {
+		dir := filepath.Join(root, pkg)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		src := "package " + pkg + "\n\nimport \"testing\"\n\nfunc " + name + "(t *testing.T) {}\n"
+		if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// runFixture 在 fixture 上跑一次，返回退出码与两路输出。
+func runFixture(t *testing.T, root string) (int, string, string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	code := run([]string{"-root", root, "-doc", "docs/DELIVERY.md"}, &out, &errOut)
+	return code, out.String(), errOut.String()
+}
+
+// TestRunGreen 全绿 fixture ⇒ 0。
+func TestRunGreen(t *testing.T) {
+	root := writeFixture(t, "# r\n")
+	code, out, errOut := runFixture(t, root)
+	if code != 0 {
+		t.Fatalf("应通过，退出码 %d；stderr：\n%s", code, errOut)
+	}
+	if !strings.Contains(out, "交付语义对账通过") {
+		t.Fatalf("成功行缺失，实得：%q", out)
+	}
+}
+
+// TestRunDistortionRed README 正向承诺 ⇒ 1 并点名。
+func TestRunDistortionRed(t *testing.T) {
+	root := writeFixture(t, "# r\n\n本内核保证 exactly-once 交付。\n")
+	code, _, errOut := runFixture(t, root)
+	if code != 1 {
+		t.Fatalf("正向承诺应判违反（1），实得 %d；stderr：\n%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "失真声明：README.md") {
+		t.Fatalf("必须点名 README 行号，实得：\n%s", errOut)
+	}
+}
+
+// TestRunMissingDoc 登记面读不到 ⇒ 2（给不出结论）。
+func TestRunMissingDoc(t *testing.T) {
+	root := writeFixture(t, "# r\n")
+	if err := os.Remove(filepath.Join(root, "docs", "DELIVERY.md")); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := runFixture(t, root)
+	if code != 2 {
+		t.Fatalf("应为给不出结论（2），实得 %d；stderr：\n%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "读不到交付语义登记面") {
+		t.Fatalf("错误要说清读不到什么，实得：\n%s", errOut)
+	}
+}
+
+// TestRunZombieWhitelist 白名单指向不存在文件 ⇒ 1（僵尸豁免）。
+func TestRunZombieWhitelist(t *testing.T) {
+	root := writeFixture(t, "# r\n")
+	docPath := filepath.Join(root, "docs", "DELIVERY.md")
+	b, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(b), "| docs/DELIVERY.md | 本表 |", "| docs/GHOST.md | 本表 |", 1)
+	if err := os.WriteFile(docPath, []byte(broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := runFixture(t, root)
+	if code != 1 {
+		t.Fatalf("僵尸白名单应判违反（1），实得 %d；stderr：\n%s", code, errOut)
+	}
+	if !strings.Contains(errOut, "docs/GHOST.md") {
+		t.Fatalf("必须点名僵尸条目，实得：\n%s", errOut)
 	}
 }
