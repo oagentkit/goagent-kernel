@@ -13,7 +13,7 @@
 
 ## 怎么读这份文档
 
-**按需跳读，不必全接。** 本文覆盖 25 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
+**按需跳读，不必全接。** 本文覆盖 32 个能力包，分 10 组彼此独立的能力，典型接入顺序如下：
 
 ```
 ① 契约面        contract + statemachine    ← 你的状态长什么样（必接）
@@ -41,7 +41,7 @@
 >
 > | 口径 | 数字 | 是什么 |
 > |---|---|---|
-> | 本文覆盖 | 21 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
+> | 本文覆盖 | 28 个能力包 | 各接入节里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **50** 个包 | README 包表口径（机器校验，`make docsync` 判）|
 > | policy 登记 | **49** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
 > | 生命周期登记 | **50** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
@@ -2943,6 +2943,476 @@ roundguard 是**单 agent 模型侧循环**的结局分类/次数预算/无进�
 循环本体已收敛、差异在循环周边，与多智能体编排无关。2026-11-26 归属评测后
 按概念域分派上抛：`github.com/oagentkit/agent/roundguard`（API 逐字未变；
 设计 spec 与变异矩阵随包迁入 agent 仓 docs/superpowers/specs/）。
+
+### 3.19 运行中接管：`steer`
+
+#### 是什么与何时用
+
+用户在一轮编排**运行中**注入新输入（打断、改指令、追加需求）时，`steer` 管
+**协作中止与保产续跑**——五件套缺一不可（issue #168）：
+
+1. **协作中止信号**（`ErrSteered` + `Signal`/`IsSteered`）：带 Cause 的 ctx
+   取消，与用户取消（`finalize.ErrUserCancelled`）/ 进程停机（裸 ctx 取消）可区分；
+2. **保产摘要**（`BuildSummary`）：已完成环节机械拼接，**不调 LLM**；
+3. **不落终态回可认领态**：回 `created` 由 Dispatcher 认领开新一轮；
+4. **队列感知**（`Decide`）：有排队条目才回 `created`，否则按失败收敛；
+5. **条件迁移单协程执行**（`Run`）：迁移只由本函数执行，无双跑窗口。
+
+宿主支持「用户打断正在跑的编排、改指令继续」时接它；不支持打断的宿主不需要。
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/steer"
+
+// ① 用户注入新输入时发接管信号（Cause 固定 ErrSteered，不给「发错 Cause」留口子）。
+sctx, scancel := steer.Signal(runCtx) // runCtx 是编排 ctx
+scancel()                             // 用户按了「接管」
+
+// ② 判定是不是接管（与用户取消 / 停机三分可辨）。
+if steer.IsSteered(sctx) {
+	// ③ 执行接管收尾——条件迁移只由 Run 执行，调用方不得另起协程迁移。
+	out, err := steer.Run(sctx, store, steer.Spec{
+		Header:     "## 已按新指令接管",
+		FailReport: "## 接管后中断（队列已空）",
+	})
+	// out.Decision: DecisionRequeue（回 created 开新一轮）/ DecisionFailConverge
+	// out.Hit: 条件迁移是否命中（并发投喂恰有一个赢家）
+}
+```
+
+`Store` 接口（宿主实现，gorm/model 不下沉）四个方法就是判据的全部输入：
+
+| 方法 | 作用 |
+|---|---|
+| `ReadSteps(ctx) ([]DoneStep, error)` | 读环节清单（含状态）；读失败走降级正文，不中断收尾 |
+| `HasQueue(ctx) (bool, error)` | 队列是否仍有排队条目；读失败按「无排队」判定（不开空轮的保守侧） |
+| `SetReport(ctx, text) error` | 覆写终报——**只在 Migrate 命中后**由本包调用（写序纪律） |
+| `Migrate(ctx, from []string, to string) (bool, error)` | 一次原子条件迁移；`ok=false` = 0 行（他路已接手） |
+
+#### 判据红线
+
+- **写序纪律：仲裁先于终报**（issue #205）。报告一律排在 `Migrate` 命中之后——
+  输家不得落任何报告写（覆写是把赢家结论换成输家的）。
+- **一切存储调用走脱离 ctx**（`context.WithoutCancel`）：编排 ctx 已被接管信号
+  取消，存储直查会直接中止 ⇒ 会话滞留 `running`。
+- **C3 书面保留理由**（MATURITY 三问审计裁决）：本包唯一仓内消费方 `deadline`
+  只读 `ErrSteered` 哨兵（不驱动导出面），五件套由**宿主**驱动；依赖方向
+  `finalize → deadline → steer` 单向是 policy 明文——仓内消费方少不是降级理由，
+  是「宿主直用面」的正常形态。
+- 判据本体在各函数 Godoc 与契约测试（`steer_test.go` / `steer_writeorder_test.go`），
+  本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `finalize`**：finalize 管 Cause→终态的**路由**（`ErrSteered` 是它接管臂的
+  输入）；本包管接管臂的**载荷与续跑语义**。steer 产出 Cause、finalize 消费。
+- **vs `handoff`**：handoff 改写**负责人字段**（跨进程交接单+回执+代次）；本包是
+  **同一会话内**用户对自有轮次的抢占——无所有权转移、无交接单。
+- **vs `taskboard` 的「接管」**：那是租约到期的**被动重跑**；本包是用户**主动抢占**。
+- **vs `drain`**：drain 是停机排水（进程要死了）；本包是用户要改指令（进程活得好好的）。
+
+### 3.20 成本计量与聚合：`cost`
+
+#### 是什么与何时用
+
+任务级**运行成本**的事件口径与聚合面：一条成本事件 = 一种计量（`Kind`）× 一个量
+（`Amount`）× 一组维度归属（`Dims`）。宿主需要出账单、做配额判定、跨宿主对账时接它。
+
+与 `budget` 的边界：budget **估算**输入侧会话构成（「下一轮要发多少」）；cost
+**记录**已发生的消费（「这一单已经花了多少」）。两边都出现 token 时按各自口径
+各自算——共用一个数字才是口径漂移。
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/cost"
+
+var ledger cost.Ledger // 零值可用，并发安全（进程内参考实现）
+
+// 入账一条事件：Kind × Amount × Dims。
+err := ledger.Record(cost.Event{
+	Kind:   cost.KindInputTokens,
+	Amount: 1024,
+	Dims: map[string]string{
+		cost.DimTenant: "tenant-a",
+		cost.DimRun:    "run-42",
+	},
+})
+
+// 按租户聚合（规范维度快捷面）。
+totals, err := cost.ByTenant(ledger.Events())
+for _, t := range totals {
+	_ = t.Amount(cost.KindInputTokens) // 某类计量的合计
+}
+```
+
+**开放键纪律**：`Kind` 是开放枚举（规范五种：`input_tokens` / `output_tokens` /
+`tool_calls` / `wall_time` / `concurrency`，宿主自定义种类直接用自己的键，
+内核不解释）；`Dims` 是开放键（规范维度给名字：`tenant` / `run` / `task` /
+`step` / `agent` / `model`，宿主自定义维度直接用自己的键）。
+
+#### 判据红线
+
+- **量必须非负**：报数侧给负数是记账 bug，拒收留痕（`ErrNegativeAmount`）——
+  既不静默归零也不许反向抹掉别段的账（budget 的估算侧把负值钳位为 0，两侧语义
+  刻意不同——账错必须被看见）。
+- **口径外事件不静默吸收**：`Aggregate` 遇到空 Kind / 负量的事件返回包装哨兵的
+  错误——跳过它等于让记账 bug 变成「账少了，不知道为什么」。
+- **C1 书面保留理由**（MATURITY 三问审计裁决）：本包仓内唯一消费方是 `tenant`
+  （`Quota.Judge` 对聚合结果判超限），但口径面主场景是**宿主出账单/配额**——降
+  `internal/` 会堵死宿主直接记账，书面保留。
+- 判据本体在 `Event.Validate`（口径判定单源）与 `cost_test.go`，本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `budget`**：budget 估「下一轮要发多少」，永不回填 provider 报数；cost 记
+  「这一单已花多少」，只做聚合不做估算、不做预算约束。
+- **vs `tenant`**：tenant.Quota.Judge 对一份聚合结果判超限——配额是 cost 聚合的
+  **下游**，cost 不做任何配额判定。
+- **内核给口径，不给存储**：`Ledger` 是进程内参考实现（演示口径怎么落），跨进程
+  聚合、持久化、按租户出账单是宿主资产——与 `taskboard` 同一条分工。
+
+### 3.21 跨进程任务交接：`handoff`
+
+#### 是什么与何时用
+
+跨进程任务交接的**契约面**：进程 A 的一步工作移交给进程 B 续做时，交接点在哪、
+交接是否原子、幂等键是什么、回执回到谁手里、交接超时怎么办——四问各一条契约条款。
+
+`delegate` 回答「能不能交给别的运行时」，`taskboard` 回答「同一张板子上的认领」——
+但两者都局限在同一个存储里。跨进程交接此前没有机制面，「双方都以为对方负责」与
+「谁都不负责」这两种错在报告里读起来完全正常。
+
+#### 最小接入片段
+
+```go
+import (
+	"time"
+
+	"github.com/yi-nology/goagent-kernel/handoff"
+)
+
+// 进程内交接台（参考实现——跨进程持久化用 NewDesk(ledger) 或 NewDistributedDesk）。
+desk := handoff.NewLocalDesk()
+
+// ① 挂出交接单（四问的载体：Key 幂等键 / From→To 负责人 / ReplyTo 回执地址 / TTL 时限）。
+tk, err := desk.Offer(ctx, handoff.Ticket{
+	Key:     "task-42-handoff", // 幂等键：同 Key 重复 Offer 是重放
+	From:    "agent-a",
+	To:      "agent-b",          // 指定接收方：只有它能领取
+	Payload: []byte(`{"step": 3}`),
+	ReplyTo: "agent-a",          // 回执地址（必填）：不假设「谁交的回给谁」
+	TTL:     5 * time.Minute,    // 必填 >0：领取与回执共用一条时限线
+})
+
+// ② 接收方领取（负责人在这一次原子操作里从 From 变为 To）。
+h, err := desk.Take(ctx, tk.Key, "agent-b") // h.Token 是存储铸造的领取令牌
+
+// ③ 交回执（凭令牌；completed 必填 Summary，failed/refused 必填 Failure）。
+err = desk.Reply(ctx, tk.Key, h.Token, handoff.Receipt{
+	Status:  handoff.ReceiptCompleted,
+	Summary: "步骤 3 已完成",
+})
+
+// 源方按自己的地址取回执。
+receipts, err := desk.Deliveries(ctx, "agent-a")
+```
+
+#### 判据红线
+
+- **无时限的交接单是契约禁止的**：`Validate` 拒绝 `TTL <= 0`——没有截止时刻的
+  跨进程交接只会留下一把谁都不敢动的锁。
+- **`ReplyTo` 必填**：回执送到源方显式声明的地址，不假设「谁交的回给谁」（跨进程
+  时源方可能崩溃重启，重启后身份不一定还是交接时的身份）。
+- **领取只允许 To 本人**（`ErrNotAddressee`）；回执凭存储铸造的令牌提交
+  （`ErrLeaseLost`——凭令牌认人，不凭内容，commitgate / taskboard 的同源教训）。
+- **C4 书面保留理由**（MATURITY 三问审计裁决）：契约 + `LocalDesk` 参考实现
+  独立可跑，是宿主**跨进程交接的直连面**——USAGE 无节曾是教学欠账，本节补上。
+- 判据本体在 `Ticket.Validate` / `Receipt.Validate` / `Check`（快照不变量）与
+  `ConcurrentTake`（并发领取恰好一个赢家），本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `delegate`**：delegate 回答「能不能交给别的运行时」（改派骨架）；handoff
+  回答「跨进程怎么交」（交接单+回执+代次）。
+- **vs `taskboard`**：taskboard 是同一存储里的认领/租约；handoff 是跨进程的
+  负责人字段改写。
+- **vs `ownership`**：ownership 管「哪个区域是任务域的权威」（Epoch 围栏）；handoff
+  管「这一步工作从谁交给谁」。两者正交：交接不影响区域权威。
+
+### 3.22 轨迹录制/重放与确定性评估：`eval`
+
+#### 是什么与何时用
+
+`trajectory` 把事件流投影成轨迹行；`eval` 补上「给定一段录制，能否复现同一条
+轨迹」与「给定一条轨迹，能否给出可判定的结论」两件事：**录制 → 重放 → 差异比对**
+（`Record` / `Load` / `Replay` / `Diff`）+ **确定性评估判据**（`Assess`）。
+
+需要回归比对（改了投影逻辑后旧轨迹还能不能复现）或结构评估（行收没收口、
+调用配没配对）时接它。评估判据是**纯函数**——同一份轨迹行输入永远得到同一份
+判定输出；它不跑模型、不看结果像不像。
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/eval"
+
+// ① 录制：事件流 → JSONL 定格（一行一个事件，可 diff）。
+data, err := eval.Record(evs) // evs 是 []eventbus.Event
+problems := eval.Verify(evs)  // 录制适航判定（空 = 全部适航）
+
+// ② 重放：定格 → 同一条轨迹（行 ID 确定性生成 = 「同一条轨迹」的锚点）。
+evs2, err := eval.Load(data)
+rows := eval.Replay(evs2, opts) // opts 是 trajectory.Options；两侧用同一投影函数
+
+// ③ 差异比对：空切片 = 完全复现（验收线）。
+divergences := eval.Diff(wantRows, gotRows)
+
+// ④ 确定性评估：判项词表 closure / pairing / no_duplicates / expected / forbidden。
+verdict, err := eval.Assess(eval.Spec{
+	Checks:      []eval.Check{eval.CheckClosure, eval.CheckPairing},
+	ExpectedIDs: []string{"step#1", "step#2"},
+}, rows)
+// verdict.Pass / verdict.Judged / verdict.Findings（按 (Check, RowID) 排序）
+```
+
+**判项词表**（引而不重定义，口径在 `Assess` Godoc）：
+
+| 判项 | 判什么 |
+|---|---|
+| `CheckClosure` | 收口完整：不存在「开了没收口」的行（点行本来就是孤儿，不在此判项内） |
+| `CheckPairing` | 配对完整：工具调用行全部配对 |
+| `CheckNoDuplicates` | 无重复声明（重复结果 / 重复调用） |
+| `CheckExpected` | 期望行存在（`Spec.ExpectedIDs` 全部在轨迹里） |
+| `CheckForbidden` | 禁止行缺席（`Spec.ForbiddenIDs` 一条都不许在） |
+
+#### 判据红线
+
+- **零值 Spec 判不了任何东西**——`Assess` 对它显式报 `ErrNoChecks`，不返回
+  「通过」（「没有检查」与「检查通过」在调用方看来必须不一样）。
+- **时刻是数据，不是时钟**：录制即定格，重放即复读——没有 sleep、没有 now()。
+- **评估只判轨迹结构，不判业务对错**（业务结论归宿主的判定面）。
+- 判据本体在 `Assess` / `Diff` / `Verify` 的 Godoc 与 `eval_test.go`，本节引而不重定义。
+
+#### 相邻包分工
+
+- **叠在 `trajectory` 之上**：trajectory 负责事件流→轨迹行的投影；eval 负责
+  「同一段录制能不能复现同一条投影」与「轨迹结构对不对」。非重叠——eval 不做投影。
+- **vs `protocol`**：protocol 是环节产出→结构化报告；eval 是事件流→轨迹行的
+  录制/重放/比对。两者投影对象不同。
+
+### 3.23 启动对账与孤儿回收：`reconcile`
+
+#### 是什么与何时用
+
+多副本部署下进程**非计划死**之后，上一具进程尸体名下的在途编排会话怎么收敛。
+`drain` 是计划内停机（进程要死了，排水）；`reconcile` 是非计划死（进程已经死了，
+对账）——成对件。
+
+三个入口按「凭什么说它死了」分路（收敛动作一致，差别在判定依据）：
+
+| 入口 | 路 | 判据 |
+|---|---|---|
+| `RecoverBootOrphans` | 启动锚点路 | 进程启动即替代同 instanceID 的上一具尸体，无须等事件静默 |
+| `RecoverInterrupted` | 常规路·事件静默 | owner=本副本/空：超阈无任何事件 |
+| `RecoverInterrupted` | 常规路·心跳租约 | owner=他副本：租约过期立即回收、心跳新鲜免检 |
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/reconcile"
+
+r := reconcile.New(store, pub, reconcile.Config{
+	InstanceID: "replica-a",
+	Boot:       time.Now(),         // 进程启动锚点（构造时定格）
+	// Stall / DeadOwner / LeaseTTL / BootGrace 零值取包内缺省
+})
+
+// ① 进程启动时调一次：启动锚点路（定义性孤儿立即收）。
+n, err := r.RecoverBootOrphans(ctx)
+
+// ② 周期扫描：running 搁浅回收（deny-by-default，不重放任何步骤，收敛为 failed）。
+n, err = r.RecoverInterrupted(ctx)
+
+// ③ 终态事件 Outbox 补做（实现了 FinalizeStore 时才有事做；幂等）。
+n, err = r.FlushFinalizeOutbox(ctx)
+```
+
+`Store` 接缝五个方法（宿主实现，与 taskboard/eventbus 同风格）：`ListRunning` /
+`LastActivity` / `ListBeats` / `ConvergeCAS` / `CloseBracket`。可选实现
+`FinalizeStore` 获得「终态写入 + 终态事件同一事务 + Outbox 补做」——不实现则
+`FinalizeGuarantee()` 如实报 `Atomic=false / ConfirmedDelivery=false`（显式降级，
+不假装）。
+
+#### 判据红线
+
+- **不做步骤级重放**（重放会产生重复环节与二次审批，执行段可能有副作用）——
+  收敛为 `failed` 并写明恢复路径。与 checkpoint 的「续跑而非重放」方向相反、互不替代。
+- **`closed_by` 归因**（`Cause.By`）：`boot-reconcile` / `recovery` /
+  `recovery:dead-owner` / `recovery:dead-lease`——四条路不许写成同一个标识。
+- **两个关闭态**：`BootGrace < 0`（显式关闭启动路）与 `Boot` 零值（无启动事实）——
+  都直接返回，不碰存储（防零值锚点误收全量）。
+- 判据本体在 `OrphanAtBoot` / `Stalled` / `JudgeLease` 的 Godoc 与
+  `boot_test.go` / `recover_test.go` / `finalize_outbox_test.go`，本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `checkpoint`**：checkpoint 是「续跑而非重放」（崩溃后接着跑）；reconcile 是
+  「deny-by-default 收敛为 failed、不重放」（非计划死后收尸）。
+- **vs `drain`**：drain = 计划内停机（排水）；reconcile = 非计划死（对账）。
+- **vs `worker.Recover`**：worker 接管任务板上过期认领的任务并**重跑**；reconcile
+  收敛的是**编排在途会话**，不重跑、只落终态。对象与动作都不同。
+- **vs `finalize`**：finalize 是运行期收尾漏斗（Cause→终态路由）；reconcile 是
+  启动/周期对账（孤儿收敛）。链路位置：进程死 → 重启 → `RecoverBootOrphans` →
+  走 `ConvergeCAS` 落终态（与 finalize 的收敛语义互补）。
+
+### 3.24 收尾漏斗：`finalize`
+
+#### 是什么与何时用
+
+一轮编排中止时「该落哪个终态 / 该不落终态」的**唯一收口**：Cause→终态四分路由
+（`Route`）+ 多起点条件迁移收敛（`Converge`）。宿主在编排结束/中止时调它——
+它是链顶的收尾入口。
+
+路由表（引而不重定义，单源在 `deadline.Route`，`finalize.Route` 是
+Outcome→Action 的投影，issue #355）：
+
+| Cause | Action | 落什么 |
+|---|---|---|
+| `steer.ErrSteered` | `ActionTakeover` | 不落终态回 `created`（由 steer.Run 续跑） |
+| `ErrSessionDeadline` | `ActionTimedOut` | 终态 `timed_out`（**先于**停机分支） |
+| 用户取消哨兵 | `ActionCancelled` | 终态 `cancelled` |
+| 其余 ctx 已取消 | `ActionShutdown` | **不落终态**，留给恢复循环 |
+| ctx 未取消 | `ActionFailed`（缺省） | 终态 `failed` + 排队重试裁决 |
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/finalize"
+
+// ① 路由：Cause → 该收去哪条臂（纯函数；判据单源在 deadline.Route）。
+action := finalize.Route(ctx, userCancelErr)
+
+// ② 收敛执行：包头三条并发纪律的执行面。
+switch action {
+case finalize.ActionTakeover:
+	// 载荷（摘要、回迁、队列续跑）由 steer.Run 承接——见 §3.19。
+case finalize.ActionShutdown:
+	// 不落终态：running / waiting_approval 留给恢复循环（reconcile，§3.23）。
+default:
+	out, err := finalize.Converge(ctx, store, finalize.Spec{
+		From:   []string{contract.StatusRunning, contract.StatusWaitingApproval},
+		To:     action.Status(), // contract 词表：failed / cancelled / timed_out
+		Report: "## 会话已超时",
+	})
+	// out.Hit: 条件迁移命中（false = 他路已接手）
+	// out.Status: 命中 = 目标态；零行回读 = 库内现状态
+}
+```
+
+#### 判据红线
+
+- **三条并发纪律**（包级不变量，不是调用方自觉）：① 终态写必须走脱离 ctx
+  （`Detached`）；② 条件迁移零行 = 他路已接手，不再写任何状态；③ 多起点收敛 +
+  0 行回读补发（按库内事实报，不按意图报）。
+- **C2 与 `deadline` 的投影关系**（MATURITY 三问审计裁决）：deadline 包内两半——
+  墙钟锚点机制宿主直用（finalize 完全不碰）+ `Route` 单源被 finalize 只做投影
+  （#355，`route_cross_test` 钉一致非双表）。`finalize.Route` **不重写** cause
+  判定与臂序——两处各写一份的实测后果是：同一 ctx 在 deadline 判 shutdown、
+  在 finalize 判 takeover。
+- **接管臂只判 Cause 不判队列**：「有排队条目才回 created」是 `steer.Decide` 的
+  队列感知（归接管臂载荷）。
+- 判据本体在 `Route` / `Converge` 的 Godoc 与 `converge_test.go` /
+  `route_cross_test.go`，本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `contract` / `statemachine`**：contract 是词表与接缝（不含算法）；
+  statemachine 是纯谓词（「这次迁移合不合法」）；finalize 是路由（「该迁去哪」）
+  + 并发写纪律。
+- **vs `deadline`**：deadline 是 cause 判定单源（五路收尾路由的唯一实现）；finalize
+  是它的 Outcome→Action 投影 + 收敛执行。**投影关系非重叠**（C2 书面保留）。
+- **vs `steer`**：finalize 管「往哪收」；steer 管「怎么收与怎么续」（接管臂载荷）。
+- **vs `commitgate`**：commitgate 是环节级终态**独占**提交闸；finalize 是会话级
+  cause 路由与多起点收敛。
+- **vs `reconcile`**：finalize 是运行期收尾；reconcile 是启动/周期对账（孤儿收敛）。
+
+### 3.25 指标契约面：`metrics`
+
+#### 是什么与何时用
+
+指标名 / 类型 / 维度 / 基数上界的**单一来源**：内核知道一个量是什么意思，不知道
+宿主把数投给谁（OTel / Prometheus / 自建看板）。宿主要给看板投运营指标时接它。
+
+五类运营量（issue #100 验收面）：
+
+| 量 | 指标 | 类型 |
+|---|---|---|
+| 执行耗时 | `harness.exec.duration` | histogram |
+| 重试次数 | `harness.retry.total` | counter |
+| 租约竞争 | `harness.lease.contended` | counter |
+| 恢复成功率 | `harness.recovery.total` | counter |
+| 未知结果积压 | `harness.sideeffect.uncertain` | gauge |
+
+**消费现状（如实登记）**：本包当前**零 Go 消费方**（仓内无 import），MATURITY
+盘点标注「最接近待废弃者」——五类运营量口径刚立（名称/维度随看板增补），教学面
+在此但接入面尚未被宿主拉动。是否继续存活留 MATURITY 复盘裁定，本节如实写现状
+不拔高。
+
+#### 最小接入片段
+
+```go
+import "github.com/yi-nology/goagent-kernel/metrics"
+
+// 装配期接后端（OTel / Prometheus 适配器归宿主；未装配时缺省 Nop 不反噬执行路径）。
+metrics.SetDefault(myRecorder) // myRecorder 实现 metrics.Recorder
+
+// 埋点：一行，不持有任何后端引用。
+metrics.Count(metrics.NameLeaseContended, 1, map[string]string{
+	metrics.LabelLeaseSubsystem: metrics.LeaseSubsystemSideEffect,
+	metrics.LabelLeaseOutcome:   metrics.LeaseOutcomeContended,
+})
+metrics.Observe(metrics.NameExecDuration, 123.4, map[string]string{
+	metrics.LabelExecKind: metrics.ExecKindTurn,
+})
+metrics.Set(metrics.NameUncertainBacklog, 3, nil)
+```
+
+**测试期校验**（埋错标签不报错——数照常上行，只是看板拼不起来）：
+
+```go
+mem := &metrics.Mem{Strict: true}
+metrics.SetDefault(mem)
+t.Cleanup(func() { metrics.SetDefault(nil) })
+
+metrics.Count(metrics.NameRetryTotal, 1, map[string]string{...})
+
+// Strict 模式下违规计入 Bad；测试断言它为 0。
+if mem.Bad != 0 {
+	t.Fatalf("有 %d 次违规埋点", mem.Bad)
+}
+```
+
+#### 判据红线
+
+- **先登记再埋点**：每个指标在 `Specs` 里登记后才能埋（`Validate` 判未登记名 /
+  未声明标签 / 越界取值 / 禁区键）。埋一个没登记的指标 = 看板口径外的暗数。
+- **无界字段不进标签**：`session_id` / `run_id` / `task_id` 这类值进标签就是无界
+  基数（禁区清单见 `ForbiddenLabels`）。要关联用 `trace_id`。
+- **耗时只记实测**（毫秒）：起止相减现算，估算值不许冒充实测。
+- **前缀 `harness.`**：不在 OTel 官方命名空间里，冒用官方前缀会让按官方约定解析
+  的工具读到半真半假的数据。
+- 判据本体在 `Validate` / `CheckLabels` 的 Godoc 与 `metrics_test.go` /
+  `specset_test.go`，本节引而不重定义。
+
+#### 相邻包分工
+
+- **vs `trajectory` 的 OTel 映射**：同一条分工——business 选指标、transport 负责
+  编码与投递。本包不 import 任何 OTel / Prometheus SDK（接了谁，「导出失败算不算
+  执行失败」就得由谁回答，那不该出现在内核里）。
+- **宿主自有指标**不挤进内核登记表：`DefaultSpecs().Register` 得到一份 `SpecSet`，
+  复用同一套 `Validate` 与基数门（包级表不被篡改）。
 
 ## 4. 门禁与提交前检查
 
