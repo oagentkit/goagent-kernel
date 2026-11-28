@@ -189,7 +189,7 @@ GOVULNCHECK_VERSION := v1.7.0
 BENCH_PKGS := ./ptc/ ./guardset/ ./checkpoint/ ./taskboard/ ./sideeffect/
 BENCH_PATTERN := BenchmarkPTCRunInProcess|BenchmarkGuardSet|BenchmarkCheckpoint|BenchmarkTaskBoard|BenchmarkSideEffect
 
-.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck issue-state releasecheck integration bench site check tidy devlink devunlink hygiene clean
+.PHONY: build fmt-check vet lint test race contract fault-injection gates cover cover-gate vuln crossbuild versioncheck architecture-check architecture-check-types docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck semanticscheck issue-state releasecheck integration bench site check tidy devlink devunlink hygiene clean
 
 build: ## 编译架构门禁二进制
 	$(EXPORT) $(GOENV) go build -ldflags "-X main.version=$(VERSION)" -o bin/$(BIN) ./cmd/$(BIN)
@@ -439,7 +439,7 @@ architecture-check-types: ## 架构门禁严格档（go/types 类型感知：覆
 # 在 tag 推送时判那四条发版纪律）。
 unit: fmt-check vet lint
 	$(EXPORT) $(GOENV) go test ./... -count=1 -skip '^TestFault' -timeout $(TEST_GO_TIMEOUT)
-	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck releasecheck modreplace modwork hygiene cijobname
+	$(MAKE) --no-print-directory architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck semanticscheck releasecheck modreplace modwork hygiene cijobname
 
 # contract：契约套件层（sidetest / taskboard/boardtest 的套件自测）。判「共享
 # 契约套件本身是绿的」——宿主实现跑套件前先知道判据自身没坏。
@@ -568,6 +568,13 @@ hostsurfacecheck: ## 接入面绑定对账（清单覆盖全集 + 六步对照 +
 	@# 判据本体在 internal/hostsurface（纯函数），包全集与文档 import 由 cmd 注入。
 	$(EXPORT) $(GOENV) go run ./cmd/hostsurfacecheck
 
+semanticscheck: ## 交付语义对账 + 失真声明扫描（四档词表/Stable 覆盖/白名单，issue #526）
+	@# 评审（2026-11-27 §3.3 问题三）：不要把所有能力包装成 Exactly Once——四档
+	@# 分级要成文，「把上界说成 exactly-once」要会红。本目标判 docs/DELIVERY-SEMANTICS：
+	@# 交付行 ≥6 且档位在四档值域、覆盖全部 Stable 包、判据测试真实存在；生产文档与
+	@# 包注释里的 exactly-once 字样，白名单外且拒绝语境窗口（±2 行）无拒绝标记 ⇒ 红。
+	$(EXPORT) $(GOENV) go run ./cmd/semanticscheck
+
 # ── issue 状态快照的数据源（issue #455）─────────────────────────────
 # 台账是**声明面**、GitHub 是**事实面**，两者会漂：2026-11-21 实录——台账把
 # #427/#428/#430 记成「已合入 (#436)」、代码也逐条核实落地，而 gh issue list 里
@@ -669,7 +676,7 @@ cijobname: ## ci.yml 的 job 名长度（超长 ⇒ GitHub 截断 ⇒ 分支保�
 	if [ "$$ok" != 1 ]; then exit 1; fi; \
 	echo "ci.yml job 名长度 ✓（均 ≤ 90 字节，GitHub 不会截断）"
 
-check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck releasecheck modreplace modwork hygiene
+check: versioncheck cijobname fmt-check vet lint test cover-gate vuln race crossbuild architecture-check docsync seamcheck apilifecheck deploycheck storagecheck ledgercheck acceptancecheck routecheck invariantcheck hostsurfacecheck semanticscheck releasecheck modreplace modwork hygiene
 
 tidy:
 	$(EXPORT) $(GOENV) go mod tidy

@@ -1747,8 +1747,12 @@ dependency_direction:
 #                                            包全集 ↔ README/USAGE 代码块 import 白名单；
 #                                            读 md/yaml 与抽 import 是工具职责，不形成
 #                                            机制依赖。结论全在 internal/hostsurface（纯函数）。
+#   cmd/semanticscheck                     交付语义对账门禁（2026-11-28，issue #526）：
+#                                            判 docs/DELIVERY-SEMANTICS 两张表 ↔ api-lifecycle
+#                                            Stable 全集 ↔ 生产文档/注释失真扫描；读 md/yaml、
+#                                            扫测试名与扫声明面是工具职责，不形成机制依赖。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, cmd/invariantcheck, cmd/hostsurfacecheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, cmd/invariantcheck, cmd/hostsurfacecheck, cmd/semanticscheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
