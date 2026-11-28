@@ -303,6 +303,51 @@ deps:
       seam: ""
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/semanticscheck
+      function: loadDoc
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
+
+    - package: cmd/semanticscheck
+      function: loadLifecycle
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
+
+    - package: cmd/semanticscheck
+      function: buildTestIndex
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
+
+    - package: cmd/semanticscheck
+      function: statWhitelist
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
+
+    - package: cmd/semanticscheck
+      function: scanClaims
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
+
     - package: cmd/apilifecheck
       function: checkMaturity
       deps:
