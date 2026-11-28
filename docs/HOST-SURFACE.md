@@ -102,7 +102,7 @@ USAGE 补节是教学面欠账，不阻塞本清单）；反向「教了但参�
 | internal/routeledger | 内部件 | 路线达成对账判据（本仓门禁用） |
 | internal/invariantledger | 内部件 | 不变量绑定对账判据（本仓 #523 门禁用） |
 | internal/hostsurface | 内部件 | 接入面绑定对账判据（本仓 #524 门禁用） |
-| raceprobe | 内部件 | race 门禁失败形态判定层（本仓 CI 取证看门狗，非接入面） |
+| raceprobe | 可选 | race 门禁失败形态判定层（纯函数，留公开路径供跨仓复用——与 archcheck 同物种，Go internal 会挡外仓 import） |
 
 ## 三、判据边界（如实登记）
 

@@ -58,6 +58,17 @@ const miniUsage = `# 使用指南（夹具）
 > | 生命周期登记 | **3** 个包 | ` + "`api-lifecycle.yaml`" + ` 的 ` + "`packages`" + ` 段（机器校验）|
 `
 
+// miniMaturity 成熟度盘点面（夹具）：两个 Experimental 包各一行。
+const miniMaturity = `# 成熟度盘点（夹具）
+
+updated: 2026-11-28
+
+| pkg | 分类 | breaking 窗口 | 宿主接入 | 故障测试 | 依据 |
+|---|---|---|---|---|---|
+| beta | 维持演进 | — | — | — | 夹具——仍在演进示例 |
+| internal/deep | 维持演进 | — | — | — | 夹具——嵌套包示例 |
+`
+
 // alpha.go：带标记的 Stable 包，含哨兵（var 块）、显式 error 类型变量、
 // 别名 import、非哨兵变量、指针接收者错误类型。
 const miniAlpha = `// Package alpha 夹具契约面。
@@ -128,6 +139,7 @@ func writeMiniRepo(t *testing.T) string {
 	writeFile(t, root, "docs/error-semantics.md", miniErrorTable)
 	writeFile(t, root, "docs/api-compat.md", miniAPICompat)
 	writeFile(t, root, "docs/USAGE.md", miniUsage)
+	writeFile(t, root, "docs/MATURITY.md", miniMaturity)
 	writeFile(t, root, "alpha/alpha.go", miniAlpha)
 	writeFile(t, root, "beta/beta.go", miniBeta)
 	writeFile(t, root, "internal/deep/deep.go", miniDeep)

@@ -4,7 +4,7 @@
 // 清单漂移——「文档里写了但代码里没改」正是本仓反复强调的失效形态。故与
 // architecture-check / docsync 同一条纪律：声明必须有机器判据。
 //
-// 四类判据：
+// 五类判据：
 //
 //  1. 清单 ↔ 包注释：每个登记包的包注释里必须有且只有一行生命周期标记，
 //     且级别与清单一致；
@@ -12,7 +12,10 @@
 //     清单里的包被删了也红）；
 //  3. Deprecated 条目必须给替代指向，且指向的符号真实存在；
 //  4. 错误登记：docs/error-semantics.md 的哨兵/结构化错误类型表必须与
-//     各包代码里真实声明的集合一致（issue #104「新增错误必须登记」）。
+//     各包代码里真实声明的集合一致（issue #104「新增错误必须登记」）；
+//  5. 成熟度盘点：docs/MATURITY.md 必须覆盖清单里全部 Experimental 包（双向），
+//     五分类值域 + 依据非空；标「晋级候选」的行三维证据（breaking 窗口 /
+//     宿主接入 / 故障测试）必须齐全——晋级条件的机器可判半边（issue #525）。
 //
 // 判定口径见 docs/api-compat.md；本命令只做装配（找根 → 装载 → 判 → 报告 →
 // 退出码），判定逻辑尽量留在可导入的粒度上，但**刻意不做成本仓的可导入包**：
@@ -106,7 +109,7 @@ func run(root string, out io.Writer) (int, error) {
 	return 1, nil
 }
 
-// checkAll 四类判据的聚合。拆出来是为了 run() 只管装配与输出，
+// checkAll 五类判据的聚合。拆出来是为了 run() 只管装配与输出，
 // 判据的排列在这里一眼可数。
 func checkAll(root string, m *Manifest) ([]string, error) {
 	var probs []string
@@ -140,5 +143,10 @@ func checkAll(root string, m *Manifest) ([]string, error) {
 	probs = append(probs, checkFollowsUpstream(m, scanned)...)
 	probs = append(probs, checkErrorRegistry(root, m, sents, types)...)
 	probs = append(probs, checkDocsBlocks(root, m)...)
+	maturProbs, maturErr := checkMaturity(root, m)
+	if maturErr != nil {
+		return nil, maturErr // 盘点面读不到/解析不了 = 给不出结论
+	}
+	probs = append(probs, maturProbs...)
 	return probs, nil
 }
