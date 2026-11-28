@@ -108,9 +108,11 @@ updated: 2026-11-28
 **反例锚点**（不算调用顺序依赖）：`taskboard/boardtest` / `sidetest` / `invocation/invocationtest`
 是宿主要接的契约套件——套件被固定顺序调用恰恰是它的工作方式。
 
-**教学面欠账**（与 HOST-SURFACE §二六包合并记）：USAGE 无接入节的还有
-`steer`（0 提及）、`cost`、`handoff`、`eval`、`reconcile`、`finalize`、`metrics`——
-恰是仓内消费方 0/1 的包，最易在未来被误判为内部件，下轮 USAGE 补节优先排它们。
+**教学面欠账**（与 HOST-SURFACE §二六包合并记）：`steer`（曾 0 提及，45 包最极端）、
+`cost`、`handoff`、`eval`、`reconcile`、`finalize`、`metrics` 七包 USAGE 接入节
+已补清（issue #549）——**本轮欠账清单清零**。HOST-SURFACE §二地面真相节另记的六包
+（`backend` / `controlplane` / `invocation` / `tenant` / `worker` / `coord`，
+宿主真在用但 USAGE 无接入节）仍待补，不属本轮范围。
 
 **待合并观察（不转分类）**：internal/* 五件结构同构（登记面解析 + 纯判据 + cmd），
 但归并会耦合五个门禁的演进节奏（改一个门禁的形状连坐四个）——本轮判「维持演进 +
