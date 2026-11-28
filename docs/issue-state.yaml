@@ -1,8 +1,31 @@
 # 由 make issue-state 刷新——手改无效（重跑会整份覆盖）。
 # 门禁（make ledgercheck）只读本文件、不联网；刷新需要 gh 与网络。
-updated: 2026-11-21
+updated: 2026-11-28
 issues:
-  455: open
+  534: closed
+  533: closed
+  532: closed
+  529: open
+  528: closed
+  527: closed
+  526: closed
+  525: closed
+  524: closed
+  523: closed
+  520: closed
+  510: closed
+  509: closed
+  508: closed
+  507: closed
+  506: closed
+  504: closed
+  497: closed
+  495: closed
+  483: closed
+  482: closed
+  481: closed
+  465: closed
+  455: closed
   449: closed
   448: closed
   447: closed
