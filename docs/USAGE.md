@@ -29,6 +29,12 @@
 ```
 
 每节的结构一致：**职责 → 最小集成片段 → 关键符号 → 坑 → 什么时候不该用**。
+
+> **接入面的全量分类与六步对照见 [HOST-SURFACE.md](HOST-SURFACE.md)**：上面 10 组是
+> **接入分段轴**（按能力依赖顺序教学），HOST-SURFACE 的六步（创建 → 领取 → 执行 → 提交 →
+> 恢复 → 介入）是**运行步骤轴**（链的每一步谁提供什么）——两个「六」不是一回事。
+> 全量 50 包三分类（必须接 / 可选 / 内部件）由 `make hostsurfacecheck` 机器判定：
+> 本文与 README 代码块里的 import 只许落在「必须接 / 可选」。
 最后一节 [§6 坑速查表](#6-坑速查表) 是全文浓缩，接线完成后拿它自查一遍。
 
 > **四个口径，各说一件事**（别混）：
@@ -37,14 +43,14 @@
 > |---|---|---|
 > | 本文覆盖 | 21 个能力包 | 上面 10 组里逐个讲过的机制包——**文档取舍**，由本文决定 |
 > | 仓里有什么 | **50** 个包 | README 包表口径（机器校验，`make docsync` 判）|
-> | policy 登记 | **48** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
-> | 生命周期登记 | **49** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
+> | policy 登记 | **49** 个 module id | `architecture-policy.yaml` 的 `modules` 段（机器校验，`make docsync` 判）|
+> | 生命周期登记 | **50** 个包 | `api-lifecycle.yaml` 的 `packages` 段（机器校验，`make apilifecheck` 判）|
 > 后三个数是**仓库事实**（机器判，漂了即红）；第一个数是**文档取舍**
 > （机器判不了「该不该讲某个包」，故只由本文负责）。
 >
 > **包数口径（机器校验，`make docsync` 判）**：本仓共 **43** 个包（README 包表口径）；
-> `architecture-policy.yaml` 的 `modules` 段登记 **48** 个 module id（48 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **50** 个——`taskboard`
-> 有两个 root（含子包 `taskboard/boardtest`），`invocation` 也有两个（`invocation/invocationtest`）。**两个数不是同一种量**：48 数 module id，50 数
+> `architecture-policy.yaml` 的 `modules` 段登记 **49** 个 module id（49 数的是 `modules` 段的 `- id:` 条目；这些 id 覆盖的 root 目录共 **51** 个——`taskboard`
+> 有两个 root（含子包 `taskboard/boardtest`），`invocation` 也有两个（`invocation/invocationtest`）。**两个数不是同一种量**：49 数 module id，51 数
 > root 目录）。
 >
 > 三个数不一样是对的：本文没讲的那些包里，有门禁工具（`archcheck`）、
