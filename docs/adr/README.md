@@ -15,6 +15,7 @@
 | ADR-0008 | [跨进程任务交接契约](ADR-0008-跨进程任务交接契约.md) | 跨进程交接的契约不是队列，是**负责人字段的原子改写**——交接点、幂等键、回执地址、时限四问各有一条可机械判定的答案。 | 已采纳 |
 | ADR-0009 | [调度判据归属](ADR-0009-调度判据归属.md) | 调度判据的归属靠证据：上游 dispatch 的判定面只有可达性/深度/自派发三条，优先级/公平/配额/背压落本仓 `scheduling`，可达性仍归门面。 | 已采纳 |
 | ADR-0010 | [对话域上抛与org归属](ADR-0010-对话域上抛与org归属.md) | 概念域分派第三轮：对话域七包（roundguard/budget/spill/offload/pending/sessionref/memorypipe）判据主语不是编排，全部上抛；kernel/runtime 归 oagentkit org。 | 已采纳 |
+| ADR-0011 | [Kernel不等于Framework五项边界](ADR-0011-Kernel不等于Framework五项边界.md) | 评审 §3.3-5：专家角色/Prompt/工具实现/领域判断/模型调用五项归宿主，内核只收可判定的状态与操作；补 prompt 模板与模型 client 两条门禁。 | 已采纳 |
 
 ## 写法约定
 

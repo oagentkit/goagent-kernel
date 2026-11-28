@@ -7,6 +7,8 @@ title: 介绍
 > 🤖 本页要点已收录进 [llms.txt](https://oagentkit.github.io/goagent-kernel/llms.txt)——AI 代理可直接读取。
 
 **goagent-kernel 是多智能体编排的通用内核。** 一句话定位：**编排是代码，LLM 只做单环节**——
+
+**它是 Agent Execution Kernel，不是 Agent Framework**：专家角色、Prompt、工具实现、领域判断、模型调用五项归宿主（ADR-0011），内核只收执行中产生的可判定状态与操作——核心竞争力是长任务、多任务、多副本、异常恢复下的执行正确性，不是能调用多少模型。
 它只提供确定性编排的**机制面**，**不认识任何领域概念**。
 
 所谓机制面，是这些与「给谁干活」无关的东西：
