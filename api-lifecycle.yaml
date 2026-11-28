@@ -177,6 +177,10 @@ packages:
     level: Experimental
     since: v0.81.0
     reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。它派生的「不变量绑定在不在、间隙有没有静默空隙」只服务本仓的 #523 对账门禁，不是宿主面。
+  - pkg: internal/hostsurface
+    level: Experimental
+    since: v0.81.0
+    reason: internal 内部件，Go 可见性规则已挡住外部引用，无对外承诺；登记只为「清单覆盖全部生产包」判据不留暗角。它派生的「接入面分类覆盖没覆盖、文档 import 白名单过没过」只服务本仓的 #524 对账门禁，不是宿主面。
   - pkg: taskboard/boardtest
     level: Experimental
     since: v0.33.0

@@ -576,6 +576,33 @@ deps:
       seam: ""
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
+    - package: cmd/hostsurfacecheck
+      function: loadSurface
+      deps:
+        - fs
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 读接入面登记面并交给解析层（internal/hostsurface.ParseDoc）：判定不在本层（结论全在 Judge，它吃的是注入的包全集与文档 import 事实）
+
+    - package: cmd/hostsurfacecheck
+      function: loadLifecycle
+      deps:
+        - fs
+      role: stamp
+      seam: ""
+      exempt: ""
+      reason: 读 api-lifecycle 包全集作为覆盖判据的基准面：全集必须是仓里那一份清单，注入副本会让「漏登记」判不出来
+
+    - package: cmd/hostsurfacecheck
+      function: collectDocImports
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 抽 README/USAGE 代码块的 import 声明——扫真文档本身就是门禁职责（绕过它，文档教内部件就没人拦）
+
     - package: cmd/invariantcheck
       function: loadDoc
       deps:
