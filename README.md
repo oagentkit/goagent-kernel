@@ -44,6 +44,7 @@
 > | [docs/DISTRIBUTED-EVOLUTION-20261117.md](docs/DISTRIBUTED-EVOLUTION-20261117.md) | **分布式演进方向**：外部评审逐条核验台账 + L1/L2/L3 三阶段路线 + 场景化部署配方的当前缺口 | 活文档（评审核验，2026-11-17）|
 > | [docs/INVARIANTS.md](docs/INVARIANTS.md) | **执行不变量与插点矩阵（机器可查）**：七类不变量的判定机制 / 成文处 / 必红判据绑定 + 7 步骤间隙 × 6 故障类型覆盖（零静默空隙）；`make invariantcheck` 判指针存在与行级兜底（issue #523） | 活文档（机器判定）|
 > | [docs/HOST-SURFACE.md](docs/HOST-SURFACE.md) | **宿主接入面清单（机器可查）**：六步主链「宿主提供 / kernel 兑现」对照 + 全量包三分类（必须接 / 可选 / 内部件）+ 文档 import 白名单；`make hostsurfacecheck` 判覆盖全集与白名单（issue #524） | 活文档（机器判定）|
+> | [docs/MATURITY.md](docs/MATURITY.md) | **机制成熟度盘点面（机器可查）**：Experimental 全量五分类（晋级候选/维持演进/待合并/待降级/待废弃）+ 晋级三维证据 + 三问审计处置记录；`make apilifecheck` 第五类判据（issue #525） | 活文档（机器判定）|
 > | [docs/DEPLOY-MATRIX.yaml](docs/DEPLOY-MATRIX.yaml) | **部署配方能力清单（机器可查）**：场景 → 必需能力 → 证据（契约符号 / 门禁 / issue）→ 当前状态；`make deploycheck` 判证据可解析、状态由证据推导、与 USAGE 口径一致（issue #277） | 活文档（机器判定）|
 > | [docs/STORAGE-SELECTION.yaml](docs/STORAGE-SELECTION.yaml) | **存储选型声明面（机器可查）**：什么时候用 SQLite / 什么时候用 PostgreSQL——允许集 / 能力归属 / 落点 / 选型口径 / 已知不对称；`make storagecheck` 判场景选型、能力齐备、落点可解析、写者数不越界（issue #424） | 活文档（机器判定）|
 > | [docs/K8S-EGRESS-E2E-20261119.md](docs/K8S-EGRESS-E2E-20261119.md) | **K8s 出站禁网的真集群实测结论**：环境 / 复跑方式（`make k8s-e2e`）/ 四条验收标准的实测 / **结论边界**（issue #418）| 活文档（实测结论，2026-11-19）|
@@ -423,8 +424,8 @@ Job 声明的完整校验不写进本示例，但**不是缺判据**：上游 `s
 
 | 指标 | 实测 |
 |---|---|
-| 生产代码 | 66,791 行 / 350 文件（不含 `_test.go`）|
-| 测试 | 417 个测试文件 |
+| 生产代码 | 67,008 行 / 351 文件（不含 `_test.go`）|
+| 测试 | 418 个测试文件 |
 | 覆盖率 | 门槛：全局 60% + **逐包下限 70%**（两条判据判两件事，见下）。**实测值不抄在这里**，以 `make cover-gate` 的输出为准 |
 | 结构阈值 | `max_file_lines: 400`，`max_methods_per_type: 25`（按**实质方法数**判，见下），`enforce: true` |
 | 门禁 | 12 条规则（`rules` 段，以 `make architecture-check` 的输出为准）+ **`go/ast` 结构规则**（条数随 `archcheck/*.go` 增减而变，**不抄在这里**——抄进来就是给自己造一份会静默过期的真相；判据面清单：门包不变 / 依赖方向 / 沙箱档位登记 / 执行路径 / **子进程出口** / **未受管逃逸** / **租户隔离证据三条** / **接缝契约三形态三条：#369/#370** / **用例内 goroutine 收尾（#428：测试函数起了 goroutine 而测试侧无等待点即红）** / **例外与实际命中面对账（#447：例外命中 0 条违反且未标 `status: stale` 即红，标了 `stale` 却仍命中也判矛盾红，报告逐条点名不许静默）** / **测试面不得直调包级可变入口（#449：`check_kind: test_no_direct_call`，被禁符号与受管辅助全由 policy 声明，执行体零本仓专名）** / **判定词表登记七条：词表须有枚举出口 + 消费方不得手抄（判定词表 / 输入归一词表两类，判据精确到那一处字面量）+ 判定谓词须与表同源 + 输入归一词表须有导出的归一出口 + 词表须覆盖它那一族常量的全部取值（反向派生：常量加了、表没加当天即红）+ 同形撞车须显式声明关系（同概念 / 不同概念——决定手抄指路往哪引，错误指路比不指路更坏）+ 同形关系的锚点须仍指向真实常量（改名 / 被删 / 取值漂了 / 说谎了，当天即红）**）+ **门面包已清零**（v0.35.0 删 `dispatch`/`policy`/`reminder`/`toolfail`/`sandbox` 五门面、消费方直连上游；门面规则保留、清单置空）+ 54 包依赖方向 + README 包表一致性 + **USAGE 包数口径** + **API 生命周期与错误登记口径（`apilifecheck`，#113/#104）** + **部署配方能力清单口径（`deploycheck`：证据可解析 / state 由证据推导 / USAGE 逐行一致，#277；issue 证据只在单号仍开着时才算缺口）** + **存储选型判据（`storagecheck`：场景 storage 在允许集内 / storage 提供场景必需的能力 / 能力断言在代码里找得到落点 / 多写者场景不得选单写者档位 / 选型口径与已知不对称必须看得见，#424）** + **演进台账纪律（`ledgercheck`：同一单号状态一致 / 已合入必给关闭 PR 号 / 关闭 PR 号形态 / 无主单号 / **台账 ↔ GitHub issue 状态双向对账（#455：已合入而 issue 仍开、issue 已关而台账没登记关闭 PR 号，两方向都判；判据面与数据源分离——判据是纯函数，数据源**两级**：实时 `gh` 为主、拉不到退回 `docs/issue-state.yaml` 快照（刷新走 `make issue-state`），两级都拿不到才 exit 2）**）** + **竞态（`-race`）+ 漏洞扫描（`govulncheck`）+ 交叉构建矩阵** + **发版纪律（`releasecheck`：annotated tag / CHANGELOG 含本版段 / 无 U+FFFD / 区间内无混装提交；非 tag 提交显式跳过）** + **仓库卫生（`hygiene`：被跟踪的编译产物二进制不得入库（按文件头魔数判），且被跟踪文件不得命中 `.gitignore`（`git add -f` 强加的文本产物 / 陈旧跟踪），#413 / §16 建议 3）** |

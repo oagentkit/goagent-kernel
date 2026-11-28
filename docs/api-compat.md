@@ -137,9 +137,19 @@ api-lifecycle.yaml 登记 **50** 个包（Stable 15 / Experimental 35 / Deprecat
   `taskboard/boardtest` 是契约测试子包）。已上移上游的包（`netguard` /
   `cmdpolicy`，v0.73.0）不在本组——它们的定级由上游仓的清单各自负责。
 
-Experimental → Stable 的晋级条件：**一个 minor 版本内无 breaking**且
-判定语义有配套契约套件或负对照的，下一版可晋级——晋级是显式动作
-（改清单 + 改包注释 + CHANGELOG 一行），不是自动发生的。
+Experimental → Stable 的晋级条件（**三维**，2026-11-28 起，issue #525）：
+
+1. **无 breaking 窗口**：一个 minor 版本内无 breaking，且判定语义有配套契约套件
+   或负对照（原有条件）；
+2. **真实宿主接入证据**：有宿主（goagent-runtime 或下游）在真实装配里 import 并
+   跑通过——「有套件」不等于「有宿主在用」；
+3. **真实故障测试证据**：有 fault-injection / faultmatrix / acceptance-path 指针
+   覆盖它的关键判据——「没红过」不等于「红过给你看」。
+
+三维的**机器可判半边**在 `make apilifecheck`：晋级动作发生前，该包必须先在
+`docs/MATURITY.md` 盘点表里以「晋级候选」登记且三格证据非空（缺一格判红）。
+晋级本身是显式动作（改清单 + 改包注释 + 撤盘点行 + CHANGELOG 一行），不是自动
+发生的；盘点面每按「维持演进」的包在**每个 minor 版本边界**复盘一次。
 
 ## 相关文件
 
@@ -148,5 +158,6 @@ Experimental → Stable 的晋级条件：**一个 minor 版本内无 breaking**
 | `api-lifecycle.yaml` | 清单（声明 + 机器可读） |
 | `cmd/apilifecheck` | 门禁执行体（`make apilifecheck`） |
 | `docs/error-semantics.md` | 全仓错误哨兵语义总表（同门禁校验） |
+| `docs/MATURITY.md` | 成熟度盘点面：Experimental 全量五分类 + 晋级候选三维证据（同门禁校验，issue #525） |
 | `docs/USAGE.md` | 宿主视角的接入指南（口径表含本清单登记数） |
 | `CHANGELOG.md` | 每次破坏性变更的迁移说明（BREAKING 段） |

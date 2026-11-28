@@ -304,6 +304,15 @@ deps:
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、跑真命令）
     - package: cmd/apilifecheck
+      function: checkMaturity
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：读真盘点面是门禁纪律（docs/MATURITY.md 必须是仓里那一份——注入副本等于让「晋级候选有没有证据」对着假表判）
+
+    - package: cmd/apilifecheck
       function: checkDocsBlocks
       deps:
         - fs
