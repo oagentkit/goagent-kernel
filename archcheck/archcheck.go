@@ -145,6 +145,29 @@ func RunWithOptions(root string, pol *Policy, opts RunOptions) (*Result, error) 
 	if pol == nil {
 		return nil, fmt.Errorf("policy 为空")
 	}
+	// 解析根里的符号链接：filepath.Walk 不跟随软链，根是软链时整棵子树都扫不到
+	// （见 FindRoot 的注）。宿主复用本执行体时传的根同样可能是软链 ⇒ 解析放在
+	// 入口这一处，不依赖调用方自觉。
+	real, err := realPath(root)
+	if err != nil {
+		return nil, err
+	}
+	root = real
+
+	// 扫描面守门（失败形态必须是**变红**，不是变绿）：仓库里一个 Go 源文件都
+	// 没有 ⇒ 门禁根本没判过任何东西 ⇒ 绝不能报「无阻断级违反」。
+	//
+	// 为什么必须兜底：空扫描面下，「每条规则都没扫到文件」与「没有违规」在
+	// 报告里长得一模一样（都是 0 违反），而前者其实是「给不出结论」。
+	// 这条兜底让任何让扫描面落空的形态（根是软链没解析、检出只拿到一半、
+	// policy 指错根）都在这里变成非零退出，而不是一份绿色的报告。
+	files, err := iterFiles(root, []string{"*.go"}, false)
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("扫描面为空：仓库里没有任何 Go 源文件（根=%s）——门禁给不出结论，不能报「无违反」", root)
+	}
 	res := &Result{excused: map[string]bool{}}
 
 	// 规则段：正则式规则，逐条判定。
