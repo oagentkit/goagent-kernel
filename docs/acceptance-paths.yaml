@@ -39,7 +39,7 @@
 #   acceptance-path-conclusion: <pass|fail>
 #
 # 正文里「提到这条路径」不算证据——那是本判据要挡的假绿。
-updated: 2026-11-23
+updated: 2026-11-28
 
 paths:
   # 真集群类验收（本 issue 点名的形态）。判据体与可复跑入口已随边界迁移到
@@ -52,6 +52,17 @@ paths:
     owner: goagent-runtime
     evidence: docs/K8S-EGRESS-E2E-20261119.md
     ran_at: 2026-11-19
+    conclusion: pass
+
+  # 最小闭环对齐（kernel#524 出口条件 5，2026-11-28）：runtime 的
+  # reference-runtime 六步演示真跑 + examples/全量测试绿 + 逐步对照
+  # HOST-SURFACE 六步清单——结论存档留内核仓（理由同上条）。
+  - id: host-surface-loop
+    scope: 最小闭环示例对齐 HOST-SURFACE 六步清单——reference-runtime 真跑六步（恢复不重放/认领单赢家/副作用至多一次为证）+ examples 套件与全量测试绿
+    command: CGO_ENABLED=0 go run ./examples/reference-runtime（goagent-runtime 仓）
+    owner: goagent-runtime
+    evidence: docs/HOST-SURFACE-LOOP-20261128.md
+    ran_at: 2026-11-28
     conclusion: pass
 
   # 本仓自有的验收路径（owner 留空）⇒ 门禁核验它的入口：Makefile 里必须有

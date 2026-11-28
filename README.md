@@ -47,6 +47,7 @@
 > | [docs/MATURITY.md](docs/MATURITY.md) | **机制成熟度盘点面（机器可查）**：Experimental 全量五分类（晋级候选/维持演进/待合并/待降级/待废弃）+ 晋级三维证据 + 三问审计处置记录；`make apilifecheck` 第五类判据（issue #525） | 活文档（机器判定）|
 > | [docs/DELIVERY-SEMANTICS.md](docs/DELIVERY-SEMANTICS.md) | **交付语义分级（机器可查）**：四档词表（at-most-once / at-least-once / effectively-once / idempotent-execution）+ 逐能力面承诺表（Stable 全覆盖）+ 失真声明白名单；`make semanticscheck` 扫「把上界说成 exactly-once」（issue #526） | 活文档（机器判定）|
 > | [docs/PLANES.md](docs/PLANES.md) | **三平面划分（机器可查）**：控制/执行/恢复/横切定义 + 50 包平面映射 + 跨面依赖规则（观测方向必须登记、禁止方向命中即红）；`make planecheck`（issue #527） | 活文档（机器判定）|
+> | [docs/HOST-SURFACE-LOOP-20261128.md](docs/HOST-SURFACE-LOOP-20261128.md) | **最小闭环对齐 HOST-SURFACE 的实跑证据**：reference-runtime 六步真跑 + 逐步对照 + 两种装配形态边界（kernel#524 出口条件 5，acceptance-path `host-surface-loop`） | 活文档（实测证据，2026-11-28）|
 > | [docs/DEPLOY-MATRIX.yaml](docs/DEPLOY-MATRIX.yaml) | **部署配方能力清单（机器可查）**：场景 → 必需能力 → 证据（契约符号 / 门禁 / issue）→ 当前状态；`make deploycheck` 判证据可解析、状态由证据推导、与 USAGE 口径一致（issue #277） | 活文档（机器判定）|
 > | [docs/STORAGE-SELECTION.yaml](docs/STORAGE-SELECTION.yaml) | **存储选型声明面（机器可查）**：什么时候用 SQLite / 什么时候用 PostgreSQL——允许集 / 能力归属 / 落点 / 选型口径 / 已知不对称；`make storagecheck` 判场景选型、能力齐备、落点可解析、写者数不越界（issue #424） | 活文档（机器判定）|
 > | [docs/K8S-EGRESS-E2E-20261119.md](docs/K8S-EGRESS-E2E-20261119.md) | **K8s 出站禁网的真集群实测结论**：环境 / 复跑方式（`make k8s-e2e`）/ 四条验收标准的实测 / **结论边界**（issue #418）| 活文档（实测结论，2026-11-19）|
