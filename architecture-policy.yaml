@@ -1546,6 +1546,80 @@ rules:
       - text: 'github.com/oekit/pkg/errors'
         want: miss
 
+  # 规则（2026-11-28，issue #528 / ADR-0011）：内核不得承载 prompt 模板。
+  #
+  # 评审 §3.3 问题五点名：Prompt 属于上层——kernel 只知道执行过程中产生了
+  # 什么可判定的状态和操作，不需要知道 prompt 长什么样。生产代码一旦开始
+  # 存放「You are a…」「# Role:…」这类模板，内核就长出了模型侧叙事，
+  # 宿主的 prompt 面被焊进框架——那是 Framework 化的第一步。
+  #
+  # 判定面是行文本（形态判据）；ignore_test 排除夹具（夹具引用样例是示例
+  # 不是承诺）；scope_exclude [cmd]（门禁工具加载的 policy 文本自带样例词）。
+  # 已知边界（ADR-0011 如实登记）：拼接/编码构造的模板拦不住——规则拦常见
+  # 形态，价值是「顺手存一段 You are a…」当天显形。
+  - id: harness-no-prompt-template
+    desc: 内核生产代码不得承载 prompt 模板（Prompt 属于宿主，ADR-0011）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: true
+    scope_exclude: [cmd]
+    forbid_regex: '(?i)you are a[n]? |你是一个|# ?Role:|system prompt|act as a |⟨⟨'
+    examples:
+      # 分支覆盖（issue #386 纪律）：每个备选词各一条正例。
+      - text: 'var s = "You are a helpful assistant"'
+        want: hit
+      - text: 'var s = "你是一个编排内核"'
+        want: hit
+      - text: 'var s = "# Role: 评审专家"'
+        want: hit
+      - text: 'var s = "Please render a system prompt"'
+        want: hit
+      - text: 'var s = "act as a tool router"'
+        want: hit
+      - text: 'var s = "⟨⟨user⟩"'
+        want: hit
+      # 反例各一条：判据不许放宽（近形词不得误报）。
+      - text: 'var s = "You are responsible for renewing the lease"'
+        want: miss
+      - text: 'var s = "SubsystemRegistry"'
+        want: miss
+      - text: 'var s = "角色由宿主注入"'
+        want: miss
+
+  # 规则（2026-11-28，issue #528 / ADR-0011）：内核不得 import 模型 client。
+  #
+  # 模型调用属于宿主：kernel 的 roundguard 类判据只判「这一回合的结局」，
+  # 不调模型；go.mod 零模型 client 依赖是既有事实——但那此前是「恰好没登记
+  # ext 面」的搭便车边界，没人看得见它是边界。本规则把它变成明文不许。
+  #
+  # 判定面是 import 路径（go/ast，单行/块/别名/空白导入一视同仁）；
+  # ignore_test: false——测试里起真模型调用比生产代码更危险；scope_exclude [cmd]。
+  # 已知边界（ADR-0011 如实登记）：vendored 改名的 client 拦不住——拦的是
+  # 常见形态（矩阵内 llm 层与主流 SDK 路径）。
+  - id: harness-no-model-client-import
+    desc: 内核不得 import 模型 client（模型调用属于宿主，ADR-0011）
+    severity: error
+    scope: [.]
+    include: ["*.go"]
+    ignore_test: false
+    scope_exclude: [cmd]
+    forbid_import_regex: 'oagentkit/llm|openai|anthropic'
+    examples:
+      - text: 'github.com/oagentkit/llm/client'
+        want: hit
+      # 分支覆盖（issue #386 纪律）：每个备选词各一条正例。
+      - text: 'github.com/sashabaranov/go-openai'
+        want: hit
+      - text: 'github.com/anthropics/anthropic-sdk-go'
+        want: hit
+      # 反例：判据面是模型 client，不是「上游判据包」——roundguard/guardx 是
+      # 判定面，允许 import。
+      - text: 'github.com/oagentkit/agent/roundguard'
+        want: miss
+      - text: 'github.com/oagentkit/guardx/toolgate'
+        want: miss
+
   # 规则八（2026-10-21）：外部程序执行的入口必须唯一。
   #
   # 隔离档位这套机制要成立，前提是「被执行的程序都在某个已登记的后端里跑」。
