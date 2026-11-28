@@ -150,7 +150,13 @@ const tailAbsenceReadBeats = 20
 // 已经跑完**（happens-before 经夹具的同一把互斥锁传递：读拍计数与读游标序列
 // 都在 store.mu 之下）⇒ 「此刻通道里有什么」是确定的 ⇒ 后面那条缺席断言
 // 不是在跟竞态赛跑。
-func waitTailReadBeats(t *testing.T, store *fakeTailStore, n int) {
+// tailReadCounter 读拍计数的最小能力面——fakeTailStore 之外，
+// lateCommitStore（tail_cursor_gap_test）也自带计数，同一把尺子量两种夹具。
+type tailReadCounter interface {
+	readAttempts() int
+}
+
+func waitTailReadBeats(t *testing.T, store tailReadCounter, n int) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for store.readAttempts() < n+1 {

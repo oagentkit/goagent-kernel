@@ -191,11 +191,14 @@ func TestDurablePublishInsertFailureDropsWithoutBroadcast(t *testing.T) {
 					t.Fatalf("onDrop 应收到 insert 错误, got %v", cause)
 				}
 			}
-			// 失败帧不广播：订阅者一无所获。
+			// 失败帧不广播：订阅者一无所获。insert→broadcast 是同步序列
+			// （publishSerialized 锁内投递），Publish 返回错误时广播尚未
+			// 发生且此后本用例无第二个发布者 ⇒ 事实=Publish 已返回，
+			// 非阻塞判即完整证据（#532，不设墙钟窗口）。
 			select {
 			case ev := <-ch:
 				t.Fatalf("insert 失败不得广播, 订阅者收到 %+v", ev)
-			case <-time.After(50 * time.Millisecond):
+			default:
 			}
 
 			// 恢复后续用下一号：失败的发布不烧游标、不留半条事件。
