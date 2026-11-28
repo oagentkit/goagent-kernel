@@ -57,6 +57,12 @@ type Violation struct {
 //
 // 为什么向上找而不是要求调用方传绝对路径：门禁要在这个目录下判定所有包，
 // 而包在磁盘上的位置是随仓库克隆位置变的。
+//
+// 为什么找到之后还要**解析符号链接**：filepath.Walk **不跟随符号链接**——
+// 若仓库根本身是软链（改名后留下的兼容软链、monorepo 里的软链检出、缓存检出），
+// Walk 会把根当成「一个文件」，整棵子树一个文件都扫不到 ⇒ 门禁把「没扫到」
+// 当成「没有违规」（假绿），反向也会把每条「登记了却找不到」都报成红（假红）。
+// 两种都是「门禁给不出结论却显示成了结论」——本仓纪律里最贵的失效形态。
 func FindRoot(start string) (string, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
@@ -64,7 +70,7 @@ func FindRoot(start string) (string, error) {
 	}
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "architecture-policy.yaml")); err == nil {
-			return dir, nil
+			return realPath(dir)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -72,6 +78,18 @@ func FindRoot(start string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// realPath 解析路径里的符号链接，返回真实路径。
+//
+// 解析失败即报错（不静默退回原路径）：解析不了就意味着**扫不到真实内容**——
+// 门禁给不出结论。此时退回逻辑路径只会让门禁扫空（假绿），不会更安全。
+func realPath(p string) (string, error) {
+	real, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return "", fmt.Errorf("解析真实路径失败（%s）：%w", p, err)
+	}
+	return real, nil
 }
 
 // repoRoot 找本仓根目录（供本包内的用例读真实 policy）。
