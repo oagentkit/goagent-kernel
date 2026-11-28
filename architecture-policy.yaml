@@ -1751,8 +1751,12 @@ dependency_direction:
 #                                            判 docs/DELIVERY-SEMANTICS 两张表 ↔ api-lifecycle
 #                                            Stable 全集 ↔ 生产文档/注释失真扫描；读 md/yaml、
 #                                            扫测试名与扫声明面是工具职责，不形成机制依赖。
+#   cmd/planecheck                          三平面对账门禁（2026-11-28，issue #527）：
+#                                            判 docs/PLANES.md 映射/规则两表 ↔ api-lifecycle
+#                                            全集 ↔ 生产 import 边；读 md/yaml、go/ast 扫边是
+#                                            工具职责，不形成机制依赖。
 #   （cmd/ptcchild 不在此列——它已作为模块登记在 modules 段，见该条 notes）
-  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, cmd/invariantcheck, cmd/hostsurfacecheck, cmd/semanticscheck, docs]
+  ignore_dirs: [cmd/archcheck, cmd/docsync, cmd/pkgcov, cmd/apilifecheck, cmd/releasecheck, cmd/deploymatrix, cmd/ledgercheck, cmd/seamcheck, cmd/hygiene, cmd/raceprobe, cmd/storagecheck, cmd/acceptancecheck, cmd/routecheck, cmd/invariantcheck, cmd/hostsurfacecheck, cmd/semanticscheck, cmd/planecheck, docs]
   # ── 受管外部包面（policy 级）──
   #
   # 第一方矩阵（oagentkit / oekit）整体纳入依赖方向的判定面。
