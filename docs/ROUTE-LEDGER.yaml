@@ -31,11 +31,15 @@
 #     登记单号对账）⇒ 本表**不重复**判 GitHub 状态，避免同一事实两处判定漂移。
 updated: 2026-11-24
 
-# overview_issue 是本登记面的总纲单（路线总览本身）。
+# overview_issue 是本登记面的首个总纲单（路线总览本身，#279）。
 #
 # 它的台账登记行必须存在 ⇒ 「总纲单在册」是本判据的一部分：总纲单从台账里
 # 消失 ⇒ 台账与本文档不再一致 ⇒ 即红。
 overview_issue: 279
+
+# overview_issues 是后续阶段的总纲单（阶段由不同总纲开出时逐个登记）。
+# 判据同上：每个号在台账登记面里必须有一行。L4 阶段的总纲是 #529。
+overview_issues: [529]
 
 stages:
   # L1 · 身份与租约闭环（目标态定义见台账 §4）
@@ -63,3 +67,19 @@ stages:
     exit_criteria: >-
       分区期间旧区域旧代提交一律 ErrStaleEpoch、确认前的候选代次一律
       ErrEpochUnconfirmed ⇒ 拒绝不是「尽量」。
+
+  # L4 · 执行正确性与成熟度（2026-11-27 外部评审 §3.3/§3.4 落地；总纲 #529）
+  #
+  # 与 L1–L3 的差别：L1–L3 证「分布式一致性闭环」，L4 证「内核自身作为
+  # 产品的正确性与边界」——不变量有单源登记面、宿主面有清单、成熟度有盘点、
+  # 语义有分级、平面有判据、Framework 化路径有门禁。
+  - id: L4
+    title: 执行正确性与成熟度
+    issues: [523, 524, 525, 526, 527, 528]
+    exit_criteria: >-
+      七类不变量与插点矩阵有单源登记面且零静默空隙（invariantcheck）；宿主
+      接入面三分类覆盖全集且文档不教内部件（hostsurfacecheck）；Experimental
+      全量五分类盘点且晋级候选三维证据非空（apilifecheck 第五类）；交付四档
+      语义成文且失真声明会红（semanticscheck）；三平面映射覆盖全集、跨面方向
+      逐对登记且禁止方向命中即红（planecheck）；Kernel≠Framework 五项对照零
+      空白且 prompt/模型 client 两门禁注入即红（archcheck）。

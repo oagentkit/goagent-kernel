@@ -176,3 +176,33 @@ func TestJudge_判据跑不起来即红(t *testing.T) {
 		t.Fatal("登记面缺失时必须报出（跑不起来的门禁等于没有门禁）")
 	}
 }
+
+// 列表总纲（overview_issues）逐个核在册：缺登记点名、登记在册即过（总纲可保持 open）。
+func TestJudge_列表总纲未登记即红(t *testing.T) {
+	reg := goodRegistry()
+	reg.OverviewIssues = []int{529}
+	res := Judge(reg, goodLedger()) // 台账里没有 #529
+	if !strings.Contains(problemsText(res), "#529") {
+		t.Fatalf("列表总纲未登记必须点名，实际：%s", problemsText(res))
+	}
+}
+
+func TestJudge_列表总纲在册即绿(t *testing.T) {
+	reg := goodRegistry()
+	reg.OverviewIssues = []int{529}
+	led := ledgerstatus.ParseText(strings.Join([]string{
+		"## 9. issue 台账",
+		"",
+		"| 单号 | 标题 | 阶段 | 判据形态 | 状态 |",
+		"|---|---|---|---|---|",
+		"| #261 | L1 的单 | L1 | 判据 | ✅ 已合入 (#331) |",
+		"| #262 | L2 的单 | L2 | 判据 | ✅ 已合入 (#331) |",
+		"| #279 | 总纲单 | 全程 | 判据 | 🔴 仍开着 |",
+		"| #529 | L4 总纲单 | 全程 | 判据 | 🔴 仍开着 |",
+		"",
+	}, "\n"), "test.md")
+	res := Judge(reg, led)
+	if strings.Contains(problemsText(res), "#529") {
+		t.Fatalf("在册的列表总纲不该报，实际：%s", problemsText(res))
+	}
+}

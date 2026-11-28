@@ -53,8 +53,14 @@ import (
 type Registry struct {
 	// Updated 登记面版本戳（YYYY-MM-DD）。
 	Updated string `yaml:"updated"`
-	// OverviewIssue 总纲单单号（路线总览本身）。
+	// OverviewIssue 总纲单单号（路线总览本身；首个总纲，#279）。
 	OverviewIssue int `yaml:"overview_issue"`
+	// OverviewIssues 额外总纲单单号（阶段由不同总纲开出时逐个登记，如 #529）。
+	//
+	// 为什么需要列表：登记面的总纲最初只有 #279 一个；后续阶段（L4，#529）
+	// 由新总纲开出，单值字段装不下——但「总纲单在册」这条判据必须覆盖每一个
+	// 总纲，否则新总纲从台账消失时判据不响。
+	OverviewIssues []int `yaml:"overview_issues"`
 	// Stages 路线阶段。
 	Stages []Stage `yaml:"stages"`
 }
@@ -126,11 +132,18 @@ func Judge(reg *Registry, ledger *ledgerstatus.Ledger) Result {
 	res.Members = len(members)
 	res.Achieved = len(achieved)
 
-	// 判据 3：总纲单在册。
-	if reg.OverviewIssue > 0 && !ledger.Registered(reg.OverviewIssue) {
-		res.Problems = append(res.Problems, fmt.Sprintf(
-			"总纲单 #%d 在台账登记面里没有登记：总纲单从台账消失 ⇒ 台账与本文档不再一致",
-			reg.OverviewIssue))
+	// 判据 3：总纲单在册（单值字段 + 列表字段逐个核）。
+	overviews := []int{}
+	if reg.OverviewIssue > 0 {
+		overviews = append(overviews, reg.OverviewIssue)
+	}
+	overviews = append(overviews, reg.OverviewIssues...)
+	for _, n := range overviews {
+		if !ledger.Registered(n) {
+			res.Problems = append(res.Problems, fmt.Sprintf(
+				"总纲单 #%d 在台账登记面里没有登记：总纲单从台账消失 ⇒ 台账与本文档不再一致",
+				n))
+		}
 	}
 
 	sort.Strings(res.Problems)
