@@ -348,6 +348,25 @@ deps:
       exempt: ""
       reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「失真扫描」对着假文档判，等于没有扫描）
 
+    - package: cmd/planecheck
+      function: loadDoc
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「跨面依赖」对着假边判，等于没有判据）
+
+    - package: cmd/planecheck
+      function: loadLifecycle
+      deps:
+        - fs
+      role: tool
+      seam: ""
+      exempt: ""
+      reason: 执行外部动作本身就是目的：注入了就能绕过真实文件/真实命令（门禁纪律本身要求读真文件、扫真仓——否则「跨面依赖」对着假边判，等于没有判据）
+
+
     - package: cmd/apilifecheck
       function: checkMaturity
       deps:
