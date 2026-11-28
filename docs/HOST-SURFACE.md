@@ -113,4 +113,10 @@ USAGE 补节是教学面欠账，不阻塞本清单）；反向「教了但参�
   正文提到的包名、`go get` 命令行、CHANGELOG 历史快照都不算「教宿主 import」。
 - 「USAGE 没教但宿主真在用」的六个包（见 §二地面真相）是**教学面欠账**：本清单先给
   定性，USAGE 补节另计——清单的存在恰恰让这类欠账有了对账的基准。
+- **两种装配形态（2026-11-28 实跑对账补记，见 docs/HOST-SURFACE-LOOP-20261128.md）**：
+  「必须接」指**默认机制面**——embedded 形态（宿主 runner 直驱 taskboard + checkpoint
+  计划，reference-runtime 即此形态）六步各自成链，create/intervene 走宿主 store 与
+  裁决回调；`worker`/`backend`/`controlplane` 是**驱动循环部署形态**的默认面
+  （worker-runtime / cluster 形态使用）。两形态不是「谁骗了谁」，是同一份契约的
+  两种装配；清单判「接没接对」，不判「选了哪种形态」。
 
