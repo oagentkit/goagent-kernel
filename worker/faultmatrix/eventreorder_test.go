@@ -24,6 +24,14 @@ type reorderStore struct {
 	next      uint64
 	committed map[uint64]eventbus.Event
 	watermark uint64
+	reads     int // ListAfter 读拍数（缺席断言的尺子，#532）
+}
+
+// readAttempts 返回 ListAfter 被调用过的次数（读拍数）——线程安全。
+func (s *reorderStore) readAttempts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
 }
 
 func newReorderStore() *reorderStore {
@@ -60,6 +68,7 @@ func (s *reorderStore) MaxID(context.Context) (uint64, error) {
 func (s *reorderStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]eventbus.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	var out []eventbus.Event
 	for id := cursor + 1; id <= s.watermark; id++ {
 		ev, ok := s.committed[id]
@@ -72,6 +81,25 @@ func (s *reorderStore) ListAfter(_ context.Context, cursor uint64, limit int) ([
 		}
 	}
 	return out, nil
+}
+
+// reorderAbsenceReadBeats 缺席断言要求的读拍数：本夹具 TailInterval=1ms，
+// 旧墙钟窗口 50ms ≈ 50 拍 ⇒ 取 50 保持覆盖力（#532 清偿口径）。
+const reorderAbsenceReadBeats = 50
+
+// waitReorderReadBeats 等尾随读拍跑满 n 拍（1 拍 = 一次 ListAfter 读）。
+// 尺子必须是可观测事实而不是墙钟窗口（#443/#532）：拍数没跑满就判缺席
+// 等于什么都没验 ⇒ 直接红；墙钟 2s 只作兜底上限，防挂死、不参与结论。
+func waitReorderReadBeats(t *testing.T, store *reorderStore, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for store.readAttempts() < n+1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("2s 内尾随读拍未跑满 %d 拍（实得 %d 拍）——机制没跑够拍，"+
+				"缺席断言没有证据价值（此刻判绿等于什么都没验）", n, store.readAttempts())
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func runEventOutOfOrderCommit(t *testing.T) {
@@ -98,10 +126,14 @@ func runEventOutOfOrderCommit(t *testing.T) {
 	go tailer.Run(tailCtx)
 
 	// ID=2 已提交，但水位线仍是 0：尾随器不得把 2 当成「已有 2 帧」跳过 1。
+	// 尺子=读拍计数（与 eventbus waitTailReadBeats 同法，#443/#532）：
+	// 本夹具节拍 1ms，旧 50ms 窗口≈50 拍 ⇒ 取 50 拍不降覆盖力；墙钟 2s
+	// 只作兜底上限，拍没跑满直接红（此刻判缺席等于什么都没验）。
+	waitReorderReadBeats(t, store, reorderAbsenceReadBeats)
 	select {
 	case ev := <-ch:
 		t.Fatalf("水位线未推进时不得投递乱序帧（实得 id=%d）", ev.ID)
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 
 	store.commit(idA, eventbus.Event{

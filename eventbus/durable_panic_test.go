@@ -67,11 +67,13 @@ func TestDurablePublishInsertPanicIsolated(t *testing.T) {
 		t.Fatal("drop 应收到非 nil 的 cause")
 	}
 
-	// 不广播：订阅者一无所获。
+	// 不广播：订阅者一无所获。panic 由 insertStore 隔离成 error，轮次在
+	// 锁内跳过广播即放行（同步序列）⇒ 事实=publishSafely 已返回，
+	// 非阻塞判即完整证据（#532，不设墙钟窗口）。
 	select {
 	case ev := <-ch:
 		t.Fatalf("Insert panic 不得广播, 订阅者收到 %+v", ev)
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 	if got := boom.calls.Load(); got != 1 {
 		t.Fatalf("Insert 应恰好被调用 1 次, got %d", got)

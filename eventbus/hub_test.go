@@ -34,10 +34,12 @@ func TestHubUnsubscribeStopsDelivery(t *testing.T) {
 	stop()
 	stop() // 幂等
 	h.Publish(Event{ID: 1, SessionID: "sess-a"})
+	// 分发在读锁内同步完成（deliverLocked），Publish 返回即投递决定已做
+	// ⇒ 事实=Publish 已返回，非阻塞判即完整证据（#532，不设墙钟窗口）。
 	select {
 	case ev := <-ch:
 		t.Fatalf("退订后不应再收到事件: %+v", ev)
-	case <-time.After(50 * time.Millisecond):
+	default:
 	}
 	// 重订阅收新帧。
 	ch2, stop2 := h.Subscribe("sess-a")
@@ -75,14 +77,16 @@ func TestHubSubscribeDoesNotCloseChannel(t *testing.T) {
 	stop()
 
 	h.Publish(Event{ID: 1, SessionID: "sess-a"})
+	// 同上：stop() 与 Publish 均同步返回（退订删表、分发在读锁内）⇒
+	// 非阻塞判覆盖两态——既没读到事件、也没读到关闭，正是本包声明的那一态
+	// （#532，不设墙钟窗口）。
 	select {
 	case _, ok := <-ch:
 		if !ok {
 			t.Fatal("Hub 退订后不应关闭 channel（关闭会让未查 ok 的宿主循环空转）")
 		}
 		t.Fatal("Hub 退订后不应再收到事件")
-	case <-time.After(50 * time.Millisecond):
-		// 既没读到事件、也没读到关闭 —— 正是本包声明的那一态。
+	default:
 	}
 }
 
