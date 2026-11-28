@@ -31,6 +31,14 @@ type lateCommitStore struct {
 	mu       sync.Mutex
 	minted   []Event // 已铸造（含未提交），按 ID 升序
 	commited map[uint64]bool
+	reads    int // ListAfter 读拍数（缺席断言的尺子，#532）
+}
+
+// readAttempts 返回 ListAfter 被调用过的次数（读拍数）——线程安全。
+func (s *lateCommitStore) readAttempts() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.reads
 }
 
 func newLateCommitStore() *lateCommitStore {
@@ -74,6 +82,7 @@ func (s *lateCommitStore) MaxID(context.Context) (uint64, error) {
 func (s *lateCommitStore) ListAfter(_ context.Context, cursor uint64, limit int) ([]Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.reads++
 	var out []Event
 	for _, ev := range s.minted {
 		if ev.ID <= cursor {
@@ -136,13 +145,11 @@ func TestTailerOutOfOrderCommitNotSkipped(t *testing.T) {
 	defer cancel()
 	go NewTailer(store, hub, WithTailInterval(10*time.Millisecond), WithTailStartCursor(9)).Run(ctx)
 
-	// 11 已提交但 10 未提交：守约存储必须扣住整段（不得先送 11）。等若干拍
-	// 确认没有「只送 11」的窗口——这是契约的可观测结论。
-	select {
-	case ev := <-ch:
-		t.Fatalf("10 未提交时不得投递任何帧（先送 %d 即永久跳过 10）", ev.ID)
-	case <-time.After(50 * time.Millisecond):
-	}
+	// 11 已提交但 10 未提交：守约存储必须扣住整段（不得先送 11）。尺子是
+	// 夹具数出来的读拍（#443/#532：事实做尺，墙钟只当兜底上限）——20 拍内
+	// 任何「只送 11」都会落进下面的非阻塞判。
+	waitTailReadBeats(t, store, tailAbsenceReadBeats)
+	assertNoTailFrame(t, ch, tailAbsenceReadBeats)
 
 	store.commit(10) // 10 迟到提交
 	ev := waitTail(t, ch)
@@ -185,10 +192,14 @@ func TestTailerGapAlarmFiresOnHole(t *testing.T) {
 	if ev := waitTail(t, ch); ev.ID != 11 {
 		t.Fatalf("空洞段的事件仍应投递, got %d", ev.ID)
 	}
+	// 同一空洞不得重复报警：尺子=读拍（哨兵已响过一次，机制再跑 20 拍后
+	// 通道仍无第二响）——非阻塞判，事实=拍数（#532；本处是同形面里
+	// 原单漏扫的第 7 处）。
+	waitTailReadBeats(t, &store.fake, tailAbsenceReadBeats)
 	select {
 	case g := <-gaps:
 		t.Fatalf("同一空洞不得重复报警: [%d,%d]", g[0], g[1])
-	case <-time.After(60 * time.Millisecond):
+	default:
 	}
 }
 
