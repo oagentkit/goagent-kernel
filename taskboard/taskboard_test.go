@@ -211,3 +211,78 @@ func TestTaskCloneDeepCopiesDeps(t *testing.T) {
 		}
 	}
 }
+
+// TestCheckDuplicateIdentityInvariantsPinned 判重归一 + 首现语义钉住
+// （issue #548 等价性断言）：同身份重复 N 次只报**一条**重复；不变量只查
+// **首现**那一份——后续行不参与状态判定（旧形 byRef 只收首现的语义，
+// 索引驻留改造后必须逐字保持）。
+func TestCheckDuplicateIdentityInvariantsPinned(t *testing.T) {
+	tasks := []Task{
+		{ID: "a", State: "weird"},                  // 首现：状态不在词表，应报
+		{ID: "a", State: StateClaimed, Owner: "x"}, // 二现：认领缺令牌——不得再报
+		{ID: "a", State: StateOpen},                // 三现：干净——不得再报
+	}
+	ps := Check(tasks)
+	var dups, weird, lease int
+	for _, p := range ps {
+		switch p.Code {
+		case CodeDuplicateID:
+			dups++
+		case CodeUnknownState:
+			weird++
+		case CodeClaimedNoLease:
+			lease++
+		}
+	}
+	if dups != 1 || weird != 1 || lease != 0 {
+		t.Fatalf("判重归一/首现语义被改：dup=%d(应1) unknown_state=%d(应1) claimed_no_lease=%d(应0)，实得 %v",
+			dups, weird, lease, ps)
+	}
+}
+
+// TestCheckCycleIncludesDownstreamPinned 环报文钉住（issue #548 等价性断言）：
+// 参与环 = Kahn 后入度仍 >0 的任务（环成员 + 环的下游——它们同样永远不会
+// 就绪），报文里的 (含 …) 必须恰好是这个集（至多 5 个、按 id 排序）。
+func TestCheckCycleIncludesDownstreamPinned(t *testing.T) {
+	tasks := []Task{
+		{ID: "a", State: StateOpen, Deps: []TaskID{"b"}},
+		{ID: "b", State: StateOpen, Deps: []TaskID{"a"}},    // 环 a↔b
+		{ID: "late", State: StateOpen, Deps: []TaskID{"a"}}, // 环下游
+	}
+	var text string
+	for _, p := range Check(tasks) {
+		if p.Code == CodeCycle {
+			text = p.Text
+		}
+	}
+	want := "依赖成环（含 a, b, late）：环上的任务永远不会就绪"
+	if text != want {
+		t.Fatalf("环报文集合/排序被改：\n 实得 %q\n 应为 %q", text, want)
+	}
+}
+
+// TestCheckTenantCycleCapPinned 环报文截断钉住（issue #548）：参与者按 id
+// 排序后取前 5 个——截断口径换了（比如改按发现序）就该红。
+func TestCheckTenantCycleCapPinned(t *testing.T) {
+	// 环 z→y→x→w→v→u→t→z（7 成员），下游 d 也挂进环 ⇒ 候选 8 个，报文只列 5。
+	tasks := []Task{
+		{ID: "d", State: StateOpen, Deps: []TaskID{"t"}},
+		{ID: "t", State: StateOpen, Deps: []TaskID{"z"}},
+		{ID: "u", State: StateOpen, Deps: []TaskID{"t"}},
+		{ID: "v", State: StateOpen, Deps: []TaskID{"u"}},
+		{ID: "w", State: StateOpen, Deps: []TaskID{"v"}},
+		{ID: "x", State: StateOpen, Deps: []TaskID{"w"}},
+		{ID: "y", State: StateOpen, Deps: []TaskID{"x"}},
+		{ID: "z", State: StateOpen, Deps: []TaskID{"y"}},
+	}
+	var text string
+	for _, p := range Check(tasks) {
+		if p.Code == CodeCycle {
+			text = p.Text
+		}
+	}
+	want := "依赖成环（含 d, t, u, v, w）：环上的任务永远不会就绪"
+	if text != want {
+		t.Fatalf("环报文 5 截断口径被改：\n 实得 %q\n 应为 %q", text, want)
+	}
+}

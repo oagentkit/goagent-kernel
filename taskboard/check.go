@@ -3,6 +3,20 @@
 // 身份是 (Tenant, ID)：同一 ID 在不同租户下是两条任务；依赖只在同租户内
 // 解析（跨租户引用按不存在处理——租户之间本来就不可见）。空租户 = 默认
 // 命名空间，此时身份退化为 ID，判定与旧版逐字一致。
+//
+// # 结构取舍（issue #548 分配治理，判据零变化）
+//
+// 判定语义是判据，分配是成本——两者分开记：语义面由 taskboard_test 的
+// 用例集钉住（不变量逐条 / 判重 / 租户隔离 / 环 / 确定性），本文件只动
+// **数据形状**。三条取舍：
+//
+//   - **索引驻留**：身份 → int32 索引一次驻留（瘦值 map），Task 值只住
+//     输入切片——旧形 map[taskRef]Task 把胖值（Deps/Lease/Tenant）拷进
+//     map 桶，200 任务 ~205 次增长分配（BENCH-BASELINE 回退主因）；
+//   - **CSR 邻接**：环检测的邻接表两遍成形（head+to 扁平数组），旧形
+//     map[TaskID][]TaskID 逐边 append ~500 次增长分配（基线即有热点）；
+//   - **单遍分组**：租户成员集在首轮收集，不再全量重扫重建（旧形逐租户
+//     O(T×N) 重扫 + 胖值二拷）。
 package taskboard
 
 import (
@@ -45,28 +59,45 @@ func refOf(t Task) taskRef { return taskRef{tenant: t.Tenant, id: t.ID} }
 // 报告行的 Problem.Tenant 指明问题属于哪个租户（空 = 默认命名空间）。
 func Check(tasks []Task) []Problem {
 	var out []Problem
-	byRef := make(map[taskRef]Task, len(tasks))
-	dup := map[taskRef]bool{}
 
-	for _, t := range tasks {
+	// 索引驻留（瘦值）+ 租户成员集（单遍）：Task 值不进 map。
+	idx := make(map[taskRef]int32, len(tasks))
+	members := map[string][]int32{}
+	var dup map[taskRef]bool // 惰性：无重复的常态路径零分配（旧形空 map 常驻）
+
+	for i, t := range tasks {
 		if t.ID == "" {
 			out = append(out, Problem{Tenant: t.Tenant, Code: CodeEmptyID,
 				Text: "任务没有 id：既无法被依赖引用，也无法被认领定位"})
 			continue
 		}
 		r := refOf(t)
-		if _, ok := byRef[r]; ok {
+		if _, ok := idx[r]; ok {
+			// 第二个起记重复（按身份归一——A×3 只报一条重复）。
+			if dup == nil {
+				dup = make(map[taskRef]bool)
+			}
 			dup[r] = true
 			continue
 		}
-		byRef[r] = t
+		idx[r] = int32(i)
+		members[t.Tenant] = append(members[t.Tenant], int32(i))
 	}
 	for r := range dup {
 		out = append(out, Problem{Tenant: r.tenant, Task: r.id, Code: CodeDuplicateID,
 			Text: "同租户内任务 id 重复：依赖引用会指到「其中一个」，而判定方无从知道是哪个"})
 	}
 
-	for _, t := range byRef {
+	// 不变量逐条：只看每个身份的**首现**（重复的后续行已由上段报过，
+	// 不再参与状态判定——与旧形 byRef 只收首现同一语义）。
+	for i := range tasks {
+		t := tasks[i]
+		if t.ID == "" {
+			continue
+		}
+		if idx[refOf(t)] != int32(i) {
+			continue
+		}
 		if !t.State.Valid() {
 			out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeUnknownState,
 				Text: "状态不在词表内（open / claimed / done / failed）"})
@@ -105,7 +136,7 @@ func Check(tasks []Task) []Problem {
 				continue
 			}
 			// 依赖只在同租户内解析：他租户的同 id 任务不可见。
-			dep, ok := byRef[taskRef{tenant: t.Tenant, id: d}]
+			depIdx, ok := idx[taskRef{tenant: t.Tenant, id: d}]
 			if !ok {
 				out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeUnknownDep,
 					Text: "依赖指向不存在的任务: " + string(d)})
@@ -114,7 +145,7 @@ func Check(tasks []Task) []Problem {
 			// 依赖未完成却被认领/完成：前置约束被跳过，两段工作会并行施加。
 			// failed 依赖也不算「已完成」——Terminal() 只认 done（issue #375）。
 			if t.State == StateClaimed || t.State == StateDone {
-				if !dep.State.Terminal() {
+				if !tasks[depIdx].State.Terminal() {
 					out = append(out, Problem{Tenant: t.Tenant, Task: t.ID, Code: CodeBlockedClaim,
 						Text: "依赖 " + string(d) + " 尚未完成，本任务却已认领或完成"})
 				}
@@ -123,15 +154,14 @@ func Check(tasks []Task) []Problem {
 	}
 
 	// 环按租户分别判：Kahn 拓扑排序排不空即有环。自依赖已在上面单列，
-	// 这里排除自环避免重复报。
-	for _, tenant := range tenantsOf(byRef) {
-		byID := make(map[TaskID]Task)
-		for r, t := range byRef {
-			if r.tenant == tenant {
-				byID[r.id] = t
-			}
-		}
-		if cycle := detectCycle(byID); len(cycle) > 0 {
+	// 这里排除自环避免重复报。租户序确定性（排序），与旧形 tenantsOf 同。
+	tenants := make([]string, 0, len(members))
+	for name := range members {
+		tenants = append(tenants, name)
+	}
+	slices.Sort(tenants)
+	for _, tenant := range tenants {
+		if cycle := detectCycle(tasks, members[tenant], idx); len(cycle) > 0 {
 			out = append(out, Problem{Tenant: tenant, Code: CodeCycle,
 				Text: "依赖成环（含 " + joinIDs(cycle) + "）：环上的任务永远不会就绪"})
 		}
@@ -143,67 +173,101 @@ func Check(tasks []Task) []Problem {
 	return out
 }
 
-// tenantsOf 返回快照里出现过的租户（排序；缺省空租户也按一项算）。
-func tenantsOf(byRef map[taskRef]Task) []string {
-	seen := make(map[string]bool, len(byRef))
-	out := make([]string, 0, len(byRef))
-	for r := range byRef {
-		if !seen[r.tenant] {
-			seen[r.tenant] = true
-			out = append(out, r.tenant)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // detectCycle 用 Kahn 算法找出参与环的任务（只报前若干个，够定位就行）。
 //
-// byID 是**单一租户**内的任务集（调用方已按租户分组）。
-func detectCycle(byID map[TaskID]Task) []TaskID {
-	indeg := make(map[TaskID]int, len(byID))
-	edges := make(map[TaskID][]TaskID, len(byID))
-	for id, t := range byID {
-		if _, ok := indeg[id]; !ok {
-			indeg[id] = 0
-		}
+// members 是**单一租户**内任务的全局索引（首现去重，调用方已按租户分组）；
+// 邻接表 CSR 两遍成形（head/to 扁平数组）——逐边 append 的增长分配是
+// 基线里的最大热点（issue #548），两遍换一次分配。
+// 参与环 = Kahn 后仍入度 >0 的任务（含环的下游——它们永远不会就绪，
+// 与旧形同集）；返回值按 TaskID 排序、至多 5 个。
+func detectCycle(tasks []Task, members []int32, idx map[taskRef]int32) []TaskID {
+	k := len(members)
+	if k == 0 {
+		return nil
+	}
+	// 全局索引 → 局部序（0..k-1），-1 = 非本租户成员。
+	local := make([]int32, len(tasks))
+	for i := range local {
+		local[i] = -1
+	}
+	for li, g := range members {
+		local[g] = int32(li)
+	}
+
+	// 边语义与旧形一致：d → id（id 依赖 d ⇒ d 是前置，完成后 id 入度 -1）。
+	// 第一遍数边（head 前缀和），第二遍填 to。
+	indeg := make([]int32, k)
+	head := make([]int32, k+1)
+	for li, g := range members {
+		t := tasks[g]
 		for _, d := range t.Deps {
-			if d == id || d == "" {
+			if d == t.ID || d == "" {
 				continue
 			}
-			if _, ok := byID[d]; !ok {
+			dg, ok := idx[taskRef{tenant: t.Tenant, id: d}]
+			if !ok {
+				continue // 跨租户/不存在：已由 CodeUnknownDep 报过，不进环图
+			}
+			dl := local[dg]
+			if dl < 0 {
 				continue
 			}
-			edges[d] = append(edges[d], id)
-			indeg[id]++
+			head[dl+1]++
+			indeg[li]++
 		}
 	}
-	var queue []TaskID
-	for id, n := range indeg {
-		if n == 0 {
-			queue = append(queue, id)
+	for i := 0; i < k; i++ {
+		head[i+1] += head[i]
+	}
+	to := make([]int32, head[k])
+	cursor := make([]int32, k)
+	copy(cursor, head[:k])
+	for li, g := range members {
+		t := tasks[g]
+		for _, d := range t.Deps {
+			if d == t.ID || d == "" {
+				continue
+			}
+			dg, ok := idx[taskRef{tenant: t.Tenant, id: d}]
+			if !ok {
+				continue
+			}
+			dl := local[dg]
+			if dl < 0 {
+				continue
+			}
+			to[cursor[dl]] = int32(li)
+			cursor[dl]++
 		}
 	}
-	slices.Sort(queue)
+
+	// Kahn：入度 0 入队（处理序不影响结果集——完成集与剩余集都是序无关的）。
+	queue := make([]int32, 0, k)
+	for li := 0; li < k; li++ {
+		if indeg[li] == 0 {
+			queue = append(queue, int32(li))
+		}
+	}
 	done := 0
 	for len(queue) > 0 {
 		id := queue[0]
 		queue = queue[1:]
 		done++
-		for _, next := range edges[id] {
+		for ei := head[id]; ei < head[id+1]; ei++ {
+			next := to[ei]
 			indeg[next]--
 			if indeg[next] == 0 {
 				queue = append(queue, next)
 			}
 		}
 	}
-	if done == len(indeg) {
+	if done == k {
 		return nil
 	}
 	var left []TaskID
-	for id, n := range indeg {
-		if n > 0 {
-			left = append(left, id)
+	for li := 0; li < k; li++ {
+		if indeg[li] > 0 {
+			left = append(left, tasks[members[li]].ID)
 		}
 	}
 	slices.Sort(left)
