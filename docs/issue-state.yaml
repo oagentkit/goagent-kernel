@@ -2,6 +2,9 @@
 # 门禁（make ledgercheck）只读本文件、不联网；刷新需要 gh 与网络。
 updated: 2026-11-28
 issues:
+  549: closed
+  548: closed
+  547: open
   534: closed
   533: closed
   532: closed

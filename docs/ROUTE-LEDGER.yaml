@@ -29,7 +29,7 @@
 #     登记面靠 review 守，不靠机器守；
 #   - GitHub 侧的「已关闭」由 `ledgercheck` 判据 5 全量对账（它对台账里**所有**
 #     登记单号对账）⇒ 本表**不重复**判 GitHub 状态，避免同一事实两处判定漂移。
-updated: 2026-11-24
+updated: 2026-11-28
 
 # overview_issue 是本登记面的首个总纲单（路线总览本身，#279）。
 #
@@ -39,7 +39,7 @@ overview_issue: 279
 
 # overview_issues 是后续阶段的总纲单（阶段由不同总纲开出时逐个登记）。
 # 判据同上：每个号在台账登记面里必须有一行。L4 阶段的总纲是 #529。
-overview_issues: [529]
+overview_issues: [529, 547]
 
 stages:
   # L1 · 身份与租约闭环（目标态定义见台账 §4）
@@ -83,3 +83,16 @@ stages:
       语义成文且失真声明会红（semanticscheck）；三平面映射覆盖全集、跨面方向
       逐对登记且禁止方向命中即红（planecheck）；Kernel≠Framework 五项对照零
       空白且 prompt/模型 client 两门禁注入即红（archcheck）。
+
+  # L5 · 深度优化（2026-11-28 基准对账开波；总纲 #547）
+  #
+  # 与 L4 的差别：L4 证「正确性与边界」，L5 治「成本与教学面」——性能判据链
+  # 的分配回退治理（基线不许无声过期）+ HOST-SURFACE 教学面欠账清零。
+  - id: L5
+    title: 深度优化（分配回退治理 + 教学面清欠）
+    issues: [548, 549]
+    exit_criteria: >-
+      TaskBoard 两形态 allocs/op 较回退后显著下降且语义零变化（等价性断言
+      钉判重归一/首现/环下游/5 截断）；BENCH-BASELINE 数字随录并记档回退根因
+      （演进纪律第 2 条）；USAGE 七包（steer/cost/handoff/eval/reconcile/
+      finalize/metrics）接入节清欠、MATURITY 教学面欠账清单归零。
